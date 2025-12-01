@@ -1,47 +1,66 @@
 import React, { useState, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { createClient } from '@supabase/supabase-js';
-import { 
-  LayoutDashboard, Database, Activity, AlertTriangle, BarChart3, Bot, Settings, LogOut, 
-  Search, Bell, User, Upload, RefreshCw, CheckCircle, AlertCircle, FileText, TrendingUp, 
-  DollarSign, Clock, Truck, Package, Menu, X, ChevronRight, Download, Moon, Sun, Send, Sparkles, Loader2
+import {
+  LayoutDashboard, Database, Activity, AlertTriangle, BarChart3, Bot, Settings, LogOut,
+  Search, User, Upload, RefreshCw, CheckCircle, AlertCircle, FileText, TrendingUp,
+  Menu, X, ChevronRight, Download, Moon, Sun, Send, Sparkles, Loader2
 } from 'lucide-react';
 
 // --- 1. 設定 Supabase (請填入你的資料) ---
 const supabaseUrl = "https://cbxvqqqulwytdblivtoe.supabase.co";
-const supabaseKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNieHZxcXF1bHd5dGRibGl2dG9lIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQ0NjQzNjUsImV4cCI6MjA4MDA0MDM2NX0.3PeFtqJAkoxrosFeAiXbOklRCDxaQjH2VjXWwEiFyYI"; 
+const supabaseKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNieHZxcXF1bHd5dGRibGl2dG9lIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQ0NjQzNjUsImV4cCI6MjA4MDA0MDM2NX0.3PeFtqJAkoxrosFeAiXbOklRCDxaQjH2VjXWwEiFyYI";
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 // --- Robust Gemini API Integration ---
 const callGeminiAPI = async (prompt, systemContext = "") => {
-  const apiKey = "AIzaSyBiPV68i9HR_D6a_PQ3lwSEJSIYZ0eF3j4"; 
-  
+  // 使用配置的 API 密钥
+  const apiKey = "AIzaSyBiPV68i9HR_D6a_PQ3lwSEJSIYZ0eF3j4";
+
   if (!apiKey) {
     console.warn("No API Key found.");
-    await new Promise(resolve => setTimeout(resolve, 1500)); 
-    return "I'm currently running in offline mode. Please check your API key connection.";
+    return "⚠️ 未配置 API 密钥。请前往设置页面添加您的 Google AI API 密钥。\n\n您可以从这里获取免费密钥: https://ai.google.dev/";
   }
 
   try {
+    const fullPrompt = systemContext
+      ? `${systemContext}\n\nUser Query: ${prompt}`
+      : prompt;
+
     const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           contents: [{
-            role: "user",
-            parts: [{ text: systemContext ? `Context: ${systemContext}\n\nUser Query: ${prompt}` : prompt }]
-          }]
+            parts: [{ text: fullPrompt }]
+          }],
+          generationConfig: {
+            temperature: 0.7,
+            maxOutputTokens: 2048,
+          }
         })
       }
     );
-    if (!response.ok) throw new Error(`API Error: ${response.status}`);
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      console.error("API Error Details:", errorData);
+
+      // 特别处理配额错误
+      if (response.status === 429) {
+        return "⚠️ API 配额已用完。\n\n解决方案:\n1. 等待配额重置(通常每天重置)\n2. 在设置中更换新的 API 密钥\n3. 升级到付费计划\n\n获取新的免费密钥: https://ai.google.dev/";
+      }
+
+      throw new Error(`API Error: ${response.status} - ${errorData.error?.message || 'Unknown error'}`);
+    }
+
     const data = await response.json();
     return data.candidates?.[0]?.content?.parts?.[0]?.text || "No response generated.";
   } catch (error) {
     console.error("Gemini API Failed:", error);
-    return "Error connecting to AI service.";
+    return `❌ AI 服务连接失败: ${error.message}\n\n请检查:\n- API 密钥是否正确\n- 网络连接是否正常\n- 是否有防火墙限制`;
   }
 };
 
@@ -124,7 +143,6 @@ const SimpleBarChart = ({ data, labels, colorClass = "bg-blue-500" }) => {
 // Mock Data
 const MOCK_ALERTS = [{ id: 1, category: "Material Shortage", item: "Lithium Batteries", supplier: "Voltaic Supplies", risk: "High", impact: "Production Stop Risk", rootCause: "Supplier strike.", recommendation: "Activate backup supplier." }, { id: 2, category: "Delivery Delay", item: "Circuit Boards", supplier: "TechTronix", risk: "Medium", impact: "2 Day Delay", rootCause: "Port congestion.", recommendation: "Expedite Air Freight." }, { id: 3, category: "Quantity Mismatch", item: "Steel Casings", supplier: "MetalWorks", risk: "Low", impact: "Inventory Discrepancy", rootCause: "Packing error.", recommendation: "Request credit note." }];
 const MOCK_KPI_CONTEXT = { healthIndex: "94%", goodsReceipt: "98%", productionRate: "87%", onTimeShipment: "92%", activeDelays: 3, riskItems: 12 };
-const MOCK_CHAT_HISTORY = [{ role: 'ai', content: "Hello! I am your SmartOps Decision Assistant. Upload an Excel file to get started!" }];
 
 // --- Main App ---
 export default function SmartOpsApp() {
@@ -228,7 +246,7 @@ export default function SmartOpsApp() {
       case 'alerts': return <SmartAlertsView addNotification={addNotification} excelData={excelData} />;
       case 'dashboard': return <OperationsDashboardView />;
       case 'analytics': return <AnalyticsCenterView excelData={excelData} />;
-      case 'decision': return <DecisionSupportView excelData={excelData} />;
+      case 'decision': return <DecisionSupportView excelData={excelData} user={session?.user} addNotification={addNotification} />;
       case 'settings': return <SettingsView darkMode={darkMode} setDarkMode={setDarkMode} user={session?.user} addNotification={addNotification} />;
       default: return <HomeView setView={setView} />;
     }
@@ -338,25 +356,450 @@ const HomeView = ({ setView }) => {
 
 const ExternalSystemsView = ({ addNotification, onFileUpload, excelData }) => {
   const [loading, setLoading] = useState(false);
-  const handleSync = () => { setLoading(true); setTimeout(() => { setLoading(false); addNotification("Synced!", "success"); }, 2000); };
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [fileName, setFileName] = useState('');
+  const [fileStats, setFileStats] = useState(null);
+  const [sortColumn, setSortColumn] = useState(null);
+  const [sortDirection, setSortDirection] = useState('asc');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const fileInputRef = useRef(null);
+  const rowsPerPage = 10;
+
+  // Calculate file statistics
+  useEffect(() => {
+    if (excelData && excelData.length > 0) {
+      const stats = {
+        totalRows: excelData.length,
+        totalColumns: Object.keys(excelData[0]).length,
+        columns: Object.keys(excelData[0]),
+        emptyFields: 0,
+        uniqueValues: {}
+      };
+
+      // Count empty fields and collect unique values per column
+      excelData.forEach(row => {
+        Object.entries(row).forEach(([key, value]) => {
+          if (!value || value === '' || value === null || value === undefined) {
+            stats.emptyFields++;
+          }
+          if (!stats.uniqueValues[key]) {
+            stats.uniqueValues[key] = new Set();
+          }
+          stats.uniqueValues[key].add(String(value));
+        });
+      });
+
+      setFileStats(stats);
+    }
+  }, [excelData]);
+
+  const handleFileChange = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    // Validate file type
+    const validTypes = ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/vnd.ms-excel'];
+    if (!validTypes.includes(file.type) && !file.name.match(/\.(xlsx|xls)$/)) {
+      addNotification("Invalid file type. Please upload Excel files only (.xlsx, .xls)", "error");
+      return;
+    }
+
+    // Validate file size (max 10MB)
+    if (file.size > 10 * 1024 * 1024) {
+      addNotification("File too large. Maximum size is 10MB", "error");
+      return;
+    }
+
+    setFileName(file.name);
+    setUploadProgress(10);
+    setLoading(true);
+
+    // Simulate upload progress
+    const progressInterval = setInterval(() => {
+      setUploadProgress(prev => {
+        if (prev >= 90) {
+          clearInterval(progressInterval);
+          return 90;
+        }
+        return prev + 10;
+      });
+    }, 200);
+
+    try {
+      await onFileUpload(e);
+      setUploadProgress(100);
+      addNotification(`Successfully loaded: ${file.name}`, "success");
+      setCurrentPage(1);
+      setSearchTerm('');
+    } catch (error) {
+      addNotification(`Upload failed: ${error.message}`, "error");
+      setUploadProgress(0);
+      setFileName('');
+    } finally {
+      setLoading(false);
+      setTimeout(() => setUploadProgress(0), 1000);
+    }
+  };
+
+  const handleSync = () => {
+    setLoading(true);
+    setTimeout(() => {
+      setLoading(false);
+      addNotification("Data synchronized successfully!", "success");
+    }, 2000);
+  };
+
+  const handleSort = (column) => {
+    if (sortColumn === column) {
+      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortColumn(column);
+      setSortDirection('asc');
+    }
+  };
+
+  const handleClearData = () => {
+    setShowDeleteConfirm(false);
+    setFileName('');
+    setFileStats(null);
+    setSearchTerm('');
+    setCurrentPage(1);
+    addNotification("Data cleared", "info");
+  };
+
+  const handleExportData = () => {
+    if (!excelData) return;
+
+    const ws = XLSX.utils.json_to_sheet(excelData);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Data");
+    XLSX.writeFile(wb, `exported_${fileName || 'data.xlsx'}`);
+    addNotification("Data exported successfully!", "success");
+  };
+
+  // Filter and sort data
+  const processedData = React.useMemo(() => {
+    if (!excelData) return [];
+
+    let filtered = excelData;
+
+    // Search filter
+    if (searchTerm) {
+      filtered = filtered.filter(row =>
+        Object.values(row).some(val =>
+          String(val).toLowerCase().includes(searchTerm.toLowerCase())
+        )
+      );
+    }
+
+    // Sort
+    if (sortColumn) {
+      filtered = [...filtered].sort((a, b) => {
+        const aVal = a[sortColumn];
+        const bVal = b[sortColumn];
+
+        if (aVal === bVal) return 0;
+        if (aVal === null || aVal === undefined) return 1;
+        if (bVal === null || bVal === undefined) return -1;
+
+        const comparison = aVal < bVal ? -1 : 1;
+        return sortDirection === 'asc' ? comparison : -comparison;
+      });
+    }
+
+    return filtered;
+  }, [excelData, searchTerm, sortColumn, sortDirection]);
+
+  // Pagination
+  const totalPages = Math.ceil(processedData.length / rowsPerPage);
+  const paginatedData = processedData.slice(
+    (currentPage - 1) * rowsPerPage,
+    currentPage * rowsPerPage
+  );
+
   return (
     <div className="space-y-6 animate-fade-in">
+      {/* Header */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <h2 className="text-xl md:text-2xl font-bold flex items-center gap-2"><Database className="w-6 h-6 text-blue-500" />External Systems</h2>
+        <div>
+          <h2 className="text-xl md:text-2xl font-bold flex items-center gap-2">
+            <Database className="w-6 h-6 text-blue-500" />
+            External Systems
+          </h2>
+          {fileName && (
+            <p className="text-sm text-slate-500 mt-1">Current file: {fileName}</p>
+          )}
+        </div>
         <div className="flex gap-2 w-full sm:w-auto">
-          <div className="relative flex-1 sm:flex-none"><input type="file" accept=".xlsx, .xls" onChange={onFileUpload} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" /><Button variant="secondary" icon={Upload} className="w-full">Upload</Button></div>
-          <Button onClick={handleSync} disabled={loading} icon={RefreshCw} className="flex-1 sm:flex-none">{loading ? "Syncing..." : "Sync"}</Button>
+          <div className="relative flex-1 sm:flex-none">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".xlsx, .xls"
+              onChange={handleFileChange}
+              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+            />
+            <Button variant="secondary" icon={Upload} className="w-full" disabled={loading}>
+              Upload Excel
+            </Button>
+          </div>
+          {excelData && (
+            <>
+              <Button onClick={handleExportData} variant="secondary" icon={Download} className="hidden sm:flex">
+                Export
+              </Button>
+              <Button onClick={() => setShowDeleteConfirm(true)} variant="danger" icon={X} className="hidden sm:flex">
+                Clear
+              </Button>
+            </>
+          )}
+          <Button onClick={handleSync} disabled={loading} icon={RefreshCw} className="flex-1 sm:flex-none">
+            {loading ? "Syncing..." : "Sync"}
+          </Button>
         </div>
       </div>
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 md:gap-6">{['ERP (SAP)', 'MES (Siemens)', 'WMS (Oracle)'].map((sys, i) => (<Card key={i} className="flex items-center justify-between"><div className="flex items-center gap-3"><div className="w-10 h-10 rounded-full bg-slate-100 dark:bg-slate-700 flex items-center justify-center font-bold text-slate-500">{sys[0]}</div><div><h4 className="font-semibold text-sm md:text-base">{sys}</h4><p className="text-xs text-green-500">Connected</p></div></div></Card>))}</div>
+
+      {/* Upload Progress */}
+      {uploadProgress > 0 && uploadProgress < 100 && (
+        <Card className="bg-blue-50 dark:bg-blue-900/20">
+          <div className="flex items-center gap-3 mb-2">
+            <Upload className="w-5 h-5 text-blue-600 animate-pulse" />
+            <span className="text-sm font-medium">Uploading {fileName}...</span>
+            <span className="ml-auto text-sm font-bold">{uploadProgress}%</span>
+          </div>
+          <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-2">
+            <div
+              className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+              style={{ width: `${uploadProgress}%` }}
+            />
+          </div>
+        </Card>
+      )}
+
+      {/* System Connections */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 md:gap-6">
+        {[
+          { name: 'ERP (SAP)', status: 'Connected', lastSync: '2 mins ago', icon: 'E' },
+          { name: 'MES (Siemens)', status: 'Connected', lastSync: '5 mins ago', icon: 'M' },
+          { name: 'WMS (Oracle)', status: 'Connected', lastSync: '1 min ago', icon: 'W' }
+        ].map((sys, i) => (
+          <Card key={i} className="hover:shadow-md transition-shadow">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center font-bold text-emerald-600">
+                  {sys.icon}
+                </div>
+                <div>
+                  <h4 className="font-semibold text-sm md:text-base">{sys.name}</h4>
+                  <p className="text-xs text-emerald-500 flex items-center gap-1">
+                    <CheckCircle className="w-3 h-3" />
+                    {sys.status}
+                  </p>
+                </div>
+              </div>
+              <div className="text-right">
+                <p className="text-xs text-slate-400">{sys.lastSync}</p>
+              </div>
+            </div>
+          </Card>
+        ))}
+      </div>
+
+      {/* File Statistics */}
+      {fileStats && (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+          <Card className="text-center">
+            <div className="text-2xl font-bold text-blue-600">{fileStats.totalRows}</div>
+            <div className="text-sm text-slate-500 mt-1">Total Rows</div>
+          </Card>
+          <Card className="text-center">
+            <div className="text-2xl font-bold text-purple-600">{fileStats.totalColumns}</div>
+            <div className="text-sm text-slate-500 mt-1">Columns</div>
+          </Card>
+          <Card className="text-center">
+            <div className="text-2xl font-bold text-amber-600">{fileStats.emptyFields}</div>
+            <div className="text-sm text-slate-500 mt-1">Empty Fields</div>
+          </Card>
+          <Card className="text-center">
+            <div className="text-2xl font-bold text-emerald-600">
+              {Math.round((1 - fileStats.emptyFields / (fileStats.totalRows * fileStats.totalColumns)) * 100)}%
+            </div>
+            <div className="text-sm text-slate-500 mt-1">Data Quality</div>
+          </Card>
+        </div>
+      )}
+
+      {/* Data Table */}
       <Card>
-        <div className="flex justify-between mb-4 items-center"><h3 className="font-semibold text-lg">Preview</h3>{excelData && <Badge type="success">{excelData.length} Rows</Badge>}</div>
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4">
+          <div className="flex items-center gap-2">
+            <h3 className="font-semibold text-lg">Data Preview</h3>
+            {excelData && <Badge type="success">{processedData.length} Rows</Badge>}
+          </div>
+          {excelData && (
+            <div className="relative w-full sm:w-64">
+              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                placeholder="Search data..."
+                value={searchTerm}
+                onChange={(e) => {
+                  setSearchTerm(e.target.value);
+                  setCurrentPage(1);
+                }}
+                className="w-full pl-10 pr-4 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-transparent text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+              />
+            </div>
+          )}
+        </div>
+
         <div className="overflow-x-auto">
-          {excelData ? (
-             <table className="w-full text-sm text-left border-collapse min-w-[600px]"><thead className="text-xs uppercase bg-slate-50 dark:bg-slate-700/50"><tr>{Object.keys(excelData[0]).map((key) => <th key={key} className="px-4 py-3 border-b">{key}</th>)}</tr></thead><tbody>{excelData.slice(0, 5).map((row, i) => (<tr key={i} className="hover:bg-slate-50 dark:hover:bg-slate-700/30">{Object.values(row).map((val, j) => <td key={j} className="px-4 py-3 border-b">{val}</td>)}</tr>))}</tbody></table>
-          ) : (<div className="text-center py-8 text-slate-400">No data loaded. Upload an Excel file.</div>)}
+          {excelData && excelData.length > 0 ? (
+            <>
+              <table className="w-full text-sm text-left border-collapse min-w-[600px]">
+                <thead className="text-xs uppercase bg-slate-50 dark:bg-slate-700/50">
+                  <tr>
+                    <th className="px-4 py-3 border-b text-slate-500">#</th>
+                    {Object.keys(excelData[0]).map((key) => (
+                      <th
+                        key={key}
+                        className="px-4 py-3 border-b cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-600 transition-colors"
+                        onClick={() => handleSort(key)}
+                      >
+                        <div className="flex items-center gap-2">
+                          {key}
+                          {sortColumn === key && (
+                            <span className="text-blue-600">
+                              {sortDirection === 'asc' ? '↑' : '↓'}
+                            </span>
+                          )}
+                        </div>
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {paginatedData.map((row, i) => (
+                    <tr key={i} className="hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors">
+                      <td className="px-4 py-3 border-b text-slate-400 font-mono text-xs">
+                        {(currentPage - 1) * rowsPerPage + i + 1}
+                      </td>
+                      {Object.values(row).map((val, j) => (
+                        <td key={j} className="px-4 py-3 border-b">
+                          {val !== null && val !== undefined && val !== '' ? (
+                            <span>{String(val)}</span>
+                          ) : (
+                            <span className="text-slate-300 dark:text-slate-600 italic">empty</span>
+                          )}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+
+              {/* Pagination */}
+              {totalPages > 1 && (
+                <div className="flex justify-between items-center mt-4 pt-4 border-t">
+                  <div className="text-sm text-slate-500">
+                    Showing {(currentPage - 1) * rowsPerPage + 1} to {Math.min(currentPage * rowsPerPage, processedData.length)} of {processedData.length} rows
+                  </div>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="secondary"
+                      onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                      disabled={currentPage === 1}
+                      className="px-3 py-1 text-sm"
+                    >
+                      Previous
+                    </Button>
+                    <div className="flex items-center gap-1">
+                      {[...Array(Math.min(5, totalPages))].map((_, i) => {
+                        let pageNum;
+                        if (totalPages <= 5) {
+                          pageNum = i + 1;
+                        } else if (currentPage <= 3) {
+                          pageNum = i + 1;
+                        } else if (currentPage >= totalPages - 2) {
+                          pageNum = totalPages - 4 + i;
+                        } else {
+                          pageNum = currentPage - 2 + i;
+                        }
+
+                        return (
+                          <button
+                            key={i}
+                            onClick={() => setCurrentPage(pageNum)}
+                            className={`px-3 py-1 text-sm rounded ${
+                              currentPage === pageNum
+                                ? 'bg-blue-600 text-white'
+                                : 'bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600'
+                            }`}
+                          >
+                            {pageNum}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <Button
+                      variant="secondary"
+                      onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                      disabled={currentPage === totalPages}
+                      className="px-3 py-1 text-sm"
+                    >
+                      Next
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="text-center py-12">
+              <Upload className="w-16 h-16 text-slate-300 mx-auto mb-4" />
+              <h3 className="text-lg font-semibold text-slate-600 dark:text-slate-400 mb-2">
+                No Data Loaded
+              </h3>
+              <p className="text-slate-500 mb-4">
+                Upload an Excel file (.xlsx, .xls) to get started
+              </p>
+              <Button
+                variant="primary"
+                icon={Upload}
+                onClick={() => fileInputRef.current?.click()}
+              >
+                Upload File
+              </Button>
+            </div>
+          )}
         </div>
       </Card>
+
+      {/* Delete Confirmation Modal */}
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <Card className="max-w-md w-full">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-12 h-12 rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center">
+                <AlertTriangle className="w-6 h-6 text-red-600" />
+              </div>
+              <div>
+                <h3 className="text-lg font-semibold">Clear Data?</h3>
+                <p className="text-sm text-slate-500">This action cannot be undone.</p>
+              </div>
+            </div>
+            <div className="flex gap-2 justify-end">
+              <Button variant="secondary" onClick={() => setShowDeleteConfirm(false)}>
+                Cancel
+              </Button>
+              <Button variant="danger" onClick={handleClearData}>
+                Clear Data
+              </Button>
+            </div>
+          </Card>
+        </div>
+      )}
     </div>
   );
 };
@@ -472,30 +915,475 @@ const AnalyticsCenterView = ({ excelData }) => {
   );
 };
 
-const DecisionSupportView = ({ excelData }) => {
+const DecisionSupportView = ({ excelData, user, addNotification }) => {
   const [input, setInput] = useState('');
-  const [chat, setChat] = useState(MOCK_CHAT_HISTORY);
+  const [conversations, setConversations] = useState([]);
+  const [currentConversationId, setCurrentConversationId] = useState(null);
   const [isTyping, setIsTyping] = useState(false);
+  const [showNewChatConfirm, setShowNewChatConfirm] = useState(false);
   const scrollRef = useRef(null);
-  useEffect(() => { if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight; }, [chat]);
-  
-  const handleSend = async (e) => { 
-    e.preventDefault(); if (!input.trim()) return; 
-    const userMsg = { role: 'user', content: input }; setChat(prev => [...prev, userMsg]); setInput(''); setIsTyping(true); 
-    let context = excelData ? `USER DATA: ${JSON.stringify(excelData.slice(0, 5))}` : "No data.";
-    const result = await callGeminiAPI(input, context); 
-    setChat(prev => [...prev, { role: 'ai', content: result }]); setIsTyping(false); 
+
+  // Auto-scroll to bottom when messages change
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [conversations, currentConversationId]);
+
+  // Load conversations from Supabase
+  useEffect(() => {
+    if (!user?.id) return;
+    let active = true;
+
+    const loadConversations = async () => {
+      const { data, error } = await supabase
+        .from('conversations')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('updated_at', { ascending: false });
+
+      if (active && !error && data) {
+        setConversations(data);
+        // Set current conversation to the most recent one
+        if (data.length > 0 && !currentConversationId) {
+          setCurrentConversationId(data[0].id);
+        }
+      }
+    };
+
+    loadConversations();
+    return () => { active = false; };
+  }, [user?.id]);
+
+  // Get current conversation
+  const currentConversation = conversations.find(c => c.id === currentConversationId);
+  const currentMessages = currentConversation?.messages || [];
+
+  // Create new conversation
+  const handleNewConversation = async () => {
+    if (!user?.id) {
+      addNotification?.("請先登入後再開啟新對話。", "error");
+      return;
+    }
+    setShowNewChatConfirm(false);
+
+    const newConversation = {
+      id: Date.now().toString(),
+      user_id: user.id,
+      title: 'New Conversation',
+      messages: [{ role: 'ai', content: 'Hello! I am your SmartOps Decision Assistant. How can I help you today?' }],
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
+
+    // Optimistically add so chatting keeps working even if Supabase insert fails
+    setConversations(prev => [newConversation, ...prev]);
+    setCurrentConversationId(newConversation.id);
+
+    const { error } = await supabase
+      .from('conversations')
+      .insert([newConversation]);
+
+    if (error) {
+      console.error("Failed to create conversation in Supabase", error);
+      addNotification?.("新對話無法同步雲端，先在本機暫存。", "error");
+      return;
+    }
+
+    addNotification?.("New conversation ready.", "success");
   };
-  
+
+  // Delete conversation
+  const handleDeleteConversation = async (convId) => {
+    if (!user?.id) return;
+
+    const { error } = await supabase
+      .from('conversations')
+      .delete()
+      .eq('id', convId)
+      .eq('user_id', user.id);
+
+    if (!error) {
+      const newConversations = conversations.filter(c => c.id !== convId);
+      setConversations(newConversations);
+
+      // If deleted current conversation, switch to another
+      if (convId === currentConversationId) {
+        setCurrentConversationId(newConversations.length > 0 ? newConversations[0].id : null);
+      }
+    }
+  };
+
+  // Send message
+  const handleSend = async (e) => {
+    e.preventDefault();
+    if (!input.trim() || !currentConversationId) return;
+
+    const userMsg = { role: 'user', content: input, timestamp: new Date().toISOString() };
+    setInput('');
+    setIsTyping(true);
+
+    // Update messages immediately for UI
+    const updatedMessages = [...currentMessages, userMsg];
+    setConversations(prev => prev.map(c =>
+      c.id === currentConversationId
+        ? { ...c, messages: updatedMessages, updated_at: new Date().toISOString() }
+        : c
+    ));
+
+    // Call AI
+    const context = excelData ? `USER DATA: ${JSON.stringify(excelData.slice(0, 5))}` : "No data available.";
+    const result = await callGeminiAPI(input, context);
+
+    const aiMsg = { role: 'ai', content: result, timestamp: new Date().toISOString() };
+    const finalMessages = [...updatedMessages, aiMsg];
+
+    // Update title based on first user message
+    const newTitle = currentMessages.length <= 1 ? input.slice(0, 50) : currentConversation.title;
+
+    // Update conversation
+    const updatedConversation = {
+      ...currentConversation,
+      title: newTitle,
+      messages: finalMessages,
+      updated_at: new Date().toISOString()
+    };
+
+    // Save to Supabase
+    const { error: updateError } = await supabase
+      .from('conversations')
+      .update({
+        title: newTitle,
+        messages: finalMessages,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', currentConversationId)
+      .eq('user_id', user.id);
+
+    if (updateError) {
+      console.error("Failed to save messages to Supabase", updateError);
+      addNotification?.("訊息已留在本機，雲端保存失敗。", "error");
+    }
+
+    // Update local state
+    setConversations(prev => prev.map(c =>
+      c.id === currentConversationId ? updatedConversation : c
+    ));
+
+    setIsTyping(false);
+  };
+
+  // Format timestamp
+  const formatTime = (timestamp) => {
+    if (!timestamp) return '';
+    const date = new Date(timestamp);
+    const now = new Date();
+    const diffMs = now - date;
+    const diffMins = Math.floor(diffMs / 60000);
+
+    if (diffMins < 1) return 'Just now';
+    if (diffMins < 60) return `${diffMins}m ago`;
+    if (diffMins < 1440) return `${Math.floor(diffMins / 60)}h ago`;
+    return date.toLocaleDateString();
+  };
+
   return (
     <div className="h-[calc(100vh-140px)] flex flex-col md:flex-row gap-6 animate-fade-in">
-      <Card className="flex-1 flex flex-col overflow-hidden p-0 h-full">
-        <div className="bg-slate-50 dark:bg-slate-800 border-b p-4"><h3 className="font-semibold">AI Assistant</h3></div>
-        <div className="flex-1 overflow-y-auto p-4 space-y-4" ref={scrollRef}>{chat.map((msg, i) => (<div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}><div className={`max-w-[85%] rounded-2xl p-3 md:p-4 text-sm ${msg.role === 'user' ? 'bg-blue-600 text-white' : 'bg-slate-100 dark:bg-slate-700'}`}>{msg.content}</div></div>))}{isTyping && <div className="p-4 text-slate-400 text-sm">Thinking...</div>}</div>
-        <div className="p-4 border-t"><form onSubmit={handleSend} className="relative"><input type="text" className="w-full pl-4 pr-12 py-3 rounded-xl border" placeholder="Ask AI..." value={input} onChange={(e) => setInput(e.target.value)} /><button type="submit" className="absolute right-2 top-2 p-2 bg-blue-600 text-white rounded-lg"><Send className="w-4 h-4" /></button></form></div>
+      {/* Conversations Sidebar */}
+      <Card className="md:w-80 w-full h-full max-h-[calc(100vh-180px)] overflow-hidden flex flex-col">
+        <div className="flex items-center justify-between border-b p-4">
+          <h3 className="font-semibold flex items-center gap-2">
+            <Bot className="w-4 h-4" />
+            Conversations
+          </h3>
+          <Button
+            variant="primary"
+            onClick={() => conversations.length > 0 ? setShowNewChatConfirm(true) : handleNewConversation()}
+            className="px-3 py-1 text-xs"
+          >
+            + New
+          </Button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto divide-y">
+          {conversations.length === 0 ? (
+            <div className="p-8 text-center">
+              <Bot className="w-12 h-12 text-slate-300 mx-auto mb-3" />
+              <p className="text-sm text-slate-400 mb-4">No conversations yet</p>
+              <Button variant="primary" onClick={handleNewConversation} className="text-xs">
+                Start Chatting
+              </Button>
+            </div>
+          ) : (
+            conversations.map((conv) => (
+              <div
+                key={conv.id}
+                className={`p-3 hover:bg-slate-50 dark:hover:bg-slate-700 cursor-pointer transition group ${
+                  currentConversationId === conv.id ? 'bg-blue-50 dark:bg-blue-900/20 border-l-4 border-l-blue-600' : ''
+                }`}
+                onClick={() => setCurrentConversationId(conv.id)}
+              >
+                <div className="flex items-start justify-between mb-1">
+                  <h4 className="font-medium text-sm line-clamp-1 flex-1">
+                    {conv.title || 'New Conversation'}
+                  </h4>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDeleteConversation(conv.id);
+                    }}
+                    className="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-100 dark:hover:bg-red-900/30 rounded transition"
+                  >
+                    <X className="w-3 h-3 text-red-600" />
+                  </button>
+                </div>
+                <div className="flex items-center justify-between">
+                  <p className="text-xs text-slate-400 line-clamp-1 flex-1">
+                    {conv.messages[conv.messages.length - 1]?.content.slice(0, 40)}...
+                  </p>
+                  <span className="text-xs text-slate-400 ml-2">
+                    {formatTime(conv.updated_at)}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 mt-1">
+                  <Badge type="info">{conv.messages.length} msgs</Badge>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
       </Card>
+
+      {/* Chat Area */}
+      <Card className="flex-1 flex flex-col overflow-hidden p-0 h-full">
+        {currentConversation ? (
+          <>
+            <div className="bg-slate-50 dark:bg-slate-800 border-b p-4 flex items-center justify-between">
+              <div>
+                <h3 className="font-semibold">{currentConversation.title}</h3>
+                <p className="text-xs text-slate-500">
+                  {currentMessages.length} messages • Updated {formatTime(currentConversation.updated_at)}
+                </p>
+              </div>
+              <button
+                onClick={() => setShowNewChatConfirm(true)}
+                className="p-2 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg transition"
+                title="New conversation"
+              >
+                <FileText className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4 space-y-4" ref={scrollRef}>
+              {currentMessages.map((msg, i) => (
+                <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} animate-fade-in`}>
+                  <div className={`max-w-[85%] rounded-2xl p-3 md:p-4 ${
+                    msg.role === 'user'
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-slate-100 dark:bg-slate-700 text-slate-900 dark:text-slate-100'
+                  }`}>
+                    <div className="text-sm leading-relaxed whitespace-pre-wrap">{msg.content}</div>
+                    {msg.timestamp && (
+                      <div className={`text-xs mt-2 ${msg.role === 'user' ? 'text-blue-100' : 'text-slate-400'}`}>
+                        {formatTime(msg.timestamp)}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+              {isTyping && (
+                <div className="flex justify-start">
+                  <div className="bg-slate-100 dark:bg-slate-700 rounded-2xl p-4">
+                    <div className="flex items-center gap-2">
+                      <Loader2 className="w-4 h-4 animate-spin text-blue-600" />
+                      <span className="text-sm text-slate-600 dark:text-slate-300">AI is thinking...</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="p-4 border-t bg-white dark:bg-slate-800">
+              <form onSubmit={handleSend} className="relative">
+                <input
+                  type="text"
+                  className="w-full pl-4 pr-12 py-3 rounded-xl border border-slate-300 dark:border-slate-600 bg-transparent focus:ring-2 focus:ring-blue-500 outline-none"
+                  placeholder="Ask AI anything..."
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  disabled={isTyping}
+                />
+                <button
+                  type="submit"
+                  disabled={isTyping || !input.trim()}
+                  className="absolute right-2 top-2 p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <Send className="w-4 h-4" />
+                </button>
+              </form>
+              {excelData && (
+                <div className="mt-2 flex items-center gap-2 text-xs text-slate-500">
+                  <Database className="w-3 h-3" />
+                  <span>Using {excelData.length} rows of data for context</span>
+                </div>
+              )}
+            </div>
+          </>
+        ) : (
+          <div className="flex-1 flex items-center justify-center">
+            <div className="text-center">
+              <Bot className="w-16 h-16 text-slate-300 mx-auto mb-4" />
+              <h3 className="text-lg font-semibold text-slate-600 dark:text-slate-400 mb-2">
+                No Conversation Selected
+              </h3>
+              <p className="text-slate-500 mb-4">
+                Start a new conversation to chat with the AI
+              </p>
+              <Button variant="primary" onClick={handleNewConversation}>
+                Start New Conversation
+              </Button>
+            </div>
+          </div>
+        )}
+      </Card>
+
+      {/* New Chat Confirmation Modal */}
+      {showNewChatConfirm && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <Card className="max-w-md w-full">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-12 h-12 rounded-full bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center">
+                <FileText className="w-6 h-6 text-blue-600" />
+              </div>
+              <div>
+                <h3 className="text-lg font-semibold">Start New Conversation?</h3>
+                <p className="text-sm text-slate-500">Current conversation will be saved</p>
+              </div>
+            </div>
+            <div className="flex gap-2 justify-end">
+              <Button variant="secondary" onClick={() => setShowNewChatConfirm(false)}>
+                Cancel
+              </Button>
+              <Button variant="primary" onClick={handleNewConversation}>
+                New Conversation
+              </Button>
+            </div>
+          </Card>
+        </div>
+      )}
     </div>
   );
 };
 
-const SettingsView = ({ darkMode, setDarkMode, user, addNotification }) => { return (<div className="max-w-3xl mx-auto space-y-6"><h2 className="text-2xl font-bold">Settings</h2><Card><h3 className="font-semibold mb-4">Profile</h3><p className="text-slate-500">Email: {user.email}</p></Card><div className="flex justify-end"><Button onClick={() => addNotification("Saved", "success")}>Save</Button></div></div>);};
+const SettingsView = ({ darkMode, setDarkMode, user, addNotification }) => {
+  const [apiKey, setApiKey] = useState(localStorage.getItem('gemini_api_key') || '');
+  const [showApiKey, setShowApiKey] = useState(false);
+
+  const handleSaveApiKey = () => {
+    if (apiKey.trim()) {
+      localStorage.setItem('gemini_api_key', apiKey.trim());
+      addNotification("API 密钥已保存!", "success");
+    } else {
+      localStorage.removeItem('gemini_api_key');
+      addNotification("API 密钥已清除", "info");
+    }
+  };
+
+  const handleClearApiKey = () => {
+    setApiKey('');
+    localStorage.removeItem('gemini_api_key');
+    addNotification("API 密钥已清除", "info");
+  };
+
+  return (
+    <div className="max-w-3xl mx-auto space-y-6 animate-fade-in">
+      <h2 className="text-2xl font-bold">Settings</h2>
+
+      {/* Profile Card */}
+      <Card>
+        <h3 className="font-semibold mb-4 flex items-center gap-2">
+          <User className="w-5 h-5" />
+          Profile
+        </h3>
+        <p className="text-slate-500">Email: {user.email}</p>
+      </Card>
+
+      {/* API Configuration Card */}
+      <Card>
+        <h3 className="font-semibold mb-4 flex items-center gap-2">
+          <Bot className="w-5 h-5 text-purple-500" />
+          AI API 配置
+        </h3>
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium mb-2">
+              Google Gemini API Key
+            </label>
+            <div className="flex gap-2">
+              <div className="relative flex-1">
+                <input
+                  type={showApiKey ? "text" : "password"}
+                  value={apiKey}
+                  onChange={(e) => setApiKey(e.target.value)}
+                  placeholder="输入您的 API 密钥"
+                  className="w-full px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-transparent focus:ring-2 focus:ring-blue-500 outline-none"
+                />
+                <button
+                  onClick={() => setShowApiKey(!showApiKey)}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                >
+                  {showApiKey ? "🙈" : "👁️"}
+                </button>
+              </div>
+            </div>
+            <p className="text-xs text-slate-500 mt-2">
+              获取免费 API 密钥: <a href="https://ai.google.dev/" target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">https://ai.google.dev/</a>
+            </p>
+          </div>
+
+          <div className="flex gap-2">
+            <Button onClick={handleSaveApiKey} variant="primary">
+              保存密钥
+            </Button>
+            <Button onClick={handleClearApiKey} variant="secondary">
+              清除密钥
+            </Button>
+          </div>
+
+          {/* API Status */}
+          <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-lg border border-blue-200 dark:border-blue-800">
+            <div className="flex items-start gap-2">
+              <AlertCircle className="w-5 h-5 text-blue-600 mt-0.5" />
+              <div className="text-sm text-blue-900 dark:text-blue-200">
+                <p className="font-medium mb-1">使用说明:</p>
+                <ul className="list-disc list-inside space-y-1 text-xs">
+                  <li>免费 API 每天有配额限制</li>
+                  <li>如果配额用完,请等待重置或使用新密钥</li>
+                  <li>API 密钥存储在浏览器本地,不会上传到服务器</li>
+                  <li>建议使用 gemini-2.5-flash 模型</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </div>
+      </Card>
+
+      {/* Theme Settings */}
+      <Card>
+        <h3 className="font-semibold mb-4 flex items-center gap-2">
+          {darkMode ? <Moon className="w-5 h-5" /> : <Sun className="w-5 h-5" />}
+          主题设置
+        </h3>
+        <div className="flex items-center justify-between">
+          <span className="text-slate-600 dark:text-slate-300">深色模式</span>
+          <button
+            onClick={() => setDarkMode(!darkMode)}
+            className={`relative w-14 h-7 rounded-full transition-colors ${darkMode ? 'bg-blue-600' : 'bg-slate-300'}`}
+          >
+            <div className={`absolute top-1 w-5 h-5 bg-white rounded-full transition-transform ${darkMode ? 'translate-x-8' : 'translate-x-1'}`} />
+          </button>
+        </div>
+      </Card>
+    </div>
+  );
+};
