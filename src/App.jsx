@@ -1,144 +1,26 @@
-import React, { useState, useEffect, useRef } from 'react';
+﻿import React, { useState, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
-import { createClient } from '@supabase/supabase-js';
 import {
   LayoutDashboard, Database, Activity, AlertTriangle, BarChart3, Bot, Settings, LogOut,
   Search, User, Upload, RefreshCw, CheckCircle, AlertCircle, FileText, TrendingUp,
-  Menu, X, ChevronRight, Download, Moon, Sun, Send, Sparkles, Loader2
+  Menu, X, ChevronRight, Download, Moon, Sun, Send, Sparkles, Loader2, Building2, ChevronDown,
+  DollarSign
 } from 'lucide-react';
 
-// --- 1. 設定 Supabase (請填入你的資料) ---
-const supabaseUrl = "https://cbxvqqqulwytdblivtoe.supabase.co";
-const supabaseKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNieHZxcXF1bHd5dGRibGl2dG9lIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQ0NjQzNjUsImV4cCI6MjA4MDA0MDM2NX0.3PeFtqJAkoxrosFeAiXbOklRCDxaQjH2VjXWwEiFyYI";
-const supabase = createClient(supabaseUrl, supabaseKey);
+// --- Import UI Components ---
+import { Card, Button, Badge } from './components/ui';
+import { SimpleLineChart, SimpleBarChart } from './components/charts';
 
-// --- Robust Gemini API Integration ---
-const callGeminiAPI = async (prompt, systemContext = "") => {
-  // 使用配置的 API 密钥
-  const apiKey = "AIzaSyBiPV68i9HR_D6a_PQ3lwSEJSIYZ0eF3j4";
+// --- Import Services ---
+import { supabase } from './services/supabaseClient';
+import { callGeminiAPI } from './services/geminiAPI';
 
-  if (!apiKey) {
-    console.warn("No API Key found.");
-    return "⚠️ 未配置 API 密钥。请前往设置页面添加您的 Google AI API 密钥。\n\n您可以从这里获取免费密钥: https://ai.google.dev/";
-  }
+// --- Import Utils ---
+import { extractSuppliers } from './utils/dataProcessing';
 
-  try {
-    const fullPrompt = systemContext
-      ? `${systemContext}\n\nUser Query: ${prompt}`
-      : prompt;
-
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{
-            parts: [{ text: fullPrompt }]
-          }],
-          generationConfig: {
-            temperature: 0.7,
-            maxOutputTokens: 2048,
-          }
-        })
-      }
-    );
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      console.error("API Error Details:", errorData);
-
-      // 特别处理配额错误
-      if (response.status === 429) {
-        return "⚠️ API 配额已用完。\n\n解决方案:\n1. 等待配额重置(通常每天重置)\n2. 在设置中更换新的 API 密钥\n3. 升级到付费计划\n\n获取新的免费密钥: https://ai.google.dev/";
-      }
-
-      throw new Error(`API Error: ${response.status} - ${errorData.error?.message || 'Unknown error'}`);
-    }
-
-    const data = await response.json();
-    return data.candidates?.[0]?.content?.parts?.[0]?.text || "No response generated.";
-  } catch (error) {
-    console.error("Gemini API Failed:", error);
-    return `❌ AI 服务连接失败: ${error.message}\n\n请检查:\n- API 密钥是否正确\n- 网络连接是否正常\n- 是否有防火墙限制`;
-  }
-};
-
-// --- UI Components (Responsive Updates) ---
-const Card = ({ children, className = "", onClick, hoverEffect = false }) => (
-  <div onClick={onClick} className={`bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm p-4 md:p-6 ${hoverEffect ? 'hover:shadow-lg hover:border-blue-500 dark:hover:border-blue-400 cursor-pointer transition-all duration-200' : ''} ${className}`}>
-    {children}
-  </div>
-);
-
-const Button = ({ children, onClick, variant = "primary", className = "", disabled = false, icon: Icon }) => {
-  const baseStyles = "flex items-center justify-center px-4 py-2 rounded-lg font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed text-sm md:text-base";
-  const variants = {
-    primary: "bg-blue-600 hover:bg-blue-700 text-white focus:ring-blue-500",
-    secondary: "bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-600 focus:ring-slate-500",
-    danger: "bg-red-600 hover:bg-red-700 text-white focus:ring-red-500",
-    success: "bg-emerald-600 hover:bg-emerald-700 text-white focus:ring-emerald-500",
-    magic: "bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 text-white hover:opacity-90 focus:ring-purple-500"
-  };
-  return (
-    <button onClick={onClick} disabled={disabled} className={`${baseStyles} ${variants[variant]} ${className}`}>
-      {Icon && <Icon className="w-4 h-4 mr-2" />}
-      {children}
-    </button>
-  );
-};
-
-const Badge = ({ children, type = "info" }) => {
-  const styles = {
-    info: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300",
-    success: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300",
-    warning: "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300",
-    danger: "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300",
-  };
-  return <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium ${styles[type]}`}>{children}</span>;
-};
-
-// Charts (Improved Responsiveness)
-const SimpleLineChart = ({ data, color = "#3b82f6" }) => {
-  const max = Math.max(...data) * 1.2;
-  const points = data.map((val, i) => `${(i / (data.length - 1)) * 100},${100 - (val / max) * 100}`).join(' ');
-  return (
-    <div className="h-48 md:h-64 w-full relative">
-      <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="h-full w-full overflow-visible">
-        <polyline fill="none" stroke={color} strokeWidth="2" points={points} vectorEffect="non-scaling-stroke" />
-        {data.map((val, i) => (
-          <circle key={i} cx={(i / (data.length - 1)) * 100} cy={100 - (val / max) * 100} r="3" fill={color} className="hover:r-5 transition-all cursor-pointer opacity-0 hover:opacity-100">
-            <title>{val}</title>
-          </circle>
-        ))}
-      </svg>
-      {/* Grid Lines */}
-      <div className="absolute inset-0 flex flex-col justify-between pointer-events-none opacity-10">
-        {[...Array(5)].map((_, i) => <div key={i} className="w-full h-px bg-slate-500" />)}
-      </div>
-    </div>
-  );
-};
-
-const SimpleBarChart = ({ data, labels, colorClass = "bg-blue-500" }) => {
-  const max = Math.max(...data);
-  return (
-    <div className="h-48 md:h-64 flex items-end justify-between gap-2">
-      {data.map((val, i) => (
-        <div key={i} className="flex-1 flex flex-col items-center group h-full justify-end">
-          <div className="relative w-full flex items-end justify-center h-full bg-slate-100 dark:bg-slate-700/50 rounded-t-sm overflow-hidden">
-            <div style={{ height: `${(val / max) * 100}%` }} className={`w-full ${colorClass} transition-all duration-500 group-hover:opacity-80 relative`}>
-               <div className="absolute -top-8 left-1/2 -translate-x-1/2 bg-slate-800 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-10">{val}%</div>
-            </div>
-          </div>
-          <span className="text-xs text-slate-500 dark:text-slate-400 mt-2 truncate w-full text-center hidden sm:block">{labels[i]}</span>
-          {/* Mobile only simplified label */}
-          <span className="text-xs text-slate-500 dark:text-slate-400 mt-1 sm:hidden">{labels[i].substring(0,1)}</span>
-        </div>
-      ))}
-    </div>
-  );
-};
+// --- Import Views ---
+import SupplierManagementView from './views/SupplierManagementView';
+import CostAnalysisView from './views/CostAnalysisView';
 
 // Mock Data
 const MOCK_ALERTS = [{ id: 1, category: "Material Shortage", item: "Lithium Batteries", supplier: "Voltaic Supplies", risk: "High", impact: "Production Stop Risk", rootCause: "Supplier strike.", recommendation: "Activate backup supplier." }, { id: 2, category: "Delivery Delay", item: "Circuit Boards", supplier: "TechTronix", risk: "Medium", impact: "2 Day Delay", rootCause: "Port congestion.", recommendation: "Expedite Air Freight." }, { id: 3, category: "Quantity Mismatch", item: "Steel Casings", supplier: "MetalWorks", risk: "Low", impact: "Inventory Discrepancy", rootCause: "Packing error.", recommendation: "Request credit note." }];
@@ -155,6 +37,8 @@ export default function SmartOpsApp() {
   const [loading, setLoading] = useState(false);
   const [excelData, setExcelData] = useState(null);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false); // Mobile Menu State
+  const [showDataDropdown, setShowDataDropdown] = useState(false); // Data Management Dropdown
+  const dropdownRef = useRef(null);
 
   const addNotification = (msg, type = 'info') => {
     const id = Date.now();
@@ -189,11 +73,26 @@ export default function SmartOpsApp() {
     else document.documentElement.classList.remove('dark');
   }, [darkMode]);
 
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+        setShowDataDropdown(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
   const fetchUserData = async (userId) => {
     const { data, error } = await supabase.from('user_files').select('data').eq('user_id', userId).order('created_at', { ascending: false }).limit(1);
     if (data && data.length > 0) {
-      setExcelData(data[0].data);
-      addNotification("Data restored from cloud.", "success");
+      const restored = data[0].data;
+      const rows = Array.isArray(restored) ? restored : restored?.rows;
+      if (Array.isArray(rows)) {
+        setExcelData(rows);
+        addNotification("Data restored from cloud.", "success");
+      }
     }
   };
 
@@ -241,10 +140,12 @@ export default function SmartOpsApp() {
   const renderView = () => {
     switch (view) {
       case 'home': return <HomeView setView={setView} />;
-      case 'external': return <ExternalSystemsView addNotification={addNotification} onFileUpload={handleExcelUpload} excelData={excelData} />;
+      case 'external': return <ExternalSystemsView addNotification={addNotification} excelData={excelData} setExcelData={setExcelData} user={session?.user} />;
+      case 'suppliers': return <SupplierManagementView addNotification={addNotification} />;
+      case 'cost-analysis': return <CostAnalysisView addNotification={addNotification} user={session?.user} />;
       case 'integration': return <DataIntegrationView addNotification={addNotification} />;
       case 'alerts': return <SmartAlertsView addNotification={addNotification} excelData={excelData} />;
-      case 'dashboard': return <OperationsDashboardView />;
+      case 'dashboard': return <OperationsDashboardView excelData={excelData} />;
       case 'analytics': return <AnalyticsCenterView excelData={excelData} />;
       case 'decision': return <DecisionSupportView excelData={excelData} user={session?.user} addNotification={addNotification} />;
       case 'settings': return <SettingsView darkMode={darkMode} setDarkMode={setDarkMode} user={session?.user} addNotification={addNotification} />;
@@ -273,7 +174,19 @@ export default function SmartOpsApp() {
     );
   }
 
-  const navItems = [{ id: 'home', label: 'Home', icon: LayoutDashboard }, { id: 'dashboard', label: 'Dashboard', icon: BarChart3 }, { id: 'alerts', label: 'Alerts', icon: AlertTriangle }, { id: 'analytics', label: 'Analytics', icon: TrendingUp }, { id: 'decision', label: 'Decision AI', icon: Bot }];
+  const navItems = [
+    { id: 'home', label: 'Home', icon: LayoutDashboard },
+    { id: 'dashboard', label: 'Dashboard', icon: BarChart3 },
+    { id: 'cost-analysis', label: 'Cost Analysis', icon: DollarSign },
+    { id: 'alerts', label: 'Alerts', icon: AlertTriangle },
+    { id: 'analytics', label: 'Analytics', icon: TrendingUp },
+    { id: 'decision', label: 'Decision AI', icon: Bot }
+  ];
+
+  const dataManagementItems = [
+    { id: 'external', label: 'External Systems', icon: Database },
+    { id: 'suppliers', label: 'Supplier Management', icon: Building2 }
+  ];
 
   return (
     <div className={`min-h-screen flex flex-col transition-colors duration-300 ${darkMode ? 'bg-slate-900 text-slate-100' : 'bg-slate-50 text-slate-900'}`}>
@@ -294,6 +207,44 @@ export default function SmartOpsApp() {
                 <item.icon className="w-4 h-4 mr-2" />{item.label}
               </button>
             ))}
+
+            {/* Data Management Dropdown */}
+            <div className="relative" ref={dropdownRef}>
+              <button
+                onClick={() => setShowDataDropdown(!showDataDropdown)}
+                className={`flex items-center px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  dataManagementItems.some(item => view === item.id)
+                    ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400'
+                    : 'hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300'
+                }`}
+              >
+                <Database className="w-4 h-4 mr-2" />
+                Data Management
+                <ChevronDown className={`w-4 h-4 ml-1 transition-transform ${showDataDropdown ? 'rotate-180' : ''}`} />
+              </button>
+
+              {showDataDropdown && (
+                <div className="absolute top-full mt-1 left-0 bg-white dark:bg-slate-800 rounded-lg shadow-lg border border-slate-200 dark:border-slate-700 py-1 min-w-[200px] z-50">
+                  {dataManagementItems.map(item => (
+                    <button
+                      key={item.id}
+                      onClick={() => {
+                        setView(item.id);
+                        setShowDataDropdown(false);
+                      }}
+                      className={`w-full flex items-center px-4 py-2 text-sm font-medium transition-colors ${
+                        view === item.id
+                          ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400'
+                          : 'hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300'
+                      }`}
+                    >
+                      <item.icon className="w-4 h-4 mr-2" />
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           </nav>
 
           <div className="flex items-center space-x-2 md:space-x-4">
@@ -313,11 +264,16 @@ export default function SmartOpsApp() {
         <div className="md:hidden bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 p-4">
           <div className="grid grid-cols-2 gap-2">
             {navItems.map(item => (
-              <button key={item.id} onClick={() => { setView(item.id); setIsMobileMenuOpen(false); }} className={`flex items-center p-3 rounded-lg text-sm font-medium ${view === item.id ? 'bg-blue-50 text-blue-600' : 'bg-slate-50 text-slate-600'}`}>
+              <button key={item.id} onClick={() => { setView(item.id); setIsMobileMenuOpen(false); }} className={`flex items-center p-3 rounded-lg text-sm font-medium ${view === item.id ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400' : 'bg-slate-50 dark:bg-slate-700 text-slate-600 dark:text-slate-300'}`}>
                 <item.icon className="w-4 h-4 mr-2" />{item.label}
               </button>
             ))}
-            <button onClick={handleLogout} className="flex items-center p-3 rounded-lg text-sm font-medium bg-red-50 text-red-600 col-span-2 justify-center"><LogOut className="w-4 h-4 mr-2" />Logout</button>
+            {dataManagementItems.map(item => (
+              <button key={item.id} onClick={() => { setView(item.id); setIsMobileMenuOpen(false); }} className={`flex items-center p-3 rounded-lg text-sm font-medium ${view === item.id ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400' : 'bg-slate-50 dark:bg-slate-700 text-slate-600 dark:text-slate-300'}`}>
+                <item.icon className="w-4 h-4 mr-2" />{item.label}
+              </button>
+            ))}
+            <button onClick={handleLogout} className="flex items-center p-3 rounded-lg text-sm font-medium bg-red-50 dark:bg-red-900/20 text-red-600 col-span-2 justify-center"><LogOut className="w-4 h-4 mr-2" />Logout</button>
           </div>
         </div>
       )}
@@ -330,6 +286,7 @@ export default function SmartOpsApp() {
 }
 
 // ... (Sub-components with Grid Fixes) ...
+
 
 const HomeView = ({ setView }) => {
   const modules = [{ id: 'external', title: "External Systems", desc: "Data sources.", icon: Database, color: "text-blue-500" },{ id: 'integration', title: "Data Integration", desc: "ETL pipelines.", icon: RefreshCw, color: "text-purple-500" },{ id: 'alerts', title: "Smart Alerts", desc: "Real-time alerts.", icon: AlertTriangle, color: "text-red-500" },{ id: 'dashboard', title: "Dashboard", desc: "KPIs & charts.", icon: LayoutDashboard, color: "text-emerald-500" },{ id: 'analytics', title: "Analytics", desc: "Insights.", icon: TrendingUp, color: "text-indigo-500" },{ id: 'decision', title: "Decision AI", desc: "AI Assistant.", icon: Bot, color: "text-amber-500" },{ id: 'settings', title: "Settings", desc: "Preferences.", icon: Settings, color: "text-slate-500" },];
@@ -354,7 +311,7 @@ const HomeView = ({ setView }) => {
   );
 };
 
-const ExternalSystemsView = ({ addNotification, onFileUpload, excelData }) => {
+const ExternalSystemsView = ({ addNotification, excelData, setExcelData, user }) => {
   const [loading, setLoading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [fileName, setFileName] = useState('');
@@ -364,22 +321,31 @@ const ExternalSystemsView = ({ addNotification, onFileUpload, excelData }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [stagedRows, setStagedRows] = useState([]);
+  const [aiPreview, setAiPreview] = useState(null);
+  const [aiStatus, setAiStatus] = useState('idle'); // idle | analyzing | ready | error
+  const [aiError, setAiError] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [versionId, setVersionId] = useState('');
+  const [supplierPreview, setSupplierPreview] = useState([]);
+  const [supplierError, setSupplierError] = useState('');
   const fileInputRef = useRef(null);
   const rowsPerPage = 10;
+  const activeData = stagedRows.length ? stagedRows : (excelData || []);
 
   // Calculate file statistics
   useEffect(() => {
-    if (excelData && excelData.length > 0) {
+    if (activeData && activeData.length > 0) {
       const stats = {
-        totalRows: excelData.length,
-        totalColumns: Object.keys(excelData[0]).length,
-        columns: Object.keys(excelData[0]),
+        totalRows: activeData.length,
+        totalColumns: Object.keys(activeData[0]).length,
+        columns: Object.keys(activeData[0]),
         emptyFields: 0,
         uniqueValues: {}
       };
 
       // Count empty fields and collect unique values per column
-      excelData.forEach(row => {
+      activeData.forEach(row => {
         Object.entries(row).forEach(([key, value]) => {
           if (!value || value === '' || value === null || value === undefined) {
             stats.emptyFields++;
@@ -392,17 +358,22 @@ const ExternalSystemsView = ({ addNotification, onFileUpload, excelData }) => {
       });
 
       setFileStats(stats);
+    } else {
+      setFileStats(null);
     }
-  }, [excelData]);
+  }, [excelData, activeData]);
 
   const handleFileChange = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
 
+    const lower = file.name.toLowerCase();
+    const isExcel = lower.endsWith('.xlsx') || lower.endsWith('.xls');
+    const isCsv = lower.endsWith('.csv');
+
     // Validate file type
-    const validTypes = ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/vnd.ms-excel'];
-    if (!validTypes.includes(file.type) && !file.name.match(/\.(xlsx|xls)$/)) {
-      addNotification("Invalid file type. Please upload Excel files only (.xlsx, .xls)", "error");
+    if (!isExcel && !isCsv) {
+      addNotification("Invalid file type. Please upload CSV or Excel files (.csv, .xlsx, .xls)", "error");
       return;
     }
 
@@ -415,6 +386,12 @@ const ExternalSystemsView = ({ addNotification, onFileUpload, excelData }) => {
     setFileName(file.name);
     setUploadProgress(10);
     setLoading(true);
+    setAiStatus('idle');
+    setAiPreview(null);
+    setAiError('');
+    setVersionId('');
+    setSupplierPreview([]);
+    setSupplierError('');
 
     // Simulate upload progress
     const progressInterval = setInterval(() => {
@@ -428,19 +405,132 @@ const ExternalSystemsView = ({ addNotification, onFileUpload, excelData }) => {
     }, 200);
 
     try {
-      await onFileUpload(e);
+      const rows = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (evt) => {
+          try {
+            const bstr = evt.target.result;
+            const wb = XLSX.read(bstr, { type: 'binary' });
+            const wsname = wb.SheetNames[0];
+            const data = XLSX.utils.sheet_to_json(wb.Sheets[wsname], { defval: '' });
+            resolve(data);
+          } catch (err) {
+            reject(err);
+          }
+        };
+        reader.onerror = reject;
+        reader.readAsBinaryString(file);
+      });
+
+      setStagedRows(rows);
       setUploadProgress(100);
-      addNotification(`Successfully loaded: ${file.name}`, "success");
+      addNotification(`已載入 ${rows.length} 筆資料，等待 AI 分析`, "success");
+      const suppliers = extractSuppliers(rows);
+      setSupplierPreview(suppliers);
+      if (!suppliers.length) {
+        setSupplierError('未偵測到供應商欄位，請確認資料包含供應商名稱。');
+      }
       setCurrentPage(1);
       setSearchTerm('');
+      if (rows.length > 0) {
+        await runAiAnalysis(rows);
+      } else {
+        addNotification("檔案為空，無法分析", "error");
+        setAiStatus('error');
+      }
     } catch (error) {
       addNotification(`Upload failed: ${error.message}`, "error");
       setUploadProgress(0);
       setFileName('');
+      setStagedRows([]);
+      setAiStatus('error');
+      setAiError(error.message || 'Parse failed');
     } finally {
       setLoading(false);
       setTimeout(() => setUploadProgress(0), 1000);
     }
+  };
+
+
+  const extractAiJson = (text) => {
+    if (!text) return {};
+    try {
+      return JSON.parse(text);
+    } catch (_) {
+      const match = text.match(/\{[\s\S]*\}/);
+      if (match) {
+        try {
+          return JSON.parse(match[0]);
+        } catch (_err) {
+          return {};
+        }
+      }
+      return {};
+    }
+  };
+
+  const runAiAnalysis = async (rows) => {
+    try {
+      setAiStatus('analyzing');
+      setAiError('');
+      const sample = rows.slice(0, 30);
+      const prompt = `You are a data profiler. Given JSON rows, infer field names, data quality issues, and errors. Return JSON {"fields": ["field1", ...], "quality": "Chinese quality summary", "summary": "Chinese content summary"}. Sample rows: ${JSON.stringify(sample).slice(0, 12000)}`;
+      const aiText = await callGeminiAPI(prompt);
+      const parsed = extractAiJson(aiText);
+      const fields = Array.isArray(parsed.fields) && parsed.fields.length > 0
+        ? parsed.fields
+        : Object.keys(sample[0] || {});
+      setAiPreview({
+        fields,
+        quality: parsed.quality || 'AI did not return a quality summary',
+        summary: parsed.summary || 'AI did not return a content summary',
+        raw: aiText
+      });
+      setAiStatus('ready');
+    } catch (err) {
+      setAiStatus('error');
+      setAiError(err.message || 'AI analysis failed');
+    }
+  };
+      const handleAccept = async () => {
+    if (!stagedRows.length) return;
+    const version = `v-${Date.now()}`;
+    setSaving(true);
+    setVersionId(version);
+    try {
+      const payload = {
+        user_id: user?.id,
+        filename: fileName || 'upload',
+        data: { rows: stagedRows, version }
+      };
+      const { error } = await supabase.from('user_files').insert([payload]);
+      if (error) throw new Error(error.message);
+      if (supplierPreview.length > 0) {
+        const { error: supplierErrorInsert } = await supabase.from('suppliers').insert(supplierPreview);
+        if (supplierErrorInsert) throw new Error(`Supplier save failed: ${supplierErrorInsert.message}`);
+      }
+      setExcelData(stagedRows);
+      addNotification(`Data saved (${version})`, "success");
+      setStagedRows([]);
+      setAiStatus('idle');
+      setSupplierPreview([]);
+    } catch (err) {
+      addNotification(`Save failed: ${err.message}`, "error");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleReject = () => {
+    setStagedRows([]);
+    setAiPreview(null);
+    setAiStatus('idle');
+    setAiError('');
+    setVersionId('');
+    setFileName('');
+    setSupplierPreview([]);
+    setSupplierError('');
+    addNotification("Cleared staged upload data", "info");
   };
 
   const handleSync = () => {
@@ -466,13 +556,18 @@ const ExternalSystemsView = ({ addNotification, onFileUpload, excelData }) => {
     setFileStats(null);
     setSearchTerm('');
     setCurrentPage(1);
+    setStagedRows([]);
+    setAiPreview(null);
+    setAiStatus('idle');
+    setVersionId('');
+    setExcelData?.(null);
     addNotification("Data cleared", "info");
   };
 
   const handleExportData = () => {
-    if (!excelData) return;
+    if (!activeData || activeData.length === 0) return;
 
-    const ws = XLSX.utils.json_to_sheet(excelData);
+    const ws = XLSX.utils.json_to_sheet(activeData);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Data");
     XLSX.writeFile(wb, `exported_${fileName || 'data.xlsx'}`);
@@ -481,9 +576,9 @@ const ExternalSystemsView = ({ addNotification, onFileUpload, excelData }) => {
 
   // Filter and sort data
   const processedData = React.useMemo(() => {
-    if (!excelData) return [];
+    if (!activeData) return [];
 
-    let filtered = excelData;
+    let filtered = activeData;
 
     // Search filter
     if (searchTerm) {
@@ -510,7 +605,7 @@ const ExternalSystemsView = ({ addNotification, onFileUpload, excelData }) => {
     }
 
     return filtered;
-  }, [excelData, searchTerm, sortColumn, sortDirection]);
+  }, [activeData, searchTerm, sortColumn, sortDirection]);
 
   // Pagination
   const totalPages = Math.ceil(processedData.length / rowsPerPage);
@@ -537,15 +632,15 @@ const ExternalSystemsView = ({ addNotification, onFileUpload, excelData }) => {
             <input
               ref={fileInputRef}
               type="file"
-              accept=".xlsx, .xls"
+              accept=".xlsx, .xls, .csv"
               onChange={handleFileChange}
               className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
             />
             <Button variant="secondary" icon={Upload} className="w-full" disabled={loading}>
-              Upload Excel
+              Upload CSV / Excel
             </Button>
           </div>
-          {excelData && (
+          {activeData && activeData.length > 0 && (
             <>
               <Button onClick={handleExportData} variant="secondary" icon={Download} className="hidden sm:flex">
                 Export
@@ -574,6 +669,127 @@ const ExternalSystemsView = ({ addNotification, onFileUpload, excelData }) => {
               className="bg-blue-600 h-2 rounded-full transition-all duration-300"
               style={{ width: `${uploadProgress}%` }}
             />
+          </div>
+        </Card>
+      )}
+
+      {/* AI Analysis & Preview */}
+      {stagedRows.length > 0 && (
+        <Card className="border-blue-200 dark:border-blue-800 bg-blue-50/60 dark:bg-slate-800/40">
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <div>
+                <h3 className="font-semibold flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-blue-600" />
+                  AI 資料預覽
+                </h3>
+                <p className="text-sm text-slate-500 dark:text-slate-400">
+                  已載入 {stagedRows.length} 筆資料，AI 先分析 30 筆樣本。
+                </p>
+              </div>
+              <div className="flex gap-2">
+                <Button
+                  variant="primary"
+                  onClick={runAiAnalysis.bind(null, stagedRows)}
+                  disabled={aiStatus === 'analyzing' || stagedRows.length === 0}
+                >
+                  {aiStatus === 'analyzing' ? "AI 分析中..." : "重新分析"}
+                </Button>
+                <Button variant="secondary" onClick={handleReject}>
+                  捨棄
+                </Button>
+                <Button
+                  variant="success"
+                  onClick={handleAccept}
+                  disabled={aiStatus !== 'ready' || saving}
+                >
+                  {saving ? "儲存中..." : "接受並儲存"}
+                </Button>
+              </div>
+            </div>
+
+            {aiStatus === 'analyzing' && (
+              <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
+                <Loader2 className="w-4 h-4 animate-spin text-blue-600" />
+                AI 解析中，請稍候...
+              </div>
+            )}
+
+            {aiStatus === 'error' && (
+              <div className="flex items-center gap-2 text-sm text-red-600">
+                <AlertCircle className="w-4 h-4" />
+                {aiError || 'AI 分析失敗'}
+              </div>
+            )}
+
+            {aiPreview && aiStatus === 'ready' && (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="md:col-span-2 space-y-2">
+                  <div className="text-sm text-slate-500">AI 摘要</div>
+                  <p className="text-sm leading-relaxed whitespace-pre-line">{aiPreview.summary}</p>
+                  <div className="text-sm text-slate-500 mt-3">品質檢查</div>
+                  <p className="text-sm leading-relaxed whitespace-pre-line">{aiPreview.quality}</p>
+                  {versionId && (
+                    <Badge type="success">版本 {versionId}</Badge>
+                  )}
+                </div>
+                <div className="space-y-2">
+                  <div className="text-sm text-slate-500">欄位</div>
+                  <div className="flex flex-wrap gap-2">
+                    {aiPreview.fields && aiPreview.fields.length > 0 ? aiPreview.fields.map((f) => (
+                      <Badge key={f} type="info">{f}</Badge>
+                    )) : <span className="text-xs text-slate-400">AI 無法識別欄位</span>}
+                  </div>
+                  <div className="text-xs text-slate-400 mt-2">
+                    AI 原始輸出（供除錯）：<br />{aiPreview.raw?.slice(0, 200)}{aiPreview.raw && aiPreview.raw.length > 200 ? '…' : ''}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {supplierPreview.length > 0 && (
+              <div className="mt-2">
+                <div className="flex items-center gap-2 mb-2">
+                  <Database className="w-4 h-4 text-emerald-500" />
+                  <span className="text-sm font-semibold">偵測到的供應商資料（去重後）</span>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm border-collapse min-w-[600px]">
+                    <thead className="bg-emerald-50 dark:bg-emerald-900/30 text-emerald-800 dark:text-emerald-100">
+                      <tr>
+                        <th className="px-3 py-2 text-left">名稱</th>
+                        <th className="px-3 py-2 text-left">聯絡方式</th>
+                        <th className="px-3 py-2 text-left">地址</th>
+                        <th className="px-3 py-2 text-left">產品類別</th>
+                        <th className="px-3 py-2 text-left">付款條件</th>
+                        <th className="px-3 py-2 text-left">交貨時間</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {supplierPreview.slice(0, 5).map((s, idx) => (
+                        <tr key={idx} className="border-b border-emerald-100 dark:border-emerald-900/40">
+                          <td className="px-3 py-2">{s.supplier_name || '-'}</td>
+                          <td className="px-3 py-2">{s.contact_info || '-'}</td>
+                          <td className="px-3 py-2">{s.address || '-'}</td>
+                          <td className="px-3 py-2">{s.product_category || '-'}</td>
+                          <td className="px-3 py-2">{s.payment_terms || '-'}</td>
+                          <td className="px-3 py-2">{s.delivery_time || '-'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {supplierPreview.length > 5 && (
+                    <div className="text-xs text-slate-500 mt-1">僅顯示前 5 筆，共 {supplierPreview.length} 筆供應商</div>
+                  )}
+                </div>
+              </div>
+            )}
+            {supplierError && !supplierPreview.length && (
+              <div className="text-sm text-amber-600 flex items-center gap-2">
+                <AlertCircle className="w-4 h-4" />
+                {supplierError}
+              </div>
+            )}
           </div>
         </Card>
       )}
@@ -636,9 +852,9 @@ const ExternalSystemsView = ({ addNotification, onFileUpload, excelData }) => {
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4">
           <div className="flex items-center gap-2">
             <h3 className="font-semibold text-lg">Data Preview</h3>
-            {excelData && <Badge type="success">{processedData.length} Rows</Badge>}
+            {activeData && activeData.length > 0 && <Badge type="success">{processedData.length} Rows</Badge>}
           </div>
-          {excelData && (
+          {activeData && activeData.length > 0 && (
             <div className="relative w-full sm:w-64">
               <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
               <input
@@ -656,13 +872,13 @@ const ExternalSystemsView = ({ addNotification, onFileUpload, excelData }) => {
         </div>
 
         <div className="overflow-x-auto">
-          {excelData && excelData.length > 0 ? (
+          {activeData && activeData.length > 0 ? (
             <>
               <table className="w-full text-sm text-left border-collapse min-w-[600px]">
                 <thead className="text-xs uppercase bg-slate-50 dark:bg-slate-700/50">
                   <tr>
                     <th className="px-4 py-3 border-b text-slate-500">#</th>
-                    {Object.keys(excelData[0]).map((key) => (
+                    {Object.keys(activeData[0]).map((key) => (
                       <th
                         key={key}
                         className="px-4 py-3 border-b cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-600 transition-colors"
@@ -672,7 +888,7 @@ const ExternalSystemsView = ({ addNotification, onFileUpload, excelData }) => {
                           {key}
                           {sortColumn === key && (
                             <span className="text-blue-600">
-                              {sortDirection === 'asc' ? '↑' : '↓'}
+                              {sortDirection === 'asc' ? '^' : 'v'}
                             </span>
                           )}
                         </div>
@@ -861,29 +1077,148 @@ const SmartAlertsView = ({ addNotification, excelData }) => {
   );
 };
 
-const OperationsDashboardView = () => {
+const OperationsDashboardView = ({ excelData }) => {
+  const [range, setRange] = useState('7d');
+  const ranges = [
+    { id: '7d', label: '7d' },
+    { id: '30d', label: '30d' },
+    { id: '90d', label: '90d' }
+  ];
+
+  const hasData = Array.isArray(excelData) && excelData.length > 0;
+  const columns = hasData ? Object.keys(excelData[0]) : [];
+  const totalCells = hasData ? excelData.length * columns.length : 0;
+
+  let emptyFields = 0;
+  if (hasData) {
+    excelData.forEach(row => {
+      columns.forEach(col => {
+        const value = row[col];
+        if (value === null || value === undefined || value === '') {
+          emptyFields += 1;
+        }
+      });
+    });
+  }
+
+  const fillRate = totalCells ? Math.round(((totalCells - emptyFields) / totalCells) * 100) : 0;
+  const numericColumns = hasData ? columns.filter(col => excelData.some(row => typeof row[col] === 'number' && !Number.isNaN(row[col]))) : [];
+  const stringColumns = hasData ? columns.filter(col => typeof excelData[0][col] === 'string') : [];
+  const firstNumeric = numericColumns[0];
+  const categoryColumn = stringColumns[0] || columns[0];
+
+  const lineChartData = hasData && firstNumeric
+    ? excelData.slice(0, Math.min(12, excelData.length)).map(row => Number(row[firstNumeric]) || 0)
+    : [65, 78, 80, 85, 70, 88, 92];
+
+  const categoryCounts = hasData && categoryColumn ? excelData.reduce((acc, row) => {
+    const key = row[categoryColumn] ? String(row[categoryColumn]) : 'Unspecified';
+    acc[key] = (acc[key] || 0) + 1;
+    return acc;
+  }, {}) : {};
+
+  const topCategories = Object.entries(categoryCounts).sort((a, b) => b[1] - a[1]).slice(0, 5);
+
+  const barChartData = topCategories.length
+    ? {
+        labels: topCategories.map(([label]) => label),
+        values: topCategories.map(([, count]) => Math.round((count / excelData.length) * 100))
+      }
+    : { labels: ['Alpha', 'Beta', 'Gamma', 'Delta', 'Epsilon'], values: [95, 82, 88, 75, 98] };
+
+  const shortages = topCategories.length
+    ? topCategories.map(([label, count], i) => ({
+        label,
+        percent: Math.min(100, Math.round((count / excelData.length) * 100)),
+        color: ['bg-blue-500', 'bg-purple-500', 'bg-amber-500', 'bg-emerald-500', 'bg-rose-500'][i % 5]
+      }))
+    : [
+        { label: 'Materials', percent: 45, color: 'bg-blue-500' },
+        { label: 'Packing', percent: 30, color: 'bg-purple-500' },
+        { label: 'Chips', percent: 25, color: 'bg-amber-500' }
+      ];
+
+  const kpis = hasData ? [
+    { label: "Rows", value: excelData.length.toLocaleString(), delta: `${columns.length} columns`, color: "text-emerald-500", icon: Activity },
+    { label: "Completeness", value: `${fillRate}%`, delta: `${emptyFields} empty cells`, color: "text-blue-500", icon: CheckCircle },
+    { label: "Numeric Fields", value: numericColumns.length || '0', delta: firstNumeric ? `Charting ${firstNumeric}` : "No numeric columns detected", color: "text-amber-500", icon: TrendingUp },
+    { label: "Top Category", value: topCategories[0]?.[0] || 'N/A', delta: topCategories[0] ? `${topCategories[0][1]} rows` : "Upload data to populate", color: "text-red-500", icon: AlertTriangle }
+  ] : [
+    { label: "Health", value: MOCK_KPI_CONTEXT.healthIndex, delta: "+2.1%", color: "text-emerald-500", icon: Activity },
+    { label: "On-Time", value: MOCK_KPI_CONTEXT.onTimeShipment, delta: "+1.4%", color: "text-blue-500", icon: CheckCircle },
+    { label: "Production", value: MOCK_KPI_CONTEXT.productionRate, delta: "-0.8%", color: "text-amber-500", icon: TrendingUp },
+    { label: "Delays", value: MOCK_KPI_CONTEXT.activeDelays, delta: "3 open", color: "text-red-500", icon: AlertTriangle }
+  ];
+
   return (
     <div className="space-y-6 animate-fade-in">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <h2 className="text-xl md:text-2xl font-bold flex items-center gap-2"><LayoutDashboard className="w-6 h-6 text-emerald-500" />Dashboard</h2>
-        <select className="bg-white dark:bg-slate-700 border border-slate-300 rounded-lg text-sm px-3 py-2 w-full sm:w-auto"><option>Last 7 Days</option><option>Last Month</option></select>
+        <div>
+          <h2 className="text-xl md:text-2xl font-bold flex items-center gap-2">
+            <LayoutDashboard className="w-6 h-6 text-emerald-500" />
+            Operations Dashboard
+          </h2>
+          <p className="text-slate-500 text-sm">Supply chain health and short-term trends</p>
+        </div>
+        <div className="flex items-center gap-2">
+          {ranges.map(r => (
+            <button
+              key={r.id}
+              onClick={() => setRange(r.id)}
+              className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition ${range === r.id ? 'bg-blue-600 text-white border-blue-600' : 'border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300'}`}
+            >
+              {r.label}
+            </button>
+          ))}
+        </div>
       </div>
-      {/* Responsive Grid for KPIs */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 md:gap-4">
-        {[{ l: "Health", v: MOCK_KPI_CONTEXT.healthIndex, c: "text-emerald-500" }, { l: "Receipt", v: MOCK_KPI_CONTEXT.goodsReceipt, c: "text-blue-500" }, { l: "Production", v: MOCK_KPI_CONTEXT.productionRate, c: "text-amber-500" }, { l: "Shipment", v: MOCK_KPI_CONTEXT.onTimeShipment, c: "text-blue-500" }, { l: "Delays", v: MOCK_KPI_CONTEXT.activeDelays, c: "text-red-500" }, { l: "Risks", v: MOCK_KPI_CONTEXT.riskItems, c: "text-amber-500" }].map((k, i) => (
-          <Card key={i} className="p-3 md:p-4 text-center">
-            <div className="text-[10px] md:text-xs text-slate-500 uppercase font-bold tracking-wider mb-1">{k.l}</div>
-            <div className={`text-xl md:text-2xl font-bold ${k.c}`}>{k.v}</div>
+
+      {hasData ? (
+        <Badge type="success">Using {excelData.length} uploaded rows</Badge>
+      ) : (
+        <Badge type="warning">Upload an Excel file in External Systems to populate this dashboard</Badge>
+      )}
+
+      {/* KPI Row */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {kpis.map((k, i) => (
+          <Card key={i} className="p-4 flex items-start justify-between">
+            <div>
+              <div className="text-xs uppercase text-slate-500 font-semibold">{k.label}</div>
+              <div className={`text-2xl font-bold ${k.color} mt-1`}>{k.value}</div>
+              <div className="text-xs text-emerald-600 dark:text-emerald-400 mt-1">{k.delta}</div>
+            </div>
+            <div className="p-2 rounded-lg bg-slate-100 dark:bg-slate-700/50">
+              <k.icon className={`w-5 h-5 ${k.color}`} />
+            </div>
           </Card>
         ))}
       </div>
+
+      {/* Charts */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <Card><h3 className="font-semibold mb-4">Production Trend</h3><SimpleLineChart data={[65, 78, 80, 85, 70, 88, 92]} /></Card>
-        <Card><h3 className="font-semibold mb-4">On-Time Delivery</h3><SimpleBarChart data={[95, 82, 88, 75, 98]} labels={['Alpha', 'Beta', 'Gamma', 'Delta', 'Epsilon']} colorClass="bg-indigo-500" /></Card>
+        <Card>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="font-semibold">Production Trend</h3>
+            <span className="text-xs text-slate-400">Range: {range.toUpperCase()}</span>
+          </div>
+          <SimpleLineChart data={lineChartData} />
+        </Card>
+        <Card>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="font-semibold">{hasData ? 'Top Categories' : 'On-Time Delivery'}</h3>
+            <Badge type="info">{hasData ? 'Share of rows' : 'Top lanes'}</Badge>
+          </div>
+          <SimpleBarChart data={barChartData.values} labels={barChartData.labels} colorClass="bg-indigo-500" />
+        </Card>
       </div>
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <Card className="lg:col-span-2">
-          <h3 className="font-semibold mb-4">Delay Heatmap</h3>
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="font-semibold">Delay Heatmap</h3>
+            <span className="text-xs text-slate-400">Working days</span>
+          </div>
           <div className="grid grid-cols-7 gap-1 md:gap-2">
             {['M','T','W','T','F','S','S'].map(d => <div key={d} className="text-center text-xs text-slate-500">{d}</div>)}
             {[0, 2, 5, 1, 0, 8, 3, 2, 4, 1, 6, 2, 0, 1].map((val, i) => (
@@ -891,7 +1226,22 @@ const OperationsDashboardView = () => {
             ))}
           </div>
         </Card>
-        <Card><h3 className="font-semibold mb-4">Shortages</h3><div className="flex flex-col gap-4">{[{ l: 'Materials', p: 45, c: 'bg-blue-500' }, { l: 'Packing', p: 30, c: 'bg-purple-500' }, { l: 'Chips', p: 25, c: 'bg-amber-500' }].map((item, i) => (<div key={i}><div className="flex justify-between text-sm mb-1"><span>{item.l}</span><span>{item.p}%</span></div><div className="w-full bg-slate-200 h-2 rounded-full"><div className={`h-full ${item.c}`} style={{ width: `${item.p}%` }}></div></div></div>))}</div></Card>
+        <Card>
+          <h3 className="font-semibold mb-4">Shortages</h3>
+          <div className="flex flex-col gap-4">
+            {shortages.map((item, i) => (
+              <div key={i}>
+                <div className="flex justify-between text-sm mb-1">
+                  <span>{item.label}</span>
+                  <span>{item.percent}%</span>
+                </div>
+                <div className="w-full bg-slate-200 h-2 rounded-full">
+                  <div className={`h-full ${item.color}`} style={{ width: `${item.percent}%` }}></div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
       </div>
     </div>
   );
@@ -962,7 +1312,7 @@ const DecisionSupportView = ({ excelData, user, addNotification }) => {
   // Create new conversation
   const handleNewConversation = async () => {
     if (!user?.id) {
-      addNotification?.("請先登入後再開啟新對話。", "error");
+      addNotification?.("Please sign in before starting a new conversation.", "error");
       return;
     }
     setShowNewChatConfirm(false);
@@ -986,7 +1336,7 @@ const DecisionSupportView = ({ excelData, user, addNotification }) => {
 
     if (error) {
       console.error("Failed to create conversation in Supabase", error);
-      addNotification?.("新對話無法同步雲端，先在本機暫存。", "error");
+      addNotification?.("Conversation could not sync to the cloud; keeping a local copy.", "error");
       return;
     }
 
@@ -1062,7 +1412,7 @@ const DecisionSupportView = ({ excelData, user, addNotification }) => {
 
     if (updateError) {
       console.error("Failed to save messages to Supabase", updateError);
-      addNotification?.("訊息已留在本機，雲端保存失敗。", "error");
+      addNotification?.("Message kept locally; cloud save failed.", "error");
     }
 
     // Update local state
@@ -1162,7 +1512,7 @@ const DecisionSupportView = ({ excelData, user, addNotification }) => {
               <div>
                 <h3 className="font-semibold">{currentConversation.title}</h3>
                 <p className="text-xs text-slate-500">
-                  {currentMessages.length} messages • Updated {formatTime(currentConversation.updated_at)}
+                  {currentMessages.length} messages - Updated {formatTime(currentConversation.updated_at)}
                 </p>
               </div>
               <button
@@ -1282,17 +1632,17 @@ const SettingsView = ({ darkMode, setDarkMode, user, addNotification }) => {
   const handleSaveApiKey = () => {
     if (apiKey.trim()) {
       localStorage.setItem('gemini_api_key', apiKey.trim());
-      addNotification("API 密钥已保存!", "success");
+      addNotification("API key saved!", "success");
     } else {
       localStorage.removeItem('gemini_api_key');
-      addNotification("API 密钥已清除", "info");
+      addNotification("API key cleared", "info");
     }
   };
 
   const handleClearApiKey = () => {
     setApiKey('');
     localStorage.removeItem('gemini_api_key');
-    addNotification("API 密钥已清除", "info");
+    addNotification("API key cleared", "info");
   };
 
   return (
@@ -1312,7 +1662,7 @@ const SettingsView = ({ darkMode, setDarkMode, user, addNotification }) => {
       <Card>
         <h3 className="font-semibold mb-4 flex items-center gap-2">
           <Bot className="w-5 h-5 text-purple-500" />
-          AI API 配置
+          AI API Configuration
         </h3>
         <div className="space-y-4">
           <div>
@@ -1325,28 +1675,28 @@ const SettingsView = ({ darkMode, setDarkMode, user, addNotification }) => {
                   type={showApiKey ? "text" : "password"}
                   value={apiKey}
                   onChange={(e) => setApiKey(e.target.value)}
-                  placeholder="输入您的 API 密钥"
+                  placeholder="Enter your API key"
                   className="w-full px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-transparent focus:ring-2 focus:ring-blue-500 outline-none"
                 />
                 <button
                   onClick={() => setShowApiKey(!showApiKey)}
                   className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
                 >
-                  {showApiKey ? "🙈" : "👁️"}
+                  {showApiKey ? "Hide" : "Show"}
                 </button>
               </div>
             </div>
             <p className="text-xs text-slate-500 mt-2">
-              获取免费 API 密钥: <a href="https://ai.google.dev/" target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">https://ai.google.dev/</a>
+              Get a free API key: <a href="https://ai.google.dev/" target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">https://ai.google.dev/</a>
             </p>
           </div>
 
           <div className="flex gap-2">
             <Button onClick={handleSaveApiKey} variant="primary">
-              保存密钥
+              Save key
             </Button>
             <Button onClick={handleClearApiKey} variant="secondary">
-              清除密钥
+              Clear key
             </Button>
           </div>
 
@@ -1355,12 +1705,12 @@ const SettingsView = ({ darkMode, setDarkMode, user, addNotification }) => {
             <div className="flex items-start gap-2">
               <AlertCircle className="w-5 h-5 text-blue-600 mt-0.5" />
               <div className="text-sm text-blue-900 dark:text-blue-200">
-                <p className="font-medium mb-1">使用说明:</p>
+                <p className="font-medium mb-1">Usage notes:</p>
                 <ul className="list-disc list-inside space-y-1 text-xs">
-                  <li>免费 API 每天有配额限制</li>
-                  <li>如果配额用完,请等待重置或使用新密钥</li>
-                  <li>API 密钥存储在浏览器本地,不会上传到服务器</li>
-                  <li>建议使用 gemini-2.5-flash 模型</li>
+                  <li>Free API tiers have daily quotas</li>
+                  <li>If the quota is exhausted, wait for reset or use a new key</li>
+                  <li>API keys are stored locally in your browser, never uploaded</li>
+                  <li>Recommended model: gemini-2.5-flash</li>
                 </ul>
               </div>
             </div>
@@ -1372,10 +1722,10 @@ const SettingsView = ({ darkMode, setDarkMode, user, addNotification }) => {
       <Card>
         <h3 className="font-semibold mb-4 flex items-center gap-2">
           {darkMode ? <Moon className="w-5 h-5" /> : <Sun className="w-5 h-5" />}
-          主题设置
+          Theme Settings
         </h3>
         <div className="flex items-center justify-between">
-          <span className="text-slate-600 dark:text-slate-300">深色模式</span>
+          <span className="text-slate-600 dark:text-slate-300">Dark mode</span>
           <button
             onClick={() => setDarkMode(!darkMode)}
             className={`relative w-14 h-7 rounded-full transition-colors ${darkMode ? 'bg-blue-600' : 'bg-slate-300'}`}
@@ -1387,3 +1737,9 @@ const SettingsView = ({ darkMode, setDarkMode, user, addNotification }) => {
     </div>
   );
 };
+
+
+
+
+
+
