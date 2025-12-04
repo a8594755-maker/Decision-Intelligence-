@@ -21,6 +21,7 @@ import { extractSuppliers } from './utils/dataProcessing';
 // --- Import Views ---
 import SupplierManagementView from './views/SupplierManagementView';
 import CostAnalysisView from './views/CostAnalysisView';
+import EnhancedExternalSystemsView from './views/EnhancedExternalSystemsView';
 
 // Mock Data
 const MOCK_ALERTS = [{ id: 1, category: "Material Shortage", item: "Lithium Batteries", supplier: "Voltaic Supplies", risk: "High", impact: "Production Stop Risk", rootCause: "Supplier strike.", recommendation: "Activate backup supplier." }, { id: 2, category: "Delivery Delay", item: "Circuit Boards", supplier: "TechTronix", risk: "Medium", impact: "2 Day Delay", rootCause: "Port congestion.", recommendation: "Expedite Air Freight." }, { id: 3, category: "Quantity Mismatch", item: "Steel Casings", supplier: "MetalWorks", risk: "Low", impact: "Inventory Discrepancy", rootCause: "Packing error.", recommendation: "Request credit note." }];
@@ -140,12 +141,12 @@ export default function SmartOpsApp() {
   const renderView = () => {
     switch (view) {
       case 'home': return <HomeView setView={setView} />;
-      case 'external': return <ExternalSystemsView addNotification={addNotification} excelData={excelData} setExcelData={setExcelData} user={session?.user} />;
+      case 'external': return <EnhancedExternalSystemsView addNotification={addNotification} user={session?.user} />;
       case 'suppliers': return <SupplierManagementView addNotification={addNotification} />;
       case 'cost-analysis': return <CostAnalysisView addNotification={addNotification} user={session?.user} />;
       case 'integration': return <DataIntegrationView addNotification={addNotification} />;
-      case 'alerts': return <SmartAlertsView addNotification={addNotification} excelData={excelData} />;
-      case 'dashboard': return <OperationsDashboardView excelData={excelData} />;
+      case 'alerts': return <SmartAlertsView addNotification={addNotification} excelData={excelData} user={session?.user} />;
+      case 'dashboard': return <OperationsDashboardView excelData={excelData} user={session?.user} />;
       case 'analytics': return <AnalyticsCenterView excelData={excelData} />;
       case 'decision': return <DecisionSupportView excelData={excelData} user={session?.user} addNotification={addNotification} />;
       case 'settings': return <SettingsView darkMode={darkMode} setDarkMode={setDarkMode} user={session?.user} addNotification={addNotification} />;
@@ -1032,16 +1033,64 @@ const DataIntegrationView = ({ addNotification }) => {
   );
 };
 
-const SmartAlertsView = ({ addNotification, excelData }) => {
+const SmartAlertsView = ({ addNotification, excelData, user }) => {
   const [selectedAlert, setSelectedAlert] = useState(null);
   const [aiAnalysis, setAiAnalysis] = useState(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  
+  const [kpiAlerts, setKpiAlerts] = useState([]);
+  const [loadingKpiAlerts, setLoadingKpiAlerts] = useState(false);
+
+  // Load KPI-based alerts
+  useEffect(() => {
+    const loadKpiAlerts = async () => {
+      if (!user?.id) return;
+
+      setLoadingKpiAlerts(true);
+      try {
+        const { getAnomalousSuppliers } = await import('./services/supplierKpiService');
+        const anomalies = await getAnomalousSuppliers(user.id, {
+          maxDefectRate: 5,
+          minOnTimeRate: 90,
+          maxPriceVolatility: 15
+        });
+
+        // Convert to alert format
+        const alerts = anomalies.flatMap(supplier =>
+          supplier.issues.map(issue => ({
+            id: `kpi-${supplier.supplier_id}-${issue.type}`,
+            category: issue.type === 'high_defect_rate' ? 'High Defect Rate' :
+                     issue.type === 'low_on_time_rate' ? 'Low On-Time Delivery' :
+                     'High Price Volatility',
+            item: supplier.supplier_name,
+            supplier: supplier.supplier_name,
+            risk: issue.severity === 'high' ? 'High' : 'Medium',
+            impact: issue.message,
+            rootCause: `Score: ${supplier.overall_score?.toFixed(0)} | Risk: ${supplier.risk_level}`,
+            recommendation: `Current value: ${issue.value?.toFixed(2)} | Threshold: ${issue.threshold}`,
+            isKpiAlert: true,
+            supplierData: supplier
+          }))
+        );
+
+        setKpiAlerts(alerts);
+      } catch (error) {
+        console.error('Failed to load KPI alerts:', error);
+      } finally {
+        setLoadingKpiAlerts(false);
+      }
+    };
+
+    loadKpiAlerts();
+  }, [user]);
+
+  const allAlerts = [...kpiAlerts, ...MOCK_ALERTS];
+
   const generateDeepDive = async () => {
     if (!selectedAlert) return;
     setIsAnalyzing(true); setAiAnalysis(null);
     const context = excelData ? `USER DATA: ${JSON.stringify(excelData.slice(0, 5))}...` : "No data.";
-    const prompt = `Analyze alert: ${selectedAlert.category} for ${selectedAlert.item}. Context: ${context}. Suggest mitigation.`;
+    const kpiContext = selectedAlert.isKpiAlert ? `SUPPLIER KPI DATA: ${JSON.stringify(selectedAlert.supplierData)}` : '';
+    const prompt = `Analyze alert: ${selectedAlert.category} for ${selectedAlert.item}. Context: ${context} ${kpiContext}. Suggest mitigation.`;
     const result = await callGeminiAPI(prompt);
     setAiAnalysis(result); setIsAnalyzing(false);
   };
@@ -1049,13 +1098,51 @@ const SmartAlertsView = ({ addNotification, excelData }) => {
   return (
     <div className="flex flex-col lg:flex-row gap-6 animate-fade-in h-[calc(100vh-140px)]">
       <div className={`${selectedAlert ? 'hidden lg:block lg:w-1/3' : 'w-full'} space-y-4 overflow-y-auto`}>
-        <h2 className="text-xl md:text-2xl font-bold flex items-center gap-2 mb-4"><AlertTriangle className="w-6 h-6 text-red-500" />Alerts</h2>
-        {MOCK_ALERTS.map(alert => (
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-xl md:text-2xl font-bold flex items-center gap-2">
+            <AlertTriangle className="w-6 h-6 text-red-500" />
+            Alerts
+          </h2>
+          <Badge type="info">{allAlerts.length} Total</Badge>
+        </div>
+
+        {kpiAlerts.length > 0 && (
+          <div className="mb-4">
+            <h3 className="text-sm font-semibold text-purple-600 mb-2 flex items-center gap-2">
+              <Building2 className="w-4 h-4" />
+              Supplier KPI Alerts ({kpiAlerts.length})
+            </h3>
+          </div>
+        )}
+
+        {loadingKpiAlerts && (
+          <Card className="text-center py-4">
+            <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-purple-600 mx-auto mb-2"></div>
+            <p className="text-xs text-slate-500">Loading KPI alerts...</p>
+          </Card>
+        )}
+
+        {allAlerts.map(alert => (
           <Card key={alert.id} onClick={() => setSelectedAlert(alert)} className={`cursor-pointer border-l-4 ${selectedAlert?.id === alert.id ? 'ring-2 ring-blue-500' : ''} ${alert.risk === 'High' ? 'border-l-red-500' : 'border-l-amber-500'}`}>
-            <div className="flex justify-between items-start mb-2"><span className="font-semibold">{alert.category}</span><Badge type={alert.risk === 'High' ? 'danger' : 'warning'}>{alert.risk}</Badge></div>
+            <div className="flex justify-between items-start mb-2">
+              <div className="flex items-center gap-2">
+                <span className="font-semibold">{alert.category}</span>
+                {alert.isKpiAlert && <Badge type="info" className="text-xs">KPI</Badge>}
+              </div>
+              <Badge type={alert.risk === 'High' ? 'danger' : 'warning'}>{alert.risk}</Badge>
+            </div>
             <p className="text-sm text-slate-500 mb-1">{alert.item}</p>
+            <p className="text-xs text-slate-400">{alert.supplier}</p>
           </Card>
         ))}
+
+        {!loadingKpiAlerts && allAlerts.length === 0 && (
+          <Card className="text-center py-8 text-slate-500">
+            <AlertTriangle className="w-12 h-12 mx-auto mb-2 opacity-20" />
+            <p>No alerts at this time</p>
+            <p className="text-xs mt-1">System is operating normally</p>
+          </Card>
+        )}
       </div>
       {selectedAlert ? (
         <div className="flex-1 animate-slide-in overflow-y-auto pb-20 lg:pb-0">
@@ -1077,13 +1164,36 @@ const SmartAlertsView = ({ addNotification, excelData }) => {
   );
 };
 
-const OperationsDashboardView = ({ excelData }) => {
+const OperationsDashboardView = ({ excelData, user }) => {
   const [range, setRange] = useState('7d');
+  const [supplierKpis, setSupplierKpis] = useState([]);
+  const [loadingKpis, setLoadingKpis] = useState(false);
+
   const ranges = [
     { id: '7d', label: '7d' },
     { id: '30d', label: '30d' },
     { id: '90d', label: '90d' }
   ];
+
+  // Load supplier KPI data
+  useEffect(() => {
+    const loadSupplierKpis = async () => {
+      if (!user?.id) return;
+
+      setLoadingKpis(true);
+      try {
+        const { getSupplierKpiSummary } = await import('./services/supplierKpiService');
+        const kpiData = await getSupplierKpiSummary(user.id);
+        setSupplierKpis(Array.isArray(kpiData) ? kpiData.slice(0, 10) : []);
+      } catch (error) {
+        console.error('Failed to load supplier KPIs:', error);
+      } finally {
+        setLoadingKpis(false);
+      }
+    };
+
+    loadSupplierKpis();
+  }, [user]);
 
   const hasData = Array.isArray(excelData) && excelData.length > 0;
   const columns = hasData ? Object.keys(excelData[0]) : [];
@@ -1194,6 +1304,88 @@ const OperationsDashboardView = ({ excelData }) => {
           </Card>
         ))}
       </div>
+
+      {/* Supplier Performance Section */}
+      {supplierKpis.length > 0 && (
+        <Card>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="font-semibold flex items-center gap-2">
+              <Building2 className="w-5 h-5 text-purple-600" />
+              Supplier Performance Overview
+            </h3>
+            <Badge type="info">{supplierKpis.length} Suppliers</Badge>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="text-xs uppercase bg-slate-50 dark:bg-slate-700/50">
+                <tr>
+                  <th className="px-3 py-2 text-left">Supplier</th>
+                  <th className="px-3 py-2 text-center">Score</th>
+                  <th className="px-3 py-2 text-center">Defect %</th>
+                  <th className="px-3 py-2 text-center">On-Time %</th>
+                  <th className="px-3 py-2 text-center">Volatility %</th>
+                  <th className="px-3 py-2 text-center">Risk</th>
+                </tr>
+              </thead>
+              <tbody>
+                {supplierKpis.map((supplier, idx) => (
+                  <tr key={supplier.supplier_id} className="border-b dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800/50">
+                    <td className="px-3 py-2 font-medium">{supplier.supplier_name}</td>
+                    <td className="px-3 py-2 text-center">
+                      <span className={`font-bold ${
+                        supplier.overall_score >= 90 ? 'text-green-600' :
+                        supplier.overall_score >= 70 ? 'text-yellow-600' :
+                        'text-red-600'
+                      }`}>
+                        {supplier.overall_score?.toFixed(0)}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2 text-center">
+                      <span className={supplier.defect_rate > 5 ? 'text-red-600 font-semibold' : 'text-slate-600'}>
+                        {supplier.defect_rate?.toFixed(2)}%
+                      </span>
+                    </td>
+                    <td className="px-3 py-2 text-center">
+                      <span className={supplier.on_time_rate < 90 ? 'text-red-600 font-semibold' : 'text-green-600'}>
+                        {supplier.on_time_rate?.toFixed(2)}%
+                      </span>
+                    </td>
+                    <td className="px-3 py-2 text-center">
+                      <span className={supplier.max_price_volatility > 15 ? 'text-red-600 font-semibold' : 'text-slate-600'}>
+                        {supplier.max_price_volatility?.toFixed(2)}%
+                      </span>
+                    </td>
+                    <td className="px-3 py-2 text-center">
+                      <Badge type={
+                        supplier.risk_level === 'low' ? 'success' :
+                        supplier.risk_level === 'medium' ? 'warning' : 'danger'
+                      }>
+                        {supplier.risk_level}
+                      </Badge>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {supplierKpis.length === 0 && !loadingKpis && (
+            <div className="text-center py-8 text-slate-500">
+              <Building2 className="w-12 h-12 mx-auto mb-2 opacity-20" />
+              <p>No supplier KPI data available</p>
+              <p className="text-xs mt-1">Upload goods receipt data to calculate supplier KPIs</p>
+            </div>
+          )}
+
+          {loadingKpis && (
+            <div className="text-center py-8">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600 mx-auto"></div>
+              <p className="mt-2 text-sm text-slate-500">Loading supplier KPIs...</p>
+            </div>
+          )}
+        </Card>
+      )}
 
       {/* Charts */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

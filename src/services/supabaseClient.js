@@ -115,6 +115,366 @@ export const suppliersService = {
 
     if (error) throw error;
     return data || [];
+  },
+
+  // 根據名稱查找供應商（用於數據導入時去重）
+  async findByName(userId, supplierName) {
+    const { data, error } = await supabase
+      .from('suppliers')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('supplier_name', supplierName)
+      .single();
+
+    if (error) {
+      if (error.code === 'PGRST116') return null; // Not found
+      throw error;
+    }
+    return data;
+  },
+
+  // 根據編碼查找供應商
+  async findByCode(userId, supplierCode) {
+    const { data, error } = await supabase
+      .from('suppliers')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('supplier_code', supplierCode)
+      .single();
+
+    if (error) {
+      if (error.code === 'PGRST116') return null;
+      throw error;
+    }
+    return data;
+  },
+
+  // 創建或獲取供應商（用於導入時自動創建）
+  async findOrCreate(userId, supplierData) {
+    const { supplier_name, supplier_code } = supplierData;
+
+    // 優先根據編碼查找
+    if (supplier_code) {
+      const existing = await this.findByCode(userId, supplier_code);
+      if (existing) return existing;
+    }
+
+    // 根據名稱查找
+    const existingByName = await this.findByName(userId, supplier_name);
+    if (existingByName) return existingByName;
+
+    // 不存在則創建
+    const newSupplier = {
+      user_id: userId,
+      supplier_name,
+      supplier_code: supplier_code || null,
+      status: 'active'
+    };
+
+    const { data, error } = await supabase
+      .from('suppliers')
+      .insert(newSupplier)
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data;
+  }
+};
+
+/**
+ * Materials Operations
+ */
+export const materialsService = {
+  // 創建或獲取物料
+  async findOrCreate(userId, materialData) {
+    const { material_code, material_name, category, uom } = materialData;
+
+    // 根據 material_code 查找
+    const { data: existing, error: findError } = await supabase
+      .from('materials')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('material_code', material_code)
+      .single();
+
+    if (!findError && existing) {
+      return existing;
+    }
+
+    // 不存在則創建
+    const newMaterial = {
+      user_id: userId,
+      material_code,
+      material_name: material_name || material_code,
+      category: category || null,
+      uom: uom || 'pcs'
+    };
+
+    const { data, error } = await supabase
+      .from('materials')
+      .insert(newMaterial)
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data;
+  },
+
+  // 獲取所有物料
+  async getAll(userId) {
+    const { data, error } = await supabase
+      .from('materials')
+      .select('*')
+      .eq('user_id', userId)
+      .order('material_code', { ascending: true });
+
+    if (error) throw error;
+    return data || [];
+  },
+
+  // 根據編碼查找物料
+  async findByCode(userId, materialCode) {
+    const { data, error } = await supabase
+      .from('materials')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('material_code', materialCode)
+      .single();
+
+    if (error) {
+      if (error.code === 'PGRST116') return null;
+      throw error;
+    }
+    return data;
+  },
+
+  // 更新物料
+  async update(materialId, updates) {
+    const { data, error } = await supabase
+      .from('materials')
+      .update(updates)
+      .eq('id', materialId)
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data;
+  },
+
+  // 刪除物料
+  async delete(materialId) {
+    const { error } = await supabase
+      .from('materials')
+      .delete()
+      .eq('id', materialId);
+
+    if (error) throw error;
+    return { success: true };
+  }
+};
+
+/**
+ * Goods Receipts Operations
+ */
+export const goodsReceiptsService = {
+  // 批量插入收貨記錄
+  async batchInsert(userId, receipts, uploadFileId = null) {
+    if (!receipts || receipts.length === 0) {
+      return { success: true, count: 0 };
+    }
+
+    const payload = receipts.map(r => ({
+      user_id: userId,
+      upload_file_id: uploadFileId,
+      supplier_id: r.supplier_id,
+      material_id: r.material_id,
+      po_number: r.po_number || null,
+      receipt_number: r.receipt_number || null,
+      planned_delivery_date: r.planned_delivery_date || null,
+      actual_delivery_date: r.actual_delivery_date,
+      receipt_date: r.receipt_date || new Date().toISOString().split('T')[0],
+      received_qty: r.received_qty,
+      rejected_qty: r.rejected_qty || 0
+    }));
+
+    const { data, error } = await supabase
+      .from('goods_receipts')
+      .insert(payload)
+      .select();
+
+    if (error) throw error;
+    return { success: true, count: data.length, data };
+  },
+
+  // 獲取收貨記錄
+  async getReceipts(userId, options = {}) {
+    const { supplierId, materialId, startDate, endDate, limit = 100, offset = 0 } = options;
+
+    let query = supabase
+      .from('goods_receipts')
+      .select('*, suppliers(supplier_name, supplier_code), materials(material_code, material_name)')
+      .eq('user_id', userId)
+      .order('actual_delivery_date', { ascending: false })
+      .range(offset, offset + limit - 1);
+
+    if (supplierId) {
+      query = query.eq('supplier_id', supplierId);
+    }
+
+    if (materialId) {
+      query = query.eq('material_id', materialId);
+    }
+
+    if (startDate) {
+      query = query.gte('actual_delivery_date', startDate);
+    }
+
+    if (endDate) {
+      query = query.lte('actual_delivery_date', endDate);
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+    return data || [];
+  },
+
+  // 刪除收貨記錄
+  async delete(receiptId) {
+    const { error } = await supabase
+      .from('goods_receipts')
+      .delete()
+      .eq('id', receiptId);
+
+    if (error) throw error;
+    return { success: true };
+  },
+
+  // 獲取統計數據
+  async getStats(userId, days = 30) {
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - days);
+
+    const { data, error } = await supabase
+      .from('goods_receipts')
+      .select('received_qty, rejected_qty, defect_rate, is_on_time')
+      .eq('user_id', userId)
+      .gte('actual_delivery_date', startDate.toISOString().split('T')[0]);
+
+    if (error) throw error;
+
+    const stats = {
+      totalReceipts: data.length,
+      totalReceived: data.reduce((sum, r) => sum + parseFloat(r.received_qty || 0), 0),
+      totalRejected: data.reduce((sum, r) => sum + parseFloat(r.rejected_qty || 0), 0),
+      onTimeCount: data.filter(r => r.is_on_time === true).length,
+      avgDefectRate: 0,
+      onTimeRate: 0
+    };
+
+    if (stats.totalReceived > 0) {
+      stats.avgDefectRate = (stats.totalRejected / stats.totalReceived * 100).toFixed(2);
+    }
+
+    if (stats.totalReceipts > 0) {
+      stats.onTimeRate = (stats.onTimeCount / stats.totalReceipts * 100).toFixed(2);
+    }
+
+    return stats;
+  }
+};
+
+/**
+ * Price History Operations
+ */
+export const priceHistoryService = {
+  // 批量插入價格記錄
+  async batchInsert(userId, prices, uploadFileId = null) {
+    if (!prices || prices.length === 0) {
+      return { success: true, count: 0 };
+    }
+
+    const payload = prices.map(p => ({
+      user_id: userId,
+      upload_file_id: uploadFileId,
+      supplier_id: p.supplier_id,
+      material_id: p.material_id,
+      order_date: p.order_date,
+      unit_price: p.unit_price,
+      currency: p.currency || 'USD',
+      quantity: p.quantity || 0,
+      is_contract_price: p.is_contract_price || false
+    }));
+
+    const { data, error } = await supabase
+      .from('price_history')
+      .insert(payload)
+      .select();
+
+    if (error) throw error;
+    return { success: true, count: data.length, data };
+  },
+
+  // 獲取價格歷史
+  async getPrices(userId, options = {}) {
+    const { supplierId, materialId, startDate, endDate, limit = 100, offset = 0 } = options;
+
+    let query = supabase
+      .from('price_history')
+      .select('*, suppliers(supplier_name, supplier_code), materials(material_code, material_name)')
+      .eq('user_id', userId)
+      .order('order_date', { ascending: false })
+      .range(offset, offset + limit - 1);
+
+    if (supplierId) {
+      query = query.eq('supplier_id', supplierId);
+    }
+
+    if (materialId) {
+      query = query.eq('material_id', materialId);
+    }
+
+    if (startDate) {
+      query = query.gte('order_date', startDate);
+    }
+
+    if (endDate) {
+      query = query.lte('order_date', endDate);
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+    return data || [];
+  },
+
+  // 刪除價格記錄
+  async delete(priceId) {
+    const { error } = await supabase
+      .from('price_history')
+      .delete()
+      .eq('id', priceId);
+
+    if (error) throw error;
+    return { success: true };
+  },
+
+  // 獲取最新價格
+  async getLatestPrice(userId, supplierId, materialId) {
+    const { data, error } = await supabase
+      .from('price_history')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('supplier_id', supplierId)
+      .eq('material_id', materialId)
+      .order('order_date', { ascending: false })
+      .limit(1)
+      .single();
+
+    if (error) {
+      if (error.code === 'PGRST116') return null;
+      throw error;
+    }
+    return data;
   }
 };
 

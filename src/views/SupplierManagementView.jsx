@@ -1,17 +1,20 @@
 import React, { useState, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
-import { Database, Search, Plus, Edit2, Trash2, X, Building2, Upload, FileSpreadsheet } from 'lucide-react';
+import { Database, Search, Plus, Edit2, Trash2, X, Building2, Upload, FileSpreadsheet, TrendingUp, TrendingDown, AlertTriangle } from 'lucide-react';
 import { Card, Button, Badge, Modal } from '../components/ui';
 import { suppliersService } from '../services/supabaseClient';
 import { extractSuppliers, validateFile } from '../utils/dataProcessing';
+import { getSupplierKpiSummary } from '../services/supplierKpiService';
 
 /**
  * Supplier Management View
- * 供應商管理獨立頁面 - 完整的 CRUD 功能
+ * Standalone supplier management page with full CRUD functionality
  */
 export const SupplierManagementView = ({ addNotification }) => {
   const [suppliers, setSuppliers] = useState([]);
+  const [suppliersWithKpi, setSuppliersWithKpi] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [loadingKpi, setLoadingKpi] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [showAddModal, setShowAddModal] = useState(false);
@@ -34,7 +37,7 @@ export const SupplierManagementView = ({ addNotification }) => {
 
   const rowsPerPage = 10;
 
-  // 載入供應商數據
+  // Load supplier data
   useEffect(() => {
     loadSuppliers();
   }, []);
@@ -44,14 +47,61 @@ export const SupplierManagementView = ({ addNotification }) => {
     try {
       const data = await suppliersService.getAllSuppliers();
       setSuppliers(data);
+
+      // Load KPI data
+      if (data && data.length > 0 && data[0].user_id) {
+        loadKpiData(data[0].user_id);
+      }
     } catch (error) {
-      addNotification(`載入失敗: ${error.message}`, "error");
+      addNotification(`Load failed: ${error.message}`, "error");
     } finally {
       setLoading(false);
     }
   };
 
-  // 搜索功能
+  const loadKpiData = async (userId) => {
+    setLoadingKpi(true);
+    try {
+      const kpiData = await getSupplierKpiSummary(userId);
+
+      // Merge KPI data with suppliers
+      const merged = suppliers.map(supplier => {
+        const kpi = Array.isArray(kpiData)
+          ? kpiData.find(k => k.supplier_id === supplier.id)
+          : null;
+
+        return {
+          ...supplier,
+          kpi: kpi || {
+            defect_rate: 0,
+            on_time_rate: 0,
+            max_price_volatility: 0,
+            overall_score: 0,
+            risk_level: 'unknown'
+          }
+        };
+      });
+
+      setSuppliersWithKpi(merged);
+    } catch (error) {
+      console.error('Failed to load KPI data:', error);
+      // Fallback: use suppliers without KPI
+      setSuppliersWithKpi(suppliers.map(s => ({
+        ...s,
+        kpi: {
+          defect_rate: 0,
+          on_time_rate: 0,
+          max_price_volatility: 0,
+          overall_score: 0,
+          risk_level: 'unknown'
+        }
+      })));
+    } finally {
+      setLoadingKpi(false);
+    }
+  };
+
+  // Search functionality
   const handleSearch = async () => {
     if (!searchTerm.trim()) {
       loadSuppliers();
@@ -64,71 +114,71 @@ export const SupplierManagementView = ({ addNotification }) => {
       setSuppliers(data);
       setCurrentPage(1);
     } catch (error) {
-      addNotification(`搜索失敗: ${error.message}`, "error");
+      addNotification(`Search failed: ${error.message}`, "error");
     } finally {
       setLoading(false);
     }
   };
 
-  // 新增供應商
+  // Add supplier
   const handleAdd = async () => {
     if (!formData.supplier_name.trim()) {
-      addNotification("供應商名稱不能為空", "error");
+      addNotification("Supplier name cannot be empty", "error");
       return;
     }
 
     setLoading(true);
     try {
       await suppliersService.insertSuppliers([formData]);
-      addNotification("新增成功", "success");
+      addNotification("Supplier added successfully", "success");
       setShowAddModal(false);
       resetForm();
       loadSuppliers();
     } catch (error) {
-      addNotification(`新增失敗: ${error.message}`, "error");
+      addNotification(`Add failed: ${error.message}`, "error");
     } finally {
       setLoading(false);
     }
   };
 
-  // 編輯供應商
+  // Edit supplier
   const handleEdit = async () => {
     if (!formData.supplier_name.trim()) {
-      addNotification("供應商名稱不能為空", "error");
+      addNotification("Supplier name cannot be empty", "error");
       return;
     }
 
     setLoading(true);
     try {
       await suppliersService.updateSupplier(selectedSupplier.id, formData);
-      addNotification("更新成功", "success");
+      addNotification("Supplier updated successfully", "success");
       setShowEditModal(false);
       resetForm();
       loadSuppliers();
     } catch (error) {
-      addNotification(`更新失敗: ${error.message}`, "error");
+      addNotification(`Update failed: ${error.message}`, "error");
     } finally {
       setLoading(false);
     }
   };
 
-  // 刪除供應商
+  // Delete supplier
   const handleDelete = async () => {
     setLoading(true);
     try {
       await suppliersService.deleteSupplier(selectedSupplier.id);
-      addNotification("刪除成功", "success");
+      addNotification("Supplier deleted successfully", "success");
       setShowDeleteModal(false);
       setSelectedSupplier(null);
       loadSuppliers();
     } catch (error) {
-      addNotification(`刪除失敗: ${error.message}`, "error");
+      addNotification(`Delete failed: ${error.message}`, "error");
     } finally {
       setLoading(false);
     }
   };
 
-  // Excel 批量匯入
+  // Excel bulk import
   const handleFileSelect = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -150,23 +200,23 @@ export const SupplierManagementView = ({ addNotification }) => {
         const wsname = wb.SheetNames[0];
         const data = XLSX.utils.sheet_to_json(wb.Sheets[wsname]);
 
-        // 使用 extractSuppliers 提取供應商數據
+        // Extract supplier data using extractSuppliers
         const extractedSuppliers = extractSuppliers(data);
 
         if (extractedSuppliers.length === 0) {
-          addNotification("Excel 文件中未找到有效的供應商數據", "error");
+          addNotification("No valid supplier data found in Excel file", "error");
           setLoading(false);
           return;
         }
 
         setImportPreview(extractedSuppliers);
         setShowImportModal(true);
-        addNotification(`已識別 ${extractedSuppliers.length} 個供應商`, "success");
+        addNotification(`Identified ${extractedSuppliers.length} suppliers`, "success");
         setLoading(false);
       };
       reader.readAsBinaryString(file);
     } catch (error) {
-      addNotification(`文件讀取失敗: ${error.message}`, "error");
+      addNotification(`File read failed: ${error.message}`, "error");
       setLoading(false);
     }
   };
@@ -178,18 +228,18 @@ export const SupplierManagementView = ({ addNotification }) => {
     setImportProgress(10);
 
     try {
-      // 批量插入供應商
+      // Batch insert suppliers
       const { count } = await suppliersService.insertSuppliers(importPreview);
 
       setImportProgress(100);
-      addNotification(`成功匯入 ${count} 個供應商`, "success");
+      addNotification(`Successfully imported ${count} suppliers`, "success");
       setShowImportModal(false);
       setImportFile(null);
       setImportPreview([]);
       setImportProgress(0);
       loadSuppliers();
     } catch (error) {
-      addNotification(`匯入失敗: ${error.message}`, "error");
+      addNotification(`Import failed: ${error.message}`, "error");
       setImportProgress(0);
     } finally {
       setLoading(false);
@@ -233,16 +283,31 @@ export const SupplierManagementView = ({ addNotification }) => {
     setShowDeleteModal(true);
   };
 
-  // 過濾和分頁
+  // Filtering and pagination
+  const displaySuppliers = suppliersWithKpi.length > 0 ? suppliersWithKpi : suppliers;
   const filteredSuppliers = searchTerm
-    ? suppliers
-    : suppliers;
+    ? displaySuppliers
+    : displaySuppliers;
 
   const totalPages = Math.ceil(filteredSuppliers.length / rowsPerPage);
   const paginatedSuppliers = filteredSuppliers.slice(
     (currentPage - 1) * rowsPerPage,
     currentPage * rowsPerPage
   );
+
+  // Helper function to get risk badge
+  const getRiskBadge = (riskLevel) => {
+    switch (riskLevel) {
+      case 'low':
+        return <Badge type="success">Low Risk</Badge>;
+      case 'medium':
+        return <Badge type="warning">Medium Risk</Badge>;
+      case 'high':
+        return <Badge type="danger">High Risk</Badge>;
+      default:
+        return <Badge type="info">No Data</Badge>;
+    }
+  };
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -251,10 +316,10 @@ export const SupplierManagementView = ({ addNotification }) => {
         <div>
           <h2 className="text-xl md:text-2xl font-bold flex items-center gap-2">
             <Building2 className="w-6 h-6 text-purple-500" />
-            供應商管理
+            Supplier Management
           </h2>
           <p className="text-sm text-slate-500 mt-1">
-            管理所有供應商資料，支持新增、編輯、刪除、批量匯入功能
+            Manage all supplier information with add, edit, delete, and bulk import functionality
           </p>
         </div>
         <div className="flex gap-2">
@@ -271,14 +336,14 @@ export const SupplierManagementView = ({ addNotification }) => {
             onClick={() => fileInputRef.current?.click()}
             disabled={loading}
           >
-            批量匯入
+            Bulk Import
           </Button>
           <Button
             variant="primary"
             icon={Plus}
             onClick={() => setShowAddModal(true)}
           >
-            新增供應商
+            Add Supplier
           </Button>
         </div>
       </div>
@@ -291,7 +356,7 @@ export const SupplierManagementView = ({ addNotification }) => {
               <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
               <input
                 type="text"
-                placeholder="搜索供應商名稱、聯絡方式或地址..."
+                placeholder="Search supplier name, contact, or address..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
@@ -299,7 +364,7 @@ export const SupplierManagementView = ({ addNotification }) => {
               />
             </div>
             <Button onClick={handleSearch} disabled={loading}>
-              搜索
+              Search
             </Button>
             <Button
               variant="secondary"
@@ -308,7 +373,7 @@ export const SupplierManagementView = ({ addNotification }) => {
                 loadSuppliers();
               }}
             >
-              重置
+              Reset
             </Button>
           </div>
         </Card>
@@ -316,7 +381,7 @@ export const SupplierManagementView = ({ addNotification }) => {
           <div className="text-2xl font-bold text-purple-600">
             {suppliers.length}
           </div>
-          <div className="text-sm text-slate-500 mt-1">總供應商數</div>
+          <div className="text-sm text-slate-500 mt-1">Total Suppliers</div>
         </Card>
       </div>
 
@@ -326,74 +391,151 @@ export const SupplierManagementView = ({ addNotification }) => {
           {loading ? (
             <div className="text-center py-12">
               <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-              <p className="mt-4 text-slate-500">載入中...</p>
+              <p className="mt-4 text-slate-500">Loading...</p>
             </div>
           ) : paginatedSuppliers.length > 0 ? (
             <>
-              <table className="w-full text-sm text-left border-collapse min-w-[800px]">
+              <table className="w-full text-sm text-left border-collapse min-w-[1200px]">
                 <thead className="text-xs uppercase bg-slate-50 dark:bg-slate-700/50">
                   <tr>
                     <th className="px-4 py-3 border-b">#</th>
-                    <th className="px-4 py-3 border-b">供應商名稱</th>
-                    <th className="px-4 py-3 border-b">聯絡方式</th>
-                    <th className="px-4 py-3 border-b">地址</th>
-                    <th className="px-4 py-3 border-b">產品類別</th>
-                    <th className="px-4 py-3 border-b">付款條件</th>
-                    <th className="px-4 py-3 border-b">交貨時間</th>
-                    <th className="px-4 py-3 border-b text-center">操作</th>
+                    <th className="px-4 py-3 border-b">Supplier Name</th>
+                    <th className="px-4 py-3 border-b">Contact Info</th>
+                    <th className="px-4 py-3 border-b">Product Category</th>
+                    <th className="px-4 py-3 border-b text-center" title="Defect Rate">
+                      <div className="flex items-center justify-center gap-1">
+                        <AlertTriangle className="w-3 h-3" />
+                        Defect %
+                      </div>
+                    </th>
+                    <th className="px-4 py-3 border-b text-center" title="On-Time Delivery Rate">
+                      <div className="flex items-center justify-center gap-1">
+                        <TrendingUp className="w-3 h-3" />
+                        On-Time %
+                      </div>
+                    </th>
+                    <th className="px-4 py-3 border-b text-center" title="Price Volatility">
+                      <div className="flex items-center justify-center gap-1">
+                        <TrendingDown className="w-3 h-3" />
+                        Volatility %
+                      </div>
+                    </th>
+                    <th className="px-4 py-3 border-b text-center">Score</th>
+                    <th className="px-4 py-3 border-b text-center">Risk</th>
+                    <th className="px-4 py-3 border-b text-center">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {paginatedSuppliers.map((supplier, i) => (
-                    <tr
-                      key={supplier.id}
-                      className="hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors"
-                    >
-                      <td className="px-4 py-3 border-b text-slate-400 font-mono text-xs">
-                        {(currentPage - 1) * rowsPerPage + i + 1}
-                      </td>
-                      <td className="px-4 py-3 border-b font-semibold">
-                        {supplier.supplier_name || '-'}
-                      </td>
-                      <td className="px-4 py-3 border-b">
-                        {supplier.contact_info || '-'}
-                      </td>
-                      <td className="px-4 py-3 border-b">
-                        {supplier.address || '-'}
-                      </td>
-                      <td className="px-4 py-3 border-b">
-                        {supplier.product_category ? (
-                          <Badge type="info">{supplier.product_category}</Badge>
-                        ) : (
-                          '-'
-                        )}
-                      </td>
-                      <td className="px-4 py-3 border-b">
-                        {supplier.payment_terms || '-'}
-                      </td>
-                      <td className="px-4 py-3 border-b">
-                        {supplier.delivery_time || '-'}
-                      </td>
-                      <td className="px-4 py-3 border-b">
-                        <div className="flex items-center justify-center gap-2">
-                          <button
-                            onClick={() => openEditModal(supplier)}
-                            className="p-2 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg transition"
-                            title="編輯"
-                          >
-                            <Edit2 className="w-4 h-4 text-blue-600" />
-                          </button>
-                          <button
-                            onClick={() => openDeleteModal(supplier)}
-                            className="p-2 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition"
-                            title="刪除"
-                          >
-                            <Trash2 className="w-4 h-4 text-red-600" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                  {paginatedSuppliers.map((supplier, i) => {
+                    const kpi = supplier.kpi || {};
+                    const hasKpiData = kpi.risk_level && kpi.risk_level !== 'unknown';
+
+                    return (
+                      <tr
+                        key={supplier.id}
+                        className="hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors"
+                      >
+                        <td className="px-4 py-3 border-b text-slate-400 font-mono text-xs">
+                          {(currentPage - 1) * rowsPerPage + i + 1}
+                        </td>
+                        <td className="px-4 py-3 border-b font-semibold">
+                          {supplier.supplier_name || '-'}
+                        </td>
+                        <td className="px-4 py-3 border-b text-xs">
+                          {supplier.contact_info || '-'}
+                        </td>
+                        <td className="px-4 py-3 border-b">
+                          {supplier.product_category ? (
+                            <Badge type="info">{supplier.product_category}</Badge>
+                          ) : (
+                            '-'
+                          )}
+                        </td>
+
+                        {/* KPI Columns */}
+                        <td className="px-4 py-3 border-b text-center">
+                          {hasKpiData ? (
+                            <span className={`font-semibold ${
+                              kpi.defect_rate > 5 ? 'text-red-600' :
+                              kpi.defect_rate > 2 ? 'text-yellow-600' :
+                              'text-green-600'
+                            }`}>
+                              {kpi.defect_rate?.toFixed(2)}%
+                            </span>
+                          ) : (
+                            <span className="text-slate-400 text-xs">-</span>
+                          )}
+                        </td>
+
+                        <td className="px-4 py-3 border-b text-center">
+                          {hasKpiData ? (
+                            <span className={`font-semibold ${
+                              kpi.on_time_rate < 90 ? 'text-red-600' :
+                              kpi.on_time_rate < 95 ? 'text-yellow-600' :
+                              'text-green-600'
+                            }`}>
+                              {kpi.on_time_rate?.toFixed(2)}%
+                            </span>
+                          ) : (
+                            <span className="text-slate-400 text-xs">-</span>
+                          )}
+                        </td>
+
+                        <td className="px-4 py-3 border-b text-center">
+                          {hasKpiData ? (
+                            <span className={`font-semibold ${
+                              kpi.max_price_volatility > 15 ? 'text-red-600' :
+                              kpi.max_price_volatility > 10 ? 'text-yellow-600' :
+                              'text-green-600'
+                            }`}>
+                              {kpi.max_price_volatility?.toFixed(2)}%
+                            </span>
+                          ) : (
+                            <span className="text-slate-400 text-xs">-</span>
+                          )}
+                        </td>
+
+                        <td className="px-4 py-3 border-b text-center">
+                          {hasKpiData ? (
+                            <div className="flex items-center justify-center gap-1">
+                              <span className={`font-bold text-lg ${
+                                kpi.overall_score >= 90 ? 'text-green-600' :
+                                kpi.overall_score >= 70 ? 'text-yellow-600' :
+                                'text-red-600'
+                              }`}>
+                                {kpi.overall_score?.toFixed(0)}
+                              </span>
+                            </div>
+                          ) : (
+                            <span className="text-slate-400 text-xs">-</span>
+                          )}
+                        </td>
+
+                        <td className="px-4 py-3 border-b text-center">
+                          {hasKpiData ? getRiskBadge(kpi.risk_level) : getRiskBadge('unknown')}
+                        </td>
+
+                        <td className="px-4 py-3 border-b">
+                          <div className="flex items-center justify-center gap-2">
+                            <button
+                              onClick={() => openEditModal(supplier)}
+                              className="p-2 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg transition"
+                              title="Edit"
+                            >
+                              <Edit2 className="w-4 h-4 text-blue-600" />
+                            </button>
+                            <button
+                              onClick={() => openDeleteModal(supplier)}
+                              className="p-2 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition"
+                              title="Delete"
+                            >
+                              <Trash2 className="w-4 h-4 text-red-600" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
 
@@ -401,9 +543,9 @@ export const SupplierManagementView = ({ addNotification }) => {
               {totalPages > 1 && (
                 <div className="flex justify-between items-center mt-4 pt-4 border-t">
                   <div className="text-sm text-slate-500">
-                    顯示 {(currentPage - 1) * rowsPerPage + 1} 到{' '}
-                    {Math.min(currentPage * rowsPerPage, filteredSuppliers.length)} 筆，
-                    共 {filteredSuppliers.length} 筆
+                    Showing {(currentPage - 1) * rowsPerPage + 1} to{' '}
+                    {Math.min(currentPage * rowsPerPage, filteredSuppliers.length)} of{' '}
+                    {filteredSuppliers.length} entries
                   </div>
                   <div className="flex gap-2">
                     <Button
@@ -412,7 +554,7 @@ export const SupplierManagementView = ({ addNotification }) => {
                       disabled={currentPage === 1}
                       className="px-3 py-1 text-sm"
                     >
-                      上一頁
+                      Previous
                     </Button>
                     <div className="flex items-center gap-1">
                       {[...Array(Math.min(5, totalPages))].map((_, i) => {
@@ -448,7 +590,7 @@ export const SupplierManagementView = ({ addNotification }) => {
                       disabled={currentPage === totalPages}
                       className="px-3 py-1 text-sm"
                     >
-                      下一頁
+                      Next
                     </Button>
                   </div>
                 </div>
@@ -458,17 +600,17 @@ export const SupplierManagementView = ({ addNotification }) => {
             <div className="text-center py-12">
               <Database className="w-16 h-16 text-slate-300 mx-auto mb-4" />
               <h3 className="text-lg font-semibold text-slate-600 dark:text-slate-400 mb-2">
-                沒有供應商資料
+                No Supplier Data
               </h3>
               <p className="text-slate-500 mb-4">
-                點擊「新增供應商」按鈕來添加第一個供應商
+                Click "Add Supplier" button to add your first supplier
               </p>
               <Button
                 variant="primary"
                 icon={Plus}
                 onClick={() => setShowAddModal(true)}
               >
-                新增供應商
+                Add Supplier
               </Button>
             </div>
           )}
@@ -480,7 +622,7 @@ export const SupplierManagementView = ({ addNotification }) => {
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 overflow-y-auto">
           <Card className="max-w-2xl w-full my-8">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold">新增供應商</h3>
+              <h3 className="text-lg font-semibold">Add Supplier</h3>
               <button
                 onClick={() => {
                   setShowAddModal(false);
@@ -495,7 +637,7 @@ export const SupplierManagementView = ({ addNotification }) => {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium mb-1">
-                  供應商名稱 <span className="text-red-500">*</span>
+                  Supplier Name <span className="text-red-500">*</span>
                 </label>
                 <input
                   type="text"
@@ -504,12 +646,12 @@ export const SupplierManagementView = ({ addNotification }) => {
                     setFormData({ ...formData, supplier_name: e.target.value })
                   }
                   className="w-full px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-transparent focus:ring-2 focus:ring-blue-500 outline-none"
-                  placeholder="輸入供應商名稱"
+                  placeholder="Enter supplier name"
                 />
               </div>
 
               <div>
-                <label className="block text-sm font-medium mb-1">聯絡方式</label>
+                <label className="block text-sm font-medium mb-1">Contact Info</label>
                 <input
                   type="text"
                   value={formData.contact_info}
@@ -517,12 +659,12 @@ export const SupplierManagementView = ({ addNotification }) => {
                     setFormData({ ...formData, contact_info: e.target.value })
                   }
                   className="w-full px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-transparent focus:ring-2 focus:ring-blue-500 outline-none"
-                  placeholder="電話或 Email"
+                  placeholder="Phone or Email"
                 />
               </div>
 
               <div className="md:col-span-2">
-                <label className="block text-sm font-medium mb-1">地址</label>
+                <label className="block text-sm font-medium mb-1">Address</label>
                 <input
                   type="text"
                   value={formData.address}
@@ -530,12 +672,12 @@ export const SupplierManagementView = ({ addNotification }) => {
                     setFormData({ ...formData, address: e.target.value })
                   }
                   className="w-full px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-transparent focus:ring-2 focus:ring-blue-500 outline-none"
-                  placeholder="輸入地址"
+                  placeholder="Enter address"
                 />
               </div>
 
               <div>
-                <label className="block text-sm font-medium mb-1">產品類別</label>
+                <label className="block text-sm font-medium mb-1">Product Category</label>
                 <input
                   type="text"
                   value={formData.product_category}
@@ -543,12 +685,12 @@ export const SupplierManagementView = ({ addNotification }) => {
                     setFormData({ ...formData, product_category: e.target.value })
                   }
                   className="w-full px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-transparent focus:ring-2 focus:ring-blue-500 outline-none"
-                  placeholder="例如：電子零件"
+                  placeholder="e.g., Electronic Components"
                 />
               </div>
 
               <div>
-                <label className="block text-sm font-medium mb-1">付款條件</label>
+                <label className="block text-sm font-medium mb-1">Payment Terms</label>
                 <input
                   type="text"
                   value={formData.payment_terms}
@@ -556,12 +698,12 @@ export const SupplierManagementView = ({ addNotification }) => {
                     setFormData({ ...formData, payment_terms: e.target.value })
                   }
                   className="w-full px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-transparent focus:ring-2 focus:ring-blue-500 outline-none"
-                  placeholder="例如：Net 30"
+                  placeholder="e.g., Net 30"
                 />
               </div>
 
               <div>
-                <label className="block text-sm font-medium mb-1">交貨時間</label>
+                <label className="block text-sm font-medium mb-1">Delivery Time</label>
                 <input
                   type="text"
                   value={formData.delivery_time}
@@ -569,7 +711,7 @@ export const SupplierManagementView = ({ addNotification }) => {
                     setFormData({ ...formData, delivery_time: e.target.value })
                   }
                   className="w-full px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-transparent focus:ring-2 focus:ring-blue-500 outline-none"
-                  placeholder="例如：7-14 天"
+                  placeholder="e.g., 7-14 days"
                 />
               </div>
             </div>
@@ -582,10 +724,10 @@ export const SupplierManagementView = ({ addNotification }) => {
                   resetForm();
                 }}
               >
-                取消
+                Cancel
               </Button>
               <Button variant="primary" onClick={handleAdd} disabled={loading}>
-                {loading ? '新增中...' : '確定新增'}
+                {loading ? 'Adding...' : 'Add Supplier'}
               </Button>
             </div>
           </Card>
@@ -597,7 +739,7 @@ export const SupplierManagementView = ({ addNotification }) => {
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 overflow-y-auto">
           <Card className="max-w-2xl w-full my-8">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold">編輯供應商</h3>
+              <h3 className="text-lg font-semibold">Edit Supplier</h3>
               <button
                 onClick={() => {
                   setShowEditModal(false);
@@ -612,7 +754,7 @@ export const SupplierManagementView = ({ addNotification }) => {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium mb-1">
-                  供應商名稱 <span className="text-red-500">*</span>
+                  Supplier Name <span className="text-red-500">*</span>
                 </label>
                 <input
                   type="text"
@@ -625,7 +767,7 @@ export const SupplierManagementView = ({ addNotification }) => {
               </div>
 
               <div>
-                <label className="block text-sm font-medium mb-1">聯絡方式</label>
+                <label className="block text-sm font-medium mb-1">Contact Info</label>
                 <input
                   type="text"
                   value={formData.contact_info}
@@ -637,7 +779,7 @@ export const SupplierManagementView = ({ addNotification }) => {
               </div>
 
               <div className="md:col-span-2">
-                <label className="block text-sm font-medium mb-1">地址</label>
+                <label className="block text-sm font-medium mb-1">Address</label>
                 <input
                   type="text"
                   value={formData.address}
@@ -649,7 +791,7 @@ export const SupplierManagementView = ({ addNotification }) => {
               </div>
 
               <div>
-                <label className="block text-sm font-medium mb-1">產品類別</label>
+                <label className="block text-sm font-medium mb-1">Product Category</label>
                 <input
                   type="text"
                   value={formData.product_category}
@@ -661,7 +803,7 @@ export const SupplierManagementView = ({ addNotification }) => {
               </div>
 
               <div>
-                <label className="block text-sm font-medium mb-1">付款條件</label>
+                <label className="block text-sm font-medium mb-1">Payment Terms</label>
                 <input
                   type="text"
                   value={formData.payment_terms}
@@ -673,7 +815,7 @@ export const SupplierManagementView = ({ addNotification }) => {
               </div>
 
               <div>
-                <label className="block text-sm font-medium mb-1">交貨時間</label>
+                <label className="block text-sm font-medium mb-1">Delivery Time</label>
                 <input
                   type="text"
                   value={formData.delivery_time}
@@ -693,10 +835,10 @@ export const SupplierManagementView = ({ addNotification }) => {
                   resetForm();
                 }}
               >
-                取消
+                Cancel
               </Button>
               <Button variant="primary" onClick={handleEdit} disabled={loading}>
-                {loading ? '更新中...' : '確定更新'}
+                {loading ? 'Updating...' : 'Update Supplier'}
               </Button>
             </div>
           </Card>
@@ -713,9 +855,9 @@ export const SupplierManagementView = ({ addNotification }) => {
                   <FileSpreadsheet className="w-5 h-5 text-green-600" />
                 </div>
                 <div>
-                  <h3 className="text-lg font-semibold">批量匯入供應商</h3>
+                  <h3 className="text-lg font-semibold">Bulk Import Suppliers</h3>
                   <p className="text-sm text-slate-500">
-                    預覽將要匯入的 {importPreview.length} 個供應商
+                    Preview {importPreview.length} suppliers to import
                   </p>
                 </div>
               </div>
@@ -733,10 +875,10 @@ export const SupplierManagementView = ({ addNotification }) => {
                 <thead className="bg-slate-100 dark:bg-slate-800">
                   <tr>
                     <th className="px-4 py-2 text-left">#</th>
-                    <th className="px-4 py-2 text-left">供應商名稱</th>
-                    <th className="px-4 py-2 text-left">聯絡方式</th>
-                    <th className="px-4 py-2 text-left">地址</th>
-                    <th className="px-4 py-2 text-left">產品類別</th>
+                    <th className="px-4 py-2 text-left">Supplier Name</th>
+                    <th className="px-4 py-2 text-left">Contact Info</th>
+                    <th className="px-4 py-2 text-left">Address</th>
+                    <th className="px-4 py-2 text-left">Product Category</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -763,7 +905,7 @@ export const SupplierManagementView = ({ addNotification }) => {
                   />
                 </div>
                 <p className="text-sm text-slate-500 mt-1 text-center">
-                  匯入進度: {importProgress}%
+                  Import progress: {importProgress}%
                 </p>
               </div>
             )}
@@ -775,7 +917,7 @@ export const SupplierManagementView = ({ addNotification }) => {
                 onClick={handleImportCancel}
                 disabled={importProgress > 0 && importProgress < 100}
               >
-                取消
+                Cancel
               </Button>
               <Button
                 variant="success"
@@ -783,7 +925,7 @@ export const SupplierManagementView = ({ addNotification }) => {
                 onClick={handleImportConfirm}
                 disabled={importProgress > 0 && importProgress < 100}
               >
-                確定匯入 {importPreview.length} 個供應商
+                Import {importPreview.length} Suppliers
               </Button>
             </div>
           </Card>
@@ -798,16 +940,16 @@ export const SupplierManagementView = ({ addNotification }) => {
           setSelectedSupplier(null);
         }}
         onConfirm={handleDelete}
-        title="刪除供應商?"
-        description="此操作無法撤銷"
+        title="Delete Supplier?"
+        description="This action cannot be undone"
         icon={Trash2}
         iconBgColor="bg-red-100 dark:bg-red-900/30"
         iconColor="text-red-600"
-        confirmText="確定刪除"
+        confirmText="Delete"
         confirmVariant="danger"
       >
         <p className="text-sm text-slate-600 dark:text-slate-400">
-          確定要刪除供應商「{selectedSupplier?.supplier_name}」嗎？
+          Are you sure you want to delete supplier "{selectedSupplier?.supplier_name}"?
         </p>
       </Modal>
     </div>
