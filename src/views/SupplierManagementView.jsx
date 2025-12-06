@@ -28,6 +28,7 @@ export const SupplierManagementView = ({ addNotification }) => {
   const fileInputRef = useRef(null);
   const [formData, setFormData] = useState({
     supplier_name: '',
+    supplier_code: '',
     contact_info: '',
     address: '',
     product_category: '',
@@ -36,6 +37,19 @@ export const SupplierManagementView = ({ addNotification }) => {
   });
 
   const rowsPerPage = 10;
+
+  // Helper function to format contact_info object
+  const formatContactInfo = (contactInfo) => {
+    if (!contactInfo) return '-';
+    if (typeof contactInfo === 'string') return contactInfo;
+
+    const parts = [];
+    if (contactInfo.contact_person) parts.push(contactInfo.contact_person);
+    if (contactInfo.phone) parts.push(contactInfo.phone);
+    if (contactInfo.email) parts.push(contactInfo.email);
+
+    return parts.length > 0 ? parts.join(' | ') : '-';
+  };
 
   // Load supplier data
   useEffect(() => {
@@ -129,7 +143,19 @@ export const SupplierManagementView = ({ addNotification }) => {
 
     setLoading(true);
     try {
-      await suppliersService.insertSuppliers([formData]);
+      const supplierData = {
+        supplier_name: formData.supplier_name,
+        supplier_code: formData.supplier_code || null,
+        contact_info: {
+          contact_person: formData.contact_info,
+          address: formData.address,
+          product_category: formData.product_category,
+          payment_terms: formData.payment_terms,
+          delivery_time: formData.delivery_time
+        },
+        status: 'active'
+      };
+      await suppliersService.insertSuppliers([supplierData]);
       addNotification("Supplier added successfully", "success");
       setShowAddModal(false);
       resetForm();
@@ -150,7 +176,18 @@ export const SupplierManagementView = ({ addNotification }) => {
 
     setLoading(true);
     try {
-      await suppliersService.updateSupplier(selectedSupplier.id, formData);
+      const supplierData = {
+        supplier_name: formData.supplier_name,
+        supplier_code: formData.supplier_code || null,
+        contact_info: {
+          contact_person: formData.contact_info,
+          address: formData.address,
+          product_category: formData.product_category,
+          payment_terms: formData.payment_terms,
+          delivery_time: formData.delivery_time
+        }
+      };
+      await suppliersService.updateSupplier(selectedSupplier.id, supplierData);
       addNotification("Supplier updated successfully", "success");
       setShowEditModal(false);
       resetForm();
@@ -256,6 +293,7 @@ export const SupplierManagementView = ({ addNotification }) => {
   const resetForm = () => {
     setFormData({
       supplier_name: '',
+      supplier_code: '',
       contact_info: '',
       address: '',
       product_category: '',
@@ -267,13 +305,15 @@ export const SupplierManagementView = ({ addNotification }) => {
 
   const openEditModal = (supplier) => {
     setSelectedSupplier(supplier);
+    const contactInfo = supplier.contact_info || {};
     setFormData({
       supplier_name: supplier.supplier_name || '',
-      contact_info: supplier.contact_info || '',
-      address: supplier.address || '',
-      product_category: supplier.product_category || '',
-      payment_terms: supplier.payment_terms || '',
-      delivery_time: supplier.delivery_time || ''
+      supplier_code: supplier.supplier_code || '',
+      contact_info: typeof contactInfo === 'string' ? contactInfo : (contactInfo.contact_person || contactInfo.phone || contactInfo.email || ''),
+      address: typeof contactInfo === 'object' ? (contactInfo.address || '') : '',
+      product_category: typeof contactInfo === 'object' ? (contactInfo.product_category || '') : '',
+      payment_terms: typeof contactInfo === 'object' ? (contactInfo.payment_terms || '') : '',
+      delivery_time: typeof contactInfo === 'object' ? (contactInfo.delivery_time || '') : ''
     });
     setShowEditModal(true);
   };
@@ -442,11 +482,11 @@ export const SupplierManagementView = ({ addNotification }) => {
                           {supplier.supplier_name || '-'}
                         </td>
                         <td className="px-4 py-3 border-b text-xs">
-                          {supplier.contact_info || '-'}
+                          {formatContactInfo(supplier.contact_info)}
                         </td>
                         <td className="px-4 py-3 border-b">
-                          {supplier.product_category ? (
-                            <Badge type="info">{supplier.product_category}</Badge>
+                          {supplier.contact_info?.product_category ? (
+                            <Badge type="info">{supplier.contact_info.product_category}</Badge>
                           ) : (
                             '-'
                           )}
@@ -886,9 +926,9 @@ export const SupplierManagementView = ({ addNotification }) => {
                     <tr key={idx} className="border-b border-slate-200 dark:border-slate-700">
                       <td className="px-4 py-2">{idx + 1}</td>
                       <td className="px-4 py-2 font-medium">{supplier.supplier_name}</td>
-                      <td className="px-4 py-2">{supplier.contact_info || '-'}</td>
-                      <td className="px-4 py-2">{supplier.address || '-'}</td>
-                      <td className="px-4 py-2">{supplier.product_category || '-'}</td>
+                      <td className="px-4 py-2">{formatContactInfo(supplier.contact_info)}</td>
+                      <td className="px-4 py-2">{supplier.contact_info?.address || '-'}</td>
+                      <td className="px-4 py-2">{supplier.contact_info?.product_category || '-'}</td>
                     </tr>
                   ))}
                 </tbody>

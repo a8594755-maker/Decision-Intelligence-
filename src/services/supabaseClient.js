@@ -110,7 +110,7 @@ export const suppliersService = {
     const { data, error } = await supabase
       .from('suppliers')
       .select('*')
-      .or(`supplier_name.ilike.%${searchTerm}%,contact_info.ilike.%${searchTerm}%,address.ilike.%${searchTerm}%`)
+      .or(`supplier_name.ilike.%${searchTerm}%,supplier_code.ilike.%${searchTerm}%,notes.ilike.%${searchTerm}%`)
       .order('created_at', { ascending: false });
 
     if (error) throw error;
@@ -590,3 +590,139 @@ export const authService = {
     return supabase.auth.onAuthStateChange(callback);
   }
 };
+
+/**
+ * Upload Mappings Operations
+ * 儲存和管理欄位映射模板
+ */
+export const uploadMappingsService = {
+  /**
+   * 保存或更新欄位映射模板
+   * @param {string} userId - 使用者 ID
+   * @param {string} uploadType - 上傳類型
+   * @param {Array} originalColumns - 原始 Excel 欄位列表
+   * @param {Object} mappingJson - 欄位映射關係
+   * @returns {Promise<Object>} 保存的 mapping 記錄
+   */
+  async saveMapping(userId, uploadType, originalColumns, mappingJson) {
+    const payload = {
+      user_id: userId,
+      upload_type: uploadType,
+      original_columns: originalColumns,
+      mapping_json: mappingJson
+    };
+
+    // 使用 upsert 策略：如果已存在則更新，不存在則插入
+    const { data, error } = await supabase
+      .from('upload_mappings')
+      .upsert(payload, {
+        onConflict: 'user_id,upload_type',
+        returning: 'representation'
+      })
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data;
+  },
+
+  /**
+   * 根據使用者和上傳類型獲取最新的映射模板
+   * @param {string} userId - 使用者 ID
+   * @param {string} uploadType - 上傳類型
+   * @returns {Promise<Object|null>} 映射記錄或 null
+   */
+  async getMapping(userId, uploadType) {
+    const { data, error } = await supabase
+      .from('upload_mappings')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('upload_type', uploadType)
+      .single();
+
+    if (error) {
+      if (error.code === 'PGRST116') return null; // Not found
+      throw error;
+    }
+    return data;
+  },
+
+  /**
+   * 獲取使用者的所有映射模板
+   * @param {string} userId - 使用者 ID
+   * @returns {Promise<Array>} 映射記錄列表
+   */
+  async getAllMappings(userId) {
+    const { data, error } = await supabase
+      .from('upload_mappings')
+      .select('*')
+      .eq('user_id', userId)
+      .order('updated_at', { ascending: false });
+
+    if (error) throw error;
+    return data || [];
+  },
+
+  /**
+   * 刪除特定的映射模板
+   * @param {string} userId - 使用者 ID
+   * @param {string} uploadType - 上傳類型
+   * @returns {Promise<Object>} 成功訊息
+   */
+  async deleteMapping(userId, uploadType) {
+    const { error } = await supabase
+      .from('upload_mappings')
+      .delete()
+      .eq('user_id', userId)
+      .eq('upload_type', uploadType);
+
+    if (error) throw error;
+    return { success: true };
+  },
+
+  /**
+   * 智能映射：根據相似度自動套用之前的 mapping
+   * @param {string} userId - 使用者 ID
+   * @param {string} uploadType - 上傳類型
+   * @param {Array} currentColumns - 當前 Excel 欄位
+   * @returns {Promise<Object>} 建議的映射或空物件
+   */
+  async smartMapping(userId, uploadType, currentColumns) {
+    const savedMapping = await this.getMapping(userId, uploadType);
+    
+    if (!savedMapping) {
+      return {}; // 沒有保存的映射
+    }
+
+    const { original_columns: savedColumns, mapping_json: savedMappingJson } = savedMapping;
+
+    // 建立新的映射物件
+    const smartMappingResult = {};
+
+    // 遍歷當前欄位，嘗試匹配之前的映射
+    currentColumns.forEach(currentCol => {
+      // 完全匹配
+      if (savedColumns.includes(currentCol) && savedMappingJson[currentCol]) {
+        smartMappingResult[currentCol] = savedMappingJson[currentCol];
+      } else {
+        // 模糊匹配（大小寫不敏感）
+        const lowerCurrentCol = currentCol.toLowerCase();
+        const matchedCol = savedColumns.find(
+          savedCol => savedCol.toLowerCase() === lowerCurrentCol
+        );
+        
+        if (matchedCol && savedMappingJson[matchedCol]) {
+          smartMappingResult[currentCol] = savedMappingJson[matchedCol];
+        }
+      }
+    });
+
+    return smartMappingResult;
+  }
+};
+
+/**
+ * Import Batches Operations
+ * 管理匯入歷史和批次撤銷功能
+ */
+export { importBatchesService } from './importHistoryService';

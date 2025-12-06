@@ -1,28 +1,144 @@
 ﻿import React, { useState, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
+import { createClient } from '@supabase/supabase-js';
 import {
   LayoutDashboard, Database, Activity, AlertTriangle, BarChart3, Bot, Settings, LogOut,
   Search, User, Upload, RefreshCw, CheckCircle, AlertCircle, FileText, TrendingUp,
-  Menu, X, ChevronRight, Download, Moon, Sun, Send, Sparkles, Loader2, Building2, ChevronDown,
-  DollarSign, History
+  Menu, X, ChevronRight, Download, Moon, Sun, Send, Sparkles, Loader2
 } from 'lucide-react';
 
-// --- Import UI Components ---
-import { Card, Button, Badge } from './components/ui';
-import { SimpleLineChart, SimpleBarChart } from './components/charts';
+// --- Supabase setup (replace with your credentials) ---
+const supabaseUrl = "https://cbxvqqqulwytdblivtoe.supabase.co";
+const supabaseKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNieHZxcXF1bHd5dGRibGl2dG9lIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQ0NjQzNjUsImV4cCI6MjA4MDA0MDM2NX0.3PeFtqJAkoxrosFeAiXbOklRCDxaQjH2VjXWwEiFyYI";
+const supabase = createClient(supabaseUrl, supabaseKey);
 
-// --- Import Services ---
-import { supabase } from './services/supabaseClient';
-import { callGeminiAPI } from './services/geminiAPI';
+// --- Robust Gemini API Integration ---
+const callGeminiAPI = async (prompt, systemContext = "") => {
+  // Use the configured API key
+  const apiKey = "AIzaSyBiPV68i9HR_D6a_PQ3lwSEJSIYZ0eF3j4";
 
-// --- Import Utils ---
-import { extractSuppliers } from './utils/dataProcessing';
+  if (!apiKey) {
+    console.warn("No API Key found.");
+    return "WARNING: No API key found. Add your Google AI API key in Settings.\n\nYou can grab a free key here: https://ai.google.dev/";
+  }
 
-// --- Import Views ---
-import SupplierManagementView from './views/SupplierManagementView';
-import CostAnalysisView from './views/CostAnalysisView';
-import EnhancedExternalSystemsView from './views/EnhancedExternalSystemsView';
-import ImportHistoryView from './views/ImportHistoryView';
+  try {
+    const fullPrompt = systemContext
+      ? `${systemContext}\n\nUser Query: ${prompt}`
+      : prompt;
+
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{
+            parts: [{ text: fullPrompt }]
+          }],
+          generationConfig: {
+            temperature: 0.7,
+            maxOutputTokens: 2048,
+          }
+        })
+      }
+    );
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      console.error("API Error Details:", errorData);
+
+      // Handle quota errors explicitly
+      if (response.status === 429) {
+        return "WARNING: API quota is exhausted.\n\nTry:\n1. Wait for the daily reset\n2. Swap in a new API key in Settings\n3. Upgrade to a paid plan\n\nGet another free key: https://ai.google.dev/";
+      }
+
+      throw new Error(`API Error: ${response.status} - ${errorData.error?.message || 'Unknown error'}`);
+    }
+
+    const data = await response.json();
+    return data.candidates?.[0]?.content?.parts?.[0]?.text || "No response generated.";
+  } catch (error) {
+    console.error("Gemini API Failed:", error);
+    return `ERROR: AI service request failed: ${error.message}\n\nPlease check:\n- Is your API key correct?\n- Is the network available?\n- Any firewall blocking the request?`;
+  }
+};
+
+// --- UI Components (Responsive Updates) ---
+const Card = ({ children, className = "", onClick, hoverEffect = false }) => (
+  <div onClick={onClick} className={`bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm p-4 md:p-6 ${hoverEffect ? 'hover:shadow-lg hover:border-blue-500 dark:hover:border-blue-400 cursor-pointer transition-all duration-200' : ''} ${className}`}>
+    {children}
+  </div>
+);
+
+const Button = ({ children, onClick, variant = "primary", className = "", disabled = false, icon: Icon }) => {
+  const baseStyles = "flex items-center justify-center px-4 py-2 rounded-lg font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed text-sm md:text-base";
+  const variants = {
+    primary: "bg-blue-600 hover:bg-blue-700 text-white focus:ring-blue-500",
+    secondary: "bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-600 focus:ring-slate-500",
+    danger: "bg-red-600 hover:bg-red-700 text-white focus:ring-red-500",
+    success: "bg-emerald-600 hover:bg-emerald-700 text-white focus:ring-emerald-500",
+    magic: "bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 text-white hover:opacity-90 focus:ring-purple-500"
+  };
+  return (
+    <button onClick={onClick} disabled={disabled} className={`${baseStyles} ${variants[variant]} ${className}`}>
+      {Icon && <Icon className="w-4 h-4 mr-2" />}
+      {children}
+    </button>
+  );
+};
+
+const Badge = ({ children, type = "info" }) => {
+  const styles = {
+    info: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300",
+    success: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300",
+    warning: "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300",
+    danger: "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300",
+  };
+  return <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium ${styles[type]}`}>{children}</span>;
+};
+
+// Charts (Improved Responsiveness)
+const SimpleLineChart = ({ data, color = "#3b82f6" }) => {
+  const max = Math.max(...data) * 1.2;
+  const points = data.map((val, i) => `${(i / (data.length - 1)) * 100},${100 - (val / max) * 100}`).join(' ');
+  return (
+    <div className="h-48 md:h-64 w-full relative">
+      <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="h-full w-full overflow-visible">
+        <polyline fill="none" stroke={color} strokeWidth="2" points={points} vectorEffect="non-scaling-stroke" />
+        {data.map((val, i) => (
+          <circle key={i} cx={(i / (data.length - 1)) * 100} cy={100 - (val / max) * 100} r="3" fill={color} className="hover:r-5 transition-all cursor-pointer opacity-0 hover:opacity-100">
+            <title>{val}</title>
+          </circle>
+        ))}
+      </svg>
+      {/* Grid Lines */}
+      <div className="absolute inset-0 flex flex-col justify-between pointer-events-none opacity-10">
+        {[...Array(5)].map((_, i) => <div key={i} className="w-full h-px bg-slate-500" />)}
+      </div>
+    </div>
+  );
+};
+
+const SimpleBarChart = ({ data, labels, colorClass = "bg-blue-500" }) => {
+  const max = Math.max(...data);
+  return (
+    <div className="h-48 md:h-64 flex items-end justify-between gap-2">
+      {data.map((val, i) => (
+        <div key={i} className="flex-1 flex flex-col items-center group h-full justify-end">
+          <div className="relative w-full flex items-end justify-center h-full bg-slate-100 dark:bg-slate-700/50 rounded-t-sm overflow-hidden">
+            <div style={{ height: `${(val / max) * 100}%` }} className={`w-full ${colorClass} transition-all duration-500 group-hover:opacity-80 relative`}>
+               <div className="absolute -top-8 left-1/2 -translate-x-1/2 bg-slate-800 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-10">{val}%</div>
+            </div>
+          </div>
+          <span className="text-xs text-slate-500 dark:text-slate-400 mt-2 truncate w-full text-center hidden sm:block">{labels[i]}</span>
+          {/* Mobile only simplified label */}
+          <span className="text-xs text-slate-500 dark:text-slate-400 mt-1 sm:hidden">{labels[i].substring(0,1)}</span>
+        </div>
+      ))}
+    </div>
+  );
+};
 
 // Mock Data
 const MOCK_ALERTS = [{ id: 1, category: "Material Shortage", item: "Lithium Batteries", supplier: "Voltaic Supplies", risk: "High", impact: "Production Stop Risk", rootCause: "Supplier strike.", recommendation: "Activate backup supplier." }, { id: 2, category: "Delivery Delay", item: "Circuit Boards", supplier: "TechTronix", risk: "Medium", impact: "2 Day Delay", rootCause: "Port congestion.", recommendation: "Expedite Air Freight." }, { id: 3, category: "Quantity Mismatch", item: "Steel Casings", supplier: "MetalWorks", risk: "Low", impact: "Inventory Discrepancy", rootCause: "Packing error.", recommendation: "Request credit note." }];
@@ -39,8 +155,6 @@ export default function SmartOpsApp() {
   const [loading, setLoading] = useState(false);
   const [excelData, setExcelData] = useState(null);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false); // Mobile Menu State
-  const [openDropdowns, setOpenDropdowns] = useState({}); // Track which dropdowns are open
-  const dropdownRefs = useRef({}); // Multiple dropdown refs
 
   const addNotification = (msg, type = 'info') => {
     const id = Date.now();
@@ -74,20 +188,6 @@ export default function SmartOpsApp() {
     if (darkMode) document.documentElement.classList.add('dark');
     else document.documentElement.classList.remove('dark');
   }, [darkMode]);
-
-  // Close dropdowns when clicking outside
-  useEffect(() => {
-    const handleClickOutside = (event) => {
-      const clickedOutsideAll = Object.keys(dropdownRefs.current).every(
-        key => !dropdownRefs.current[key]?.contains(event.target)
-      );
-      if (clickedOutsideAll) {
-        setOpenDropdowns({});
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
 
   const fetchUserData = async (userId) => {
     const { data, error } = await supabase.from('user_files').select('data').eq('user_id', userId).order('created_at', { ascending: false }).limit(1);
@@ -145,13 +245,10 @@ export default function SmartOpsApp() {
   const renderView = () => {
     switch (view) {
       case 'home': return <HomeView setView={setView} />;
-      case 'external': return <EnhancedExternalSystemsView addNotification={addNotification} user={session?.user} />;
-      case 'import-history': return <ImportHistoryView addNotification={addNotification} user={session?.user} />;
-      case 'suppliers': return <SupplierManagementView addNotification={addNotification} />;
-      case 'cost-analysis': return <CostAnalysisView addNotification={addNotification} user={session?.user} />;
+      case 'external': return <ExternalSystemsView addNotification={addNotification} excelData={excelData} setExcelData={setExcelData} user={session?.user} />;
       case 'integration': return <DataIntegrationView addNotification={addNotification} />;
-      case 'alerts': return <SmartAlertsView addNotification={addNotification} excelData={excelData} user={session?.user} />;
-      case 'dashboard': return <OperationsDashboardView excelData={excelData} user={session?.user} />;
+      case 'alerts': return <SmartAlertsView addNotification={addNotification} excelData={excelData} />;
+      case 'dashboard': return <OperationsDashboardView excelData={excelData} />;
       case 'analytics': return <AnalyticsCenterView excelData={excelData} />;
       case 'decision': return <DecisionSupportView excelData={excelData} user={session?.user} addNotification={addNotification} />;
       case 'settings': return <SettingsView darkMode={darkMode} setDarkMode={setDarkMode} user={session?.user} addNotification={addNotification} />;
@@ -180,68 +277,7 @@ export default function SmartOpsApp() {
     );
   }
 
-  // Navigation configuration array - hierarchical structure
-  const navigationConfig = [
-    {
-      key: 'home',
-      label: 'Home',
-      icon: LayoutDashboard,
-      view: 'home'
-    },
-    {
-      key: 'operations',
-      label: 'Operations',
-      icon: Activity,
-      children: [
-        { key: 'dashboard', label: 'Dashboard', icon: BarChart3, view: 'dashboard' },
-        { key: 'alerts', label: 'Alerts', icon: AlertTriangle, view: 'alerts' }
-      ]
-    },
-    {
-      key: 'analysis',
-      label: 'Analysis',
-      icon: TrendingUp,
-      children: [
-        { key: 'cost-analysis', label: 'Cost Analysis', icon: DollarSign, view: 'cost-analysis' },
-        { key: 'analytics', label: 'Analytics', icon: BarChart3, view: 'analytics' }
-      ]
-    },
-    {
-      key: 'data',
-      label: 'Data',
-      icon: Database,
-      children: [
-        { key: 'external', label: 'External Systems', icon: Database, view: 'external' },
-        { key: 'integration', label: 'Data Integration', icon: RefreshCw, view: 'integration' },
-        { key: 'suppliers', label: 'Supplier Management', icon: Building2, view: 'suppliers' }
-      ]
-    },
-    {
-      key: 'decision',
-      label: 'Decision AI',
-      icon: Bot,
-      view: 'decision'
-    }
-  ];
-
-  // Helper function: Check if current view is under a nav item
-  const isNavItemActive = (navItem) => {
-    if (navItem.view) {
-      return view === navItem.view;
-    }
-    if (navItem.children) {
-      return navItem.children.some(child => child.view === view);
-    }
-    return false;
-  };
-
-  // Helper function: Toggle dropdown
-  const toggleDropdown = (key) => {
-    setOpenDropdowns(prev => ({
-      ...prev,
-      [key]: !prev[key]
-    }));
-  };
+  const navItems = [{ id: 'home', label: 'Home', icon: LayoutDashboard }, { id: 'dashboard', label: 'Dashboard', icon: BarChart3 }, { id: 'alerts', label: 'Alerts', icon: AlertTriangle }, { id: 'analytics', label: 'Analytics', icon: TrendingUp }, { id: 'decision', label: 'Decision AI', icon: Bot }];
 
   return (
     <div className={`min-h-screen flex flex-col transition-colors duration-300 ${darkMode ? 'bg-slate-900 text-slate-100' : 'bg-slate-50 text-slate-900'}`}>
@@ -255,73 +291,13 @@ export default function SmartOpsApp() {
             <span className="text-xl font-bold">SmartOps</span>
           </div>
           
-          {/* Desktop Nav - hierarchical navigation */}
+          {/* Desktop Nav */}
           <nav className="hidden md:flex items-center space-x-1">
-            {navigationConfig.map(navItem => {
-              const isActive = isNavItemActive(navItem);
-              
-              // Single item (no submenu)
-              if (!navItem.children) {
-                return (
-                  <button 
-                    key={navItem.key} 
-                    onClick={() => setView(navItem.view)} 
-                    className={`flex items-center px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                      isActive 
-                        ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400' 
-                        : 'hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300'
-                    }`}
-                  >
-                    <navItem.icon className="w-4 h-4 mr-2" />
-                    {navItem.label}
-                  </button>
-                );
-              }
-              
-              // Item with submenu
-              return (
-                <div 
-                  key={navItem.key} 
-                  className="relative" 
-                  ref={el => dropdownRefs.current[navItem.key] = el}
-                >
-                  <button
-                    onClick={() => toggleDropdown(navItem.key)}
-                    className={`flex items-center px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                      isActive
-                        ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400'
-                        : 'hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300'
-                    }`}
-                  >
-                    <navItem.icon className="w-4 h-4 mr-2" />
-                    {navItem.label}
-                    <ChevronDown className={`w-4 h-4 ml-1 transition-transform ${openDropdowns[navItem.key] ? 'rotate-180' : ''}`} />
-                  </button>
-
-                  {openDropdowns[navItem.key] && (
-                    <div className="absolute top-full mt-1 left-0 bg-white dark:bg-slate-800 rounded-lg shadow-lg border border-slate-200 dark:border-slate-700 py-1 min-w-[200px] z-50">
-                      {navItem.children.map(child => (
-                        <button
-                          key={child.key}
-                          onClick={() => {
-                            setView(child.view);
-                            setOpenDropdowns({});
-                          }}
-                          className={`w-full flex items-center px-4 py-2 text-sm font-medium transition-colors ${
-                            view === child.view
-                              ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400'
-                              : 'hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300'
-                          }`}
-                        >
-                          <child.icon className="w-4 h-4 mr-2" />
-                          {child.label}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
+            {navItems.map(item => (
+              <button key={item.id} onClick={() => setView(item.id)} className={`flex items-center px-3 py-2 rounded-lg text-sm font-medium transition-colors ${view === item.id ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400' : 'hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300'}`}>
+                <item.icon className="w-4 h-4 mr-2" />{item.label}
+              </button>
+            ))}
           </nav>
 
           <div className="flex items-center space-x-2 md:space-x-4">
@@ -336,66 +312,16 @@ export default function SmartOpsApp() {
         </div>
       </header>
 
-      {/* Mobile Menu Dropdown - hierarchical navigation */}
+      {/* Mobile Menu Dropdown */}
       {isMobileMenuOpen && (
         <div className="md:hidden bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 p-4">
-          <div className="space-y-2">
-            {navigationConfig.map(navItem => {
-              // Single item (no submenu)
-              if (!navItem.children) {
-                return (
-                  <button 
-                    key={navItem.key} 
-                    onClick={() => { 
-                      setView(navItem.view); 
-                      setIsMobileMenuOpen(false); 
-                    }} 
-                    className={`w-full flex items-center p-3 rounded-lg text-sm font-medium ${
-                      view === navItem.view 
-                        ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400' 
-                        : 'bg-slate-50 dark:bg-slate-700 text-slate-600 dark:text-slate-300'
-                    }`}
-                  >
-                    <navItem.icon className="w-4 h-4 mr-2" />
-                    {navItem.label}
-                  </button>
-                );
-              }
-              
-              // Item with submenu - expand to show all children in mobile version
-              return (
-                <div key={navItem.key} className="space-y-1">
-                  <div className="text-xs uppercase font-semibold text-slate-400 px-3 py-1 flex items-center gap-2">
-                    <navItem.icon className="w-3 h-3" />
-                    {navItem.label}
-                  </div>
-                  {navItem.children.map(child => (
-                    <button 
-                      key={child.key}
-                      onClick={() => { 
-                        setView(child.view); 
-                        setIsMobileMenuOpen(false); 
-                      }} 
-                      className={`w-full flex items-center p-3 pl-6 rounded-lg text-sm font-medium ${
-                        view === child.view 
-                          ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400' 
-                          : 'bg-slate-50 dark:bg-slate-700 text-slate-600 dark:text-slate-300'
-                      }`}
-                    >
-                      <child.icon className="w-4 h-4 mr-2" />
-                      {child.label}
-                    </button>
-                  ))}
-                </div>
-              );
-            })}
-            <button 
-              onClick={handleLogout} 
-              className="w-full flex items-center p-3 rounded-lg text-sm font-medium bg-red-50 dark:bg-red-900/20 text-red-600 justify-center mt-4"
-            >
-              <LogOut className="w-4 h-4 mr-2" />
-              Logout
-            </button>
+          <div className="grid grid-cols-2 gap-2">
+            {navItems.map(item => (
+              <button key={item.id} onClick={() => { setView(item.id); setIsMobileMenuOpen(false); }} className={`flex items-center p-3 rounded-lg text-sm font-medium ${view === item.id ? 'bg-blue-50 text-blue-600' : 'bg-slate-50 text-slate-600'}`}>
+                <item.icon className="w-4 h-4 mr-2" />{item.label}
+              </button>
+            ))}
+            <button onClick={handleLogout} className="flex items-center p-3 rounded-lg text-sm font-medium bg-red-50 text-red-600 col-span-2 justify-center"><LogOut className="w-4 h-4 mr-2" />Logout</button>
           </div>
         </div>
       )}
@@ -409,247 +335,25 @@ export default function SmartOpsApp() {
 
 // ... (Sub-components with Grid Fixes) ...
 
-
-// Universal Module Card Component
-const ModuleCard = ({ id, title, description, icon: Icon, color, onClick }) => {
-  return (
-    <Card 
-      onClick={() => onClick(id)} 
-      hoverEffect 
-      className="group cursor-pointer h-full"
-    >
-      <div className="flex flex-col h-full">
-        <div className="flex items-start justify-between mb-3">
-          <div className={`p-2.5 rounded-lg bg-slate-100 dark:bg-slate-700/50 ${color} group-hover:scale-110 transition-transform`}>
-            <Icon className="w-5 h-5" />
-          </div>
-          <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-blue-600 group-hover:translate-x-1 transition-all" />
-        </div>
-        <h3 className="text-base font-semibold mb-1.5 group-hover:text-blue-600 transition-colors">
-          {title}
-        </h3>
-        <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
-          {description}
-        </p>
-      </div>
-    </Card>
-  );
-};
-
-// Refactored Home View Component
 const HomeView = ({ setView }) => {
-  // Core and Data Management Modules
-  const coreModules = [
-    { 
-      id: 'dashboard', 
-      title: "Operations Dashboard", 
-      description: "View supply chain health, KPI trends, and key metrics", 
-      icon: LayoutDashboard, 
-      color: "text-emerald-500" 
-    },
-    { 
-      id: 'cost-analysis', 
-      title: "Cost Analysis", 
-      description: "Track procurement costs and analyze supplier price trends", 
-      icon: DollarSign, 
-      color: "text-blue-500" 
-    },
-    { 
-      id: 'alerts', 
-      title: "Alert Center", 
-      description: "Real-time monitoring of supply chain issues, risk warnings, and recommendations", 
-      icon: AlertTriangle, 
-      color: "text-red-500" 
-    },
-    { 
-      id: 'analytics', 
-      title: "Analytics Center", 
-      description: "Deep data insights and AI-driven analysis reports", 
-      icon: TrendingUp, 
-      color: "text-indigo-500" 
-    },
-  ];
-
-  const dataModules = [
-    { 
-      id: 'suppliers', 
-      title: "Supplier Management", 
-      description: "Manage supplier data, track performance and KPI scores", 
-      icon: Building2, 
-      color: "text-purple-500" 
-    },
-    { 
-      id: 'external', 
-      title: "External Systems", 
-      description: "Connect ERP, MES, WMS and other systems, upload data files", 
-      icon: Database, 
-      color: "text-cyan-500" 
-    },
-    { 
-      id: 'import-history', 
-      title: "Import History", 
-      description: "View all data import records, preview data and undo batches", 
-      icon: History, 
-      color: "text-indigo-500" 
-    },
-    { 
-      id: 'decision', 
-      title: "AI Decision Assistant", 
-      description: "Chat with AI to get supply chain decision insights and recommendations", 
-      icon: Bot, 
-      color: "text-amber-500" 
-    },
-  ];
-
-  // Mock KPI data (can be fetched from props or API in the future)
-  const kpiData = [
-    { label: "System Health", value: "94%", trend: "+2.1%", color: "text-emerald-600", bgColor: "bg-emerald-50 dark:bg-emerald-900/20", icon: Activity },
-    { label: "On-Time Delivery", value: "92%", trend: "+1.4%", color: "text-blue-600", bgColor: "bg-blue-50 dark:bg-blue-900/20", icon: CheckCircle },
-    { label: "Pending Alerts", value: "3", trend: "Requires Attention", color: "text-red-600", bgColor: "bg-red-50 dark:bg-red-900/20", icon: AlertTriangle },
-  ];
-
-  // Quick action items
-  const quickActions = [
-    { label: "3 high-risk alerts pending", action: 'alerts', icon: AlertTriangle, color: "text-red-600" },
-    { label: "5 suppliers below KPI standards", action: 'suppliers', icon: Building2, color: "text-amber-600" },
-    { label: "12 items approaching shortage", action: 'dashboard', icon: TrendingUp, color: "text-blue-600" },
-  ];
-
+  const modules = [{ id: 'external', title: "External Systems", desc: "Data sources.", icon: Database, color: "text-blue-500" },{ id: 'integration', title: "Data Integration", desc: "ETL pipelines.", icon: RefreshCw, color: "text-purple-500" },{ id: 'alerts', title: "Smart Alerts", desc: "Real-time alerts.", icon: AlertTriangle, color: "text-red-500" },{ id: 'dashboard', title: "Dashboard", desc: "KPIs & charts.", icon: LayoutDashboard, color: "text-emerald-500" },{ id: 'analytics', title: "Analytics", desc: "Insights.", icon: TrendingUp, color: "text-indigo-500" },{ id: 'decision', title: "Decision AI", desc: "AI Assistant.", icon: Bot, color: "text-amber-500" },{ id: 'settings', title: "Settings", desc: "Preferences.", icon: Settings, color: "text-slate-500" },];
   return (
-    <div className="space-y-8 animate-fade-in">
-      {/* Hero Section - Welcome Area + KPI Overview */}
-      <div className="space-y-6">
-        <div>
-          <h1 className="text-2xl md:text-3xl font-bold text-slate-900 dark:text-slate-100 mb-2">
-            👋 Welcome Back
-          </h1>
-          <p className="text-slate-600 dark:text-slate-400 text-sm md:text-base">
-            Today is {new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' })}. Here's your supply chain overview
-          </p>
-        </div>
-
-        {/* KPI Cards Row */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          {kpiData.map((kpi, index) => (
-            <Card key={index} className={`${kpi.bgColor} border-none`}>
-              <div className="flex items-start justify-between">
-                <div>
-                  <div className="text-xs uppercase font-semibold text-slate-600 dark:text-slate-400 mb-1">
-                    {kpi.label}
-                  </div>
-                  <div className={`text-3xl font-bold ${kpi.color} mb-1`}>
-                    {kpi.value}
-                  </div>
-                  <div className={`text-xs font-medium ${kpi.color.replace('600', '500')}`}>
-                    {kpi.trend}
-                  </div>
-                </div>
-                <div className={`p-2 rounded-lg ${kpi.bgColor}`}>
-                  <kpi.icon className={`w-6 h-6 ${kpi.color}`} />
-                </div>
-              </div>
-            </Card>
-          ))}
-        </div>
-      </div>
-
-      {/* Quick Actions - Action Items Area */}
-      <Card className="border-l-4 border-l-amber-500 bg-amber-50/50 dark:bg-amber-900/10">
-        <h3 className="font-semibold text-slate-900 dark:text-slate-100 mb-3 flex items-center gap-2">
-          <AlertCircle className="w-5 h-5 text-amber-600" />
-          Items Requiring Your Attention
-        </h3>
-        <div className="space-y-2">
-          {quickActions.map((action, index) => (
-            <button
-              key={index}
-              onClick={() => setView(action.action)}
-              className="w-full flex items-center justify-between p-3 rounded-lg bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors group"
-            >
-              <div className="flex items-center gap-3">
-                <action.icon className={`w-4 h-4 ${action.color}`} />
-                <span className="text-sm font-medium text-slate-700 dark:text-slate-300">
-                  {action.label}
-                </span>
-              </div>
-              <ChevronRight className="w-4 h-4 text-slate-400 group-hover:text-blue-600 group-hover:translate-x-1 transition-all" />
-            </button>
-          ))}
-        </div>
-      </Card>
-
-      {/* Core Modules - Core Function Modules */}
-      <div className="space-y-4">
-        <div>
-          <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100 mb-1">
-            Core Features
-          </h2>
-          <p className="text-sm text-slate-500 dark:text-slate-400">
-            Daily operations and analytics tools
-          </p>
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          {coreModules.map((module) => (
-            <ModuleCard
-              key={module.id}
-              {...module}
-              onClick={setView}
-            />
-          ))}
-        </div>
-      </div>
-
-      {/* Data Management Modules - Data Management Modules */}
-      <div className="space-y-4">
-        <div>
-          <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100 mb-1">
-            Data Management
-          </h2>
-          <p className="text-sm text-slate-500 dark:text-slate-400">
-            Manage suppliers, integrate system data, and AI tools
-          </p>
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {dataModules.map((module) => (
-            <ModuleCard
-              key={module.id}
-              {...module}
-              onClick={setView}
-            />
-          ))}
-        </div>
-      </div>
-
-      {/* System Status - External System Connection Status */}
-      <Card className="bg-slate-50/50 dark:bg-slate-800/50">
-        <h3 className="font-semibold text-slate-900 dark:text-slate-100 mb-4 flex items-center gap-2">
-          <Database className="w-5 h-5 text-slate-600" />
-          External System Connection Status
-        </h3>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          {[
-            { name: 'ERP (SAP)', status: 'Connected', lastSync: '2 mins ago', icon: 'E' },
-            { name: 'MES (Siemens)', status: 'Connected', lastSync: '5 mins ago', icon: 'M' },
-            { name: 'WMS (Oracle)', status: 'Connected', lastSync: '1 min ago', icon: 'W' }
-          ].map((sys, i) => (
-            <div key={i} className="flex items-center gap-3 p-3 bg-white dark:bg-slate-700 rounded-lg">
-              <div className="w-10 h-10 rounded-full bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center font-bold text-emerald-600">
-                {sys.icon}
-              </div>
-              <div className="flex-1">
-                <h4 className="font-medium text-sm text-slate-900 dark:text-slate-100">{sys.name}</h4>
-                <p className="text-xs text-emerald-600 flex items-center gap-1">
-                  <CheckCircle className="w-3 h-3" />
-                  {sys.status}
-                </p>
-              </div>
-              <div className="text-right">
-                <p className="text-xs text-slate-400">{sys.lastSync}</p>
-              </div>
+    <div className="animate-fade-in w-full">
+      <h2 className="text-xl md:text-2xl font-bold mb-2">Welcome Back</h2>
+      <p className="text-slate-500 dark:text-slate-400 mb-8">Select a module to manage your supply chain.</p>
+      {/* Smart Grid System */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 md:gap-6">
+        {modules.map((m) => (
+          <Card key={m.id} onClick={() => setView(m.id)} hoverEffect className="group">
+            <div className="flex items-start justify-between mb-4">
+              <div className={`p-3 rounded-lg bg-slate-100 dark:bg-slate-700/50 ${m.color} group-hover:bg-white transition-colors`}><m.icon className="w-6 h-6" /></div>
+              <ChevronRight className="w-5 h-5 text-slate-300 group-hover:text-slate-500 transition-colors" />
             </div>
-          ))}
-        </div>
-      </Card>
+            <h3 className="text-lg font-semibold mb-1">{m.title}</h3>
+            <p className="text-sm text-slate-500 dark:text-slate-400">{m.desc}</p>
+          </Card>
+        ))}
+      </div>
     </div>
   );
 };
@@ -767,18 +471,18 @@ const ExternalSystemsView = ({ addNotification, excelData, setExcelData, user })
 
       setStagedRows(rows);
       setUploadProgress(100);
-      addNotification(`Loaded ${rows.length} rows, awaiting AI analysis`, "success");
+      addNotification(`已載入 ${rows.length} 筆資料，等待 AI 分析`, "success");
       const suppliers = extractSuppliers(rows);
       setSupplierPreview(suppliers);
       if (!suppliers.length) {
-        setSupplierError('No supplier fields detected. Please ensure data contains supplier names.');
+        setSupplierError('未偵測到供應商欄位，請確認資料包含供應商名稱。');
       }
       setCurrentPage(1);
       setSearchTerm('');
       if (rows.length > 0) {
         await runAiAnalysis(rows);
       } else {
-        addNotification("File is empty, unable to analyze", "error");
+        addNotification("檔案為空，無法分析", "error");
         setAiStatus('error');
       }
     } catch (error) {
@@ -794,6 +498,44 @@ const ExternalSystemsView = ({ addNotification, excelData, setExcelData, user })
     }
   };
 
+  const normalizeKey = (key) => key.replace(/\s+/g, '').toLowerCase();
+
+  const extractSuppliers = (rows) => {
+    if (!Array.isArray(rows)) return [];
+    const nameKeys = ['supplier_name', 'supplier', '供應商名稱', '供应商名称'];
+    const contactKeys = ['contact_info', 'contact', '聯絡方式', '联系方式', 'phone', 'email'];
+    const addressKeys = ['address', '地址'];
+    const categoryKeys = ['product_category', 'category', '產品類別', '产品类别'];
+    const paymentKeys = ['payment_terms', '付款條件', '付款条件'];
+    const deliveryKeys = ['delivery_time', '交貨時間', '交货时间', 'lead_time'];
+
+    const findVal = (row, keys) => {
+      const lowerMap = {};
+      Object.keys(row || {}).forEach(k => lowerMap[normalizeKey(k)] = row[k]);
+      for (const k of keys) {
+        const val = lowerMap[normalizeKey(k)];
+        if (val !== undefined && val !== null && val !== '') return String(val);
+      }
+      return '';
+    };
+
+    const seen = new Set();
+    const extracted = [];
+    rows.forEach((row) => {
+      const supplier_name = findVal(row, nameKeys);
+      if (!supplier_name) return;
+      const contact_info = findVal(row, contactKeys);
+      const address = findVal(row, addressKeys);
+      const product_category = findVal(row, categoryKeys);
+      const payment_terms = findVal(row, paymentKeys);
+      const delivery_time = findVal(row, deliveryKeys);
+      const key = `${supplier_name}|${contact_info}|${address}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      extracted.push({ supplier_name, contact_info, address, product_category, payment_terms, delivery_time });
+    });
+    return extracted;
+  };
 
   const extractAiJson = (text) => {
     if (!text) return {};
@@ -1024,10 +766,10 @@ const ExternalSystemsView = ({ addNotification, excelData, setExcelData, user })
               <div>
                 <h3 className="font-semibold flex items-center gap-2">
                   <Sparkles className="w-4 h-4 text-blue-600" />
-                  AI Data Preview
+                  AI 資料預覽
                 </h3>
                 <p className="text-sm text-slate-500 dark:text-slate-400">
-                  Loaded {stagedRows.length} rows. AI will analyze first 30 samples.
+                  已載入 {stagedRows.length} 筆資料，AI 先分析 30 筆樣本。
                 </p>
               </div>
               <div className="flex gap-2">
@@ -1036,17 +778,17 @@ const ExternalSystemsView = ({ addNotification, excelData, setExcelData, user })
                   onClick={runAiAnalysis.bind(null, stagedRows)}
                   disabled={aiStatus === 'analyzing' || stagedRows.length === 0}
                 >
-                  {aiStatus === 'analyzing' ? "AI Analyzing..." : "Re-analyze"}
+                  {aiStatus === 'analyzing' ? "AI 分析中..." : "重新分析"}
                 </Button>
                 <Button variant="secondary" onClick={handleReject}>
-                  Discard
+                  捨棄
                 </Button>
                 <Button
                   variant="success"
                   onClick={handleAccept}
                   disabled={aiStatus !== 'ready' || saving}
                 >
-                  {saving ? "Saving..." : "Accept & Save"}
+                  {saving ? "儲存中..." : "接受並儲存"}
                 </Button>
               </div>
             </div>
@@ -1054,37 +796,37 @@ const ExternalSystemsView = ({ addNotification, excelData, setExcelData, user })
             {aiStatus === 'analyzing' && (
               <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
                 <Loader2 className="w-4 h-4 animate-spin text-blue-600" />
-                AI analyzing, please wait...
+                AI 解析中，請稍候...
               </div>
             )}
 
             {aiStatus === 'error' && (
               <div className="flex items-center gap-2 text-sm text-red-600">
                 <AlertCircle className="w-4 h-4" />
-                {aiError || 'AI analysis failed'}
+                {aiError || 'AI 分析失敗'}
               </div>
             )}
 
             {aiPreview && aiStatus === 'ready' && (
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div className="md:col-span-2 space-y-2">
-                  <div className="text-sm text-slate-500">AI Summary</div>
+                  <div className="text-sm text-slate-500">AI 摘要</div>
                   <p className="text-sm leading-relaxed whitespace-pre-line">{aiPreview.summary}</p>
-                  <div className="text-sm text-slate-500 mt-3">Quality Check</div>
+                  <div className="text-sm text-slate-500 mt-3">品質檢查</div>
                   <p className="text-sm leading-relaxed whitespace-pre-line">{aiPreview.quality}</p>
                   {versionId && (
-                    <Badge type="success">Version {versionId}</Badge>
+                    <Badge type="success">版本 {versionId}</Badge>
                   )}
                 </div>
                 <div className="space-y-2">
-                  <div className="text-sm text-slate-500">Fields</div>
+                  <div className="text-sm text-slate-500">欄位</div>
                   <div className="flex flex-wrap gap-2">
                     {aiPreview.fields && aiPreview.fields.length > 0 ? aiPreview.fields.map((f) => (
                       <Badge key={f} type="info">{f}</Badge>
-                    )) : <span className="text-xs text-slate-400">AI could not identify fields</span>}
+                    )) : <span className="text-xs text-slate-400">AI 無法識別欄位</span>}
                   </div>
                   <div className="text-xs text-slate-400 mt-2">
-                    AI raw output (for debugging):<br />{aiPreview.raw?.slice(0, 200)}{aiPreview.raw && aiPreview.raw.length > 200 ? '…' : ''}
+                    AI 原始輸出（供除錯）：<br />{aiPreview.raw?.slice(0, 200)}{aiPreview.raw && aiPreview.raw.length > 200 ? '…' : ''}
                   </div>
                 </div>
               </div>
@@ -1094,18 +836,18 @@ const ExternalSystemsView = ({ addNotification, excelData, setExcelData, user })
               <div className="mt-2">
                 <div className="flex items-center gap-2 mb-2">
                   <Database className="w-4 h-4 text-emerald-500" />
-                  <span className="text-sm font-semibold">Detected Supplier Data (Deduplicated)</span>
+                  <span className="text-sm font-semibold">偵測到的供應商資料（去重後）</span>
                 </div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm border-collapse min-w-[600px]">
                     <thead className="bg-emerald-50 dark:bg-emerald-900/30 text-emerald-800 dark:text-emerald-100">
                       <tr>
-                        <th className="px-3 py-2 text-left">Name</th>
-                        <th className="px-3 py-2 text-left">Contact</th>
-                        <th className="px-3 py-2 text-left">Address</th>
-                        <th className="px-3 py-2 text-left">Product Category</th>
-                        <th className="px-3 py-2 text-left">Payment Terms</th>
-                        <th className="px-3 py-2 text-left">Delivery Time</th>
+                        <th className="px-3 py-2 text-left">名稱</th>
+                        <th className="px-3 py-2 text-left">聯絡方式</th>
+                        <th className="px-3 py-2 text-left">地址</th>
+                        <th className="px-3 py-2 text-left">產品類別</th>
+                        <th className="px-3 py-2 text-left">付款條件</th>
+                        <th className="px-3 py-2 text-left">交貨時間</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1122,7 +864,7 @@ const ExternalSystemsView = ({ addNotification, excelData, setExcelData, user })
                     </tbody>
                   </table>
                   {supplierPreview.length > 5 && (
-                    <div className="text-xs text-slate-500 mt-1">Showing first 5 of {supplierPreview.length} suppliers</div>
+                    <div className="text-xs text-slate-500 mt-1">僅顯示前 5 筆，共 {supplierPreview.length} 筆供應商</div>
                   )}
                 </div>
               </div>
@@ -1375,64 +1117,16 @@ const DataIntegrationView = ({ addNotification }) => {
   );
 };
 
-const SmartAlertsView = ({ addNotification, excelData, user }) => {
+const SmartAlertsView = ({ addNotification, excelData }) => {
   const [selectedAlert, setSelectedAlert] = useState(null);
   const [aiAnalysis, setAiAnalysis] = useState(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [kpiAlerts, setKpiAlerts] = useState([]);
-  const [loadingKpiAlerts, setLoadingKpiAlerts] = useState(false);
-
-  // Load KPI-based alerts
-  useEffect(() => {
-    const loadKpiAlerts = async () => {
-      if (!user?.id) return;
-
-      setLoadingKpiAlerts(true);
-      try {
-        const { getAnomalousSuppliers } = await import('./services/supplierKpiService');
-        const anomalies = await getAnomalousSuppliers(user.id, {
-          maxDefectRate: 5,
-          minOnTimeRate: 90,
-          maxPriceVolatility: 15
-        });
-
-        // Convert to alert format
-        const alerts = anomalies.flatMap(supplier =>
-          supplier.issues.map(issue => ({
-            id: `kpi-${supplier.supplier_id}-${issue.type}`,
-            category: issue.type === 'high_defect_rate' ? 'High Defect Rate' :
-                     issue.type === 'low_on_time_rate' ? 'Low On-Time Delivery' :
-                     'High Price Volatility',
-            item: supplier.supplier_name,
-            supplier: supplier.supplier_name,
-            risk: issue.severity === 'high' ? 'High' : 'Medium',
-            impact: issue.message,
-            rootCause: `Score: ${supplier.overall_score?.toFixed(0)} | Risk: ${supplier.risk_level}`,
-            recommendation: `Current value: ${issue.value?.toFixed(2)} | Threshold: ${issue.threshold}`,
-            isKpiAlert: true,
-            supplierData: supplier
-          }))
-        );
-
-        setKpiAlerts(alerts);
-      } catch (error) {
-        console.error('Failed to load KPI alerts:', error);
-      } finally {
-        setLoadingKpiAlerts(false);
-      }
-    };
-
-    loadKpiAlerts();
-  }, [user]);
-
-  const allAlerts = [...kpiAlerts, ...MOCK_ALERTS];
-
+  
   const generateDeepDive = async () => {
     if (!selectedAlert) return;
     setIsAnalyzing(true); setAiAnalysis(null);
     const context = excelData ? `USER DATA: ${JSON.stringify(excelData.slice(0, 5))}...` : "No data.";
-    const kpiContext = selectedAlert.isKpiAlert ? `SUPPLIER KPI DATA: ${JSON.stringify(selectedAlert.supplierData)}` : '';
-    const prompt = `Analyze alert: ${selectedAlert.category} for ${selectedAlert.item}. Context: ${context} ${kpiContext}. Suggest mitigation.`;
+    const prompt = `Analyze alert: ${selectedAlert.category} for ${selectedAlert.item}. Context: ${context}. Suggest mitigation.`;
     const result = await callGeminiAPI(prompt);
     setAiAnalysis(result); setIsAnalyzing(false);
   };
@@ -1440,51 +1134,13 @@ const SmartAlertsView = ({ addNotification, excelData, user }) => {
   return (
     <div className="flex flex-col lg:flex-row gap-6 animate-fade-in h-[calc(100vh-140px)]">
       <div className={`${selectedAlert ? 'hidden lg:block lg:w-1/3' : 'w-full'} space-y-4 overflow-y-auto`}>
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-xl md:text-2xl font-bold flex items-center gap-2">
-            <AlertTriangle className="w-6 h-6 text-red-500" />
-            Alerts
-          </h2>
-          <Badge type="info">{allAlerts.length} Total</Badge>
-        </div>
-
-        {kpiAlerts.length > 0 && (
-          <div className="mb-4">
-            <h3 className="text-sm font-semibold text-purple-600 mb-2 flex items-center gap-2">
-              <Building2 className="w-4 h-4" />
-              Supplier KPI Alerts ({kpiAlerts.length})
-            </h3>
-          </div>
-        )}
-
-        {loadingKpiAlerts && (
-          <Card className="text-center py-4">
-            <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-purple-600 mx-auto mb-2"></div>
-            <p className="text-xs text-slate-500">Loading KPI alerts...</p>
-          </Card>
-        )}
-
-        {allAlerts.map(alert => (
+        <h2 className="text-xl md:text-2xl font-bold flex items-center gap-2 mb-4"><AlertTriangle className="w-6 h-6 text-red-500" />Alerts</h2>
+        {MOCK_ALERTS.map(alert => (
           <Card key={alert.id} onClick={() => setSelectedAlert(alert)} className={`cursor-pointer border-l-4 ${selectedAlert?.id === alert.id ? 'ring-2 ring-blue-500' : ''} ${alert.risk === 'High' ? 'border-l-red-500' : 'border-l-amber-500'}`}>
-            <div className="flex justify-between items-start mb-2">
-              <div className="flex items-center gap-2">
-                <span className="font-semibold">{alert.category}</span>
-                {alert.isKpiAlert && <Badge type="info" className="text-xs">KPI</Badge>}
-              </div>
-              <Badge type={alert.risk === 'High' ? 'danger' : 'warning'}>{alert.risk}</Badge>
-            </div>
+            <div className="flex justify-between items-start mb-2"><span className="font-semibold">{alert.category}</span><Badge type={alert.risk === 'High' ? 'danger' : 'warning'}>{alert.risk}</Badge></div>
             <p className="text-sm text-slate-500 mb-1">{alert.item}</p>
-            <p className="text-xs text-slate-400">{alert.supplier}</p>
           </Card>
         ))}
-
-        {!loadingKpiAlerts && allAlerts.length === 0 && (
-          <Card className="text-center py-8 text-slate-500">
-            <AlertTriangle className="w-12 h-12 mx-auto mb-2 opacity-20" />
-            <p>No alerts at this time</p>
-            <p className="text-xs mt-1">System is operating normally</p>
-          </Card>
-        )}
       </div>
       {selectedAlert ? (
         <div className="flex-1 animate-slide-in overflow-y-auto pb-20 lg:pb-0">
@@ -1506,36 +1162,13 @@ const SmartAlertsView = ({ addNotification, excelData, user }) => {
   );
 };
 
-const OperationsDashboardView = ({ excelData, user }) => {
+const OperationsDashboardView = ({ excelData }) => {
   const [range, setRange] = useState('7d');
-  const [supplierKpis, setSupplierKpis] = useState([]);
-  const [loadingKpis, setLoadingKpis] = useState(false);
-
   const ranges = [
     { id: '7d', label: '7d' },
     { id: '30d', label: '30d' },
     { id: '90d', label: '90d' }
   ];
-
-  // Load supplier KPI data
-  useEffect(() => {
-    const loadSupplierKpis = async () => {
-      if (!user?.id) return;
-
-      setLoadingKpis(true);
-      try {
-        const { getSupplierKpiSummary } = await import('./services/supplierKpiService');
-        const kpiData = await getSupplierKpiSummary(user.id);
-        setSupplierKpis(Array.isArray(kpiData) ? kpiData.slice(0, 10) : []);
-      } catch (error) {
-        console.error('Failed to load supplier KPIs:', error);
-      } finally {
-        setLoadingKpis(false);
-      }
-    };
-
-    loadSupplierKpis();
-  }, [user]);
 
   const hasData = Array.isArray(excelData) && excelData.length > 0;
   const columns = hasData ? Object.keys(excelData[0]) : [];
@@ -1646,88 +1279,6 @@ const OperationsDashboardView = ({ excelData, user }) => {
           </Card>
         ))}
       </div>
-
-      {/* Supplier Performance Section */}
-      {supplierKpis.length > 0 && (
-        <Card>
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="font-semibold flex items-center gap-2">
-              <Building2 className="w-5 h-5 text-purple-600" />
-              Supplier Performance Overview
-            </h3>
-            <Badge type="info">{supplierKpis.length} Suppliers</Badge>
-          </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="text-xs uppercase bg-slate-50 dark:bg-slate-700/50">
-                <tr>
-                  <th className="px-3 py-2 text-left">Supplier</th>
-                  <th className="px-3 py-2 text-center">Score</th>
-                  <th className="px-3 py-2 text-center">Defect %</th>
-                  <th className="px-3 py-2 text-center">On-Time %</th>
-                  <th className="px-3 py-2 text-center">Volatility %</th>
-                  <th className="px-3 py-2 text-center">Risk</th>
-                </tr>
-              </thead>
-              <tbody>
-                {supplierKpis.map((supplier, idx) => (
-                  <tr key={supplier.supplier_id} className="border-b dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800/50">
-                    <td className="px-3 py-2 font-medium">{supplier.supplier_name}</td>
-                    <td className="px-3 py-2 text-center">
-                      <span className={`font-bold ${
-                        supplier.overall_score >= 90 ? 'text-green-600' :
-                        supplier.overall_score >= 70 ? 'text-yellow-600' :
-                        'text-red-600'
-                      }`}>
-                        {supplier.overall_score?.toFixed(0)}
-                      </span>
-                    </td>
-                    <td className="px-3 py-2 text-center">
-                      <span className={supplier.defect_rate > 5 ? 'text-red-600 font-semibold' : 'text-slate-600'}>
-                        {supplier.defect_rate?.toFixed(2)}%
-                      </span>
-                    </td>
-                    <td className="px-3 py-2 text-center">
-                      <span className={supplier.on_time_rate < 90 ? 'text-red-600 font-semibold' : 'text-green-600'}>
-                        {supplier.on_time_rate?.toFixed(2)}%
-                      </span>
-                    </td>
-                    <td className="px-3 py-2 text-center">
-                      <span className={supplier.max_price_volatility > 15 ? 'text-red-600 font-semibold' : 'text-slate-600'}>
-                        {supplier.max_price_volatility?.toFixed(2)}%
-                      </span>
-                    </td>
-                    <td className="px-3 py-2 text-center">
-                      <Badge type={
-                        supplier.risk_level === 'low' ? 'success' :
-                        supplier.risk_level === 'medium' ? 'warning' : 'danger'
-                      }>
-                        {supplier.risk_level}
-                      </Badge>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          {supplierKpis.length === 0 && !loadingKpis && (
-            <div className="text-center py-8 text-slate-500">
-              <Building2 className="w-12 h-12 mx-auto mb-2 opacity-20" />
-              <p>No supplier KPI data available</p>
-              <p className="text-xs mt-1">Upload goods receipt data to calculate supplier KPIs</p>
-            </div>
-          )}
-
-          {loadingKpis && (
-            <div className="text-center py-8">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600 mx-auto"></div>
-              <p className="mt-2 text-sm text-slate-500">Loading supplier KPIs...</p>
-            </div>
-          )}
-        </Card>
-      )}
 
       {/* Charts */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
