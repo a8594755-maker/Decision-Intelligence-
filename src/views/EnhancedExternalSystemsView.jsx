@@ -467,6 +467,95 @@ const EnhancedExternalSystemsView = ({ addNotification, user }) => {
     }
   };
 
+  /**
+   * Convert Excel date serial number to readable date format
+   * @param {any} value - Date value (could be number, string, Date object)
+   * @returns {string} Formatted date string or original value
+   */
+  const formatDateForPreview = (value) => {
+    if (!value) return value;
+
+    // If it's an Excel serial number (number between 1 and 50000)
+    if (typeof value === 'number' && value >= 1 && value <= 50000) {
+      try {
+        // Excel epoch is 1899-12-30 (accounting for Excel's 1900 leap year bug)
+        const excelEpoch = new Date(1899, 11, 30);
+        const date = new Date(excelEpoch.getTime() + value * 86400000);
+        
+        if (!isNaN(date.getTime())) {
+          return date.toISOString().split('T')[0]; // Returns YYYY-MM-DD
+        }
+      } catch (e) {
+        console.error('Error converting Excel date:', value, e);
+      }
+    }
+
+    // If it's already a Date object
+    if (value instanceof Date && !isNaN(value.getTime())) {
+      return value.toISOString().split('T')[0];
+    }
+
+    // Return original value for strings and other types
+    return value;
+  };
+
+  /**
+   * Generate mapped data preview - shows how data will look after field mapping
+   * @returns {Array} Preview rows with system field names
+   */
+  const generateMappedPreview = () => {
+    if (!rawRows || rawRows.length === 0 || !columnMapping) {
+      return [];
+    }
+
+    // Get schema to check field types
+    const schema = UPLOAD_SCHEMAS[uploadType];
+    
+    // Take first 5 rows for preview
+    const previewRows = rawRows.slice(0, 5);
+    
+    return previewRows.map((row, index) => {
+      const mappedRow = { _rowIndex: index + 1 };
+      
+      // Transform data according to columnMapping
+      Object.entries(columnMapping).forEach(([excelCol, systemField]) => {
+        if (systemField && systemField !== '') {
+          let value = row[excelCol];
+          
+          // Check if this field is a date type and format it
+          const fieldDef = schema?.fields.find(f => f.key === systemField);
+          if (fieldDef && fieldDef.type === 'date') {
+            value = formatDateForPreview(value);
+          }
+          
+          mappedRow[systemField] = value;
+        }
+      });
+      
+      return mappedRow;
+    });
+  };
+
+  /**
+   * Get all mapped system fields (sorted by required first)
+   * @returns {Array} Array of field objects that have been mapped
+   */
+  const getMappedSystemFields = () => {
+    const schema = UPLOAD_SCHEMAS[uploadType];
+    if (!schema) return [];
+    
+    const mappedFields = Object.values(columnMapping).filter(v => v !== '');
+    
+    return schema.fields
+      .filter(f => mappedFields.includes(f.key))
+      .sort((a, b) => {
+        // Required fields first
+        if (a.required && !b.required) return -1;
+        if (!a.required && b.required) return 1;
+        return 0;
+      });
+  };
+
   // Step 4: Validate and clean data
   const validateData = () => {
     if (!mappingComplete) {
@@ -1179,6 +1268,105 @@ const EnhancedExternalSystemsView = ({ addNotification, user }) => {
                 </table>
               </div>
             </div>
+
+            {/* Mapped Data Preview - 顯示映射轉換後的資料預覽 */}
+            {Object.values(columnMapping).some(v => v !== '') && (
+              <div className="p-4 bg-emerald-50 dark:bg-emerald-900/20 rounded-lg border border-emerald-200 dark:border-emerald-800">
+                <div className="flex items-center justify-between mb-3">
+                  <h4 className="text-sm font-semibold text-emerald-900 dark:text-emerald-100 flex items-center gap-2">
+                    <Check className="w-4 h-4" />
+                    Mapped Data Preview (轉換後資料預覽)
+                  </h4>
+                  <span className="text-xs text-emerald-700 dark:text-emerald-300">
+                    Showing first 5 rows after field mapping
+                  </span>
+                </div>
+                
+                <p className="text-xs text-emerald-800 dark:text-emerald-200 mb-3">
+                  This is how your data will look after mapping to system fields. Please verify the mapping is correct.
+                </p>
+                
+                <div className="overflow-x-auto bg-white dark:bg-slate-800 rounded border dark:border-slate-700">
+                  <table className="w-full text-xs">
+                    <thead className="bg-emerald-100 dark:bg-emerald-900/30">
+                      <tr className="border-b dark:border-emerald-800">
+                        <th className="text-left p-2 font-semibold">#</th>
+                        {getMappedSystemFields().map(field => (
+                          <th 
+                            key={field.key} 
+                            className={`text-left p-2 font-semibold ${
+                              field.required ? 'text-red-600 dark:text-red-400' : 'text-emerald-900 dark:text-emerald-100'
+                            }`}
+                            title={field.description}
+                          >
+                            {field.label}
+                            {field.required && <span className="text-red-500 ml-1">*</span>}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {generateMappedPreview().map((mappedRow, idx) => (
+                        <tr key={idx} className="border-b dark:border-slate-700 hover:bg-emerald-50 dark:hover:bg-emerald-900/10">
+                          <td className="p-2 text-slate-400 font-mono">{mappedRow._rowIndex}</td>
+                          {getMappedSystemFields().map(field => (
+                            <td key={field.key} className="p-2">
+                              {mappedRow[field.key] !== undefined && mappedRow[field.key] !== null && mappedRow[field.key] !== '' ? (
+                                <span className="text-slate-900 dark:text-slate-100">
+                                  {String(mappedRow[field.key]).substring(0, 30)}
+                                  {String(mappedRow[field.key]).length > 30 && '...'}
+                                </span>
+                              ) : (
+                                <span className="text-slate-400 italic text-xs">empty</span>
+                              )}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  
+                  {/* 欄位統計資訊 */}
+                  <div className="p-3 bg-slate-50 dark:bg-slate-800 border-t dark:border-slate-700">
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+                      <div>
+                        <span className="text-slate-500">Total Columns:</span>
+                        <span className="ml-2 font-semibold text-emerald-600">
+                          {getMappedSystemFields().length}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-slate-500">Required:</span>
+                        <span className="ml-2 font-semibold text-red-600">
+                          {getMappedSystemFields().filter(f => f.required).length}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-slate-500">Optional:</span>
+                        <span className="ml-2 font-semibold text-blue-600">
+                          {getMappedSystemFields().filter(f => !f.required).length}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-slate-500">Total Rows:</span>
+                        <span className="ml-2 font-semibold text-slate-900 dark:text-slate-100">
+                          {rawRows.length}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                
+                {/* 提示訊息 */}
+                <div className="mt-3 flex items-start gap-2 text-xs text-emerald-800 dark:text-emerald-200">
+                  <Sparkles className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                  <p>
+                    <strong>Tip:</strong> If the mapped data looks correct, click "Next: Validate Data" to proceed with data validation. 
+                    If you need to adjust the mapping, modify the field assignments above.
+                  </p>
+                </div>
+              </div>
+            )}
 
             {/* Button Area */}
             <div className="flex justify-between items-center pt-2">
