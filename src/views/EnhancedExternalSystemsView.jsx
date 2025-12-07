@@ -26,7 +26,8 @@ import {
   extractAiJson,
   generateMappingPrompt,
   validateMappingResponse,
-  mergeMappings
+  mergeMappings,
+  ruleBasedMapping
 } from '../utils/aiMappingHelper';
 
 // Note: Upload type configuration has been moved to src/utils/uploadSchemas.js
@@ -44,6 +45,9 @@ const EnhancedExternalSystemsView = ({ addNotification, user }) => {
   const [fileName, setFileName] = useState('');
   const [rawRows, setRawRows] = useState([]);
   const [columns, setColumns] = useState([]);
+  const [workbook, setWorkbook] = useState(null); // Store workbook for sheet switching
+  const [sheetNames, setSheetNames] = useState([]); // Available sheet names
+  const [selectedSheet, setSelectedSheet] = useState(''); // Currently selected sheet
 
   // Field mapping - format: { [excelColumn]: systemFieldKey }
   const [columnMapping, setColumnMapping] = useState({});
@@ -72,8 +76,54 @@ const EnhancedExternalSystemsView = ({ addNotification, user }) => {
     setFileName('');
     setRawRows([]);
     setColumns([]);
+    setWorkbook(null);
+    setSheetNames([]);
+    setSelectedSheet('');
     setColumnMapping({});
     setValidationResult(null);
+  };
+
+  // Handle sheet change
+  const handleSheetChange = (sheetName) => {
+    if (!workbook) return;
+    
+    try {
+      setLoading(true);
+      
+      // Read data from selected sheet
+      const data = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { defval: '' });
+      
+      if (data.length === 0) {
+        addNotification(`Sheet "${sheetName}" is empty`, "error");
+        setLoading(false);
+        return;
+      }
+      
+      const cols = Object.keys(data[0]);
+      
+      // Update state
+      setSelectedSheet(sheetName);
+      setRawRows(data);
+      setColumns(cols);
+      
+      // Reset mapping when switching sheets
+      setColumnMapping({});
+      setMappingComplete(false);
+      setValidationResult(null);
+      setMappingAiStatus('idle');
+      
+      // Stay on step 3 (mapping) if already there, otherwise go to step 3
+      if (currentStep >= 3) {
+        setCurrentStep(3);
+      }
+      
+      addNotification(`Switched to sheet "${sheetName}", loaded ${data.length} rows`, "success");
+      setLoading(false);
+    } catch (error) {
+      console.error('Error switching sheet:', error);
+      addNotification(`Failed to load sheet "${sheetName}": ${error.message}`, "error");
+      setLoading(false);
+    }
   };
 
   // Step 2: Upload file
@@ -109,15 +159,34 @@ const EnhancedExternalSystemsView = ({ addNotification, user }) => {
     setLoading(true);
 
     try {
-      const rows = await new Promise((resolve, reject) => {
+      const { workbookData, rows, cols, sheets, defaultSheet } = await new Promise((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = (evt) => {
           try {
             const bstr = evt.target.result;
             const wb = XLSX.read(bstr, { type: 'binary' });
-            const wsname = wb.SheetNames[0];
-            const data = XLSX.utils.sheet_to_json(wb.Sheets[wsname], { defval: '' });
-            resolve(data);
+            
+            // Get all sheet names
+            const sheets = wb.SheetNames;
+            
+            // Default to first sheet
+            const defaultSheet = sheets[0];
+            const data = XLSX.utils.sheet_to_json(wb.Sheets[defaultSheet], { defval: '' });
+            
+            if (data.length === 0) {
+              reject(new Error(`Sheet "${defaultSheet}" is empty`));
+              return;
+            }
+            
+            const cols = Object.keys(data[0]);
+            
+            resolve({
+              workbookData: wb,
+              rows: data,
+              cols: cols,
+              sheets: sheets,
+              defaultSheet: defaultSheet
+            });
           } catch (err) {
             reject(err);
           }
@@ -126,16 +195,16 @@ const EnhancedExternalSystemsView = ({ addNotification, user }) => {
         reader.readAsBinaryString(selectedFile);
       });
 
-      if (rows.length === 0) {
-        throw new Error('File is empty');
-      }
-
-      const cols = Object.keys(rows[0]);
+      // Store workbook and sheet info
+      setWorkbook(workbookData);
+      setSheetNames(sheets);
+      setSelectedSheet(defaultSheet);
       setRawRows(rows);
       setColumns(cols);
       setUploadProgress(100);
 
-      addNotification(`Loaded ${rows.length} rows`, "success");
+      const sheetInfo = sheets.length > 1 ? ` (Sheet: ${defaultSheet}, ${sheets.length} sheets available)` : '';
+      addNotification(`Loaded ${rows.length} rows${sheetInfo}`, "success");
 
       // Automatically proceed to field mapping step and load previous mapping
       setTimeout(async () => {
@@ -269,12 +338,15 @@ const EnhancedExternalSystemsView = ({ addNotification, user }) => {
     setMappingAiStatus('analyzing');
     setMappingAiError('');
 
+    // Get schema (定義在 try 外面，這樣 catch 也能用)
+    const schema = UPLOAD_SCHEMAS[uploadType];
+    if (!schema) {
+      addNotification(`Unknown upload type: ${uploadType}`, "error");
+      setMappingAiStatus('error');
+      return;
+    }
+
     try {
-      // Get schema
-      const schema = UPLOAD_SCHEMAS[uploadType];
-      if (!schema) {
-        throw new Error(`Unknown upload type: ${uploadType}`);
-      }
 
       // Prepare sample data (first 20 rows)
       const sampleRows = rawRows.slice(0, 20);
@@ -288,15 +360,34 @@ const EnhancedExternalSystemsView = ({ addNotification, user }) => {
       );
 
       // Call Gemini API
+      console.log('=== AI Mapping Request ===');
+      console.log('Upload Type:', uploadType);
+      console.log('Columns:', columns);
+      console.log('Prompt:', prompt);
+      
       const aiResponse = await callGeminiAPI(prompt);
+      console.log('=== AI Raw Response ===');
+      console.log('Length:', aiResponse?.length);
+      console.log('Content:', aiResponse);
+      console.log('First 200 chars:', aiResponse?.substring(0, 200));
 
       // Parse AI response
       const parsedResponse = extractAiJson(aiResponse);
+      console.log('=== Parsed Response ===');
+      console.log('Type:', typeof parsedResponse);
+      console.log('Has mappings:', parsedResponse?.mappings ? 'Yes' : 'No');
+      console.log('Mappings count:', parsedResponse?.mappings?.length);
+      console.log('Full parsed:', JSON.stringify(parsedResponse, null, 2));
 
       // Validate response format
       if (!validateMappingResponse(parsedResponse)) {
-        throw new Error('AI response format is incorrect');
+        console.error('=== Validation Failed ===');
+        console.error('Invalid response structure:', parsedResponse);
+        console.error('Validation details: missing "mappings" array or invalid mapping structure');
+        throw new Error('AI response format is incorrect. The AI may have returned explanatory text instead of pure JSON. Please try again or use manual mapping.');
       }
+      
+      console.log('=== Validation Passed ===');
 
       // Merge mapping suggestions into existing columnMapping
       const { mapping: newMapping, appliedCount, skippedCount } = mergeMappings(
@@ -329,12 +420,50 @@ const EnhancedExternalSystemsView = ({ addNotification, user }) => {
 
     } catch (error) {
       console.error('AI field suggestion failed:', error);
-      setMappingAiStatus('error');
-      setMappingAiError(error.message || 'AI analysis failed');
-      addNotification(
-        `AI field suggestion failed: ${error.message}. Please use manual mapping.`,
-        "error"
-      );
+      console.log('Falling back to rule-based mapping...');
+      
+      // 嘗試使用規則式映射作為備選方案
+      try {
+        const ruleMappings = ruleBasedMapping(columns, uploadType, schema.fields);
+        console.log('Rule-based mappings:', ruleMappings);
+        
+        // 過濾出有效的映射（target 不為 null 且信心度 >= 0.7）
+        const validMappings = ruleMappings.filter(m => m.target && m.confidence >= 0.7);
+        
+        if (validMappings.length > 0) {
+          // 使用規則式映射結果
+          const { mapping: newMapping, appliedCount } = mergeMappings(
+            columnMapping,
+            validMappings,
+            0.7
+          );
+          
+          setColumnMapping(newMapping);
+          checkMappingComplete(newMapping);
+          setMappingAiStatus('ready');
+          
+          addNotification(
+            `AI failed, but applied ${appliedCount} smart suggestions based on common patterns. Please review.`,
+            "info"
+          );
+        } else {
+          // 規則式映射也沒有找到足夠的匹配
+          setMappingAiStatus('error');
+          setMappingAiError(error.message || 'AI analysis failed');
+          addNotification(
+            `AI field suggestion failed: ${error.message}. Please use manual mapping.`,
+            "error"
+          );
+        }
+      } catch (ruleError) {
+        console.error('Rule-based mapping also failed:', ruleError);
+        setMappingAiStatus('error');
+        setMappingAiError(error.message || 'AI analysis failed');
+        addNotification(
+          `AI field suggestion failed: ${error.message}. Please use manual mapping.`,
+          "error"
+        );
+      }
     }
   };
 
@@ -384,6 +513,14 @@ const EnhancedExternalSystemsView = ({ addNotification, user }) => {
       console.log(`Note: ${validationResult.errorRows.length} error rows will not be saved`);
     }
 
+    // validationResult.validRows 已經是合併後的資料（針對 supplier_master）
+    const rowsToSave = validationResult.validRows;
+    const mergedCount = validationResult.stats.merged || 0;
+
+    if (mergedCount > 0) {
+      console.log(`${mergedCount} duplicate rows have been intelligently merged`);
+    }
+
     setSaving(true);
 
     let batchId = null;
@@ -422,21 +559,21 @@ const EnhancedExternalSystemsView = ({ addNotification, user }) => {
       const fileRecord = await userFilesService.saveFile(userId, fileName, rawRows);
       const uploadFileId = fileRecord.id;
 
-      // 3. Process data based on upload type (with batch_id)
+      // 3. Process data based on upload type (with batch_id) - using deduplicated rows
       let savedCount = 0;
       if (uploadType === 'goods_receipt') {
-        savedCount = await saveGoodsReceipts(userId, validationResult.validRows, uploadFileId, batchId);
+        savedCount = await saveGoodsReceipts(userId, rowsToSave, uploadFileId, batchId);
       } else if (uploadType === 'price_history') {
-        savedCount = await savePriceHistory(userId, validationResult.validRows, uploadFileId, batchId);
+        savedCount = await savePriceHistory(userId, rowsToSave, uploadFileId, batchId);
       } else if (uploadType === 'supplier_master') {
-        savedCount = await saveSuppliers(userId, validationResult.validRows, batchId);
+        savedCount = await saveSuppliers(userId, rowsToSave, batchId);
       } else {
         throw new Error(`Unsupported upload type: ${uploadType}`);
       }
 
       // 4. Update import batch with success/error counts and mark as completed
       await importBatchesService.updateBatch(batchId, {
-        successRows: validationResult.validRows.length,
+        successRows: rowsToSave.length, // 合併後的數量
         errorRows: validationResult.errorRows.length,
         status: 'completed'
       });
@@ -457,9 +594,19 @@ const EnhancedExternalSystemsView = ({ addNotification, user }) => {
       }
 
       // 6. Show success message
-      const successMsg = hasErrors 
-        ? `Successfully saved ${savedCount} valid rows, ${validationResult.errorRows.length} error rows skipped`
-        : `Successfully saved all ${savedCount} rows`;
+      let successMsg = `Successfully saved ${savedCount} rows`;
+      
+      const details = [];
+      if (mergedCount > 0) {
+        details.push(`${mergedCount} duplicates merged`);
+      }
+      if (validationResult.errorRows.length > 0) {
+        details.push(`${validationResult.errorRows.length} errors skipped`);
+      }
+      
+      if (details.length > 0) {
+        successMsg += ` (${details.join(', ')})`;
+      }
       
       addNotification(successMsg, "success");
 
@@ -617,10 +764,13 @@ const EnhancedExternalSystemsView = ({ addNotification, user }) => {
       batch_id: batchId
     }));
 
-    // Batch insert suppliers
-    await suppliersService.insertSuppliers(suppliers);
+    // Batch insert/update suppliers (with duplicate check)
+    const result = await suppliersService.insertSuppliers(suppliers);
     
-    return suppliers.length;
+    // Log the result
+    console.log(`Suppliers saved: ${result.inserted} inserted, ${result.updated} updated`);
+    
+    return result.count;
   };
 
   // Reset workflow
@@ -847,6 +997,38 @@ const EnhancedExternalSystemsView = ({ addNotification, user }) => {
               </Button>
             </div>
 
+            {/* Sheet Selector (if multiple sheets available) */}
+            {sheetNames.length > 1 && (
+              <div className="p-4 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg">
+                <div className="flex items-center justify-between gap-4">
+                  <div className="flex items-center gap-2">
+                    <FileSpreadsheet className="w-5 h-5 text-yellow-600" />
+                    <span className="font-medium text-yellow-900 dark:text-yellow-100">
+                      Multiple sheets detected:
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <label className="text-sm text-yellow-800 dark:text-yellow-200">
+                      Select sheet:
+                    </label>
+                    <select
+                      value={selectedSheet}
+                      onChange={(e) => handleSheetChange(e.target.value)}
+                      disabled={loading}
+                      className="px-3 py-1.5 rounded border border-yellow-300 dark:border-yellow-700 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-yellow-500 outline-none"
+                    >
+                      {sheetNames.map(name => (
+                        <option key={name} value={name}>{name}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+                <p className="text-xs text-yellow-700 dark:text-yellow-300 mt-2">
+                  Currently showing data from sheet: <strong>{selectedSheet}</strong> ({rawRows.length} rows)
+                </p>
+              </div>
+            )}
+
             <p className="text-sm text-slate-600 dark:text-slate-400">
               Map Excel columns to system fields. <span className="text-red-500">Required fields</span> must be mapped to continue.
               {mappingAiStatus === 'idle' && (
@@ -1048,7 +1230,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user }) => {
             </div>
 
             {/* Statistics Cards */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
               <div className="p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
                 <div className="text-3xl font-bold text-blue-600">{validationResult.stats.total}</div>
                 <div className="text-sm text-slate-600 dark:text-slate-400 mt-1">Total Rows</div>
@@ -1061,11 +1243,78 @@ const EnhancedExternalSystemsView = ({ addNotification, user }) => {
                 <div className="text-3xl font-bold text-red-600">{validationResult.stats.invalid}</div>
                 <div className="text-sm text-slate-600 dark:text-slate-400 mt-1">Error Data</div>
               </div>
+              <div className="p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
+                <div className="text-3xl font-bold text-blue-600">{validationResult.stats.merged || 0}</div>
+                <div className="text-sm text-slate-600 dark:text-slate-400 mt-1">Merged</div>
+              </div>
               <div className="p-4 bg-purple-50 dark:bg-purple-900/20 rounded-lg border border-purple-200 dark:border-purple-800">
                 <div className="text-3xl font-bold text-purple-600">{validationResult.stats.successRate}%</div>
                 <div className="text-sm text-slate-600 dark:text-slate-400 mt-1">Success Rate</div>
               </div>
             </div>
+
+            {/* Merge Info */}
+            {validationResult.duplicateGroups && validationResult.duplicateGroups.length > 0 && (
+              <div className="p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
+                <div className="flex items-start gap-3">
+                  <Check className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
+                  <div className="flex-1">
+                    <h4 className="font-semibold text-blue-900 dark:text-blue-100 mb-1">
+                      ✓ Intelligently merged {validationResult.stats.duplicates || validationResult.duplicateGroups.length} duplicate records
+                    </h4>
+                    <p className="text-sm text-blue-800 dark:text-blue-200 mb-3">
+                      System has automatically merged duplicate suppliers, preserving the most complete information.
+                    </p>
+                    
+                    <div className="space-y-3">
+                      {validationResult.duplicateGroups.slice(0, 5).map((group, idx) => (
+                        <div key={idx} className="bg-white dark:bg-slate-800 rounded border border-blue-300 dark:border-blue-700 p-3">
+                          <div className="text-sm font-semibold text-blue-900 dark:text-blue-100 mb-2">
+                            {group.type === 'merged' && `Merged Supplier: "${group.value}"`}
+                            {group.type === 'combined' && `Merged ${group.keys?.join(' + ')}`}
+                            <span className="ml-2 text-xs font-normal text-blue-700 dark:text-blue-300">
+                              ({group.count} rows merged into 1)
+                            </span>
+                          </div>
+                          <div className="text-xs space-y-1">
+                            <div className="text-blue-600 dark:text-blue-400 font-medium">
+                              Merged from rows: {group.originalRow}, {group.mergedFromRows?.join(', ')}
+                            </div>
+                            {group.mergedData && (
+                              <div className="mt-2 p-2 bg-blue-50 dark:bg-blue-900/30 rounded text-slate-700 dark:text-slate-300">
+                                <div className="font-medium mb-1">Final merged data:</div>
+                                <div className="space-y-0.5">
+                                  {group.mergedData.supplier_code && (
+                                    <div>• Code: {group.mergedData.supplier_code}</div>
+                                  )}
+                                  {group.mergedData.supplier_name && (
+                                    <div>• Name: {group.mergedData.supplier_name}</div>
+                                  )}
+                                  {group.mergedData.contact_person && (
+                                    <div>• Contact: {group.mergedData.contact_person}</div>
+                                  )}
+                                  {group.mergedData.phone && (
+                                    <div>• Phone: {group.mergedData.phone}</div>
+                                  )}
+                                  {group.mergedData.email && (
+                                    <div>• Email: {group.mergedData.email}</div>
+                                  )}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                      {validationResult.duplicateGroups.length > 5 && (
+                        <p className="text-xs text-blue-700 dark:text-blue-300">
+                          ... and {validationResult.duplicateGroups.length - 5} more merged groups
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Success Message */}
             {validationResult.stats.valid > 0 && (
@@ -1078,6 +1327,11 @@ const EnhancedExternalSystemsView = ({ addNotification, user }) => {
                     </h4>
                     <p className="text-sm text-green-800 dark:text-green-200">
                       These rows have been type-converted and cleaned, and are ready to be safely saved to the database.
+                      {validationResult.duplicateGroups && validationResult.duplicateGroups.length > 0 && (
+                        <span className="block mt-1 font-semibold">
+                          Note: Duplicate records have been intelligently merged.
+                        </span>
+                      )}
                     </p>
                   </div>
                 </div>

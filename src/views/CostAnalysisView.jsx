@@ -2,21 +2,26 @@ import React, { useState, useEffect } from 'react';
 import {
   DollarSign, TrendingUp, TrendingDown, AlertTriangle, Sparkles,
   Plus, Calendar, BarChart3, PieChart, Loader2, CheckCircle, X,
-  AlertCircle, RefreshCw, Download
+  AlertCircle, RefreshCw, Download, Package, Briefcase, Search,
+  ChevronDown, ChevronRight
 } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
 import { Card, Button, Badge } from '../components/ui';
-import { SimpleLineChart } from '../components/charts';
+import { SimpleLineChart, SimpleBarChart } from '../components/charts';
 import * as costAnalysisService from '../services/costAnalysisService';
-import { analyzeCostAnomaly, generateCostOptimizationSuggestions } from '../services/geminiAPI';
+import * as materialCostService from '../services/materialCostService';
+import { analyzeCostAnomaly, generateCostOptimizationSuggestions, callGeminiAPI } from '../services/geminiAPI';
 
 /**
  * Cost Analysis View
  * Features: Daily cost recording, trend analysis, anomaly detection, AI suggestions
  */
 export default function CostAnalysisView({ addNotification, user }) {
-  // State management
+  // View Mode: 'operational' or 'material'
+  const [viewMode, setViewMode] = useState('material');
+
+  // Operational Cost State
   const [loading, setLoading] = useState(false);
-  const [showAddModal, setShowAddModal] = useState(false);
   const [costRecords, setCostRecords] = useState([]);
   const [trends, setTrends] = useState(null);
   const [costStructure, setCostStructure] = useState(null);
@@ -28,28 +33,45 @@ export default function CostAnalysisView({ addNotification, user }) {
   const [analyzingOptimization, setAnalyzingOptimization] = useState(false);
   const [selectedPeriod, setSelectedPeriod] = useState('30'); // 30, 60, 90 days
 
-  // Form data
-  const [formData, setFormData] = useState({
-    cost_date: new Date().toISOString().split('T')[0],
-    direct_labor_hours: '',
-    direct_labor_rate: '',
-    indirect_labor_hours: '',
-    indirect_labor_rate: '',
-    production_output: '',
-    production_unit: 'pcs',
-    material_cost: '0',
-    overhead_cost: '0',
-    notes: ''
-  });
+  // Material Cost State
+  const [materialLoading, setMaterialLoading] = useState(false);
+  const [materialKPIs, setMaterialKPIs] = useState(null);
+  const [materialsWithPrices, setMaterialsWithPrices] = useState([]);
+  const [selectedMaterial, setSelectedMaterial] = useState(null);
+  const [materialTrend, setMaterialTrend] = useState(null);
+  const [topMovers, setTopMovers] = useState([]);
+  const [supplierComparison, setSupplierComparison] = useState([]);
+  const [dataCoverage, setDataCoverage] = useState(null);
+  const [materialAIOptimization, setMaterialAIOptimization] = useState('');
+  const [analyzingMaterialAI, setAnalyzingMaterialAI] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [filterType, setFilterType] = useState('all'); // 'all', 'increases', 'decreases'
+  const [customRange, setCustomRange] = useState(null); // { startDate, endDate } or null
+  const [showCustomRangePicker, setShowCustomRangePicker] = useState(false);
+  const [priceDisplayMode, setPriceDisplayMode] = useState('price'); // 'price' or 'index'
+  const [topBySpend, setTopBySpend] = useState([]);
 
-  // Load data
+
+  // Load data based on view mode
   useEffect(() => {
     if (user?.id) {
-      loadAllData();
+      if (viewMode === 'operational') {
+        loadOperationalData();
+      } else {
+        loadMaterialCostData();
+      }
     }
-  }, [user, selectedPeriod]);
+  }, [user, selectedPeriod, customRange, viewMode]);
 
-  const loadAllData = async () => {
+  // Load selected material trend when material changes
+  useEffect(() => {
+    if (user?.id && selectedMaterial && viewMode === 'material') {
+      loadMaterialTrend();
+      loadSupplierComparison();
+    }
+  }, [selectedMaterial, user, selectedPeriod, customRange, viewMode]);
+
+  const loadOperationalData = async () => {
     setLoading(true);
     try {
       // Load cost trends
@@ -78,28 +100,76 @@ export default function CostAnalysisView({ addNotification, user }) {
     }
   };
 
-  // Submit cost record
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-
-    if (!formData.direct_labor_hours || !formData.direct_labor_rate) {
-      addNotification('Please fill in required fields', 'error');
-      return;
-    }
-
-    setLoading(true);
+  const loadMaterialCostData = async () => {
+    setMaterialLoading(true);
     try {
-      await costAnalysisService.recordDailyCost(user.id, formData);
-      addNotification('Cost record saved successfully', 'success');
-      setShowAddModal(false);
-      resetForm();
-      loadAllData();
+      const days = customRange ? null : parseInt(selectedPeriod);
+
+      // Load KPIs
+      const kpis = await materialCostService.getMaterialCostKPIs(user.id, days, customRange);
+      setMaterialKPIs(kpis);
+
+      // Load materials with prices
+      const materials = await materialCostService.getMaterialsWithPrices(user.id, days, customRange);
+      setMaterialsWithPrices(materials);
+
+      // Load Top Movers
+      const movers = await materialCostService.getTopMovers(user.id, days, customRange);
+      setTopMovers(movers);
+
+      // Load Top by Spend (if quantity data is available)
+      const topSpend = await materialCostService.getTopBySpend(user.id, days, customRange, 10);
+      setTopBySpend(topSpend);
+
+      // Load data coverage
+      const coverage = await materialCostService.checkDataCoverage(user.id, days, customRange);
+      setDataCoverage(coverage);
+
+      // Auto-select first material if available
+      if (materials.length > 0 && !selectedMaterial) {
+        setSelectedMaterial(materials[0]);
+      }
     } catch (error) {
-      addNotification(`Save failed: ${error.message}`, 'error');
+      addNotification(`Load material cost data failed: ${error.message}`, 'error');
     } finally {
-      setLoading(false);
+      setMaterialLoading(false);
     }
   };
+
+  const loadMaterialTrend = async () => {
+    if (!selectedMaterial) return;
+
+    try {
+      const days = customRange ? null : parseInt(selectedPeriod);
+      const trend = await materialCostService.getMaterialPriceTrend(
+        user.id,
+        selectedMaterial.id,
+        days,
+        customRange
+      );
+      setMaterialTrend(trend);
+    } catch (error) {
+      addNotification(`Load material trend failed: ${error.message}`, 'error');
+    }
+  };
+
+  const loadSupplierComparison = async () => {
+    if (!selectedMaterial) return;
+
+    try {
+      const days = customRange ? null : parseInt(selectedPeriod);
+      const comparison = await materialCostService.getSupplierComparison(
+        user.id,
+        selectedMaterial.id,
+        days,
+        customRange
+      );
+      setSupplierComparison(comparison);
+    } catch (error) {
+      addNotification(`Load supplier comparison failed: ${error.message}`, 'error');
+    }
+  };
+
 
   // AI analyze anomaly
   const handleAnalyzeAnomaly = async (anomaly) => {
@@ -118,7 +188,7 @@ export default function CostAnalysisView({ addNotification, user }) {
     }
   };
 
-  // AI optimization suggestions
+  // AI optimization suggestions - Operational Cost
   const handleGenerateOptimization = async () => {
     if (!costStructure || !trends) {
       addNotification('Insufficient data to generate optimization suggestions', 'warning');
@@ -139,6 +209,71 @@ export default function CostAnalysisView({ addNotification, user }) {
     }
   };
 
+  // AI optimization suggestions - Material Cost
+  const handleGenerateMaterialOptimization = async () => {
+    if (!materialKPIs || topMovers.length === 0) {
+      addNotification('Insufficient material cost data to generate suggestions', 'warning');
+      return;
+    }
+
+    setAnalyzingMaterialAI(true);
+    setMaterialAIOptimization('');
+
+    try {
+      const days = customRange ? null : parseInt(selectedPeriod);
+      console.log('Generating AI context with:', { userId: user.id, days, customRange });
+      
+      const context = await materialCostService.generateAIContext(user.id, days, customRange);
+      console.log('AI context generated:', context);
+
+      const prompt = `You are a material cost optimization consultant. Based on the following material cost summary, explain what is happening, which materials and suppliers need attention, and suggest cost optimization actions.
+
+Period: ${context.period}
+
+KPIs:
+- Total Materials with Price Data: ${context.kpis.totalMaterials}
+- Average Price Change: ${context.kpis.avgPriceChange.toFixed(2)}%
+- High Volatility Materials: ${context.kpis.highVolatilityCount}
+
+Top Price Increasers:
+${context.topIncreasers.map((m, i) => `${i + 1}. ${m.material}: ${m.oldPrice} → ${m.newPrice} (${m.changePercent}%)`).join('\n')}
+
+Top Price Decreasers:
+${context.topDecreasers.map((m, i) => `${i + 1}. ${m.material}: ${m.oldPrice} → ${m.newPrice} (${m.changePercent}%)`).join('\n')}
+
+High Volatility Materials:
+${context.highVolatility.map((m, i) => `${i + 1}. ${m.material}: Volatility ${m.volatility}%`).join('\n')}
+
+Please provide in Chinese (Traditional):
+1. Key insights about the cost situation
+2. Materials that need immediate attention
+3. Specific optimization suggestions (3-5 actionable items)
+4. Supplier management recommendations`;
+
+      console.log('Calling Gemini API with prompt length:', prompt.length);
+      const suggestions = await callGeminiAPI(prompt, '', {
+        temperature: 0.6,
+        maxOutputTokens: 8192  // Increased from 2000 to allow longer responses
+      });
+
+      console.log('Gemini API response received, length:', suggestions?.length || 0);
+      console.log('Gemini API response content:', suggestions);
+      
+      if (!suggestions || suggestions.trim().length === 0) {
+        throw new Error('Gemini API returned empty response');
+      }
+      
+      setMaterialAIOptimization(suggestions);
+      addNotification('AI suggestions generated successfully', 'success');
+    } catch (error) {
+      console.error('AI generation error:', error);
+      addNotification(`Generate material cost suggestions failed: ${error.message}`, 'error');
+      setMaterialAIOptimization(`Error: ${error.message}\n\nPlease check the console for more details.`);
+    } finally {
+      setAnalyzingMaterialAI(false);
+    }
+  };
+
   // Resolve anomaly
   const handleResolveAnomaly = async (anomalyId, notes) => {
     try {
@@ -152,37 +287,6 @@ export default function CostAnalysisView({ addNotification, user }) {
     }
   };
 
-  const resetForm = () => {
-    setFormData({
-      cost_date: new Date().toISOString().split('T')[0],
-      direct_labor_hours: '',
-      direct_labor_rate: '',
-      indirect_labor_hours: '',
-      indirect_labor_rate: '',
-      production_output: '',
-      production_unit: 'pcs',
-      material_cost: '0',
-      overhead_cost: '0',
-      notes: ''
-    });
-  };
-
-  // Calculate cost preview
-  const calculatePreview = () => {
-    const directCost = (parseFloat(formData.direct_labor_hours) || 0) *
-                      (parseFloat(formData.direct_labor_rate) || 0);
-    const indirectCost = (parseFloat(formData.indirect_labor_hours) || 0) *
-                        (parseFloat(formData.indirect_labor_rate) || 0);
-    const totalCost = directCost + indirectCost +
-                     (parseFloat(formData.material_cost) || 0) +
-                     (parseFloat(formData.overhead_cost) || 0);
-    const output = parseFloat(formData.production_output) || 0;
-    const unitCost = output > 0 ? (totalCost / output).toFixed(2) : '0.00';
-
-    return { directCost, indirectCost, totalCost, unitCost };
-  };
-
-  const preview = calculatePreview();
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -194,47 +298,724 @@ export default function CostAnalysisView({ addNotification, user }) {
             Cost Analysis
           </h2>
           <p className="text-sm text-slate-500 mt-1">
-            Record daily costs, track trends, detect anomalies, AI-powered analysis
+            {viewMode === 'operational'
+              ? 'Record daily costs, track trends, detect anomalies, AI-powered analysis'
+              : 'Analyze material prices, identify cost trends, optimize supplier selection'
+            }
           </p>
         </div>
         <div className="flex gap-2">
           <Button
             variant="secondary"
             icon={RefreshCw}
-            onClick={loadAllData}
-            disabled={loading}
+            onClick={viewMode === 'operational' ? loadOperationalData : loadMaterialCostData}
+            disabled={loading || materialLoading}
           >
             Refresh
-          </Button>
-          <Button
-            variant="primary"
-            icon={Plus}
-            onClick={() => setShowAddModal(true)}
-          >
-            Record Cost
           </Button>
         </div>
       </div>
 
+      {/* View Mode Tabs */}
+      <div className="flex gap-2 border-b border-slate-200 dark:border-slate-700">
+        <button
+          onClick={() => setViewMode('material')}
+          className={`px-4 py-2 font-medium text-sm flex items-center gap-2 transition border-b-2 ${
+            viewMode === 'material'
+              ? 'border-blue-600 text-blue-600'
+              : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
+          }`}
+        >
+          <Package className="w-4 h-4" />
+          Material Cost
+        </button>
+        <button
+          onClick={() => setViewMode('operational')}
+          className={`px-4 py-2 font-medium text-sm flex items-center gap-2 transition border-b-2 ${
+            viewMode === 'operational'
+              ? 'border-blue-600 text-blue-600'
+              : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
+          }`}
+        >
+          <Briefcase className="w-4 h-4" />
+          Operational Cost
+        </button>
+      </div>
+
       {/* Period selector */}
-      <div className="flex items-center gap-2">
-        <span className="text-sm text-slate-500">View Period:</span>
-        {['30', '60', '90'].map(days => (
+      <div className="space-y-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-sm text-slate-500">View Period:</span>
+          {['30', '90', '180', '365'].map(days => (
+            <button
+              key={days}
+              onClick={() => {
+                setSelectedPeriod(days);
+                setCustomRange(null);
+              }}
+              className={`px-3 py-1 rounded-lg text-sm font-medium transition ${
+                selectedPeriod === days && !customRange
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600'
+              }`}
+            >
+              {days} Days
+            </button>
+          ))}
           <button
-            key={days}
-            onClick={() => setSelectedPeriod(days)}
+            onClick={() => setShowCustomRangePicker(!showCustomRangePicker)}
             className={`px-3 py-1 rounded-lg text-sm font-medium transition ${
-              selectedPeriod === days
-                ? 'bg-blue-600 text-white'
+              customRange
+                ? 'bg-purple-600 text-white'
                 : 'bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600'
             }`}
           >
-            {days} Days
+            Custom Range
           </button>
-        ))}
+        </div>
+
+        {/* Custom Range Picker */}
+        {showCustomRangePicker && (
+          <Card className="p-4 bg-slate-50 dark:bg-slate-800">
+            <div className="flex flex-wrap items-end gap-4">
+              <div>
+                <label className="block text-xs font-medium text-slate-500 mb-1">Start Date</label>
+                <input
+                  type="date"
+                  defaultValue={customRange?.startDate || ''}
+                  onChange={(e) => {
+                    const newRange = {
+                      ...customRange,
+                      startDate: e.target.value
+                    };
+                    if (newRange.startDate && newRange.endDate) {
+                      setCustomRange(newRange);
+                      setSelectedPeriod(null);
+                    }
+                  }}
+                  className="px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-500 mb-1">End Date</label>
+                <input
+                  type="date"
+                  defaultValue={customRange?.endDate || ''}
+                  onChange={(e) => {
+                    const newRange = {
+                      ...customRange,
+                      endDate: e.target.value
+                    };
+                    if (newRange.startDate && newRange.endDate) {
+                      setCustomRange(newRange);
+                      setSelectedPeriod(null);
+                    }
+                  }}
+                  className="px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-sm"
+                />
+              </div>
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  setCustomRange(null);
+                  setShowCustomRangePicker(false);
+                  if (!selectedPeriod) setSelectedPeriod('30');
+                }}
+                className="text-sm py-1.5"
+              >
+                Clear
+              </Button>
+            </div>
+          </Card>
+        )}
+
+        {/* Display selected range */}
+        {customRange && customRange.startDate && customRange.endDate && (
+          <div className="text-xs text-slate-600 dark:text-slate-400">
+            <Calendar className="w-3 h-3 inline mr-1" />
+            Selected Range: {customRange.startDate} ~ {customRange.endDate}
+          </div>
+        )}
       </div>
 
-      {/* KPI Cards */}
+      {/* Material Cost View */}
+      {viewMode === 'material' && (
+        <>
+          {/* Material Cost KPI Cards */}
+          {materialKPIs && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
+              <Card className="p-4">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <div className="text-xs text-slate-500 font-semibold uppercase">Materials with Price Data</div>
+                    <div className="text-2xl font-bold text-blue-600 mt-1">
+                      {materialKPIs.totalMaterials}
+                    </div>
+                    <div className="text-xs text-slate-500 mt-1">
+                      {customRange ? 'In custom range' : `Last ${selectedPeriod} days`}
+                    </div>
+                  </div>
+                  <div className="p-2 rounded-lg bg-blue-100 dark:bg-blue-900/30">
+                    <Package className="w-5 h-5 text-blue-600" />
+                  </div>
+                </div>
+              </Card>
+
+              <Card className="p-4">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <div className="text-xs text-slate-500 font-semibold uppercase">Avg Price Change</div>
+                    <div className={`text-2xl font-bold mt-1 ${
+                      materialKPIs.avgPriceChange > 0 ? 'text-red-600' : 'text-green-600'
+                    }`}>
+                      {materialKPIs.avgPriceChange > 0 ? '+' : ''}{materialKPIs.avgPriceChange.toFixed(2)}%
+                    </div>
+                    <div className="text-xs text-slate-500 mt-1">Average across all materials</div>
+                  </div>
+                  <div className={`p-2 rounded-lg ${
+                    materialKPIs.avgPriceChange > 0
+                      ? 'bg-red-100 dark:bg-red-900/30'
+                      : 'bg-green-100 dark:bg-green-900/30'
+                  }`}>
+                    {materialKPIs.avgPriceChange > 0 ? (
+                      <TrendingUp className="w-5 h-5 text-red-600" />
+                    ) : (
+                      <TrendingDown className="w-5 h-5 text-green-600" />
+                    )}
+                  </div>
+                </div>
+              </Card>
+
+              <Card className="p-4">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <div className="text-xs text-slate-500 font-semibold uppercase">Top Increase</div>
+                    <div className="text-2xl font-bold text-orange-600 mt-1">
+                      {materialKPIs.topIncreaseMaterial
+                        ? `+${materialKPIs.topIncreaseMaterial.changePercent.toFixed(1)}%`
+                        : 'N/A'
+                      }
+                    </div>
+                    <div className="text-xs text-slate-500 mt-1 truncate">
+                      {materialKPIs.topIncreaseMaterial?.material_code || 'No data'}
+                    </div>
+                  </div>
+                  <div className="p-2 rounded-lg bg-orange-100 dark:bg-orange-900/30">
+                    <TrendingUp className="w-5 h-5 text-orange-600" />
+                  </div>
+                </div>
+              </Card>
+
+              <Card className="p-4">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <div className="text-xs text-slate-500 font-semibold uppercase">High Volatility</div>
+                    <div className="text-2xl font-bold text-purple-600 mt-1">
+                      {materialKPIs.highVolatilityCount}
+                    </div>
+                    <div className="text-xs text-slate-500 mt-1">Materials &gt; 15% volatility</div>
+                  </div>
+                  <div className="p-2 rounded-lg bg-purple-100 dark:bg-purple-900/30">
+                    <AlertTriangle className="w-5 h-5 text-purple-600" />
+                  </div>
+                </div>
+              </Card>
+
+              <Card className="p-4">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <div className="text-xs text-slate-500 font-semibold uppercase">Total Material Spend</div>
+                    <div className="text-2xl font-bold text-emerald-600 mt-1">
+                      {materialKPIs.totalMaterialSpend !== null
+                        ? `$${materialKPIs.totalMaterialSpend.toLocaleString('en-US', {maximumFractionDigits: 0})}`
+                        : 'N/A'
+                      }
+                    </div>
+                    <div className="text-xs text-slate-500 mt-1">
+                      {materialKPIs.hasQuantityData ? 'In selected period' : 'Qty data missing'}
+                    </div>
+                  </div>
+                  <div className="p-2 rounded-lg bg-emerald-100 dark:bg-emerald-900/30">
+                    <DollarSign className="w-5 h-5 text-emerald-600" />
+                  </div>
+                </div>
+              </Card>
+            </div>
+          )}
+
+          {/* Data Coverage Panel */}
+          {dataCoverage && (
+            <Card className={`p-4 ${
+              dataCoverage.hasPriceData
+                ? 'bg-blue-50 dark:bg-blue-900/20'
+                : 'bg-yellow-50 dark:bg-yellow-900/20'
+            }`}>
+              <div className="flex items-start gap-3">
+                <div className={`p-2 rounded-lg ${
+                  dataCoverage.hasPriceData
+                    ? 'bg-blue-100 dark:bg-blue-900/30'
+                    : 'bg-yellow-100 dark:bg-yellow-900/30'
+                }`}>
+                  {dataCoverage.hasPriceData ? (
+                    <CheckCircle className="w-5 h-5 text-blue-600" />
+                  ) : (
+                    <AlertCircle className="w-5 h-5 text-yellow-600" />
+                  )}
+                </div>
+                <div className="flex-1">
+                  <h3 className="text-sm font-semibold mb-2">
+                    {dataCoverage.hasPriceData ? 'Data Coverage Status' : 'Missing Data'}
+                  </h3>
+                  <div className="space-y-1">
+                    {dataCoverage.recommendations.map((rec, idx) => (
+                      <p key={idx} className="text-sm text-slate-600 dark:text-slate-300">
+                        {rec}
+                      </p>
+                    ))}
+                  </div>
+                  {dataCoverage.hasPriceData && (
+                    <div className="mt-3 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 text-xs">
+                      <div>
+                        <span className="text-slate-500">Material Code:</span>
+                        <span className="ml-1 font-semibold">{dataCoverage.coverage.material_code.toFixed(0)}%</span>
+                      </div>
+                      <div>
+                        <span className="text-slate-500">Supplier:</span>
+                        <span className="ml-1 font-semibold">{dataCoverage.coverage.supplier_name.toFixed(0)}%</span>
+                      </div>
+                      <div>
+                        <span className="text-slate-500">Currency:</span>
+                        <span className="ml-1 font-semibold">{dataCoverage.coverage.currency.toFixed(0)}%</span>
+                      </div>
+                      <div>
+                        <span className="text-slate-500">Quantity:</span>
+                        <span className={`ml-1 font-semibold ${
+                          dataCoverage.coverage.quantity > 0 ? 'text-green-600' : 'text-yellow-600'
+                        }`}>
+                          {dataCoverage.coverage.quantity > 0 ? `${dataCoverage.coverage.quantity.toFixed(0)}%` : 'N/A'}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-slate-500">Total Records:</span>
+                        <span className="ml-1 font-semibold">{dataCoverage.totalRecords}</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </Card>
+          )}
+
+          {/* Material Price Trend Chart */}
+          {materialsWithPrices.length > 0 && (
+            <Card>
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4">
+                <div className="flex items-center gap-4">
+                  <h3 className="text-lg font-semibold">Material Price Trend</h3>
+                  {/* Price / Index Toggle */}
+                  <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 rounded-lg p-1">
+                    <button
+                      onClick={() => setPriceDisplayMode('price')}
+                      className={`px-2 py-1 text-xs font-medium rounded transition ${
+                        priceDisplayMode === 'price'
+                          ? 'bg-white dark:bg-slate-700 text-blue-600 shadow-sm'
+                          : 'text-slate-600 dark:text-slate-400'
+                      }`}
+                    >
+                      Price
+                    </button>
+                    <button
+                      onClick={() => setPriceDisplayMode('index')}
+                      className={`px-2 py-1 text-xs font-medium rounded transition ${
+                        priceDisplayMode === 'index'
+                          ? 'bg-white dark:bg-slate-700 text-blue-600 shadow-sm'
+                          : 'text-slate-600 dark:text-slate-400'
+                      }`}
+                    >
+                      Index (100)
+                    </button>
+                  </div>
+                </div>
+                <div className="relative w-full sm:w-64">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                  <select
+                    value={selectedMaterial?.id || ''}
+                    onChange={(e) => {
+                      const mat = materialsWithPrices.find(m => m.id === e.target.value);
+                      setSelectedMaterial(mat);
+                    }}
+                    className="w-full pl-10 pr-4 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 focus:ring-2 focus:ring-blue-500 outline-none text-sm"
+                  >
+                    {materialsWithPrices.map((mat, idx) => (
+                      <option key={`material-${mat.id || 'unknown'}-${idx}`} value={mat.id}>
+                        {mat.material_code} - {mat.material_name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {materialTrend && materialTrend.prices.length > 0 ? (
+                <>
+                  <SimpleLineChart
+                    data={priceDisplayMode === 'index' 
+                      ? materialTrend.prices.map(p => (p / materialTrend.prices[0]) * 100)
+                      : materialTrend.prices
+                    }
+                    color="#3b82f6"
+                    height={250}
+                    yAxisRange={priceDisplayMode === 'price' ? materialTrend.dynamicYAxis : null}
+                  />
+                  <div className="mt-4 grid grid-cols-2 sm:grid-cols-5 gap-4 text-sm">
+                    <div>
+                      <div className="text-slate-500">Min Price</div>
+                      <div className="font-bold text-green-600">
+                        ${materialTrend.summary.minPrice.toFixed(2)}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-slate-500">Max Price</div>
+                      <div className="font-bold text-red-600">
+                        ${materialTrend.summary.maxPrice.toFixed(2)}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-slate-500">Avg Price</div>
+                      <div className="font-bold text-blue-600">
+                        ${materialTrend.summary.avgPrice.toFixed(2)}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-slate-500">Price Change</div>
+                      <div className={`font-bold ${
+                        materialTrend.summary.changePercent > 0 ? 'text-red-600' : 'text-green-600'
+                      }`}>
+                        {materialTrend.summary.changePercent > 0 ? '+' : ''}
+                        {materialTrend.summary.changePercent.toFixed(2)}%
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-slate-500">Volatility</div>
+                      <div className={`font-bold ${
+                        materialTrend.summary.volatility > 15 ? 'text-orange-600' : 'text-slate-600'
+                      }`}>
+                        {materialTrend.summary.volatility.toFixed(2)}%
+                      </div>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div className="text-center py-8 text-slate-400">
+                  <p className="text-sm">No price trend data available for selected material</p>
+                </div>
+              )}
+            </Card>
+          )}
+
+          {/* Supplier Comparison for Selected Material */}
+          {selectedMaterial && supplierComparison.length > 0 && (
+            <Card>
+              <h3 className="text-lg font-semibold mb-4">
+                Supplier Comparison for {selectedMaterial.material_code}
+              </h3>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-slate-50 dark:bg-slate-800">
+                    <tr>
+                      <th className="px-4 py-2 text-left">Supplier</th>
+                      <th className="px-4 py-2 text-right">Latest Price</th>
+                      <th className="px-4 py-2 text-right">Avg Price</th>
+                      <th className="px-4 py-2 text-right">Change %</th>
+                      <th className="px-4 py-2 text-right">Last Date</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {supplierComparison.map((supp, idx) => (
+                      <tr key={`supplier-${supp.supplier_id || 'unknown'}-${idx}`} className="border-t dark:border-slate-700">
+                        <td className="px-4 py-2">
+                          <div className="font-medium">{supp.supplier_name}</div>
+                          <div className="text-xs text-slate-500">{supp.supplier_code}</div>
+                        </td>
+                        <td className="px-4 py-2 text-right font-semibold">
+                          {supp.currency} {supp.latestPrice.toFixed(2)}
+                          {idx === 0 && (
+                            <Badge type="success" className="ml-2">Lowest</Badge>
+                          )}
+                        </td>
+                        <td className="px-4 py-2 text-right">
+                          {supp.currency} {supp.avgPrice.toFixed(2)}
+                        </td>
+                        <td className={`px-4 py-2 text-right font-semibold ${
+                          supp.changePercent > 0 ? 'text-red-600' : 'text-green-600'
+                        }`}>
+                          {supp.changePercent > 0 ? '+' : ''}{supp.changePercent.toFixed(2)}%
+                        </td>
+                        <td className="px-4 py-2 text-right text-slate-500">
+                          {supp.lastDate}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+          )}
+
+          {/* Top Movers Table */}
+          {topMovers.length > 0 && (
+            <Card>
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4">
+                <h3 className="text-lg font-semibold">Top Movers</h3>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setFilterType('all')}
+                    className={`px-3 py-1 rounded-lg text-xs font-medium transition ${
+                      filterType === 'all'
+                        ? 'bg-blue-600 text-white'
+                        : 'bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600'
+                    }`}
+                  >
+                    All
+                  </button>
+                  <button
+                    onClick={() => setFilterType('increases')}
+                    className={`px-3 py-1 rounded-lg text-xs font-medium transition ${
+                      filterType === 'increases'
+                        ? 'bg-red-600 text-white'
+                        : 'bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600'
+                    }`}
+                  >
+                    Increases
+                  </button>
+                  <button
+                    onClick={() => setFilterType('decreases')}
+                    className={`px-3 py-1 rounded-lg text-xs font-medium transition ${
+                      filterType === 'decreases'
+                        ? 'bg-green-600 text-white'
+                        : 'bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600'
+                    }`}
+                  >
+                    Decreases
+                  </button>
+                </div>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-slate-50 dark:bg-slate-800">
+                    <tr>
+                      <th className="px-4 py-2 text-left">Material</th>
+                      <th className="px-4 py-2 text-left">Category</th>
+                      <th className="px-4 py-2 text-right">Old Price</th>
+                      <th className="px-4 py-2 text-right">Latest Price</th>
+                      <th className="px-4 py-2 text-right">Change %</th>
+                      <th className="px-4 py-2 text-right">Volatility</th>
+                      <th className="px-4 py-2 text-right">Suppliers</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {topMovers
+                      .filter(m => {
+                        if (filterType === 'increases') return m.changePercent > 0;
+                        if (filterType === 'decreases') return m.changePercent < 0;
+                        return true;
+                      })
+                      .filter(m => {
+                        if (!searchTerm) return true;
+                        return m.material_code.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                               m.material_name.toLowerCase().includes(searchTerm.toLowerCase());
+                      })
+                      .slice(0, 20)
+                      .map((mover, idx) => (
+                        <tr key={`mover-${mover.material_id || 'unknown'}-${idx}`} className="border-t dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800">
+                          <td className="px-4 py-2">
+                            <div className="font-medium">{mover.material_code}</div>
+                            <div className="text-xs text-slate-500 truncate max-w-xs">
+                              {mover.material_name}
+                            </div>
+                          </td>
+                          <td className="px-4 py-2 text-slate-600 dark:text-slate-400">
+                            {mover.category || 'N/A'}
+                          </td>
+                          <td className="px-4 py-2 text-right">
+                            {mover.currency} {mover.oldestPrice.toFixed(2)}
+                          </td>
+                          <td className="px-4 py-2 text-right font-semibold">
+                            {mover.currency} {mover.latestPrice.toFixed(2)}
+                          </td>
+                          <td className={`px-4 py-2 text-right font-bold ${
+                            mover.changePercent > 0 ? 'text-red-600' : 'text-green-600'
+                          }`}>
+                            {mover.changePercent > 0 ? '+' : ''}{mover.changePercent.toFixed(2)}%
+                          </td>
+                          <td className={`px-4 py-2 text-right ${
+                            mover.volatility > 15 ? 'text-orange-600 font-semibold' : 'text-slate-600'
+                          }`}>
+                            {mover.volatility.toFixed(2)}%
+                          </td>
+                          <td className="px-4 py-2 text-right">
+                            {mover.supplierCount}
+                          </td>
+                        </tr>
+                      ))
+                    }
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+          )}
+
+          {/* Top Materials by Spend */}
+          {topBySpend.length > 0 && (
+            <Card>
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-semibold">Top Materials by Spend</h3>
+                <Badge type="info">{topBySpend.length} materials</Badge>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-slate-50 dark:bg-slate-800">
+                    <tr>
+                      <th className="px-4 py-2 text-left">Material</th>
+                      <th className="px-4 py-2 text-left">Category</th>
+                      <th className="px-4 py-2 text-right">Total Spend</th>
+                      <th className="px-4 py-2 text-right">Total Qty</th>
+                      <th className="px-4 py-2 text-right">Avg Price</th>
+                      <th className="px-4 py-2 text-right">Price Change %</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {topBySpend.map((item, idx) => (
+                      <tr key={`spend-${item.material_id || 'unknown'}-${idx}`} className="border-t dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800">
+                        <td className="px-4 py-2">
+                          <div className="font-medium">{item.material_code}</div>
+                          <div className="text-xs text-slate-500 truncate max-w-xs">
+                            {item.material_name}
+                          </div>
+                        </td>
+                        <td className="px-4 py-2 text-slate-600 dark:text-slate-400">
+                          {item.category}
+                        </td>
+                        <td className="px-4 py-2 text-right font-bold text-emerald-600">
+                          ${item.totalSpend.toLocaleString('en-US', {maximumFractionDigits: 0})}
+                          {idx === 0 && <Badge type="success" className="ml-2">Highest</Badge>}
+                        </td>
+                        <td className="px-4 py-2 text-right">
+                          {item.totalQty.toLocaleString('en-US', {maximumFractionDigits: 0})}
+                        </td>
+                        <td className="px-4 py-2 text-right">
+                          ${item.avgPrice.toFixed(2)}
+                        </td>
+                        <td className={`px-4 py-2 text-right font-semibold ${
+                          item.priceChangePercent > 0 ? 'text-red-600' : 'text-green-600'
+                        }`}>
+                          {item.priceChangePercent > 0 ? '+' : ''}{item.priceChangePercent.toFixed(2)}%
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+          )}
+
+          {/* No Quantity Data Message */}
+          {dataCoverage && dataCoverage.hasPriceData && !dataCoverage.hasQuantityData && topBySpend.length === 0 && (
+            <Card className="p-4 bg-yellow-50 dark:bg-yellow-900/20">
+              <div className="flex items-start gap-3">
+                <AlertCircle className="w-5 h-5 text-yellow-600 flex-shrink-0 mt-0.5" />
+                <div>
+                  <h4 className="text-sm font-semibold text-yellow-800 dark:text-yellow-300 mb-1">
+                    Quantity Data Missing
+                  </h4>
+                  <p className="text-sm text-slate-600 dark:text-slate-400">
+                    To enable spend analysis and "Top Materials by Spend", please upload data that includes a quantity field 
+                    (e.g., <code className="px-1 py-0.5 bg-slate-200 dark:bg-slate-700 rounded text-xs">Quantity</code>, 
+                    <code className="px-1 py-0.5 bg-slate-200 dark:bg-slate-700 rounded text-xs mx-1">Qty</code>, or 
+                    <code className="px-1 py-0.5 bg-slate-200 dark:bg-slate-700 rounded text-xs">OrderQty</code>).
+                  </p>
+                </div>
+              </div>
+            </Card>
+          )}
+
+          {/* Material Cost AI Optimization */}
+          <Card className="bg-gradient-to-br from-purple-50 to-pink-50 dark:from-purple-900/20 dark:to-pink-900/20">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold flex items-center gap-2">
+                <Sparkles className="w-5 h-5 text-purple-600" />
+                AI Cost Optimization
+              </h3>
+              <Button
+                variant="magic"
+                onClick={handleGenerateMaterialOptimization}
+                disabled={analyzingMaterialAI || !materialKPIs}
+                className="text-sm py-1 px-3"
+              >
+                {analyzingMaterialAI ? 'Analyzing...' : 'Generate'}
+              </Button>
+            </div>
+
+            {/* Scrollable content area */}
+            <div className="max-h-80 overflow-y-auto pr-2">
+              {analyzingMaterialAI && (
+                <div className="flex items-center gap-2 text-purple-600 py-4">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span className="text-sm">Analyzing your materials and suppliers…</span>
+                </div>
+              )}
+
+              {materialAIOptimization && !analyzingMaterialAI && (
+                <div className={`prose prose-sm max-w-none dark:prose-invert ${
+                  materialAIOptimization.startsWith('Error:') ? 'text-red-600 dark:text-red-400' : ''
+                }`}>
+                  {materialAIOptimization.startsWith('Error:') ? (
+                    <div className="whitespace-pre-line text-sm leading-relaxed">
+                      {materialAIOptimization}
+                    </div>
+                  ) : (
+                    <ReactMarkdown>{materialAIOptimization}</ReactMarkdown>
+                  )}
+                </div>
+              )}
+
+              {!materialAIOptimization && !analyzingMaterialAI && (
+                <div className="text-center py-8 text-slate-400">
+                  <Sparkles className="w-12 h-12 mx-auto mb-2 opacity-50" />
+                  <p className="text-sm">Click Generate to get AI suggestions based on your current Material Cost data.</p>
+                </div>
+              )}
+            </div>
+          </Card>
+
+          {/* Empty State for Material Cost */}
+          {!materialLoading && (!dataCoverage || !dataCoverage.hasPriceData) && (
+            <Card className="text-center py-12">
+              <Package className="w-16 h-16 text-slate-300 mx-auto mb-4" />
+              <h3 className="text-lg font-semibold text-slate-600 dark:text-slate-400 mb-2">
+                No Material Cost Data Yet
+              </h3>
+              <p className="text-slate-500 mb-4">
+                Please go to Data Upload page to upload material price history
+              </p>
+              <p className="text-sm text-slate-400 mb-4">
+                Required columns: MaterialCode, SupplierName, OrderDate, UnitPrice, Currency
+              </p>
+              <Button
+                variant="primary"
+                icon={ChevronRight}
+                onClick={() => window.location.hash = '#external-systems'}
+              >
+                Go to Data Upload
+              </Button>
+            </Card>
+          )}
+        </>
+      )}
+
+      {/* Operational Cost View (existing code) */}
+      {viewMode === 'operational' && (
+        <>
+          {/* KPI Cards */}
       {trends && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <Card className="p-4">
@@ -389,9 +1170,7 @@ export default function CostAnalysisView({ addNotification, user }) {
 
           {aiOptimization && !analyzingOptimization && (
             <div className="prose prose-sm max-w-none dark:prose-invert">
-              <div className="whitespace-pre-line text-sm leading-relaxed">
-                {aiOptimization}
-              </div>
+              <ReactMarkdown>{aiOptimization}</ReactMarkdown>
             </div>
           )}
 
@@ -489,9 +1268,7 @@ export default function CostAnalysisView({ addNotification, user }) {
 
             {aiAnalysis && !analyzingAnomaly && (
               <div className="prose prose-sm max-w-none dark:prose-invert">
-                <div className="whitespace-pre-line text-sm leading-relaxed">
-                  {aiAnalysis}
-                </div>
+                <ReactMarkdown>{aiAnalysis}</ReactMarkdown>
               </div>
             )}
 
@@ -516,224 +1293,30 @@ export default function CostAnalysisView({ addNotification, user }) {
         </div>
       )}
 
-      {/* Record Cost Modal */}
-      {showAddModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 overflow-y-auto">
-          <Card className="max-w-3xl w-full my-8">
-            <div className="flex items-center justify-between mb-6">
-              <h3 className="text-lg font-semibold">Record Daily Cost</h3>
-              <button
-                onClick={() => {
-                  setShowAddModal(false);
-                  resetForm();
-                }}
-                className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg"
+
+          {/* Empty State */}
+          {!loading && costRecords.length === 0 && (
+            <Card className="text-center py-12">
+              <DollarSign className="w-16 h-16 text-slate-300 mx-auto mb-4" />
+              <h3 className="text-lg font-semibold text-slate-600 dark:text-slate-400 mb-2">
+                No Operational Cost Data Yet
+              </h3>
+              <p className="text-slate-500 mb-4">
+                Please go to Data Upload page to upload operational cost data
+              </p>
+              <p className="text-sm text-slate-400 mb-4">
+                Required columns: CostDate, DirectLaborHours, DirectLaborRate, ProductionOutput
+              </p>
+              <Button
+                variant="primary"
+                icon={ChevronRight}
+                onClick={() => window.location.hash = '#external-systems'}
               >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <form onSubmit={handleSubmit}>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {/* Date */}
-                <div>
-                  <label className="block text-sm font-medium mb-1">
-                    Date <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="date"
-                    value={formData.cost_date}
-                    onChange={(e) => setFormData({ ...formData, cost_date: e.target.value })}
-                    className="w-full px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-transparent focus:ring-2 focus:ring-blue-500 outline-none"
-                    required
-                  />
-                </div>
-
-                {/* Direct Labor Hours */}
-                <div>
-                  <label className="block text-sm font-medium mb-1">
-                    Direct Labor Hours <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={formData.direct_labor_hours}
-                    onChange={(e) => setFormData({ ...formData, direct_labor_hours: e.target.value })}
-                    className="w-full px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-transparent focus:ring-2 focus:ring-blue-500 outline-none"
-                    placeholder="e.g., 160"
-                    required
-                  />
-                </div>
-
-                {/* Direct Labor Rate */}
-                <div>
-                  <label className="block text-sm font-medium mb-1">
-                    Direct Labor Rate ($/hr) <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={formData.direct_labor_rate}
-                    onChange={(e) => setFormData({ ...formData, direct_labor_rate: e.target.value })}
-                    className="w-full px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-transparent focus:ring-2 focus:ring-blue-500 outline-none"
-                    placeholder="e.g., 25"
-                    required
-                  />
-                </div>
-
-                {/* Indirect Labor Hours */}
-                <div>
-                  <label className="block text-sm font-medium mb-1">
-                    Indirect Labor Hours
-                  </label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={formData.indirect_labor_hours}
-                    onChange={(e) => setFormData({ ...formData, indirect_labor_hours: e.target.value })}
-                    className="w-full px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-transparent focus:ring-2 focus:ring-blue-500 outline-none"
-                    placeholder="e.g., 80"
-                  />
-                </div>
-
-                {/* Indirect Labor Rate */}
-                <div>
-                  <label className="block text-sm font-medium mb-1">
-                    Indirect Labor Rate ($/hr)
-                  </label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={formData.indirect_labor_rate}
-                    onChange={(e) => setFormData({ ...formData, indirect_labor_rate: e.target.value })}
-                    className="w-full px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-transparent focus:ring-2 focus:ring-blue-500 outline-none"
-                    placeholder="e.g., 20"
-                  />
-                </div>
-
-                {/* Production Output */}
-                <div>
-                  <label className="block text-sm font-medium mb-1">
-                    Production Output <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={formData.production_output}
-                    onChange={(e) => setFormData({ ...formData, production_output: e.target.value })}
-                    className="w-full px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-transparent focus:ring-2 focus:ring-blue-500 outline-none"
-                    placeholder="e.g., 1000"
-                    required
-                  />
-                </div>
-
-                {/* Material Cost */}
-                <div>
-                  <label className="block text-sm font-medium mb-1">
-                    Material Cost ($)
-                  </label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={formData.material_cost}
-                    onChange={(e) => setFormData({ ...formData, material_cost: e.target.value })}
-                    className="w-full px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-transparent focus:ring-2 focus:ring-blue-500 outline-none"
-                    placeholder="e.g., 5000"
-                  />
-                </div>
-
-                {/* Overhead Cost */}
-                <div>
-                  <label className="block text-sm font-medium mb-1">
-                    Overhead Cost ($)
-                  </label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={formData.overhead_cost}
-                    onChange={(e) => setFormData({ ...formData, overhead_cost: e.target.value })}
-                    className="w-full px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-transparent focus:ring-2 focus:ring-blue-500 outline-none"
-                    placeholder="e.g., 2000"
-                  />
-                </div>
-
-                {/* Notes */}
-                <div className="md:col-span-2">
-                  <label className="block text-sm font-medium mb-1">
-                    Notes
-                  </label>
-                  <textarea
-                    value={formData.notes}
-                    onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
-                    className="w-full px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-transparent focus:ring-2 focus:ring-blue-500 outline-none"
-                    rows="2"
-                    placeholder="Additional notes..."
-                  />
-                </div>
-              </div>
-
-              {/* Cost Preview */}
-              <div className="mt-6 p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
-                <h4 className="text-sm font-semibold mb-3">Cost Preview</h4>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                  <div>
-                    <div className="text-slate-500">Direct Labor</div>
-                    <div className="font-bold text-blue-600">${preview.directCost.toLocaleString()}</div>
-                  </div>
-                  <div>
-                    <div className="text-slate-500">Indirect Labor</div>
-                    <div className="font-bold text-purple-600">${preview.indirectCost.toLocaleString()}</div>
-                  </div>
-                  <div>
-                    <div className="text-slate-500">Total Cost</div>
-                    <div className="font-bold text-green-600">${preview.totalCost.toLocaleString()}</div>
-                  </div>
-                  <div>
-                    <div className="text-slate-500">Unit Cost</div>
-                    <div className="font-bold text-orange-600">${preview.unitCost}</div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Buttons */}
-              <div className="flex gap-2 justify-end mt-6">
-                <Button
-                  type="button"
-                  variant="secondary"
-                  onClick={() => {
-                    setShowAddModal(false);
-                    resetForm();
-                  }}
-                >
-                  Cancel
-                </Button>
-                <Button type="submit" variant="primary" disabled={loading}>
-                  {loading ? 'Saving...' : 'Save'}
-                </Button>
-              </div>
-            </form>
-          </Card>
-        </div>
-      )}
-
-      {/* Empty State */}
-      {!loading && costRecords.length === 0 && (
-        <Card className="text-center py-12">
-          <DollarSign className="w-16 h-16 text-slate-300 mx-auto mb-4" />
-          <h3 className="text-lg font-semibold text-slate-600 dark:text-slate-400 mb-2">
-            No Cost Records Yet
-          </h3>
-          <p className="text-slate-500 mb-4">
-            Start recording daily costs to track operational efficiency
-          </p>
-          <Button
-            variant="primary"
-            icon={Plus}
-            onClick={() => setShowAddModal(true)}
-          >
-            Record First Cost
-          </Button>
-        </Card>
+                Go to Data Upload
+              </Button>
+            </Card>
+          )}
+        </>
       )}
     </div>
   );

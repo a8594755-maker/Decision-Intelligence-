@@ -60,17 +60,80 @@ export const SupplierManagementView = ({ addNotification }) => {
     setLoading(true);
     try {
       const data = await suppliersService.getAllSuppliers();
-      setSuppliers(data);
+      
+      // 去重：合併相同 supplier_name 的記錄，保留最完整的資訊
+      const deduplicatedData = deduplicateSuppliers(data);
+      
+      setSuppliers(deduplicatedData);
 
       // Load KPI data
-      if (data && data.length > 0 && data[0].user_id) {
-        loadKpiData(data[0].user_id);
+      if (deduplicatedData && deduplicatedData.length > 0 && deduplicatedData[0].user_id) {
+        loadKpiData(deduplicatedData[0].user_id);
       }
     } catch (error) {
       addNotification(`Load failed: ${error.message}`, "error");
     } finally {
       setLoading(false);
     }
+  };
+
+  // 去重函數：合併相同供應商，保留最完整的資訊
+  const deduplicateSuppliers = (suppliers) => {
+    if (!suppliers || suppliers.length === 0) return [];
+
+    const supplierMap = new Map();
+
+    suppliers.forEach(supplier => {
+      const key = supplier.supplier_name?.trim().toLowerCase();
+      if (!key) return;
+
+      const existing = supplierMap.get(key);
+
+      if (!existing) {
+        // 第一次出現，直接添加
+        supplierMap.set(key, supplier);
+      } else {
+        // 已存在，合併資訊（保留最完整的）
+        const merged = { ...existing };
+
+        // 合併 contact_info
+        if (supplier.contact_info && typeof supplier.contact_info === 'object') {
+          merged.contact_info = { ...existing.contact_info };
+          Object.keys(supplier.contact_info).forEach(key => {
+            const existingValue = merged.contact_info[key];
+            const newValue = supplier.contact_info[key];
+            
+            // 如果現有值為空，使用新值
+            if (!existingValue || existingValue === '-' || existingValue === '') {
+              if (newValue && newValue !== '-' && newValue !== '') {
+                merged.contact_info[key] = newValue;
+              }
+            }
+          });
+        }
+
+        // 合併其他欄位
+        ['supplier_code', 'address', 'product_category', 'payment_terms', 'delivery_time', 'status'].forEach(field => {
+          const existingValue = merged[field];
+          const newValue = supplier[field];
+          
+          if (!existingValue || existingValue === '-' || existingValue === '') {
+            if (newValue && newValue !== '-' && newValue !== '') {
+              merged[field] = newValue;
+            }
+          }
+        });
+
+        // 保留最新的 updated_at
+        if (supplier.updated_at && (!merged.updated_at || supplier.updated_at > merged.updated_at)) {
+          merged.updated_at = supplier.updated_at;
+        }
+
+        supplierMap.set(key, merged);
+      }
+    });
+
+    return Array.from(supplierMap.values());
   };
 
   const loadKpiData = async (userId) => {

@@ -4,10 +4,14 @@ import React from 'react';
  * Simple Line Chart Component
  * 簡單的折線圖組件
  */
-export const SimpleLineChart = ({ data, color = "#3b82f6" }) => {
-  const max = Math.max(...data) * 1.2;
+export const SimpleLineChart = ({ data, color = "#3b82f6", yAxisRange = null }) => {
+  // 使用提供的 y 軸範圍，或默認自動計算
+  const min = yAxisRange?.min ?? 0;
+  const max = yAxisRange?.max ?? (Math.max(...data) * 1.2);
+  
+  const range = max - min;
   const points = data
-    .map((val, i) => `${(i / (data.length - 1)) * 100},${100 - (val / max) * 100}`)
+    .map((val, i) => `${(i / (data.length - 1)) * 100},${100 - ((val - min) / range) * 100}`)
     .join(' ');
 
   return (
@@ -28,12 +32,12 @@ export const SimpleLineChart = ({ data, color = "#3b82f6" }) => {
           <circle
             key={i}
             cx={(i / (data.length - 1)) * 100}
-            cy={100 - (val / max) * 100}
+            cy={100 - ((val - min) / range) * 100}
             r="3"
             fill={color}
             className="hover:r-5 transition-all cursor-pointer opacity-0 hover:opacity-100"
           >
-            <title>{val}</title>
+            <title>{val.toFixed(2)}</title>
           </circle>
         ))}
       </svg>

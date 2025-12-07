@@ -70,3 +70,5 @@ COMMENT ON COLUMN upload_mappings.mapping_json IS '欄位映射關係（JSON 物
 COMMENT ON COLUMN upload_mappings.created_at IS '建立時間';
 COMMENT ON COLUMN upload_mappings.updated_at IS '最後更新時間';
 
+
+

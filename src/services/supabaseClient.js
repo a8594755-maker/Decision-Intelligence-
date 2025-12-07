@@ -56,19 +56,115 @@ export const userFilesService = {
  * Suppliers Operations
  */
 export const suppliersService = {
-  // 批量插入供應商
+  // 批量插入供應商（使用 upsert 避免重複）
   async insertSuppliers(suppliers) {
     if (!suppliers || suppliers.length === 0) {
       return { success: true, count: 0 };
     }
 
-    const { data, error } = await supabase
+    // 先檢查資料庫中已存在的供應商
+    const supplierNames = suppliers.map(s => s.supplier_name).filter(Boolean);
+    const supplierCodes = suppliers.map(s => s.supplier_code).filter(Boolean);
+    
+    let queryBuilder = supabase
       .from('suppliers')
-      .insert(suppliers)
-      .select();
+      .select('id, supplier_name, supplier_code');
+    
+    // 建立 OR 查詢條件
+    const orConditions = [];
+    if (supplierNames.length > 0) {
+      orConditions.push(`supplier_name.in.(${supplierNames.map(n => `"${n}"`).join(',')})`);
+    }
+    if (supplierCodes.length > 0) {
+      orConditions.push(`supplier_code.in.(${supplierCodes.map(c => `"${c}"`).join(',')})`);
+    }
+    
+    const { data: existingSuppliers, error: queryError } = orConditions.length > 0
+      ? await queryBuilder.or(orConditions.join(','))
+      : { data: [], error: null };
+    
+    if (queryError) {
+      console.warn('Failed to check existing suppliers:', queryError);
+      // Continue with insert anyway
+    }
 
-    if (error) throw error;
-    return { success: true, count: data.length, data };
+    // 建立已存在供應商的 Map
+    const existingMap = new Map();
+    if (existingSuppliers) {
+      existingSuppliers.forEach(s => {
+        if (s.supplier_code) existingMap.set(`code:${s.supplier_code}`, s.id);
+        if (s.supplier_name) existingMap.set(`name:${s.supplier_name}`, s.id);
+      });
+    }
+
+    // 分離新供應商和需要更新的供應商
+    const toInsert = [];
+    const toUpdate = [];
+
+    suppliers.forEach(supplier => {
+      const codeKey = supplier.supplier_code ? `code:${supplier.supplier_code}` : null;
+      const nameKey = supplier.supplier_name ? `name:${supplier.supplier_name}` : null;
+      
+      const existingId = codeKey && existingMap.get(codeKey) || nameKey && existingMap.get(nameKey);
+      
+      if (existingId) {
+        // 已存在，準備更新
+        toUpdate.push({ ...supplier, id: existingId });
+      } else {
+        // 新供應商，準備插入
+        toInsert.push(supplier);
+      }
+    });
+
+    let insertedCount = 0;
+    let updatedCount = 0;
+
+    // 插入新供應商
+    if (toInsert.length > 0) {
+      const { data: insertedData, error: insertError } = await supabase
+        .from('suppliers')
+        .insert(toInsert)
+        .select();
+
+      if (insertError) {
+        console.error('Insert error:', insertError);
+        throw insertError;
+      }
+      insertedCount = insertedData?.length || 0;
+    }
+
+    // 更新已存在的供應商（合併資訊）
+    if (toUpdate.length > 0) {
+      for (const supplier of toUpdate) {
+        const { id, ...updateData } = supplier;
+        
+        // 只更新非空欄位（保留現有資料）
+        const fieldsToUpdate = {};
+        Object.keys(updateData).forEach(key => {
+          if (updateData[key] !== null && updateData[key] !== undefined && updateData[key] !== '') {
+            fieldsToUpdate[key] = updateData[key];
+          }
+        });
+
+        const { error: updateError } = await supabase
+          .from('suppliers')
+          .update(fieldsToUpdate)
+          .eq('id', id);
+
+        if (updateError) {
+          console.error(`Failed to update supplier ${id}:`, updateError);
+        } else {
+          updatedCount++;
+        }
+      }
+    }
+
+    return { 
+      success: true, 
+      count: insertedCount + updatedCount,
+      inserted: insertedCount,
+      updated: updatedCount
+    };
   },
 
   // 獲取所有供應商

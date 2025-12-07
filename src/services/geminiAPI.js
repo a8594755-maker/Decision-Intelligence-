@@ -4,7 +4,9 @@
  */
 
 const DEFAULT_API_KEY = "AIzaSyBiPV68i9HR_D6a_PQ3lwSEJSIYZ0eF3j4";
-const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
+// Using user-specified model gemini-2.5-flash
+const GEMINI_MODEL = "gemini-2.5-flash";
+const API_VERSION = "v1beta"; // Use v1beta for experimental models
 
 /**
  * 從 localStorage 獲取 API Key，如果沒有則使用預設值
@@ -57,12 +59,15 @@ export const callGeminiAPI = async (prompt, systemContext = "", options = {}) =>
       }],
       generationConfig: {
         temperature: options.temperature || 0.7,
-        maxOutputTokens: options.maxOutputTokens || 2048,
+        maxOutputTokens: options.maxOutputTokens || 8192,  // Increased default for longer responses
       }
     };
 
+    const apiUrl = `https://generativelanguage.googleapis.com/${API_VERSION}/models/${GEMINI_MODEL}:generateContent`;
+    console.log(`Using API URL: ${apiUrl}`);
+
     const response = await fetch(
-      `${GEMINI_API_URL}?key=${apiKey}`,
+      `${apiUrl}?key=${apiKey}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -83,7 +88,42 @@ export const callGeminiAPI = async (prompt, systemContext = "", options = {}) =>
     }
 
     const data = await response.json();
-    return data.candidates?.[0]?.content?.parts?.[0]?.text || "No response generated.";
+    console.log("=== Gemini API Full Response ===");
+    console.log(JSON.stringify(data, null, 2));
+    
+    // Check for errors in response
+    if (data.error) {
+      console.error("API returned error:", data.error);
+      return `ERROR: ${data.error.message || 'Unknown API error'}`;
+    }
+    
+    // Check for safety filters or blocked content
+    if (data.candidates?.[0]?.finishReason === "SAFETY") {
+      console.warn("Content blocked by safety filters:", data.candidates[0].safetyRatings);
+      return "WARNING: Content blocked by AI safety filters.\n\nThe AI detected potentially sensitive content in the request or response. Try:\n1. Simplify your data\n2. Remove any sensitive information\n3. Try again with different parameters";
+    }
+    
+    // Check finish reason
+    const finishReason = data.candidates?.[0]?.finishReason;
+    console.log("Finish reason:", finishReason);
+    
+    // Handle MAX_TOKENS finish reason - response might still have partial text
+    if (finishReason === "MAX_TOKENS") {
+      const partialText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (partialText) {
+        console.warn("Response was truncated due to MAX_TOKENS, but partial text is available");
+        return partialText + "\n\n[回應因長度限制被截斷]";
+      }
+    }
+    
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    
+    if (!text) {
+      console.warn("No text in response. Candidates:", data.candidates);
+      return `No response generated.\n\nFinish reason: ${finishReason || 'unknown'}\n\nThis might be due to:\n1. Content safety filters\n2. Model not supporting this request\n3. Invalid model name (current: ${GEMINI_MODEL})\n\nPlease check the console for full details.`;
+    }
+    
+    return text;
   } catch (error) {
     console.error("Gemini API Failed:", error);
     return `ERROR: AI service request failed: ${error.message}\n\nPlease check:\n- Is your API key correct?\n- Is the network available?\n- Any firewall blocking the request?`;

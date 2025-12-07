@@ -565,3 +565,5 @@ AI 自動欄位映射功能：
 - **UPLOAD_WORKFLOW_GUIDE.md** - 完整上傳流程
 - **src/utils/aiMappingHelper.js** - AI 輔助函數原始碼
 
+
+
