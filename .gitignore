@@ -28,3 +28,11 @@ dist-ssr
 .env.local
 .env.production
 .env.*.local
+
+# Backup files (may contain sensitive information)
+*.backup
+*.bak
+*_backup.*
+
+# Files with hardcoded API keys
+src/App.jsx.backup
