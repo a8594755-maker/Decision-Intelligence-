@@ -454,3 +454,5 @@ generateMappingPrompt(uploadType, schemaFields, originalColumns, sampleRows) {
 
 如果還是失敗，規則式映射會自動接管（95%+ 自動化率）！
 
+
+

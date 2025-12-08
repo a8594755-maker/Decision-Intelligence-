@@ -370,3 +370,5 @@ SELECT COUNT(*) FROM price_history WHERE user_id = auth.uid();
 
 請告訴我上述檢查的結果，我會幫您解決！
 
+
+

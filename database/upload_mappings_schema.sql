@@ -72,3 +72,5 @@ COMMENT ON COLUMN upload_mappings.updated_at IS '最後更新時間';
 
 
 
+
+
