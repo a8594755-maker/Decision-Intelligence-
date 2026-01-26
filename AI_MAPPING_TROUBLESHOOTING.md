@@ -354,3 +354,6 @@ material_name  → Material Name
 
 AI 建議是輔助功能，失敗不影響核心流程！
 
+
+
+

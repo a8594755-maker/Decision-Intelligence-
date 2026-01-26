@@ -30,3 +30,6 @@ ADD CONSTRAINT suppliers_supplier_code_unique
 UNIQUE (supplier_code)
 WHERE supplier_code IS NOT NULL;
 
+
+
+

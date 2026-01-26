@@ -1,9 +1,15 @@
 import { createClient } from '@supabase/supabase-js';
 
-// Supabase configuration
-// 優先使用環境變數，如果沒有則使用預設值
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || "https://cbxvqqqulwytdblivtoe.supabase.co";
-const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY || "sb_publishable_YcRs0N95Mk6BpTFIq0hoRA_jsW6KlHo";
+// Supabase configuration - using environment variables
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+// Validate environment variables
+if (!supabaseUrl || !supabaseKey) {
+  console.error('❌ Missing Supabase environment variables!');
+  console.error('Please ensure .env file exists with VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY');
+  throw new Error('Supabase configuration error: Missing environment variables');
+}
 
 export const supabase = createClient(supabaseUrl, supabaseKey);
 

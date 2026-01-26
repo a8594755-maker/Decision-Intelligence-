@@ -337,3 +337,6 @@ SimpleLineChart({ data, color = "#3b82f6", yAxisRange = null })
 
 如果您在測試過程中遇到任何問題，或者需要進一步調整，請告訴我！
 
+
+
+

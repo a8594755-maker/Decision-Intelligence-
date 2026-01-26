@@ -1,369 +1,369 @@
-# SmartOps 供應鏈營運平台
+# SmartOps Supply Chain Operations Platform
 
-React + Vite 打造的智能供應商績效與成本營運儀表板，整合 Supabase 雲端資料庫、Google Gemini AI 決策助手、Excel/CSV 匯入、KPI 視覺化、異常分析與自動化工作流程。
+An intelligent supplier performance and cost operations dashboard built with React + Vite, integrating Supabase cloud database, Google Gemini AI decision assistant, Excel/CSV import, KPI visualization, anomaly analysis, and automated workflows.
 
-## 🌟 主要功能
+## 🌟 Key Features
 
-### 📊 供應商管理
-- **供應商主檔管理**：完整 CRUD 操作、進階搜尋與篩選
-- **批次匯入**：支援 Excel/CSV，智能去重與驗證
-- **AI 欄位映射**：自動識別欄位對應關係，減少手動設定
-- **KPI 整合**：即時顯示供應商績效摘要
+### 📊 Supplier Management
+- **Supplier Master Management**: Complete CRUD operations, advanced search and filtering
+- **Batch Import**: Support for Excel/CSV with intelligent deduplication and validation
+- **AI Field Mapping**: Automatically identify field correspondences, reducing manual configuration
+- **KPI Integration**: Real-time display of supplier performance summary
 
-### 📈 KPI 與儀表板
-- **收貨合格率**：追蹤供應商交付品質
-- **準時交付率**：監控交期達成狀況
-- **缺陷率分析**：識別品質問題趨勢
-- **價格趨勢**：視覺化價格變動歷程
-- **互動式圖表**：可篩選、縮放的動態儀表板
+### 📈 KPI & Dashboard
+- **Receiving Quality Rate**: Track supplier delivery quality
+- **On-Time Delivery Rate**: Monitor delivery schedule achievement
+- **Defect Rate Analysis**: Identify quality issue trends
+- **Price Trends**: Visualize price change history
+- **Interactive Charts**: Filterable, zoomable dynamic dashboard
 
-### 💰 材料成本分析（新功能）
-- **成本結構分析**：自動計算材料成本占比
-- **異常偵測**：識別價格異常與成本波動
-- **AI 洞察報告**：Gemini AI 生成改善建議
-- **歷史趨勢追蹤**：多期間成本比較分析
-- 📖 詳見：[材料成本分析快速指南](MATERIAL_COST_QUICK_START.md)
+### 💰 Material Cost Analysis (New Feature)
+- **Cost Structure Analysis**: Automatically calculate material cost proportions
+- **Anomaly Detection**: Identify price anomalies and cost fluctuations
+- **AI Insight Reports**: Gemini AI generates improvement suggestions
+- **Historical Trend Tracking**: Multi-period cost comparison analysis
+- 📖 See details: [Material Cost Analysis Quick Guide](MATERIAL_COST_QUICK_START.md)
 
-### 📤 智能數據匯入系統
-- **三大類型支援**：貨收記錄、價格歷史、供應商主檔
-- **AI 自動映射**：智能欄位識別與建議
-- **多工作表支援**：一次匯入多個 Excel 工作表
-- **前端去重**：上傳前自動檢測重複記錄
-- **智能合併**：提供更新、跳過、新增等合併選項
-- **資料驗證**：15+ 種驗證規則確保資料品質
-- **導入歷史追蹤**：完整記錄每次匯入操作與結果
-- 📖 詳見：[數據上傳完整指南](DATA_UPLOAD_COMPLETE_GUIDE.md)
+### 📤 Intelligent Data Import System
+- **Three Type Support**: Goods receipt records, price history, supplier master
+- **AI Auto Mapping**: Intelligent field identification and suggestions
+- **Multi-Sheet Support**: Import multiple Excel sheets at once
+- **Frontend Deduplication**: Automatically detect duplicate records before upload
+- **Smart Merge**: Provides merge options including update, skip, and add
+- **Data Validation**: 15+ validation rules to ensure data quality
+- **Import History Tracking**: Complete record of each import operation and results
+- 📖 See details: [Complete Data Upload Guide](DATA_UPLOAD_COMPLETE_GUIDE.md)
 
-### 🤖 AI 決策助手
-- **上下文對話**：基於當前數據的智能問答
-- **多對話管理**：建立、切換、管理多個對話串
-- **歷史記錄**：保存對話歷史供日後參考
-- **行動建議**：針對成本異常提供具體改善方案
+### 🤖 AI Decision Assistant
+- **Contextual Conversations**: Intelligent Q&A based on current data
+- **Multi-Conversation Management**: Create, switch, and manage multiple conversation threads
+- **History Records**: Save conversation history for future reference
+- **Action Recommendations**: Provide specific improvement solutions for cost anomalies
 
-### 🔐 帳號與雲端同步
-- **Supabase 認證**：安全的 Email/Password 登入
-- **多租戶隔離**：每個用戶的資料完全獨立
-- **雲端同步**：資料自動備份到雲端
-- **檔案管理**：支援雲端備份與還原
+### 🔐 Account & Cloud Sync
+- **Supabase Authentication**: Secure Email/Password login
+- **Multi-Tenant Isolation**: Each user's data is completely independent
+- **Cloud Sync**: Automatic data backup to cloud
+- **File Management**: Support for cloud backup and restore
 
-## 🛠️ 技術堆疊
+## 🛠️ Tech Stack
 
-### 前端框架
-- **React 19** - 現代化的用戶介面框架
-- **Vite 7** - 快速的建置工具與開發伺服器
-- **Tailwind CSS 4** - 實用優先的 CSS 框架
-- **Lucide Icons** - 精美的開源圖示庫
+### Frontend Framework
+- **React 19** - Modern user interface framework
+- **Vite 7** - Fast build tool and development server
+- **Tailwind CSS 4** - Utility-first CSS framework
+- **Lucide Icons** - Beautiful open-source icon library
 
-### 後端服務
+### Backend Services
 - **Supabase** 
-  - PostgreSQL 資料庫
-  - 即時資料同步
-  - 認證與授權
-  - 雲端儲存
+  - PostgreSQL database
+  - Real-time data synchronization
+  - Authentication and authorization
+  - Cloud storage
   
-### AI 整合
+### AI Integration
 - **Google Gemini 2.5 Flash** 
-  - 智能欄位映射
-  - 成本分析與洞察
-  - 對話式決策助手
-  - 異常檢測與建議
+  - Intelligent field mapping
+  - Cost analysis and insights
+  - Conversational decision assistant
+  - Anomaly detection and recommendations
 
-### 資料處理
-- **XLSX** - Excel 檔案解析與處理
-- **Papa Parse** - CSV 檔案解析
-- **Recharts** - 資料視覺化圖表庫
+### Data Processing
+- **XLSX** - Excel file parsing and processing
+- **Papa Parse** - CSV file parsing
+- **Recharts** - Data visualization chart library
 
-## 🚀 快速開始
+## 🚀 Quick Start
 
-### 1. 環境需求
+### 1. Environment Requirements
 - **Node.js** 18+ 
-- **npm** 或 **yarn**
-- **Supabase 帳號**（免費方案即可）
-- **Google AI Studio 帳號**（取得 Gemini API Key）
+- **npm** or **yarn**
+- **Supabase Account** (free tier is sufficient)
+- **Google AI Studio Account** (to obtain Gemini API Key)
 
-### 2. 安裝步驟
+### 2. Installation Steps
 
 ```bash
-# 複製專案
+# Clone the project
 git clone https://github.com/your-username/smartops-app.git
 cd smartops-app
 
-# 安裝相依套件
+# Install dependencies
 npm install
 
-# 啟動開發伺服器
+# Start development server
 npm run dev
 ```
 
-預設開啟於 http://localhost:5173
+Default opens at http://localhost:5173
 
-### 3. 資料庫設定
+### 3. Database Setup
 
-執行以下 SQL 腳本建立資料庫結構：
+Execute the following SQL scripts to create the database structure:
 
 ```bash
-# 快速設定（包含基本表格與範例資料）
-執行 QUICK_SETUP.sql
+# Quick setup (includes basic tables and sample data)
+Execute QUICK_SETUP.sql
 
-# 或完整設定（包含所有表格、檢視、觸發器）
-執行 database/supplier_kpi_schema.sql
-執行 database/import_batches_schema.sql
-執行 database/upload_mappings_schema.sql
-執行 database/cost_analysis_schema.sql
+# Or complete setup (includes all tables, views, triggers)
+Execute database/supplier_kpi_schema.sql
+Execute database/import_batches_schema.sql
+Execute database/upload_mappings_schema.sql
+Execute database/cost_analysis_schema.sql
 ```
 
-📖 詳細說明請參考：[資料庫架構指南](DATABASE_SCHEMA_GUIDE.md)
+📖 For detailed instructions, refer to: [Database Schema Guide](DATABASE_SCHEMA_GUIDE.md)
 
-### 4. 環境變數配置
+### 4. Environment Variables Configuration
 
-**Supabase 設定**：
-- 在 `src/services/supabaseClient.js` 設定您的 Supabase URL 與 Anon Key
-- 建議正式環境使用 `.env.local`：
+**Supabase Setup**:
+- Configure your Supabase URL and Anon Key in `src/services/supabaseClient.js`
+- For production environment, it's recommended to use `.env.local`:
   ```
   VITE_SUPABASE_URL=your-supabase-url
   VITE_SUPABASE_ANON_KEY=your-anon-key
   ```
 
-**Gemini API Key**：
-- 方法 1：在應用程式的「Settings」介面輸入（儲存於 localStorage）
-- 方法 2：設定環境變數 `VITE_GEMINI_API_KEY`
-- 取得金鑰：https://ai.google.dev/
+**Gemini API Key**:
+- Method 1: Enter in the application's "Settings" interface (stored in localStorage)
+- Method 2: Set environment variable `VITE_GEMINI_API_KEY`
+- Get API key: https://ai.google.dev/
 
-### 5. 首次登入
-- 在 Supabase 後台的 Authentication 建立使用者
-- 或在登入頁面使用註冊功能
-- 登入後即可開始使用所有功能
+### 5. First Login
+- Create a user in Supabase dashboard's Authentication
+- Or use the registration function on the login page
+- After login, you can start using all features
 
-## ⚙️ 環境設定說明
+## ⚙️ Environment Configuration
 
-### 網路權限
-- Gemini AI 需要外網連線
-- Supabase 需設定允許的網域（CORS）
-- 建議在 Supabase 後台設定網域白名單
+### Network Permissions
+- Gemini AI requires internet connection
+- Supabase needs to configure allowed domains (CORS)
+- It's recommended to set domain whitelist in Supabase dashboard
 
-### API 配額管理
-- Gemini API 免費方案：15 requests/min
-- 建議升級為付費方案以獲得更高配額
-- 應用程式已內建錯誤處理與重試機制
-- 📖 詳見：[Gemini API 配額問題](GEMINI_API_QUOTA_ISSUE.md)
+### API Quota Management
+- Gemini API free tier: 15 requests/min
+- It's recommended to upgrade to paid plan for higher quota
+- The application has built-in error handling and retry mechanisms
+- 📖 See details: [Gemini API Quota Issue](GEMINI_API_QUOTA_ISSUE.md)
 
-## 🗄️ 資料庫架構
+## 🗄️ Database Schema
 
-### 核心資料表
-- **suppliers** - 供應商主檔
-- **materials** - 物料主檔
-- **goods_receipts** - 貨收記錄
-- **price_history** - 價格歷史
-- **import_batches** - 匯入批次記錄
-- **upload_mappings** - 欄位映射模板
-- **material_cost_analysis** - 材料成本分析
+### Core Tables
+- **suppliers** - Supplier master
+- **materials** - Material master
+- **goods_receipts** - Goods receipt records
+- **price_history** - Price history
+- **import_batches** - Import batch records
+- **upload_mappings** - Field mapping templates
+- **material_cost_analysis** - Material cost analysis
 
-### KPI 檢視
-- **supplier_kpi_summary** - 供應商 KPI 摘要
-- **supplier_performance_stats** - 績效統計
-- **material_price_trends** - 價格趨勢
-- **cost_analysis_results** - 成本分析結果
+### KPI Views
+- **supplier_kpi_summary** - Supplier KPI summary
+- **supplier_performance_stats** - Performance statistics
+- **material_price_trends** - Price trends
+- **cost_analysis_results** - Cost analysis results
 
-### 資料庫管理
-- **多租戶設計**：所有資料以 `user_id` 隔離
-- **自動時間戳**：created_at / updated_at 自動維護
-- **索引優化**：針對常用查詢建立複合索引
-- **資料清理腳本**：[重置所有資料](HOW_TO_RESET_DATA.md)
+### Database Management
+- **Multi-Tenant Design**: All data is isolated by `user_id`
+- **Automatic Timestamps**: created_at / updated_at automatically maintained
+- **Index Optimization**: Composite indexes created for common queries
+- **Data Cleanup Scripts**: [Reset All Data](HOW_TO_RESET_DATA.md)
 
-📖 完整說明：[資料庫架構指南](DATABASE_SCHEMA_GUIDE.md)
+📖 Complete documentation: [Database Schema Guide](DATABASE_SCHEMA_GUIDE.md)
 
-## 📋 資料匯入欄位需求
+## 📋 Data Import Field Requirements
 
-### 貨收記錄（Goods Receipt）
-**必填欄位**：
-- `supplier_name` - 供應商名稱
-- `material_code` - 物料代碼
-- `actual_delivery_date` - 實際交付日期
-- `received_qty` - 收貨數量
+### Goods Receipt
+**Required Fields**:
+- `supplier_name` - Supplier name
+- `material_code` - Material code
+- `actual_delivery_date` - Actual delivery date
+- `received_qty` - Received quantity
 
-**選填欄位**：
+**Optional Fields**:
 - `supplier_code`, `material_name`, `po_number`, `receipt_number`
 - `planned_delivery_date`, `receipt_date`, `rejected_qty`
-- `category`, `uom` (單位)
+- `category`, `uom` (unit of measure)
 
-### 價格歷史（Price History）
-**必填欄位**：
-- `supplier_name` - 供應商名稱
-- `material_code` - 物料代碼
-- `order_date` - 訂單日期
-- `unit_price` - 單位價格
+### Price History
+**Required Fields**:
+- `supplier_name` - Supplier name
+- `material_code` - Material code
+- `order_date` - Order date
+- `unit_price` - Unit price
 
-**選填欄位**：
+**Optional Fields**:
 - `supplier_code`, `material_name`, `currency`
 - `quantity`, `is_contract_price`
 
-### 供應商主檔（Supplier Master）
-**必填欄位**：
-- `supplier_name` - 供應商名稱
+### Supplier Master
+**Required Fields**:
+- `supplier_name` - Supplier name
 
-**選填欄位**：
-- `supplier_code` - 供應商代碼
-- `contact_person` - 聯絡人
+**Optional Fields**:
+- `supplier_code` - Supplier code
+- `contact_person` - Contact person
 - `phone`, `email`, `address`
-- `product_category` - 產品類別
-- `payment_terms` - 付款條件
-- `delivery_time` - 交期
-- `status` - 狀態
+- `product_category` - Product category
+- `payment_terms` - Payment terms
+- `delivery_time` - Delivery time
+- `status` - Status
 
-### 檔案限制
-- 支援格式：Excel (.xlsx, .xls) 或 CSV
-- 檔案大小：≤ 10MB
-- 編碼：UTF-8（CSV 檔案）
-- 多工作表：支援一次匯入多個工作表
+### File Limitations
+- Supported formats: Excel (.xlsx, .xls) or CSV
+- File size: ≤ 10MB
+- Encoding: UTF-8 (for CSV files)
+- Multi-sheet: Support importing multiple sheets at once
 
-📖 詳細指南：
-- [數據上傳完整指南](DATA_UPLOAD_COMPLETE_GUIDE.md)
-- [數據驗證指南](DATA_VALIDATION_GUIDE.md)
-- [AI 映射指南](AI_MAPPING_GUIDE.md)
+📖 Detailed guides:
+- [Complete Data Upload Guide](DATA_UPLOAD_COMPLETE_GUIDE.md)
+- [Data Validation Guide](DATA_VALIDATION_GUIDE.md)
+- [AI Mapping Guide](AI_MAPPING_GUIDE.md)
 
-## 📁 專案結構
+## 📁 Project Structure
 
 ```
 smartops-app/
 ├── src/
-│   ├── App.jsx                          # 主應用程式、路由與佈局
-│   ├── main.jsx                         # 應用程式入口
+│   ├── App.jsx                          # Main application, routing and layout
+│   ├── main.jsx                         # Application entry point
 │   │
-│   ├── views/                           # 主要視圖元件
-│   │   ├── SupplierManagementView.jsx   # 供應商管理介面
-│   │   ├── CostAnalysisView.jsx         # 成本分析介面
-│   │   ├── EnhancedExternalSystemsView.jsx # 數據匯入介面
-│   │   └── ImportHistoryView.jsx        # 匯入歷史介面
+│   ├── views/                           # Main view components
+│   │   ├── SupplierManagementView.jsx   # Supplier management interface
+│   │   ├── CostAnalysisView.jsx         # Cost analysis interface
+│   │   ├── EnhancedExternalSystemsView.jsx # Data import interface
+│   │   └── ImportHistoryView.jsx        # Import history interface
 │   │
-│   ├── services/                        # 服務層
-│   │   ├── supabaseClient.js            # Supabase 連線設定
-│   │   ├── geminiAPI.js                 # Gemini AI 整合
-│   │   ├── supplierKpiService.js        # 供應商 KPI 服務
-│   │   ├── materialCostService.js       # 材料成本服務
-│   │   └── importHistoryService.js      # 匯入歷史服務
+│   ├── services/                        # Service layer
+│   │   ├── supabaseClient.js            # Supabase connection settings
+│   │   ├── geminiAPI.js                 # Gemini AI integration
+│   │   ├── supplierKpiService.js        # Supplier KPI service
+│   │   ├── materialCostService.js       # Material cost service
+│   │   └── importHistoryService.js      # Import history service
 │   │
-│   ├── utils/                           # 工具函式
-│   │   ├── dataValidation.js            # 資料驗證規則
-│   │   ├── dataProcessing.js            # 資料處理與轉換
-│   │   ├── dataCleaningUtils.js         # 資料清洗工具
-│   │   ├── aiMappingHelper.js           # AI 映射輔助
-│   │   └── uploadSchemas.js             # 上傳架構定義
+│   ├── utils/                           # Utility functions
+│   │   ├── dataValidation.js            # Data validation rules
+│   │   ├── dataProcessing.js            # Data processing and transformation
+│   │   ├── dataCleaningUtils.js         # Data cleaning utilities
+│   │   ├── aiMappingHelper.js           # AI mapping helper
+│   │   └── uploadSchemas.js             # Upload schema definitions
 │   │
-│   └── components/                      # 可重用元件
-│       ├── ui/                          # UI 基礎元件
+│   └── components/                      # Reusable components
+│       ├── ui/                          # UI base components
 │       │   ├── Button.jsx
 │       │   ├── Card.jsx
 │       │   ├── Modal.jsx
 │       │   └── Badge.jsx
-│       └── charts/                      # 圖表元件
+│       └── charts/                      # Chart components
 │           ├── SimpleBarChart.jsx
 │           └── SimpleLineChart.jsx
 │
-├── database/                            # 資料庫腳本
-│   ├── supplier_kpi_schema.sql          # KPI 資料表與檢視
-│   ├── import_batches_schema.sql        # 匯入批次架構
-│   ├── upload_mappings_schema.sql       # 映射模板架構
-│   ├── cost_analysis_schema.sql         # 成本分析架構
-│   ├── reset_all_data.sql               # 資料重置腳本
-│   └── cleanup_duplicate_suppliers.sql  # 去重腳本
+├── database/                            # Database scripts
+│   ├── supplier_kpi_schema.sql          # KPI tables and views
+│   ├── import_batches_schema.sql        # Import batch schema
+│   ├── upload_mappings_schema.sql       # Mapping template schema
+│   ├── cost_analysis_schema.sql         # Cost analysis schema
+│   ├── reset_all_data.sql               # Data reset script
+│   └── cleanup_duplicate_suppliers.sql  # Deduplication script
 │
-├── test_data_examples/                  # 測試資料範例
+├── test_data_examples/                  # Test data examples
 │   └── supplier_master_test_cases.md
 │
-└── docs/                                # 文檔（Markdown 檔案）
+└── docs/                                # Documentation (Markdown files)
     ├── 功能指南/
     ├── 故障排除/
     └── 實作說明/
 ```
 
-## 💻 常用指令
+## 💻 Common Commands
 
-### 開發
+### Development
 ```bash
-npm run dev          # 啟動開發伺服器（熱重載）
-npm run lint         # 執行 ESLint 檢查
+npm run dev          # Start development server (hot reload)
+npm run lint         # Run ESLint check
 ```
 
-### 建置與部署
+### Build & Deploy
 ```bash
-npm run build        # 建置生產版本
-npm run preview      # 預覽生產建置
+npm run build        # Build production version
+npm run preview      # Preview production build
 ```
 
-### 資料庫管理
+### Database Management
 ```bash
-# 在 Supabase SQL Editor 執行：
-# 1. 初始設定：QUICK_SETUP.sql
-# 2. 清理資料：database/reset_all_data.sql
-# 3. 去除重複：database/cleanup_duplicate_suppliers.sql
+# Execute in Supabase SQL Editor:
+# 1. Initial setup: QUICK_SETUP.sql
+# 2. Clean data: database/reset_all_data.sql
+# 3. Remove duplicates: database/cleanup_duplicate_suppliers.sql
 ```
 
-## 📚 完整文檔
+## 📚 Complete Documentation
 
-### 快速開始指南
-- [材料成本分析快速指南](MATERIAL_COST_QUICK_START.md)
-- [數據上傳完整指南](DATA_UPLOAD_COMPLETE_GUIDE.md)
-- [資料庫架構指南](DATABASE_SCHEMA_GUIDE.md)
+### Quick Start Guides
+- [Material Cost Analysis Quick Guide](MATERIAL_COST_QUICK_START.md)
+- [Complete Data Upload Guide](DATA_UPLOAD_COMPLETE_GUIDE.md)
+- [Database Schema Guide](DATABASE_SCHEMA_GUIDE.md)
 
-### 功能說明
-- [成本分析指南](COST_ANALYSIS_GUIDE.md)
-- [供應商驗證指南](SUPPLIER_VALIDATION_GUIDE.md)
-- [匯入歷史指南](IMPORT_HISTORY_GUIDE.md)
-- [AI 映射指南](AI_MAPPING_GUIDE.md)
-- [映射模板指南](MAPPING_TEMPLATE_GUIDE.md)
+### Feature Documentation
+- [Cost Analysis Guide](COST_ANALYSIS_GUIDE.md)
+- [Supplier Validation Guide](SUPPLIER_VALIDATION_GUIDE.md)
+- [Import History Guide](IMPORT_HISTORY_GUIDE.md)
+- [AI Mapping Guide](AI_MAPPING_GUIDE.md)
+- [Mapping Template Guide](MAPPING_TEMPLATE_GUIDE.md)
 
-### 新功能
-- [前端去重功能](FRONTEND_DEDUPLICATION.md)
-- [智能合併功能](SMART_MERGE_FEATURE.md)
-- [多工作表支援](MULTI_SHEET_SUPPORT.md)
-- [重複檢查功能](DUPLICATE_CHECK_FEATURE.md)
+### New Features
+- [Frontend Deduplication Feature](FRONTEND_DEDUPLICATION.md)
+- [Smart Merge Feature](SMART_MERGE_FEATURE.md)
+- [Multi-Sheet Support](MULTI_SHEET_SUPPORT.md)
+- [Duplicate Check Feature](DUPLICATE_CHECK_FEATURE.md)
 
-### 故障排除
-- [成本分析故障排除](COST_ANALYSIS_TROUBLESHOOTING.md)
-- [AI 映射故障排除](AI_MAPPING_TROUBLESHOOTING.md)
-- [Gemini API 配額問題](GEMINI_API_QUOTA_ISSUE.md)
-- [價格歷史映射修復](PRICE_HISTORY_MAPPING_FIX.md)
+### Troubleshooting
+- [Cost Analysis Troubleshooting](COST_ANALYSIS_TROUBLESHOOTING.md)
+- [AI Mapping Troubleshooting](AI_MAPPING_TROUBLESHOOTING.md)
+- [Gemini API Quota Issue](GEMINI_API_QUOTA_ISSUE.md)
+- [Price History Mapping Fix](PRICE_HISTORY_MAPPING_FIX.md)
 
-### 實作說明
-- [材料成本實作](MATERIAL_COST_IMPLEMENTATION.md)
-- [匯入歷史實作](IMPORT_HISTORY_SUMMARY.md)
-- [供應商驗證實作](SUPPLIER_VALIDATION_IMPLEMENTATION.md)
-- [架構設計文件](ARCHITECTURE_DESIGN.md)
+### Implementation Documentation
+- [Material Cost Implementation](MATERIAL_COST_IMPLEMENTATION.md)
+- [Import History Implementation](IMPORT_HISTORY_SUMMARY.md)
+- [Supplier Validation Implementation](SUPPLIER_VALIDATION_IMPLEMENTATION.md)
+- [Architecture Design Document](ARCHITECTURE_DESIGN.md)
 
-## ⚠️ 注意事項
+## ⚠️ Important Notes
 
-### 安全性
-- ⚠️ **請務必替換示範用的 API 金鑰**
-- 建議將所有敏感資訊移至環境變數
-- 正式環境請設定 Supabase CORS 白名單
-- 定期更新相依套件以修補安全漏洞
+### Security
+- ⚠️ **Please replace demo API keys**
+- It's recommended to move all sensitive information to environment variables
+- Set Supabase CORS whitelist for production environment
+- Regularly update dependencies to patch security vulnerabilities
 
-### 資料管理
-- 匯入前請確保資料庫表格已建立
-- 大量資料匯入建議分批處理
-- 定期備份重要資料
-- 使用 [資料重置腳本](HOW_TO_RESET_DATA.md) 清理測試資料
+### Data Management
+- Ensure database tables are created before importing
+- Large data imports should be processed in batches
+- Regularly backup important data
+- Use [data reset script](HOW_TO_RESET_DATA.md) to clean test data
 
-### API 配額
-- Gemini API 免費方案有請求限制
-- 建議實作快取機制減少 API 呼叫
-- 監控 API 使用量避免超額
-- 考慮升級至付費方案
+### API Quota
+- Gemini API free tier has request limits
+- It's recommended to implement caching mechanisms to reduce API calls
+- Monitor API usage to avoid exceeding limits
+- Consider upgrading to paid plan
 
-### 效能優化
-- 大型 Excel 檔案建議先壓縮或分割
-- 使用索引加速資料庫查詢
-- 前端分頁與虛擬滾動處理大量資料
-- 適當使用 React.memo 避免不必要的重新渲染
+### Performance Optimization
+- Large Excel files should be compressed or split first
+- Use indexes to speed up database queries
+- Frontend pagination and virtual scrolling for handling large datasets
+- Properly use React.memo to avoid unnecessary re-renders
 
-## 🤝 貢獻
+## 🤝 Contributing
 
-歡迎提交 Issue 或 Pull Request！
+Welcome to submit Issues or Pull Requests!
 
-## 📄 授權
+## 📄 License
 
-本專案採用 MIT 授權條款。
+This project is licensed under the MIT License.
 
 ---
 
-**SmartOps** - 讓供應鏈管理更智能、更高效 🚀
+**SmartOps** - Making supply chain management smarter and more efficient 🚀

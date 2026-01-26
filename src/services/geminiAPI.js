@@ -3,7 +3,8 @@
  * 處理所有與 Google Gemini AI 的互動
  */
 
-const DEFAULT_API_KEY = "AIzaSyAqujw4-C_L5BYTAVUlHBLFXFZsuzMyXAE";
+// Using environment variable for API key (falls back to empty string)
+const DEFAULT_API_KEY = import.meta.env.VITE_GEMINI_API_KEY || "";
 // Using user-specified model gemini-2.5-flash
 const GEMINI_MODEL = "gemini-2.5-flash";
 const API_VERSION = "v1beta"; // Use v1beta for experimental models
