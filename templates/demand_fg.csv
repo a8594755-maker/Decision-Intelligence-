@@ -1,0 +1,8 @@
+material_code,plant_id,time_bucket,week_bucket,date,demand_qty,uom,source_type,source_id,customer_id,project_id,priority,status,notes
+FG-001,PLANT-01,2026-W02,2026-W02,,1000.0,pcs,SO,SO-2026-001,CUST-001,,1,confirmed,
+FG-001,PLANT-01,2026-W03,2026-W03,,1500.0,pcs,forecast,FCST-2026-001,,,2,confirmed,
+FG-001,PLANT-01,2026-W04,2026-W04,,1200.0,pcs,manual,,,PROJ-001,1,confirmed,
+FG-002,PLANT-01,2026-W02,2026-W02,,800.0,pcs,SO,SO-2026-002,CUST-002,,1,confirmed,
+FG-002,PLANT-01,2026-W03,2026-W03,,900.0,pcs,forecast,FCST-2026-002,,,2,confirmed,
+FG-001,PLANT-01,2026-01-08,,2026-01-08,1000.0,pcs,SO,SO-2026-001,CUST-001,,1,confirmed,
+FG-001,PLANT-01,2026-01-15,,2026-01-15,1500.0,pcs,forecast,FCST-2026-001,,,2,confirmed,

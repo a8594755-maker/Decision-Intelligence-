@@ -221,9 +221,10 @@ const parsePhone = (value) => {
  * @param {*} value - 原始值
  * @param {Object} fieldDef - 欄位定義（來自 schema）
  * @param {string} uploadType - 上傳類型（用於特殊驗證邏輯）
+ * @param {Object} row - 完整資料列（用於跨欄位驗證）
  * @returns {Object} { value, errors: [] }
  */
-const validateAndCleanField = (value, fieldDef, uploadType) => {
+const validateAndCleanField = (value, fieldDef, uploadType, row = {}) => {
   const errors = [];
   let cleanedValue = value;
 
@@ -273,6 +274,16 @@ const validateAndCleanField = (value, fieldDef, uploadType) => {
         }
         if (fieldDef.max !== undefined && cleanedValue > fieldDef.max) {
           errors.push(`${fieldDef.label}不能大於 ${fieldDef.max}`);
+        }
+      }
+      break;
+    
+    case 'string':
+      // Special handling for week_bucket format
+      if (fieldDef.key === 'week_bucket' && cleanedValue) {
+        const weekBucketPattern = /^\d{4}-W\d{1,2}$/;
+        if (!weekBucketPattern.test(String(cleanedValue).trim())) {
+          errors.push(`${fieldDef.label}格式不正確，應為 YYYY-W## 格式（例如：2026-W02）`);
         }
       }
       break;
@@ -481,6 +492,89 @@ const checkDuplicates = (rows, uploadType) => {
 };
 
 /**
+ * 處理 demand_fg 的時間欄位（time_bucket）
+ * 從 week_bucket 或 date 自動填入 time_bucket
+ * @param {Object} row - 資料列
+ * @returns {Object} { time_bucket, errors }
+ */
+const processTimeBucket = (row) => {
+  const errors = [];
+  let timeBucket = null;
+
+  const weekBucket = row.week_bucket;
+  const date = row.date;
+
+  // 優先使用 date，如果沒有則使用 week_bucket
+  if (date) {
+    const parsedDate = parseDate(date);
+    if (parsedDate) {
+      timeBucket = parsedDate;
+    } else {
+      errors.push('日期格式不正確，應為 YYYY-MM-DD 格式');
+    }
+  } else if (weekBucket) {
+    const trimmed = String(weekBucket).trim();
+    const weekBucketPattern = /^\d{4}-W\d{1,2}$/;
+    if (weekBucketPattern.test(trimmed)) {
+      timeBucket = trimmed;
+    } else {
+      errors.push('週桶格式不正確，應為 YYYY-W## 格式（例如：2026-W02）');
+    }
+  } else {
+    errors.push('必須填寫 week_bucket 或 date 其中一個欄位');
+  }
+
+  return { time_bucket: timeBucket, errors };
+};
+
+/**
+ * 驗證 bom_edge 的特殊規則
+ * @param {Object} row - 資料列
+ * @returns {Array} 錯誤列表
+ */
+const validateBomEdgeRules = (row) => {
+  const errors = [];
+
+  // 驗證 qty_per > 0
+  if (row.qty_per !== null && row.qty_per !== undefined) {
+    if (row.qty_per <= 0) {
+      errors.push({ field: 'qty_per', fieldLabel: 'Quantity Per Unit', error: 'qty_per 必須大於 0', originalValue: row.qty_per });
+    }
+  }
+
+  // 驗證 valid_from <= valid_to
+  if (row.valid_from && row.valid_to) {
+    const fromDate = new Date(row.valid_from);
+    const toDate = new Date(row.valid_to);
+    if (fromDate > toDate) {
+      errors.push({ field: 'valid_from', fieldLabel: 'Valid From', error: 'valid_from 不能晚於 valid_to', originalValue: row.valid_from });
+    }
+  }
+
+  // 驗證 scrap_rate 範圍（如果填寫）
+  if (row.scrap_rate !== null && row.scrap_rate !== undefined && row.scrap_rate !== '') {
+    const scrapRate = parseNumber(row.scrap_rate);
+    if (scrapRate !== null) {
+      if (scrapRate < 0 || scrapRate >= 1) {
+        errors.push({ field: 'scrap_rate', fieldLabel: 'Scrap Rate', error: 'scrap_rate 必須在 0 <= scrap_rate < 1 範圍內', originalValue: row.scrap_rate });
+      }
+    }
+  }
+
+  // 驗證 yield_rate 範圍（如果填寫）
+  if (row.yield_rate !== null && row.yield_rate !== undefined && row.yield_rate !== '') {
+    const yieldRate = parseNumber(row.yield_rate);
+    if (yieldRate !== null) {
+      if (yieldRate <= 0 || yieldRate > 1) {
+        errors.push({ field: 'yield_rate', fieldLabel: 'Yield Rate', error: 'yield_rate 必須在 0 < yield_rate <= 1 範圍內', originalValue: row.yield_rate });
+      }
+    }
+  }
+
+  return errors;
+};
+
+/**
  * 驗證並清洗資料列
  * @param {Array} cleanRows - 已經過欄位映射轉換的資料
  * @param {string} uploadType - 上傳類型
@@ -504,8 +598,8 @@ export const validateAndCleanRows = (cleanRows, uploadType) => {
       const fieldKey = fieldDef.key;
       const originalValue = row[fieldKey];
 
-      // 將 uploadType 傳遞給驗證函數
-      const { value, errors } = validateAndCleanField(originalValue, fieldDef, uploadType);
+      // 將 uploadType 和完整 row 傳遞給驗證函數
+      const { value, errors } = validateAndCleanField(originalValue, fieldDef, uploadType, row);
 
       cleanedRow[fieldKey] = value;
 
@@ -520,6 +614,28 @@ export const validateAndCleanRows = (cleanRows, uploadType) => {
         });
       }
     });
+
+    // 特殊處理：demand_fg 的時間欄位
+    if (uploadType === 'demand_fg') {
+      const { time_bucket, errors: timeErrors } = processTimeBucket(cleanedRow);
+      cleanedRow.time_bucket = time_bucket;
+      if (timeErrors.length > 0) {
+        timeErrors.forEach(error => {
+          rowErrors.push({
+            field: 'time_bucket',
+            fieldLabel: 'Time Bucket',
+            error,
+            originalValue: cleanedRow.week_bucket || cleanedRow.date
+          });
+        });
+      }
+    }
+
+    // 特殊處理：bom_edge 的業務規則驗證
+    if (uploadType === 'bom_edge') {
+      const bomErrors = validateBomEdgeRules(cleanedRow);
+      rowErrors.push(...bomErrors);
+    }
 
     // 判斷這一行是否有效
     if (rowErrors.length === 0) {

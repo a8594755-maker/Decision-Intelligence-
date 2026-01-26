@@ -332,6 +332,262 @@ export const UPLOAD_SCHEMAS = {
         min: 0
       }
     ]
+  },
+
+  // BOM Edge - BOM relationship table
+  bom_edge: {
+    label: 'BOM Edge',
+    description: 'BOM relationship table (parent-child material usage)',
+    icon: '🔗',
+    fields: [
+      // === Required Fields ===
+      {
+        key: 'parent_material',
+        label: 'Parent Material',
+        type: 'string',
+        required: true,
+        description: 'Parent material code (FG or assembly)'
+      },
+      {
+        key: 'child_material',
+        label: 'Child Material',
+        type: 'string',
+        required: true,
+        description: 'Child material code (component)'
+      },
+      {
+        key: 'qty_per',
+        label: 'Quantity Per Unit',
+        type: 'number',
+        required: true,
+        description: 'Quantity per unit (must be > 0)',
+        min: 0.0001
+      },
+      
+      // === Optional Fields ===
+      {
+        key: 'uom',
+        label: 'Unit of Measure',
+        type: 'string',
+        required: false,
+        description: 'Unit of measure (e.g., pcs, kg, m)',
+        default: 'pcs'
+      },
+      {
+        key: 'plant_id',
+        label: 'Plant ID',
+        type: 'string',
+        required: false,
+        description: 'Plant code (for multi-plant support)'
+      },
+      {
+        key: 'bom_version',
+        label: 'BOM Version',
+        type: 'string',
+        required: false,
+        description: 'BOM version identifier'
+      },
+      {
+        key: 'valid_from',
+        label: 'Valid From',
+        type: 'date',
+        required: false,
+        description: 'Valid from date (YYYY-MM-DD)'
+      },
+      {
+        key: 'valid_to',
+        label: 'Valid To',
+        type: 'date',
+        required: false,
+        description: 'Valid to date (YYYY-MM-DD)'
+      },
+      {
+        key: 'scrap_rate',
+        label: 'Scrap Rate',
+        type: 'number',
+        required: false,
+        description: 'Scrap rate (0 <= scrap_rate < 1, e.g., 0.05 = 5%)',
+        min: 0,
+        max: 0.9999
+      },
+      {
+        key: 'yield_rate',
+        label: 'Yield Rate',
+        type: 'number',
+        required: false,
+        description: 'Yield rate (0 < yield_rate <= 1, e.g., 0.95 = 95%)',
+        min: 0.0001,
+        max: 1
+      },
+      {
+        key: 'alt_group',
+        label: 'Alternative Group',
+        type: 'string',
+        required: false,
+        description: 'Alternative material group identifier'
+      },
+      {
+        key: 'priority',
+        label: 'Priority',
+        type: 'number',
+        required: false,
+        description: 'Priority (lower number = higher priority)',
+        min: 1
+      },
+      {
+        key: 'mix_ratio',
+        label: 'Mix Ratio',
+        type: 'number',
+        required: false,
+        description: 'Mix ratio for alternative materials (0 < mix_ratio <= 1)',
+        min: 0.0001,
+        max: 1
+      },
+      {
+        key: 'ecn_number',
+        label: 'ECN Number',
+        type: 'string',
+        required: false,
+        description: 'Engineering Change Notice number'
+      },
+      {
+        key: 'ecn_effective_date',
+        label: 'ECN Effective Date',
+        type: 'date',
+        required: false,
+        description: 'ECN effective date (YYYY-MM-DD)'
+      },
+      {
+        key: 'routing_id',
+        label: 'Routing ID',
+        type: 'string',
+        required: false,
+        description: 'Routing/process version identifier'
+      },
+      {
+        key: 'notes',
+        label: 'Notes',
+        type: 'string',
+        required: false,
+        description: 'Additional notes'
+      }
+    ]
+  },
+
+  // Demand FG - Finished goods demand table
+  demand_fg: {
+    label: 'Demand FG',
+    description: 'Finished goods demand table (time-series demand data)',
+    icon: '📊',
+    fields: [
+      // === Required Fields ===
+      {
+        key: 'material_code',
+        label: 'Material Code',
+        type: 'string',
+        required: true,
+        description: 'Finished goods material code'
+      },
+      {
+        key: 'plant_id',
+        label: 'Plant ID',
+        type: 'string',
+        required: true,
+        description: 'Plant code (required for multi-plant support)'
+      },
+      {
+        key: 'demand_qty',
+        label: 'Demand Quantity',
+        type: 'number',
+        required: true,
+        description: 'Demand quantity (must be >= 0)',
+        min: 0
+      },
+      
+      // === Time Bucket Fields (at least one required) ===
+      {
+        key: 'week_bucket',
+        label: 'Week Bucket',
+        type: 'string',
+        required: false,
+        description: 'Week bucket format: YYYY-W## (e.g., 2026-W02). Use either week_bucket or date.'
+      },
+      {
+        key: 'date',
+        label: 'Date',
+        type: 'date',
+        required: false,
+        description: 'Date format: YYYY-MM-DD (e.g., 2026-01-08). Use either week_bucket or date.'
+      },
+      {
+        key: 'time_bucket',
+        label: 'Time Bucket',
+        type: 'string',
+        required: false,
+        description: 'Unified time bucket (auto-filled from week_bucket or date)'
+      },
+      
+      // === Optional Fields ===
+      {
+        key: 'uom',
+        label: 'Unit of Measure',
+        type: 'string',
+        required: false,
+        description: 'Unit of measure (e.g., pcs, kg, m)',
+        default: 'pcs'
+      },
+      {
+        key: 'source_type',
+        label: 'Source Type',
+        type: 'string',
+        required: false,
+        description: 'Demand source type: SO, forecast, manual, other'
+      },
+      {
+        key: 'source_id',
+        label: 'Source ID',
+        type: 'string',
+        required: false,
+        description: 'Source identifier (e.g., order number, forecast ID)'
+      },
+      {
+        key: 'customer_id',
+        label: 'Customer ID',
+        type: 'string',
+        required: false,
+        description: 'Customer code'
+      },
+      {
+        key: 'project_id',
+        label: 'Project ID',
+        type: 'string',
+        required: false,
+        description: 'Project code'
+      },
+      {
+        key: 'priority',
+        label: 'Priority',
+        type: 'number',
+        required: false,
+        description: 'Priority (lower number = higher priority)',
+        min: 1
+      },
+      {
+        key: 'status',
+        label: 'Status',
+        type: 'string',
+        required: false,
+        description: 'Status: draft, confirmed, cancelled',
+        default: 'confirmed'
+      },
+      {
+        key: 'notes',
+        label: 'Notes',
+        type: 'string',
+        required: false,
+        description: 'Additional notes'
+      }
+    ]
   }
 };
 

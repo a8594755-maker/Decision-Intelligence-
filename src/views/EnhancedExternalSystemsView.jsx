@@ -17,7 +17,9 @@ import {
   goodsReceiptsService,
   priceHistoryService,
   userFilesService,
-  uploadMappingsService
+  uploadMappingsService,
+  bomEdgesService,
+  demandFgService
 } from '../services/supabaseClient';
 import { importBatchesService } from '../services/importHistoryService';
 import UPLOAD_SCHEMAS from '../utils/uploadSchemas';
@@ -624,7 +626,9 @@ const EnhancedExternalSystemsView = ({ addNotification, user }) => {
       const targetTableMap = {
         'goods_receipt': 'goods_receipts',
         'price_history': 'price_history',
-        'supplier_master': 'suppliers'
+        'supplier_master': 'suppliers',
+        'bom_edge': 'bom_edges',
+        'demand_fg': 'demand_fg'
       };
       
       const targetTable = targetTableMap[uploadType] || uploadType;
@@ -656,6 +660,10 @@ const EnhancedExternalSystemsView = ({ addNotification, user }) => {
         savedCount = await savePriceHistory(userId, rowsToSave, uploadFileId, batchId);
       } else if (uploadType === 'supplier_master') {
         savedCount = await saveSuppliers(userId, rowsToSave, batchId);
+      } else if (uploadType === 'bom_edge') {
+        savedCount = await saveBomEdges(userId, rowsToSave, batchId);
+      } else if (uploadType === 'demand_fg') {
+        savedCount = await saveDemandFg(userId, rowsToSave, batchId);
       } else {
         throw new Error(`Unsupported upload type: ${uploadType}`);
       }
@@ -858,6 +866,75 @@ const EnhancedExternalSystemsView = ({ addNotification, user }) => {
     
     // Log the result
     console.log(`Suppliers saved: ${result.inserted} inserted, ${result.updated} updated`);
+    
+    return result.count;
+  };
+
+  /**
+   * Save BOM edges to database
+   * @param {string} userId - User ID
+   * @param {Array} validRows - Validated valid data
+   * @param {string} batchId - Import batch ID
+   * @returns {number} Number of records successfully saved
+   */
+  const saveBomEdges = async (userId, validRows, batchId) => {
+    const bomEdges = validRows.map(row => ({
+      parent_material: row.parent_material,
+      child_material: row.child_material,
+      qty_per: row.qty_per,
+      uom: row.uom || 'pcs',
+      plant_id: row.plant_id || null,
+      bom_version: row.bom_version || null,
+      valid_from: row.valid_from || null,
+      valid_to: row.valid_to || null,
+      scrap_rate: row.scrap_rate || null,
+      yield_rate: row.yield_rate || null,
+      alt_group: row.alt_group || null,
+      priority: row.priority || null,
+      mix_ratio: row.mix_ratio || null,
+      ecn_number: row.ecn_number || null,
+      ecn_effective_date: row.ecn_effective_date || null,
+      routing_id: row.routing_id || null,
+      notes: row.notes || null
+    }));
+
+    // Batch insert BOM edges
+    const result = await bomEdgesService.batchInsert(userId, bomEdges, batchId);
+    
+    console.log(`BOM edges saved: ${result.count} records`);
+    
+    return result.count;
+  };
+
+  /**
+   * Save demand FG to database
+   * @param {string} userId - User ID
+   * @param {Array} validRows - Validated valid data
+   * @param {string} batchId - Import batch ID
+   * @returns {number} Number of records successfully saved
+   */
+  const saveDemandFg = async (userId, validRows, batchId) => {
+    const demands = validRows.map(row => ({
+      material_code: row.material_code,
+      plant_id: row.plant_id,
+      time_bucket: row.time_bucket, // Already processed in validation
+      week_bucket: row.week_bucket || null,
+      date: row.date || null,
+      demand_qty: row.demand_qty,
+      uom: row.uom || 'pcs',
+      source_type: row.source_type || null,
+      source_id: row.source_id || null,
+      customer_id: row.customer_id || null,
+      project_id: row.project_id || null,
+      priority: row.priority || null,
+      status: row.status || 'confirmed',
+      notes: row.notes || null
+    }));
+
+    // Batch insert demand FG
+    const result = await demandFgService.batchInsert(userId, demands, batchId);
+    
+    console.log(`Demand FG saved: ${result.count} records`);
     
     return result.count;
   };

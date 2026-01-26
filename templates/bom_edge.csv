@@ -1,0 +1,7 @@
+parent_material,child_material,qty_per,uom,plant_id,bom_version,valid_from,valid_to,scrap_rate,yield_rate,alt_group,priority,mix_ratio,ecn_number,ecn_effective_date,routing_id,notes
+FG-001,COMP-001,2.0,pcs,PLANT-01,V1.0,2026-01-01,2026-12-31,0.02,0.98,,,,"","",,
+FG-001,COMP-002,1.5,pcs,PLANT-01,V1.0,2026-01-01,2026-12-31,0.01,0.99,,,,"","",,
+FG-001,COMP-003,0.5,kg,PLANT-01,V1.0,2026-01-01,2026-12-31,0.05,0.95,,,,"","",,
+FG-002,COMP-001,1.0,pcs,PLANT-01,V1.0,2026-01-01,2026-12-31,0.03,0.97,,,,"","",,
+FG-002,COMP-004,3.0,pcs,PLANT-01,V1.0,2026-01-01,2026-12-31,0.02,0.98,ALT-GROUP-01,1,0.7,ECN-2026-001,2026-03-01,ROUTE-001,主要替代料
+FG-002,COMP-005,3.0,pcs,PLANT-01,V1.0,2026-01-01,2026-12-31,0.02,0.98,ALT-GROUP-01,2,0.3,ECN-2026-001,2026-03-01,ROUTE-001,次要替代料

@@ -1754,7 +1754,7 @@ const OperationsDashboardView = ({ excelData, user }) => {
             <span className="text-xs text-slate-400">Working days</span>
           </div>
           <div className="grid grid-cols-7 gap-1 md:gap-2">
-            {['M','T','W','T','F','S','S'].map(d => <div key={d} className="text-center text-xs text-slate-500">{d}</div>)}
+            {['M','T','W','T','F','S','S'].map((d, idx) => <div key={`day-${idx}`} className="text-center text-xs text-slate-500">{d}</div>)}
             {[0, 2, 5, 1, 0, 8, 3, 2, 4, 1, 6, 2, 0, 1].map((val, i) => (
               <div key={i} className={`h-8 md:h-12 rounded flex items-center justify-center text-xs font-medium text-white ${val === 0 ? 'bg-slate-100 dark:bg-slate-800 text-slate-400' : val < 3 ? 'bg-emerald-400' : val < 6 ? 'bg-amber-400' : 'bg-red-500'}`}>{val > 0 ? val : ''}</div>
             ))}
@@ -1915,9 +1915,15 @@ const DecisionSupportView = ({ excelData, user, addNotification }) => {
         : c
     ));
 
-    // Call AI
-    const context = excelData ? `USER DATA: ${JSON.stringify(excelData.slice(0, 5))}` : "No data available.";
-    const result = await callGeminiAPI(input, context);
+    // Call AI with error handling
+    let result;
+    try {
+      const context = excelData ? `USER DATA: ${JSON.stringify(excelData.slice(0, 5))}` : "No data available.";
+      result = await callGeminiAPI(input, context);
+    } catch (error) {
+      console.error("AI call failed:", error);
+      result = `❌ AI 服務暫時不可用\n\n錯誤: ${error.message}\n\n請稍後再試，或檢查設定中的 API key。`;
+    }
 
     const aiMsg = { role: 'ai', content: result, timestamp: new Date().toISOString() };
     const finalMessages = [...updatedMessages, aiMsg];

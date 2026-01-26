@@ -1,8 +1,9 @@
 import { createClient } from '@supabase/supabase-js';
 
 // Supabase configuration
-const supabaseUrl = "https://cbxvqqqulwytdblivtoe.supabase.co";
-const supabaseKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNieHZxcXF1bHd5dGRibGl2dG9lIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQ0NjQzNjUsImV4cCI6MjA4MDA0MDM2NX0.3PeFtqJAkoxrosFeAiXbOklRCDxaQjH2VjXWwEiFyYI";
+// 優先使用環境變數，如果沒有則使用預設值
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || "https://cbxvqqqulwytdblivtoe.supabase.co";
+const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY || "sb_publishable_YcRs0N95Mk6BpTFIq0hoRA_jsW6KlHo";
 
 export const supabase = createClient(supabaseUrl, supabaseKey);
 
@@ -814,6 +815,169 @@ export const uploadMappingsService = {
     });
 
     return smartMappingResult;
+  }
+};
+
+/**
+ * BOM Edges Operations
+ */
+export const bomEdgesService = {
+  // 批量插入 BOM 關係
+  async batchInsert(userId, bomEdges, batchId = null) {
+    if (!bomEdges || bomEdges.length === 0) {
+      return { success: true, count: 0 };
+    }
+
+    const payload = bomEdges.map(edge => ({
+      user_id: userId,
+      batch_id: batchId,
+      parent_material: edge.parent_material,
+      child_material: edge.child_material,
+      qty_per: edge.qty_per,
+      uom: edge.uom || 'pcs',
+      plant_id: edge.plant_id || null,
+      bom_version: edge.bom_version || null,
+      valid_from: edge.valid_from || null,
+      valid_to: edge.valid_to || null,
+      scrap_rate: edge.scrap_rate || null,
+      yield_rate: edge.yield_rate || null,
+      alt_group: edge.alt_group || null,
+      priority: edge.priority || null,
+      mix_ratio: edge.mix_ratio || null,
+      ecn_number: edge.ecn_number || null,
+      ecn_effective_date: edge.ecn_effective_date || null,
+      routing_id: edge.routing_id || null,
+      notes: edge.notes || null
+    }));
+
+    const { data, error } = await supabase
+      .from('bom_edges')
+      .insert(payload)
+      .select();
+
+    if (error) throw error;
+    return { success: true, count: data.length, data };
+  },
+
+  // 獲取 BOM 關係
+  async getBomEdges(userId, options = {}) {
+    const { parentMaterial, childMaterial, plantId, limit = 100, offset = 0 } = options;
+
+    let query = supabase
+      .from('bom_edges')
+      .select('*')
+      .eq('user_id', userId)
+      .order('parent_material', { ascending: true })
+      .range(offset, offset + limit - 1);
+
+    if (parentMaterial) {
+      query = query.eq('parent_material', parentMaterial);
+    }
+
+    if (childMaterial) {
+      query = query.eq('child_material', childMaterial);
+    }
+
+    if (plantId) {
+      query = query.eq('plant_id', plantId);
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+    return data || [];
+  }
+};
+
+/**
+ * Demand FG Operations
+ */
+export const demandFgService = {
+  // 批量插入 FG 需求
+  async batchInsert(userId, demands, batchId = null) {
+    if (!demands || demands.length === 0) {
+      return { success: true, count: 0 };
+    }
+
+    const payload = demands.map(demand => ({
+      user_id: userId,
+      batch_id: batchId,
+      material_code: demand.material_code,
+      plant_id: demand.plant_id,
+      time_bucket: demand.time_bucket,
+      week_bucket: demand.week_bucket || null,
+      date: demand.date || null,
+      demand_qty: demand.demand_qty,
+      uom: demand.uom || 'pcs',
+      source_type: demand.source_type || null,
+      source_id: demand.source_id || null,
+      customer_id: demand.customer_id || null,
+      project_id: demand.project_id || null,
+      priority: demand.priority || null,
+      status: demand.status || 'confirmed',
+      notes: demand.notes || null
+    }));
+
+    const { data, error } = await supabase
+      .from('demand_fg')
+      .insert(payload)
+      .select();
+
+    if (error) throw error;
+    return { success: true, count: data.length, data };
+  },
+
+  // 獲取 FG 需求
+  async getDemands(userId, options = {}) {
+    const { materialCode, plantId, startTimeBucket, endTimeBucket, limit = 100, offset = 0 } = options;
+
+    let query = supabase
+      .from('demand_fg')
+      .select('*')
+      .eq('user_id', userId)
+      .order('time_bucket', { ascending: true })
+      .range(offset, offset + limit - 1);
+
+    if (materialCode) {
+      query = query.eq('material_code', materialCode);
+    }
+
+    if (plantId) {
+      query = query.eq('plant_id', plantId);
+    }
+
+    if (startTimeBucket) {
+      query = query.gte('time_bucket', startTimeBucket);
+    }
+
+    if (endTimeBucket) {
+      query = query.lte('time_bucket', endTimeBucket);
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+    return data || [];
+  }
+};
+
+/**
+ * Component Demand Operations (Stub for future use)
+ */
+export const componentDemandService = {
+  // Placeholder for future implementation
+  async getComponentDemands(userId, options = {}) {
+    // TODO: Implement component demand calculation from BOM explosion
+    return [];
+  }
+};
+
+/**
+ * Component Demand Trace Operations (Stub for future use)
+ */
+export const componentDemandTraceService = {
+  // Placeholder for future implementation
+  async getTrace(userId, componentMaterial, timeBucket) {
+    // TODO: Implement trace back to FG demand
+    return [];
   }
 };
 

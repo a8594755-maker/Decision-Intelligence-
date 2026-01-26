@@ -3,16 +3,27 @@
  * 處理所有與 Google Gemini AI 的互動
  */
 
-const DEFAULT_API_KEY = "AIzaSyBiPV68i9HR_D6a_PQ3lwSEJSIYZ0eF3j4";
+const DEFAULT_API_KEY = "AIzaSyAqujw4-C_L5BYTAVUlHBLFXFZsuzMyXAE";
 // Using user-specified model gemini-2.5-flash
 const GEMINI_MODEL = "gemini-2.5-flash";
 const API_VERSION = "v1beta"; // Use v1beta for experimental models
 
 /**
- * 從 localStorage 獲取 API Key，如果沒有則使用預設值
+ * 從環境變數、localStorage 或預設值獲取 API Key
+ * 優先順序：環境變數 > localStorage > 預設值
  */
 export const getApiKey = () => {
-  return localStorage.getItem('gemini_api_key') || DEFAULT_API_KEY;
+  // 優先使用環境變數（如果存在）
+  if (import.meta.env.VITE_GEMINI_API_KEY) {
+    return import.meta.env.VITE_GEMINI_API_KEY;
+  }
+  // 其次使用 localStorage
+  const storedKey = localStorage.getItem('gemini_api_key');
+  if (storedKey) {
+    return storedKey;
+  }
+  // 最後使用預設值
+  return DEFAULT_API_KEY;
 };
 
 /**
@@ -81,10 +92,17 @@ export const callGeminiAPI = async (prompt, systemContext = "", options = {}) =>
 
       // Handle quota errors explicitly
       if (response.status === 429) {
-        return "WARNING: API quota is exhausted.\n\nTry:\n1. Wait for the daily reset\n2. Swap in a new API key in Settings\n3. Upgrade to a paid plan\n\nGet another free key: https://ai.google.dev/";
+        return "⚠️ API 配額已用完\n\n請嘗試：\n1. 等待每日重置\n2. 在設定中更換新的 API key\n3. 升級至付費方案\n\n取得新的免費 key: https://ai.google.dev/";
       }
 
-      throw new Error(`API Error: ${response.status} - ${errorData.error?.message || 'Unknown error'}`);
+      // Handle service unavailable (503) - model overloaded
+      if (response.status === 503) {
+        return "⚠️ AI 服務暫時不可用\n\n模型目前過載，請稍後再試。\n\n建議：\n1. 等待 30 秒後重試\n2. 檢查網路連線\n3. 如果問題持續，請稍後再試";
+      }
+
+      // Handle other errors
+      const errorMessage = errorData.error?.message || '未知錯誤';
+      return `❌ AI 服務錯誤 (${response.status})\n\n${errorMessage}\n\n請檢查：\n1. API key 是否正確\n2. 網路連線是否正常\n3. 稍後再試`;
     }
 
     const data = await response.json();
@@ -126,7 +144,18 @@ export const callGeminiAPI = async (prompt, systemContext = "", options = {}) =>
     return text;
   } catch (error) {
     console.error("Gemini API Failed:", error);
-    return `ERROR: AI service request failed: ${error.message}\n\nPlease check:\n- Is your API key correct?\n- Is the network available?\n- Any firewall blocking the request?`;
+    
+    // Handle network errors
+    if (error.message.includes('fetch') || error.message.includes('network')) {
+      return "❌ 網路連線錯誤\n\n無法連接到 AI 服務。\n\n請檢查：\n1. 網路連線是否正常\n2. 防火牆是否阻擋請求\n3. 稍後再試";
+    }
+    
+    // Handle timeout errors
+    if (error.message.includes('timeout') || error.name === 'AbortError') {
+      return "⏱️ 請求超時\n\nAI 服務回應時間過長。\n\n請嘗試：\n1. 稍後再試\n2. 簡化您的問題\n3. 檢查網路連線";
+    }
+    
+    return `❌ AI 服務請求失敗\n\n錯誤訊息: ${error.message}\n\n請檢查：\n1. API key 是否正確設定\n2. 網路連線是否正常\n3. 防火牆是否阻擋請求\n4. 稍後再試`;
   }
 };
 
