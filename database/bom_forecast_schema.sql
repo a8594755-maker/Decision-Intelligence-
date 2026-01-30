@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS bom_edges (
 
   -- 时间戳
   created_at TIMESTAMPTZ DEFAULT NOW(),
-  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
 
   -- 约束：同一用户、同一父件、同一子件、同一工厂的组合应该唯一（可选，根据业务需求）
   -- UNIQUE(user_id, parent_material, child_material, plant_id)

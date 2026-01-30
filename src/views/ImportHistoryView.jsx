@@ -6,11 +6,12 @@
 import React, { useState, useEffect } from 'react';
 import {
   History, RefreshCw, Eye, Undo2, Trash2, CheckCircle, XCircle, Clock,
-  AlertTriangle, Download, Search, Filter, ChevronDown, ChevronUp, Loader2, X
+  AlertTriangle, Download, Search, Filter, ChevronDown, ChevronUp, Loader2, X, Database, TrendingUp
 } from 'lucide-react';
 import { Card, Button, Badge, Modal } from '../components/ui';
 import { importBatchesService } from '../services/importHistoryService';
 import UPLOAD_SCHEMAS from '../utils/uploadSchemas';
+import ViewDataModal from '../components/ViewDataModal';
 
 const ImportHistoryView = ({ addNotification, user }) => {
   // State
@@ -34,6 +35,12 @@ const ImportHistoryView = ({ addNotification, user }) => {
   const [undoModal, setUndoModal] = useState({
     open: false,
     batches: []
+  });
+
+  // View data modal (new MVP dashboard)
+  const [viewDataModal, setViewDataModal] = useState({
+    open: false,
+    batch: null
   });
 
   // Load batches on mount
@@ -129,6 +136,26 @@ const ImportHistoryView = ({ addNotification, user }) => {
       batch: null,
       data: [],
       loading: false
+    });
+  };
+
+  /**
+   * Open view data modal (new MVP dashboard)
+   */
+  const handleViewData = (batch) => {
+    setViewDataModal({
+      open: true,
+      batch: batch
+    });
+  };
+
+  /**
+   * Close view data modal
+   */
+  const closeViewDataModal = () => {
+    setViewDataModal({
+      open: false,
+      batch: null
     });
   };
 
@@ -553,12 +580,36 @@ const ImportHistoryView = ({ addNotification, user }) => {
                             {batch.error_rows}
                           </span>
                         </div>
+                        {batch.metadata?.error && (
+                          <div className="text-xs text-red-600 dark:text-red-400 mt-1 max-w-xs truncate" title={batch.metadata.error}>
+                            錯誤: {batch.metadata.error}
+                          </div>
+                        )}
                       </td>
                       <td className="px-4 py-3 text-center">
                         {getStatusBadge(batch.status)}
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center justify-center gap-2">
+                          {batch.target_table === 'bom_explosion' && batch.status === 'completed' && (
+                            <button
+                              onClick={() => {
+                                setView && setView('forecasts');
+                                // Could also pass batchId via URL params or global state
+                              }}
+                              className="p-1.5 hover:bg-purple-100 dark:hover:bg-purple-900/30 rounded text-purple-600 dark:text-purple-400"
+                              title="Open in Forecasts"
+                            >
+                              <TrendingUp className="w-4 h-4" />
+                            </button>
+                          )}
+                          <button
+                            onClick={() => handleViewData(batch)}
+                            className="p-1.5 hover:bg-green-100 dark:hover:bg-green-900/30 rounded text-green-600 dark:text-green-400"
+                            title="View Data (MVP Dashboard)"
+                          >
+                            <Database className="w-4 h-4" />
+                          </button>
                           <button
                             onClick={() => handlePreview(batch)}
                             className="p-1.5 hover:bg-blue-100 dark:hover:bg-blue-900/30 rounded text-blue-600 dark:text-blue-400"
@@ -716,11 +767,23 @@ const ImportHistoryView = ({ addNotification, user }) => {
           </div>
         </Modal>
       )}
+
+      {/* View Data Modal (new MVP dashboard) */}
+      {viewDataModal.open && (
+        <ViewDataModal
+          isOpen={viewDataModal.open}
+          onClose={closeViewDataModal}
+          batch={viewDataModal.batch}
+          user={user}
+          addNotification={addNotification}
+        />
+      )}
     </div>
   );
 };
 
 export default ImportHistoryView;
+
 
 
 

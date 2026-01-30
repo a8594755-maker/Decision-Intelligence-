@@ -180,6 +180,16 @@ export const importBatchesService = {
           .limit(limit);
         break;
         
+      case 'bom_explosion':
+        // 查詢 component_demand（BOM explosion 的結果）
+        query = supabase
+          .from('component_demand')
+          .select('*')
+          .eq('batch_id', batchId)
+          .order('material_code', { ascending: true })
+          .limit(limit);
+        break;
+        
       default:
         throw new Error(`Unknown target table: ${targetTable}`);
     }
@@ -187,6 +197,346 @@ export const importBatchesService = {
     const { data, error } = await query;
     if (error) throw error;
     return data || [];
+  },
+
+  /**
+   * 查詢 component_demand_trace 資料（支援篩選和分頁）
+   * @param {string} userId - 使用者 ID
+   * @param {string} batchId - 批次 ID
+   * @param {Object} options - 查詢選項
+   * @param {Object} options.filters - 篩選條件
+   * @param {number} options.limit - 限制筆數（預設 100）
+   * @param {number} options.offset - 偏移量（預設 0）
+   * @returns {Promise<Object>} { data, count, error }
+   */
+  async getComponentDemandTrace(userId, batchId, options = {}) {
+    const { filters = {}, limit = 100, offset = 0 } = options;
+    
+    try {
+      let query = supabase
+        .from('component_demand_trace')
+        .select('*')
+        .eq('user_id', userId)
+        .eq('batch_id', batchId);
+      
+      let countQuery = supabase
+        .from('component_demand_trace')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', userId)
+        .eq('batch_id', batchId);
+      
+      // Apply filters
+      if (filters.component_demand_id) {
+        query = query.eq('component_demand_id', filters.component_demand_id);
+        countQuery = countQuery.eq('component_demand_id', filters.component_demand_id);
+      }
+      if (filters.fg_demand_id) {
+        query = query.eq('fg_demand_id', filters.fg_demand_id);
+        countQuery = countQuery.eq('fg_demand_id', filters.fg_demand_id);
+      }
+      if (filters.bom_level) {
+        const level = parseInt(filters.bom_level, 10);
+        if (!isNaN(level)) {
+          query = query.eq('bom_level', level);
+          countQuery = countQuery.eq('bom_level', level);
+        }
+      }
+      // Optional: filter by material codes in trace_meta
+      if (filters.component_material_code && filters.component_material_code.trim()) {
+        query = query.ilike('trace_meta->>component_material_code', `%${filters.component_material_code}%`);
+        countQuery = countQuery.ilike('trace_meta->>component_material_code', `%${filters.component_material_code}%`);
+      }
+      if (filters.fg_material_code && filters.fg_material_code.trim()) {
+        query = query.ilike('trace_meta->>fg_material_code', `%${filters.fg_material_code}%`);
+        countQuery = countQuery.ilike('trace_meta->>fg_material_code', `%${filters.fg_material_code}%`);
+      }
+      
+      // Order by created_at
+      query = query.order('created_at', { ascending: false });
+      
+      // Apply pagination
+      query = query.range(offset, offset + limit - 1);
+      
+      // Execute queries
+      const [dataResult, countResult] = await Promise.all([
+        query,
+        countQuery
+      ]);
+      
+      if (dataResult.error) {
+        return {
+          data: [],
+          count: 0,
+          error: dataResult.error.message || dataResult.error.details || JSON.stringify(dataResult.error)
+        };
+      }
+      
+      if (countResult.error) {
+        console.warn('Count query failed:', countResult.error);
+      }
+      
+      return {
+        data: dataResult.data || [],
+        count: countResult.count || dataResult.data?.length || 0,
+        error: null
+      };
+      
+    } catch (error) {
+      console.error('Error in getComponentDemandTrace:', error);
+      return {
+        data: [],
+        count: 0,
+        error: error.message || error.details || JSON.stringify(error)
+      };
+    }
+  },
+
+  /**
+   * 查詢批次資料（支援篩選和分頁）
+   * @param {string} userId - 使用者 ID
+   * @param {string} batchId - 批次 ID
+   * @param {string} targetTable - 目標表格
+   * @param {Object} options - 查詢選項
+   * @param {Object} options.filters - 篩選條件
+   * @param {number} options.limit - 限制筆數（預設 100）
+   * @param {number} options.offset - 偏移量（預設 0）
+   * @param {string} options.view - 視圖類型 ('results' | 'trace')，僅用於 bom_explosion
+   * @returns {Promise<Object>} { data, count, error }
+   */
+  async getBatchDataWithFilters(userId, batchId, targetTable, options = {}) {
+    const { filters = {}, limit = 100, offset = 0, view = 'results' } = options;
+    
+    let query;
+    let countQuery;
+    
+    try {
+      switch (targetTable) {
+        case 'goods_receipts':
+          query = supabase
+            .from('goods_receipts')
+            .select('*')
+            .eq('user_id', userId)
+            .eq('batch_id', batchId);
+          
+          countQuery = supabase
+            .from('goods_receipts')
+            .select('*', { count: 'exact', head: true })
+            .eq('user_id', userId)
+            .eq('batch_id', batchId);
+          
+          // Apply filters
+          if (filters.material_code) {
+            query = query.ilike('material_code', `%${filters.material_code}%`);
+            countQuery = countQuery.ilike('material_code', `%${filters.material_code}%`);
+          }
+          if (filters.supplier_name) {
+            query = query.ilike('supplier_name', `%${filters.supplier_name}%`);
+            countQuery = countQuery.ilike('supplier_name', `%${filters.supplier_name}%`);
+          }
+          if (filters.plant_id) {
+            query = query.ilike('plant_id', `%${filters.plant_id}%`);
+            countQuery = countQuery.ilike('plant_id', `%${filters.plant_id}%`);
+          }
+          
+          query = query.order('gr_date', { ascending: false });
+          break;
+          
+        case 'price_history':
+          query = supabase
+            .from('price_history')
+            .select('*')
+            .eq('user_id', userId)
+            .eq('batch_id', batchId);
+          
+          countQuery = supabase
+            .from('price_history')
+            .select('*', { count: 'exact', head: true })
+            .eq('user_id', userId)
+            .eq('batch_id', batchId);
+          
+          // Apply filters
+          if (filters.material_code) {
+            query = query.ilike('material_code', `%${filters.material_code}%`);
+            countQuery = countQuery.ilike('material_code', `%${filters.material_code}%`);
+          }
+          if (filters.supplier_name) {
+            query = query.ilike('supplier_name', `%${filters.supplier_name}%`);
+            countQuery = countQuery.ilike('supplier_name', `%${filters.supplier_name}%`);
+          }
+          if (filters.plant_id) {
+            query = query.ilike('plant_id', `%${filters.plant_id}%`);
+            countQuery = countQuery.ilike('plant_id', `%${filters.plant_id}%`);
+          }
+          
+          query = query.order('price_date', { ascending: false });
+          break;
+          
+        case 'suppliers':
+          query = supabase
+            .from('suppliers')
+            .select('*')
+            .eq('user_id', userId)
+            .eq('batch_id', batchId);
+          
+          countQuery = supabase
+            .from('suppliers')
+            .select('*', { count: 'exact', head: true })
+            .eq('user_id', userId)
+            .eq('batch_id', batchId);
+          
+          // Apply filters
+          if (filters.supplier_code) {
+            query = query.ilike('supplier_code', `%${filters.supplier_code}%`);
+            countQuery = countQuery.ilike('supplier_code', `%${filters.supplier_code}%`);
+          }
+          if (filters.supplier_name) {
+            query = query.ilike('supplier_name', `%${filters.supplier_name}%`);
+            countQuery = countQuery.ilike('supplier_name', `%${filters.supplier_name}%`);
+          }
+          
+          query = query.order('supplier_code', { ascending: true });
+          break;
+          
+        case 'bom_edges':
+          query = supabase
+            .from('bom_edges')
+            .select('*')
+            .eq('user_id', userId)
+            .eq('batch_id', batchId);
+          
+          countQuery = supabase
+            .from('bom_edges')
+            .select('*', { count: 'exact', head: true })
+            .eq('user_id', userId)
+            .eq('batch_id', batchId);
+          
+          // Apply filters
+          if (filters.parent_material) {
+            query = query.ilike('parent_material', `%${filters.parent_material}%`);
+            countQuery = countQuery.ilike('parent_material', `%${filters.parent_material}%`);
+          }
+          if (filters.child_material) {
+            query = query.ilike('child_material', `%${filters.child_material}%`);
+            countQuery = countQuery.ilike('child_material', `%${filters.child_material}%`);
+          }
+          if (filters.plant_id) {
+            query = query.ilike('plant_id', `%${filters.plant_id}%`);
+            countQuery = countQuery.ilike('plant_id', `%${filters.plant_id}%`);
+          }
+          
+          query = query.order('parent_material', { ascending: true });
+          break;
+          
+        case 'demand_fg':
+          query = supabase
+            .from('demand_fg')
+            .select('*')
+            .eq('user_id', userId)
+            .eq('batch_id', batchId);
+          
+          countQuery = supabase
+            .from('demand_fg')
+            .select('*', { count: 'exact', head: true })
+            .eq('user_id', userId)
+            .eq('batch_id', batchId);
+          
+          // Apply filters
+          if (filters.material_code) {
+            query = query.ilike('material_code', `%${filters.material_code}%`);
+            countQuery = countQuery.ilike('material_code', `%${filters.material_code}%`);
+          }
+          if (filters.plant_id) {
+            query = query.ilike('plant_id', `%${filters.plant_id}%`);
+            countQuery = countQuery.ilike('plant_id', `%${filters.plant_id}%`);
+          }
+          if (filters.time_bucket) {
+            query = query.ilike('time_bucket', `%${filters.time_bucket}%`);
+            countQuery = countQuery.ilike('time_bucket', `%${filters.time_bucket}%`);
+          }
+          
+          query = query.order('time_bucket', { ascending: true });
+          break;
+          
+        case 'bom_explosion':
+          // Support view parameter: 'results' (component_demand) or 'trace' (component_demand_trace)
+          if (view === 'trace') {
+            // Delegate to getComponentDemandTrace method
+            return await this.getComponentDemandTrace(userId, batchId, { filters, limit, offset });
+          }
+          
+          // Default: view='results' - query component_demand
+          query = supabase
+            .from('component_demand')
+            .select('*')
+            .eq('user_id', userId)
+            .eq('batch_id', batchId);
+          
+          countQuery = supabase
+            .from('component_demand')
+            .select('*', { count: 'exact', head: true })
+            .eq('user_id', userId)
+            .eq('batch_id', batchId);
+          
+          // Apply filters
+          if (filters.material_code) {
+            query = query.ilike('material_code', `%${filters.material_code}%`);
+            countQuery = countQuery.ilike('material_code', `%${filters.material_code}%`);
+          }
+          if (filters.plant_id) {
+            query = query.ilike('plant_id', `%${filters.plant_id}%`);
+            countQuery = countQuery.ilike('plant_id', `%${filters.plant_id}%`);
+          }
+          if (filters.time_bucket) {
+            query = query.ilike('time_bucket', `%${filters.time_bucket}%`);
+            countQuery = countQuery.ilike('time_bucket', `%${filters.time_bucket}%`);
+          }
+          
+          query = query.order('material_code', { ascending: true });
+          break;
+          
+        default:
+          return {
+            data: [],
+            count: 0,
+            error: `Unknown target table: ${targetTable}`
+          };
+      }
+      
+      // Apply pagination
+      query = query.range(offset, offset + limit - 1);
+      
+      // Execute queries
+      const [dataResult, countResult] = await Promise.all([
+        query,
+        countQuery
+      ]);
+      
+      if (dataResult.error) {
+        return {
+          data: [],
+          count: 0,
+          error: dataResult.error.message || dataResult.error.details || JSON.stringify(dataResult.error)
+        };
+      }
+      
+      if (countResult.error) {
+        console.warn('Count query failed:', countResult.error);
+      }
+      
+      return {
+        data: dataResult.data || [],
+        count: countResult.count || dataResult.data?.length || 0,
+        error: null
+      };
+      
+    } catch (error) {
+      console.error('Error in getBatchDataWithFilters:', error);
+      return {
+        data: [],
+        count: 0,
+        error: error.message || error.details || JSON.stringify(error)
+      };
+    }
   },
 
   /**
@@ -284,6 +634,7 @@ export const importBatchesService = {
 };
 
 export default importBatchesService;
+
 
 
 

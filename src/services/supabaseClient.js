@@ -891,6 +891,29 @@ export const bomEdgesService = {
     const { data, error } = await query;
     if (error) throw error;
     return data || [];
+  },
+
+  // 獲取 BOM 關係（用於 BOM Explosion 計算）
+  // 支援根據 plantId 和 timeBuckets 過濾（考慮時效性）
+  async fetchBomEdges(userId, plantId = null, timeBuckets = []) {
+    let query = supabase
+      .from('bom_edges')
+      .select('*')
+      .eq('user_id', userId)
+      .order('parent_material', { ascending: true });
+
+    // 工廠過濾：plant_id 匹配或為 NULL（通用 BOM）
+    if (plantId) {
+      query = query.or(`plant_id.eq.${plantId},plant_id.is.null`);
+    }
+
+    // 時效性過濾：如果提供 timeBuckets，需要檢查 valid_from/valid_to
+    // 注意：這裡只過濾基本條件，實際的時效性檢查在計算邏輯中進行
+    // 因為需要將 time_bucket 轉換為日期後再比較
+
+    const { data, error } = await query;
+    if (error) throw error;
+    return data || [];
   }
 };
 
@@ -962,28 +985,441 @@ export const demandFgService = {
     const { data, error } = await query;
     if (error) throw error;
     return data || [];
+  },
+
+  // 獲取 FG 需求（用於 BOM Explosion 計算）
+  // 支援根據 plantId 和 timeBuckets 過濾
+  async fetchDemandFg(userId, plantId = null, timeBuckets = []) {
+    let query = supabase
+      .from('demand_fg')
+      .select('*')
+      .eq('user_id', userId)
+      .order('time_bucket', { ascending: true });
+
+    // 工廠過濾
+    if (plantId) {
+      query = query.eq('plant_id', plantId);
+    }
+
+    // 時間桶過濾：如果提供 timeBuckets 陣列，只取得這些時間桶的需求
+    if (timeBuckets && timeBuckets.length > 0) {
+      query = query.in('time_bucket', timeBuckets);
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+    return data || [];
   }
 };
 
 /**
- * Component Demand Operations (Stub for future use)
+ * Component Demand Operations
  */
 export const componentDemandService = {
-  // Placeholder for future implementation
+  // 獲取 Component 需求
   async getComponentDemands(userId, options = {}) {
-    // TODO: Implement component demand calculation from BOM explosion
-    return [];
+    const { materialCode, plantId, timeBucket, limit = 100, offset = 0 } = options;
+
+    let query = supabase
+      .from('component_demand')
+      .select('*')
+      .eq('user_id', userId)
+      .order('time_bucket', { ascending: true })
+      .range(offset, offset + limit - 1);
+
+    if (materialCode) {
+      query = query.eq('material_code', materialCode);
+    }
+
+    if (plantId) {
+      query = query.eq('plant_id', plantId);
+    }
+
+    if (timeBucket) {
+      query = query.eq('time_bucket', timeBucket);
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+    return data || [];
+  },
+
+  // 批量 Upsert Component 需求（用於 BOM Explosion 計算結果）
+  // 根據 material_code + plant_id + time_bucket + user_id 作為唯一鍵進行 upsert
+  // 注意：如果同一批次重新計算，應該先調用 deleteComponentOutputsByBatch 清除舊資料
+  async upsertComponentDemand(rows) {
+    if (!rows || rows.length === 0) {
+      return { success: true, count: 0 };
+    }
+
+    try {
+      // 準備 upsert 資料 - 只包含 DB schema 中存在的欄位
+      const payload = rows.map((row, index) => {
+        // 驗證必要欄位
+        if (!row.user_id || !row.material_code || !row.plant_id || !row.time_bucket) {
+          throw new Error(`Row ${index}: Missing required fields (user_id, material_code, plant_id, or time_bucket)`);
+        }
+        if (row.demand_qty === undefined || row.demand_qty === null) {
+          throw new Error(`Row ${index}: Missing demand_qty`);
+        }
+
+        // 構造 payload - 只有當 id 存在時才包含 id 欄位
+        const record = {
+          user_id: row.user_id,
+          batch_id: row.batch_id || null,
+          material_code: row.material_code,
+          plant_id: row.plant_id,
+          time_bucket: row.time_bucket,
+          demand_qty: row.demand_qty,
+          uom: row.uom || 'pcs',
+          // 注意：根據用戶要求，component_demand 不使用 source_fg_material/bom_level
+          // 但 schema 中有這些欄位，我們設為 null
+          source_fg_material: null,
+          source_fg_demand_id: null,
+          bom_level: null,
+          notes: row.notes || null
+        };
+
+        // 只有當 row.id 存在時才包含 id（用於 update）
+        if (row.id) {
+          record.id = row.id;
+        }
+
+        return record;
+      });
+
+      // 嘗試使用 upsert
+      // 如果資料庫有 UNIQUE 約束 (user_id, material_code, plant_id, time_bucket)，會自動處理衝突
+      const { data, error } = await supabase
+        .from('component_demand')
+        .upsert(payload, {
+          onConflict: 'user_id,material_code,plant_id,time_bucket',
+          ignoreDuplicates: false
+        })
+        .select();
+
+      if (error) {
+        console.warn('Upsert failed, attempting fallback strategy:', {
+          error: error.message,
+          code: error.code,
+          hint: error.hint
+        });
+
+        // 如果 upsert 失敗（可能沒有唯一約束），使用先刪除再插入的策略
+        const userId = rows[0].user_id;
+        const materialCodes = [...new Set(rows.map(r => r.material_code))];
+        const plantIds = [...new Set(rows.map(r => r.plant_id))];
+        const timeBuckets = [...new Set(rows.map(r => r.time_bucket))];
+
+        // 查詢現有記錄
+        const { data: existingData, error: queryError } = await supabase
+          .from('component_demand')
+          .select('id')
+          .eq('user_id', userId)
+          .in('material_code', materialCodes)
+          .in('plant_id', plantIds)
+          .in('time_bucket', timeBuckets);
+
+        if (queryError) {
+          const errorDetails = {
+            message: queryError.message,
+            code: queryError.code,
+            details: queryError.details
+          };
+          console.error('Query existing records failed:', errorDetails);
+          throw new Error(`Query failed: ${queryError.message}`);
+        }
+
+        // 如果有現有記錄，先刪除
+        if (existingData && existingData.length > 0) {
+          const existingIds = existingData.map(r => r.id);
+          const { error: deleteError } = await supabase
+            .from('component_demand')
+            .delete()
+            .in('id', existingIds);
+
+          if (deleteError) {
+            const errorDetails = {
+              message: deleteError.message,
+              code: deleteError.code,
+              details: deleteError.details,
+              deletedIds: existingIds.slice(0, 5)
+            };
+            console.error('Delete existing records failed:', errorDetails);
+            throw new Error(`Delete failed: ${deleteError.message}`);
+          }
+        }
+
+        // 插入新記錄
+        const { data: insertData, error: insertError } = await supabase
+          .from('component_demand')
+          .insert(payload)
+          .select();
+
+        if (insertError) {
+          const errorDetails = {
+            message: insertError.message,
+            code: insertError.code,
+            details: insertError.details,
+            hint: insertError.hint,
+            sample_payload: payload.slice(0, 2)
+          };
+          console.error('Insert new records failed:', errorDetails);
+          throw new Error(`Insert failed: ${insertError.message} (code: ${insertError.code})`);
+        }
+
+        return { success: true, count: insertData.length, data: insertData };
+      }
+
+      return { success: true, count: data.length, data };
+    } catch (error) {
+      // 捕捉並重新拋出更清楚的錯誤
+      if (error.message.includes('Missing required fields') || error.message.includes('Missing demand_qty')) {
+        throw error; // 直接拋出驗證錯誤
+      }
+      
+      const enhancedError = new Error(
+        `upsertComponentDemand error: ${error.message}`
+      );
+      enhancedError.originalError = error;
+      enhancedError.rowCount = rows.length;
+      throw enhancedError;
+    }
+  },
+
+  // 根據 batch_id 刪除 Component 需求
+  async deleteByBatch(batchId) {
+    if (!batchId) {
+      return { success: true, count: 0 };
+    }
+
+    const { data, error } = await supabase
+      .from('component_demand')
+      .delete()
+      .eq('batch_id', batchId)
+      .select();
+
+    if (error) throw error;
+    return { success: true, count: data?.length || 0 };
+  },
+
+  // 刪除 Component 輸出（包含 component_demand 和 component_demand_trace）
+  // 用於批次重新計算時清除舊資料
+  async deleteComponentOutputsByBatch(batchId) {
+    if (!batchId) {
+      return { success: true, componentDemandCount: 0, traceCount: 0 };
+    }
+
+    // 先刪除追溯記錄（因為有外鍵關聯）
+    const { data: traceData, error: traceError } = await supabase
+      .from('component_demand_trace')
+      .delete()
+      .eq('batch_id', batchId)
+      .select();
+
+    if (traceError) throw traceError;
+
+    // 再刪除 Component 需求
+    const { data: demandData, error: demandError } = await supabase
+      .from('component_demand')
+      .delete()
+      .eq('batch_id', batchId)
+      .select();
+
+    if (demandError) throw demandError;
+
+    return {
+      success: true,
+      componentDemandCount: demandData?.length || 0,
+      traceCount: traceData?.length || 0
+    };
+  },
+
+  // 根據 batch_id 獲取 Component 需求（支援篩選和分頁）
+  async getComponentDemandsByBatch(userId, batchId, options = {}) {
+    const { filters = {}, limit = 100, offset = 0 } = options;
+
+    let query = supabase
+      .from('component_demand')
+      .select('*', { count: 'exact' })
+      .eq('user_id', userId)
+      .eq('batch_id', batchId)
+      .order('created_at', { ascending: false })
+      .range(offset, offset + limit - 1);
+
+    // Apply filters
+    if (filters.material_code) {
+      query = query.ilike('material_code', `%${filters.material_code}%`);
+    }
+    if (filters.plant_id) {
+      query = query.ilike('plant_id', `%${filters.plant_id}%`);
+    }
+    if (filters.time_bucket) {
+      query = query.ilike('time_bucket', `%${filters.time_bucket}%`);
+    }
+
+    const { data, error, count } = await query;
+    
+    if (error) throw error;
+    
+    return {
+      data: data || [],
+      count: count || 0
+    };
   }
 };
 
 /**
- * Component Demand Trace Operations (Stub for future use)
+ * Component Demand Trace Operations
  */
 export const componentDemandTraceService = {
-  // Placeholder for future implementation
+  // 獲取追溯資訊
   async getTrace(userId, componentMaterial, timeBucket) {
-    // TODO: Implement trace back to FG demand
-    return [];
+    let query = supabase
+      .from('component_demand_trace')
+      .select(`
+        *,
+        component_demand:component_demand_id(*),
+        fg_demand:fg_demand_id(*),
+        bom_edge:bom_edge_id(*)
+      `)
+      .eq('user_id', userId);
+
+    if (componentMaterial) {
+      // 需要通過 component_demand 表關聯查詢
+      query = query.eq('component_demand.material_code', componentMaterial);
+    }
+
+    if (timeBucket) {
+      // 需要通過 component_demand 表關聯查詢
+      query = query.eq('component_demand.time_bucket', timeBucket);
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+    return data || [];
+  },
+
+  // 批量插入 Component 需求追溯記錄
+  // 注意：根據用戶要求，trace 使用 fg_material_code/component_material_code/path_json
+  // 但 schema 中使用的是 fg_demand_id/component_demand_id/bom_edge_id
+  // 這裡按照 schema 實作，但可以添加額外欄位（如果 schema 支援）
+  async insertComponentDemandTrace(rows) {
+    if (!rows || rows.length === 0) {
+      return { success: true, count: 0 };
+    }
+
+    try {
+      // 準備插入資料 - 只包含 DB schema 中存在的欄位
+      const payload = rows.map((row, index) => {
+        // 驗證必要欄位
+        if (!row.user_id || !row.component_demand_id || !row.fg_demand_id) {
+          throw new Error(`Row ${index}: Missing required fields (user_id, component_demand_id, or fg_demand_id)`);
+        }
+
+        return {
+          user_id: row.user_id,
+          batch_id: row.batch_id || null,
+          component_demand_id: row.component_demand_id,
+          fg_demand_id: row.fg_demand_id,
+          bom_edge_id: row.bom_edge_id || null,
+          qty_multiplier: row.qty_multiplier || null,
+          bom_level: row.bom_level || null,
+          // trace_meta: 額外的追溯信息（JSONB）
+          // 包含 path（JSON array）、material codes、source info 等
+          trace_meta: row.trace_meta || {}
+        };
+      });
+
+      const { data, error } = await supabase
+        .from('component_demand_trace')
+        .insert(payload)
+        .select();
+
+      if (error) {
+        // 詳細的錯誤訊息
+        const errorDetails = {
+          message: error.message,
+          code: error.code,
+          details: error.details,
+          hint: error.hint,
+          sample_payload: payload.slice(0, 2) // 顯示前 2 筆 payload 範例
+        };
+        console.error('insertComponentDemandTrace failed:', errorDetails);
+        throw new Error(`Database insert failed: ${error.message} (code: ${error.code})`);
+      }
+
+      return { success: true, count: data.length, data };
+    } catch (error) {
+      // 捕捉並重新拋出更清楚的錯誤
+      if (error.message.includes('Missing required fields')) {
+        throw error; // 直接拋出驗證錯誤
+      }
+      
+      const enhancedError = new Error(
+        `insertComponentDemandTrace error: ${error.message}`
+      );
+      enhancedError.originalError = error;
+      enhancedError.rowCount = rows.length;
+      throw enhancedError;
+    }
+  },
+
+  // 根據 batch_id 刪除追溯記錄
+  async deleteByBatch(batchId) {
+    if (!batchId) {
+      return { success: true, count: 0 };
+    }
+
+    const { data, error } = await supabase
+      .from('component_demand_trace')
+      .delete()
+      .eq('batch_id', batchId)
+      .select();
+
+    if (error) throw error;
+    return { success: true, count: data?.length || 0 };
+  },
+
+  // 根據 batch_id 獲取追溯記錄（支援篩選和分頁）
+  async getTracesByBatch(userId, batchId, options = {}) {
+    const { filters = {}, limit = 100, offset = 0 } = options;
+
+    let query = supabase
+      .from('component_demand_trace')
+      .select('*', { count: 'exact' })
+      .eq('user_id', userId)
+      .eq('batch_id', batchId)
+      .order('created_at', { ascending: false })
+      .range(offset, offset + limit - 1);
+
+    // Apply filters (using trace_meta JSONB column)
+    if (filters.bom_level) {
+      query = query.eq('bom_level', parseInt(filters.bom_level));
+    }
+    if (filters.fg_material_code) {
+      // Filter by trace_meta->>'fg_material_code'
+      query = query.ilike('trace_meta->>fg_material_code', `%${filters.fg_material_code}%`);
+    }
+    if (filters.component_material_code) {
+      // Filter by trace_meta->>'component_material_code'
+      query = query.ilike('trace_meta->>component_material_code', `%${filters.component_material_code}%`);
+    }
+    if (filters.component_demand_id) {
+      query = query.eq('component_demand_id', filters.component_demand_id);
+    }
+    if (filters.fg_demand_id) {
+      query = query.eq('fg_demand_id', filters.fg_demand_id);
+    }
+
+    const { data, error, count } = await query;
+    
+    if (error) throw error;
+    
+    return {
+      data: data || [],
+      count: count || 0
+    };
   }
 };
 

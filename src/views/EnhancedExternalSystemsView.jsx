@@ -7,7 +7,7 @@ import React, { useState, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import {
   Database, Upload, Download, X, RefreshCw, Sparkles,
-  Check, AlertTriangle, ArrowRight, ArrowLeft, FileSpreadsheet, Loader2
+  Check, AlertTriangle, ArrowRight, ArrowLeft, FileSpreadsheet, Loader2, TrendingUp
 } from 'lucide-react';
 import { Card, Button } from '../components/ui';
 import { callGeminiAPI } from '../services/geminiAPI';
@@ -35,7 +35,7 @@ import {
 // Note: Upload type configuration has been moved to src/utils/uploadSchemas.js
 // Kept here for compatibility, but UPLOAD_SCHEMAS should be used
 
-const EnhancedExternalSystemsView = ({ addNotification, user }) => {
+const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
   // Multi-step workflow state
   const [currentStep, setCurrentStep] = useState(1); // 1: select type, 2: upload, 3: mapping, 4: validation, 5: save
 
@@ -654,6 +654,11 @@ const EnhancedExternalSystemsView = ({ addNotification, user }) => {
 
       // 3. Process data based on upload type (with batch_id) - using deduplicated rows
       let savedCount = 0;
+      
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/35d967fa-aaea-4f36-8ecf-97e2f2e17afa',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'EnhancedExternalSystemsView.jsx:666',message:'Before calling save function',data:{uploadType,rowsToSaveCount:rowsToSave.length,batchId,uploadFileId,firstRow:rowsToSave[0]},timestamp:Date.now(),sessionId:'debug-session',runId:'before-save'})}).catch(()=>{});
+      // #endregion
+      
       if (uploadType === 'goods_receipt') {
         savedCount = await saveGoodsReceipts(userId, rowsToSave, uploadFileId, batchId);
       } else if (uploadType === 'price_history') {
@@ -661,12 +666,22 @@ const EnhancedExternalSystemsView = ({ addNotification, user }) => {
       } else if (uploadType === 'supplier_master') {
         savedCount = await saveSuppliers(userId, rowsToSave, batchId);
       } else if (uploadType === 'bom_edge') {
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/35d967fa-aaea-4f36-8ecf-97e2f2e17afa',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'EnhancedExternalSystemsView.jsx:678',message:'Calling saveBomEdges',data:{userId,rowsCount:rowsToSave.length,batchId},timestamp:Date.now(),sessionId:'debug-session',runId:'bom-edge-call'})}).catch(()=>{});
+        // #endregion
         savedCount = await saveBomEdges(userId, rowsToSave, batchId);
       } else if (uploadType === 'demand_fg') {
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/35d967fa-aaea-4f36-8ecf-97e2f2e17afa',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'EnhancedExternalSystemsView.jsx:684',message:'Calling saveDemandFg',data:{userId,rowsCount:rowsToSave.length,batchId},timestamp:Date.now(),sessionId:'debug-session',runId:'demand-fg-call'})}).catch(()=>{});
+        // #endregion
         savedCount = await saveDemandFg(userId, rowsToSave, batchId);
       } else {
         throw new Error(`Unsupported upload type: ${uploadType}`);
       }
+      
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/35d967fa-aaea-4f36-8ecf-97e2f2e17afa',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'EnhancedExternalSystemsView.jsx:692',message:'After save function completed',data:{uploadType,savedCount},timestamp:Date.now(),sessionId:'debug-session',runId:'after-save'})}).catch(()=>{});
+      // #endregion
 
       // 4. Update import batch with success/error counts and mark as completed
       await importBatchesService.updateBatch(batchId, {
@@ -707,21 +722,38 @@ const EnhancedExternalSystemsView = ({ addNotification, user }) => {
       
       addNotification(successMsg, "success");
 
+      // 6.5. Special CTA for demand_fg and bom_edge: Guide user to Forecasts
+      if (uploadType === 'demand_fg' || uploadType === 'bom_edge') {
+        setTimeout(() => {
+          addNotification(
+            `✅ ${uploadType === 'demand_fg' ? 'FG 需求' : 'BOM 關係'}資料已上傳！前往 Forecasts 頁面執行 BOM Explosion 計算 →`,
+            "success"
+          );
+        }, 1000);
+      }
+
       // 7. Reset flow (delayed so user can see success message)
       setTimeout(() => {
         resetFlow();
       }, 2000);
 
     } catch (error) {
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/35d967fa-aaea-4f36-8ecf-97e2f2e17afa',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'EnhancedExternalSystemsView.jsx:727',message:'CATCH ERROR',data:{errorType:typeof error,errorConstructor:error?.constructor?.name,errorMessage:error?.message,errorCode:error?.code,errorDetails:error?.details,errorHint:error?.hint,errorString:String(error),errorJSON:JSON.stringify(error),uploadType,batchId,validRowsCount:validationResult?.validRows?.length},timestamp:Date.now(),sessionId:'debug-session',runId:'error-capture'})}).catch(()=>{});
+      // #endregion
+      
       console.error('Error saving data:', error);
-      addNotification(`Save failed: ${error.message}`, "error");
+      
+      // Better error message display
+      const errorMsg = error?.message || error?.details || JSON.stringify(error);
+      addNotification(`Save failed: ${errorMsg}`, "error");
       
       // If batch was created but save failed, update its status to error
       if (batchId) {
         try {
           await importBatchesService.updateBatch(batchId, {
             status: 'pending',
-            metadata: { error: error.message }
+            metadata: { error: errorMsg }
           });
         } catch (updateError) {
           console.error('Failed to update batch status:', updateError);
@@ -981,6 +1013,32 @@ const EnhancedExternalSystemsView = ({ addNotification, user }) => {
           </Button>
         )}
       </div>
+
+      {/* CTA: Go to Forecasts after uploading demand_fg or bom_edge */}
+      {(uploadType === 'demand_fg' || uploadType === 'bom_edge') && currentStep === 1 && (
+        <Card className="bg-purple-50 dark:bg-purple-900/20 border-purple-200 dark:border-purple-800">
+          <div className="flex items-start gap-4">
+            <TrendingUp className="w-6 h-6 text-purple-600 flex-shrink-0 mt-1" />
+            <div className="flex-1">
+              <h3 className="font-semibold text-purple-900 dark:text-purple-100 mb-2">
+                📊 準備執行 BOM Explosion 計算？
+              </h3>
+              <p className="text-sm text-purple-800 dark:text-purple-200 mb-3">
+                上傳 demand_fg 和 bom_edge 資料後，前往 <strong>Forecasts</strong> 頁面執行 BOM Explosion 計算，
+                產生 Component 需求預測。
+              </p>
+              <Button
+                onClick={() => setView && setView('forecasts')}
+                variant="primary"
+                size="sm"
+                icon={TrendingUp}
+              >
+                前往 Forecasts →
+              </Button>
+            </div>
+          </div>
+        </Card>
+      )}
 
       {/* Progress Steps */}
       {currentStep > 1 && (

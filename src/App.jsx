@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import {
   LayoutDashboard, Database, Activity, AlertTriangle, BarChart3, Bot, Settings, LogOut,
@@ -23,6 +23,8 @@ import SupplierManagementView from './views/SupplierManagementView';
 import CostAnalysisView from './views/CostAnalysisView';
 import EnhancedExternalSystemsView from './views/EnhancedExternalSystemsView';
 import ImportHistoryView from './views/ImportHistoryView';
+import BOMDataView from './views/BOMDataView';
+import ForecastsView from './views/ForecastsView';
 
 // Mock Data
 const MOCK_ALERTS = [{ id: 1, category: "Material Shortage", item: "Lithium Batteries", supplier: "Voltaic Supplies", risk: "High", impact: "Production Stop Risk", rootCause: "Supplier strike.", recommendation: "Activate backup supplier." }, { id: 2, category: "Delivery Delay", item: "Circuit Boards", supplier: "TechTronix", risk: "Medium", impact: "2 Day Delay", rootCause: "Port congestion.", recommendation: "Expedite Air Freight." }, { id: 3, category: "Quantity Mismatch", item: "Steel Casings", supplier: "MetalWorks", risk: "Low", impact: "Inventory Discrepancy", rootCause: "Packing error.", recommendation: "Request credit note." }];
@@ -145,8 +147,10 @@ export default function SmartOpsApp() {
   const renderView = () => {
     switch (view) {
       case 'home': return <HomeView setView={setView} />;
-      case 'external': return <EnhancedExternalSystemsView addNotification={addNotification} user={session?.user} />;
-      case 'import-history': return <ImportHistoryView addNotification={addNotification} user={session?.user} />;
+      case 'forecasts': return <ForecastsView addNotification={addNotification} user={session?.user} />;
+      case 'external': return <EnhancedExternalSystemsView addNotification={addNotification} user={session?.user} setView={setView} />;
+      case 'import-history': return <ImportHistoryView addNotification={addNotification} user={session?.user} setView={setView} />;
+      case 'bom-data': return <BOMDataView addNotification={addNotification} user={session?.user} />;
       case 'suppliers': return <SupplierManagementView addNotification={addNotification} />;
       case 'cost-analysis': return <CostAnalysisView addNotification={addNotification} user={session?.user} />;
       case 'integration': return <DataIntegrationView addNotification={addNotification} />;
@@ -198,9 +202,17 @@ export default function SmartOpsApp() {
       ]
     },
     {
+      key: 'planning',
+      label: 'Planning',
+      icon: TrendingUp,
+      children: [
+        { key: 'forecasts', label: 'Forecasts', icon: TrendingUp, view: 'forecasts' }
+      ]
+    },
+    {
       key: 'analysis',
       label: 'Analysis',
-      icon: TrendingUp,
+      icon: BarChart3,
       children: [
         { key: 'cost-analysis', label: 'Cost Analysis', icon: DollarSign, view: 'cost-analysis' },
         { key: 'analytics', label: 'Analytics', icon: BarChart3, view: 'analytics' }
@@ -211,7 +223,9 @@ export default function SmartOpsApp() {
       label: 'Data',
       icon: Database,
       children: [
-        { key: 'external', label: 'External Systems', icon: Database, view: 'external' },
+        { key: 'bom-data', label: 'BOM Data', icon: Database, view: 'bom-data' },
+        { key: 'external', label: 'Data Upload', icon: Upload, view: 'external' },
+        { key: 'import-history', label: 'Import History', icon: History, view: 'import-history' },
         { key: 'integration', label: 'Data Integration', icon: RefreshCw, view: 'integration' },
         { key: 'suppliers', label: 'Supplier Management', icon: Building2, view: 'suppliers' }
       ]
@@ -472,6 +486,13 @@ const HomeView = ({ setView }) => {
 
   const dataModules = [
     { 
+      id: 'bom-data', 
+      title: "BOM Data Dashboard", 
+      description: "View and search BOM edges and demand FG data with filtering", 
+      icon: Database, 
+      color: "text-blue-500" 
+    },
+    { 
       id: 'suppliers', 
       title: "Supplier Management", 
       description: "Manage supplier data, track performance and KPI scores", 
@@ -609,7 +630,7 @@ const HomeView = ({ setView }) => {
             Manage suppliers, integrate system data, and AI tools
           </p>
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           {dataModules.map((module) => (
             <ModuleCard
               key={module.id}
