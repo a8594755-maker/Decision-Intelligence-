@@ -264,16 +264,27 @@ smartops-app/
 │   ├── import_batches_schema.sql        # Import batch schema
 │   ├── upload_mappings_schema.sql       # Mapping template schema
 │   ├── cost_analysis_schema.sql         # Cost analysis schema
-│   ├── reset_all_data.sql               # Data reset script
-│   └── cleanup_duplicate_suppliers.sql  # Deduplication script
+│   ├── bom_forecast_schema.sql          # BOM & Forecast schema
+│   └── reset_all_data.sql               # Data reset script
 │
-├── test_data_examples/                  # Test data examples
-│   └── supplier_master_test_cases.md
+├── templates/                           # Upload templates
+│   ├── bom_edge.xlsx / .csv             # BOM structure template
+│   └── demand_fg.xlsx / .csv            # FG demand template
 │
-└── docs/                                # Documentation (Markdown files)
-    ├── 功能指南/
-    ├── 故障排除/
-    └── 實作說明/
+└── docs/                                # Documentation
+    ├── BOM_EXPLOSION.md                 # BOM explosion feature doc
+    ├── BOM_EXPLOSION_SPEC.md            # BOM technical spec
+    ├── BOM_EXPLOSION_TEST_GUIDE.md      # BOM testing guide
+    ├── SETUP.md                         # Environment setup guide
+    ├── GLOSSARY.md                      # Terminology glossary
+    ├── guides/                          # User guides
+    │   ├── DATA_UPLOAD_COMPLETE_GUIDE.md
+    │   ├── AI_MAPPING_GUIDE.md
+    │   ├── SUPPLIER_VALIDATION_GUIDE.md
+    │   ├── COST_ANALYSIS_GUIDE.md
+    │   └── ... (9 guides total)
+    └── archive/                         # Historical documents
+        └── ... (development history)
 ```
 
 ## 💻 Common Commands
@@ -298,37 +309,28 @@ npm run preview      # Preview production build
 # 3. Remove duplicates: database/cleanup_duplicate_suppliers.sql
 ```
 
-## 📚 Complete Documentation
+## 📚 完整文件
 
-### Quick Start Guides
-- [Material Cost Analysis Quick Guide](MATERIAL_COST_QUICK_START.md)
-- [Complete Data Upload Guide](DATA_UPLOAD_COMPLETE_GUIDE.md)
-- [Database Schema Guide](DATABASE_SCHEMA_GUIDE.md)
+### 核心技術文件
+- **[docs/SETUP.md](docs/SETUP.md)** - 環境設定指南 (從零開始)
+- **[docs/BOM_EXPLOSION.md](docs/BOM_EXPLOSION.md)** - BOM 展開功能文件
+- **[docs/GLOSSARY.md](docs/GLOSSARY.md)** - 術語表 (統一專案用語)
+- **[DATABASE_SCHEMA_GUIDE.md](DATABASE_SCHEMA_GUIDE.md)** - 資料庫結構說明
+- **[ARCHITECTURE_DESIGN.md](ARCHITECTURE_DESIGN.md)** - 系統架構設計
 
-### Feature Documentation
-- [Cost Analysis Guide](COST_ANALYSIS_GUIDE.md)
-- [Supplier Validation Guide](SUPPLIER_VALIDATION_GUIDE.md)
-- [Import History Guide](IMPORT_HISTORY_GUIDE.md)
-- [AI Mapping Guide](AI_MAPPING_GUIDE.md)
-- [Mapping Template Guide](MAPPING_TEMPLATE_GUIDE.md)
+### 使用者指南 (docs/guides/)
+- **[資料上傳完整指南](docs/guides/DATA_UPLOAD_COMPLETE_GUIDE.md)** ⭐
+- **[AI 自動映射指南](docs/guides/AI_MAPPING_GUIDE.md)** ⭐
+- **[供應商驗證指南](docs/guides/SUPPLIER_VALIDATION_GUIDE.md)** ⭐
+- **[成本分析指南](docs/guides/COST_ANALYSIS_GUIDE.md)** ⭐
+- **[匯入歷史指南](docs/guides/IMPORT_HISTORY_GUIDE.md)** ⭐
+- [物料成本快速入門](docs/guides/MATERIAL_COST_QUICK_START.md)
+- [映射模板指南](docs/guides/MAPPING_TEMPLATE_GUIDE.md)
+- [資料驗證指南](docs/guides/DATA_VALIDATION_GUIDE.md)
+- [上傳工作流程](docs/guides/UPLOAD_WORKFLOW_GUIDE.md)
 
-### New Features
-- [Frontend Deduplication Feature](FRONTEND_DEDUPLICATION.md)
-- [Smart Merge Feature](SMART_MERGE_FEATURE.md)
-- [Multi-Sheet Support](MULTI_SHEET_SUPPORT.md)
-- [Duplicate Check Feature](DUPLICATE_CHECK_FEATURE.md)
-
-### Troubleshooting
-- [Cost Analysis Troubleshooting](COST_ANALYSIS_TROUBLESHOOTING.md)
-- [AI Mapping Troubleshooting](AI_MAPPING_TROUBLESHOOTING.md)
-- [Gemini API Quota Issue](GEMINI_API_QUOTA_ISSUE.md)
-- [Price History Mapping Fix](PRICE_HISTORY_MAPPING_FIX.md)
-
-### Implementation Documentation
-- [Material Cost Implementation](MATERIAL_COST_IMPLEMENTATION.md)
-- [Import History Implementation](IMPORT_HISTORY_SUMMARY.md)
-- [Supplier Validation Implementation](SUPPLIER_VALIDATION_IMPLEMENTATION.md)
-- [Architecture Design Document](ARCHITECTURE_DESIGN.md)
+### 開發與歷史文件
+- **[docs/archive/](docs/archive/)** - 開發歷程、已解決問題記錄
 
 ## ⚠️ Important Notes
 
