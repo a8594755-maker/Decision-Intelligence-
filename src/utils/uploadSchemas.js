@@ -588,6 +588,252 @@ export const UPLOAD_SCHEMAS = {
         description: 'Additional notes'
       }
     ]
+  },
+
+  // PO Open Lines - Purchase order open lines table
+  po_open_lines: {
+    label: 'PO Open Lines',
+    description: 'Purchase order open lines (supply commitments)',
+    icon: '📋',
+    fields: [
+      // === Required Fields ===
+      {
+        key: 'po_number',
+        label: 'PO Number',
+        type: 'string',
+        required: true,
+        description: 'Purchase order number'
+      },
+      {
+        key: 'po_line',
+        label: 'PO Line',
+        type: 'string',
+        required: true,
+        description: 'Purchase order line number (e.g., 10, 20)'
+      },
+      {
+        key: 'material_code',
+        label: 'Material Code',
+        type: 'string',
+        required: true,
+        description: 'Material code (component or raw material)'
+      },
+      {
+        key: 'plant_id',
+        label: 'Plant ID',
+        type: 'string',
+        required: true,
+        description: 'Plant code'
+      },
+      {
+        key: 'open_qty',
+        label: 'Open Quantity',
+        type: 'number',
+        required: true,
+        description: 'Open quantity (not yet received, must be >= 0)',
+        min: 0
+      },
+      
+      // === Time Bucket Fields (at least one required) ===
+      {
+        key: 'week_bucket',
+        label: 'Week Bucket',
+        type: 'string',
+        required: false,
+        description: 'Week bucket format: YYYY-W## (e.g., 2026-W05). Use either week_bucket or date.'
+      },
+      {
+        key: 'date',
+        label: 'Date',
+        type: 'date',
+        required: false,
+        description: 'Date format: YYYY-MM-DD (e.g., 2026-02-10). Use either week_bucket or date.'
+      },
+      {
+        key: 'time_bucket',
+        label: 'Time Bucket',
+        type: 'string',
+        required: false,
+        description: 'Unified time bucket (auto-filled from week_bucket or date)'
+      },
+      
+      // === Optional Fields ===
+      {
+        key: 'uom',
+        label: 'Unit of Measure',
+        type: 'string',
+        required: false,
+        description: 'Unit of measure (e.g., pcs, kg)',
+        default: 'pcs'
+      },
+      {
+        key: 'supplier_id',
+        label: 'Supplier ID',
+        type: 'string',
+        required: false,
+        description: 'Supplier code'
+      },
+      {
+        key: 'status',
+        label: 'Status',
+        type: 'string',
+        required: false,
+        description: 'Status: open, closed, cancelled',
+        default: 'open'
+      },
+      {
+        key: 'notes',
+        label: 'Notes',
+        type: 'string',
+        required: false,
+        description: 'Additional notes'
+      }
+    ]
+  },
+
+  // Inventory Snapshots - Inventory snapshot table
+  inventory_snapshots: {
+    label: 'Inventory Snapshots',
+    description: 'Inventory snapshot data (on-hand inventory by date)',
+    icon: '📦',
+    fields: [
+      // === Required Fields ===
+      {
+        key: 'material_code',
+        label: 'Material Code',
+        type: 'string',
+        required: true,
+        description: 'Material code (component, raw material, or finished goods)'
+      },
+      {
+        key: 'plant_id',
+        label: 'Plant ID',
+        type: 'string',
+        required: true,
+        description: 'Plant code'
+      },
+      {
+        key: 'snapshot_date',
+        label: 'Snapshot Date',
+        type: 'date',
+        required: true,
+        description: 'Snapshot date (YYYY-MM-DD)'
+      },
+      {
+        key: 'onhand_qty',
+        label: 'On-hand Quantity',
+        type: 'number',
+        required: true,
+        description: 'On-hand quantity (actual inventory, must be >= 0)',
+        min: 0
+      },
+      
+      // === Optional Fields ===
+      {
+        key: 'allocated_qty',
+        label: 'Allocated Quantity',
+        type: 'number',
+        required: false,
+        description: 'Allocated quantity (committed but not shipped, must be >= 0)',
+        min: 0,
+        default: 0
+      },
+      {
+        key: 'safety_stock',
+        label: 'Safety Stock',
+        type: 'number',
+        required: false,
+        description: 'Safety stock (minimum inventory level, must be >= 0)',
+        min: 0,
+        default: 0
+      },
+      {
+        key: 'uom',
+        label: 'Unit of Measure',
+        type: 'string',
+        required: false,
+        description: 'Unit of measure (e.g., pcs, kg)',
+        default: 'pcs'
+      },
+      {
+        key: 'notes',
+        label: 'Notes',
+        type: 'string',
+        required: false,
+        description: 'Additional notes'
+      }
+    ]
+  },
+
+  // FG Financials - Finished goods financial data
+  fg_financials: {
+    label: 'FG Financials',
+    description: 'Finished goods financial data (pricing and margin)',
+    icon: '💵',
+    fields: [
+      // === Required Fields ===
+      {
+        key: 'material_code',
+        label: 'Material Code',
+        type: 'string',
+        required: true,
+        description: 'Finished goods material code'
+      },
+      {
+        key: 'unit_margin',
+        label: 'Unit Margin',
+        type: 'number',
+        required: true,
+        description: 'Unit margin (gross margin per unit, must be >= 0)',
+        min: 0
+      },
+      
+      // === Optional Fields ===
+      {
+        key: 'plant_id',
+        label: 'Plant ID',
+        type: 'string',
+        required: false,
+        description: 'Plant code (leave empty for global pricing)'
+      },
+      {
+        key: 'unit_price',
+        label: 'Unit Price',
+        type: 'number',
+        required: false,
+        description: 'Unit price (selling price, must be >= 0)',
+        min: 0
+      },
+      {
+        key: 'currency',
+        label: 'Currency',
+        type: 'string',
+        required: false,
+        description: 'Currency code (e.g., USD, EUR, CNY)',
+        default: 'USD'
+      },
+      {
+        key: 'valid_from',
+        label: 'Valid From',
+        type: 'date',
+        required: false,
+        description: 'Valid from date (YYYY-MM-DD)'
+      },
+      {
+        key: 'valid_to',
+        label: 'Valid To',
+        type: 'date',
+        required: false,
+        description: 'Valid to date (YYYY-MM-DD)'
+      },
+      {
+        key: 'notes',
+        label: 'Notes',
+        type: 'string',
+        required: false,
+        description: 'Additional notes'
+      }
+    ]
   }
 };
 

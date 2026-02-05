@@ -492,8 +492,14 @@ const checkDuplicates = (rows, uploadType) => {
 };
 
 /**
- * 處理 demand_fg 的時間欄位（time_bucket）
- * 從 week_bucket 或 date 自動填入 time_bucket
+ * 處理 demand_fg / po_open_lines 的時間欄位（time_bucket）
+ * 從 week_bucket、date 或 time_bucket 自動填入 time_bucket
+ * 
+ * 欄位對應建議：
+ * - 若內容是 2026-W05、2026-W06 等 → 對應到 week_bucket
+ * - 若內容是 2026-02-10 等日期 → 對應到 date
+ * - 若 CSV 欄位名為 time_bucket，對應到 week_bucket 或 date；或直接對應 time_bucket（本函數會嘗試解析）
+ * 
  * @param {Object} row - 資料列
  * @returns {Object} { time_bucket, errors }
  */
@@ -503,8 +509,9 @@ const processTimeBucket = (row) => {
 
   const weekBucket = row.week_bucket;
   const date = row.date;
+  const timeBucketRaw = row.time_bucket;
 
-  // 優先使用 date，如果沒有則使用 week_bucket
+  // 優先使用 date，其次 week_bucket
   if (date) {
     const parsedDate = parseDate(date);
     if (parsedDate) {
@@ -520,8 +527,20 @@ const processTimeBucket = (row) => {
     } else {
       errors.push('週桶格式不正確，應為 YYYY-W## 格式（例如：2026-W02）');
     }
+  } else if (timeBucketRaw) {
+    // 支援 CSV 欄位對應到 time_bucket：嘗試解析為 week 或 date 格式
+    const trimmed = String(timeBucketRaw).trim();
+    const weekBucketPattern = /^\d{4}-W\d{1,2}$/;
+    const parsedDate = parseDate(timeBucketRaw);
+    if (weekBucketPattern.test(trimmed)) {
+      timeBucket = trimmed;
+    } else if (parsedDate) {
+      timeBucket = parsedDate;
+    } else {
+      errors.push('time_bucket 格式不正確，應為 YYYY-W##（如 2026-W05）或 YYYY-MM-DD（如 2026-02-10）');
+    }
   } else {
-    errors.push('必須填寫 week_bucket 或 date 其中一個欄位');
+    errors.push('必須填寫 week_bucket、date 或 time_bucket 其中一個欄位');
   }
 
   return { time_bucket: timeBucket, errors };
@@ -575,6 +594,189 @@ const validateBomEdgeRules = (row) => {
 };
 
 /**
+ * 驗證 po_open_lines 的特殊規則
+ * @param {Object} row - 資料列
+ * @returns {Array} 錯誤與警告列表
+ */
+const validatePoOpenLinesRules = (row) => {
+  const errors = [];
+  const warnings = [];
+
+  // 驗證 open_qty >= 0（額外檢查，雖然 schema 已經有 min 設定）
+  if (row.open_qty !== null && row.open_qty !== undefined) {
+    if (row.open_qty < 0) {
+      errors.push({ 
+        field: 'open_qty', 
+        fieldLabel: 'Open Quantity', 
+        error: 'open_qty 不能小於 0', 
+        originalValue: row.open_qty 
+      });
+    }
+  }
+
+  // 驗證 status 欄位
+  if (row.status !== null && row.status !== undefined && row.status !== '') {
+    const validStatuses = ['open', 'closed', 'cancelled'];
+    const normalizedStatus = String(row.status).toLowerCase().trim();
+    
+    if (!validStatuses.includes(normalizedStatus)) {
+      // 自動修正為 'open' 並記錄警告
+      row.status = 'open';
+      warnings.push({ 
+        field: 'status', 
+        fieldLabel: 'Status', 
+        error: `status 值「${row.status}」不在允許範圍內（open/closed/cancelled），已自動設為 'open'`, 
+        originalValue: row.status,
+        type: 'warning' 
+      });
+    } else {
+      // 標準化為小寫
+      row.status = normalizedStatus;
+    }
+  }
+
+  // 驗證 time_bucket 必須存在（在 processTimeBucket 之後檢查）
+  if (!row.time_bucket || row.time_bucket === '') {
+    errors.push({ 
+      field: 'time_bucket', 
+      fieldLabel: 'Time Bucket', 
+      error: 'time_bucket 欄位必須存在（需要 week_bucket 或 date）', 
+      originalValue: null 
+    });
+  }
+
+  return [...errors, ...warnings];
+};
+
+/**
+ * 驗證 inventory_snapshots 的特殊規則
+ * @param {Object} row - 資料列
+ * @returns {Array} 錯誤列表
+ */
+const validateInventorySnapshotsRules = (row) => {
+  const errors = [];
+
+  // 驗證 snapshot_date 必須是有效日期
+  if (!row.snapshot_date || row.snapshot_date === '') {
+    errors.push({ 
+      field: 'snapshot_date', 
+      fieldLabel: 'Snapshot Date', 
+      error: 'snapshot_date 為必填欄位', 
+      originalValue: row.snapshot_date 
+    });
+  }
+
+  // 驗證 onhand_qty >= 0
+  if (row.onhand_qty !== null && row.onhand_qty !== undefined) {
+    if (row.onhand_qty < 0) {
+      errors.push({ 
+        field: 'onhand_qty', 
+        fieldLabel: 'On-hand Quantity', 
+        error: 'onhand_qty 不能小於 0', 
+        originalValue: row.onhand_qty 
+      });
+    }
+  }
+
+  // 驗證 allocated_qty >= 0
+  if (row.allocated_qty !== null && row.allocated_qty !== undefined) {
+    if (row.allocated_qty < 0) {
+      errors.push({ 
+        field: 'allocated_qty', 
+        fieldLabel: 'Allocated Quantity', 
+        error: 'allocated_qty 不能小於 0', 
+        originalValue: row.allocated_qty 
+      });
+    }
+  }
+
+  // 驗證 safety_stock >= 0
+  if (row.safety_stock !== null && row.safety_stock !== undefined) {
+    if (row.safety_stock < 0) {
+      errors.push({ 
+        field: 'safety_stock', 
+        fieldLabel: 'Safety Stock', 
+        error: 'safety_stock 不能小於 0', 
+        originalValue: row.safety_stock 
+      });
+    }
+  }
+
+  // 確保預設值設定正確
+  if (row.allocated_qty === null || row.allocated_qty === undefined || row.allocated_qty === '') {
+    row.allocated_qty = 0;
+  }
+  if (row.safety_stock === null || row.safety_stock === undefined || row.safety_stock === '') {
+    row.safety_stock = 0;
+  }
+  if (!row.uom || row.uom === '') {
+    row.uom = 'pcs';
+  }
+
+  return errors;
+};
+
+/**
+ * 驗證 fg_financials 的特殊規則
+ * @param {Object} row - 資料列
+ * @returns {Array} 錯誤列表
+ */
+const validateFgFinancialsRules = (row) => {
+  const errors = [];
+
+  // 驗證 unit_margin >= 0（額外檢查）
+  if (row.unit_margin !== null && row.unit_margin !== undefined) {
+    if (row.unit_margin < 0) {
+      errors.push({ 
+        field: 'unit_margin', 
+        fieldLabel: 'Unit Margin', 
+        error: 'unit_margin 不能小於 0', 
+        originalValue: row.unit_margin 
+      });
+    }
+  }
+
+  // 驗證 unit_price >= 0（如果有填寫）
+  if (row.unit_price !== null && row.unit_price !== undefined && row.unit_price !== '') {
+    if (row.unit_price < 0) {
+      errors.push({ 
+        field: 'unit_price', 
+        fieldLabel: 'Unit Price', 
+        error: 'unit_price 不能小於 0', 
+        originalValue: row.unit_price 
+      });
+    }
+  }
+
+  // 驗證 valid_from <= valid_to（如果兩者都有填寫）
+  if (row.valid_from && row.valid_to) {
+    const fromDate = new Date(row.valid_from);
+    const toDate = new Date(row.valid_to);
+    
+    // 檢查日期是否有效
+    if (!isNaN(fromDate.getTime()) && !isNaN(toDate.getTime())) {
+      if (fromDate > toDate) {
+        errors.push({ 
+          field: 'valid_from', 
+          fieldLabel: 'Valid From', 
+          error: 'valid_from 不能晚於 valid_to', 
+          originalValue: row.valid_from 
+        });
+      }
+    }
+  }
+
+  // 確保 currency 預設值
+  if (!row.currency || row.currency === '') {
+    row.currency = 'USD';
+  }
+
+  // plant_id 可以為空（代表全球通用定價），不需要額外驗證
+
+  return errors;
+};
+
+/**
  * 驗證並清洗資料列
  * @param {Array} cleanRows - 已經過欄位映射轉換的資料
  * @param {string} uploadType - 上傳類型
@@ -615,8 +817,8 @@ export const validateAndCleanRows = (cleanRows, uploadType) => {
       }
     });
 
-    // 特殊處理：demand_fg 的時間欄位
-    if (uploadType === 'demand_fg') {
+    // 特殊處理：demand_fg 和 po_open_lines 的時間欄位
+    if (uploadType === 'demand_fg' || uploadType === 'po_open_lines') {
       const { time_bucket, errors: timeErrors } = processTimeBucket(cleanedRow);
       cleanedRow.time_bucket = time_bucket;
       if (timeErrors.length > 0) {
@@ -635,6 +837,24 @@ export const validateAndCleanRows = (cleanRows, uploadType) => {
     if (uploadType === 'bom_edge') {
       const bomErrors = validateBomEdgeRules(cleanedRow);
       rowErrors.push(...bomErrors);
+    }
+
+    // 特殊處理：po_open_lines 的業務規則驗證
+    if (uploadType === 'po_open_lines') {
+      const poErrors = validatePoOpenLinesRules(cleanedRow);
+      rowErrors.push(...poErrors);
+    }
+
+    // 特殊處理：inventory_snapshots 的業務規則驗證
+    if (uploadType === 'inventory_snapshots') {
+      const inventoryErrors = validateInventorySnapshotsRules(cleanedRow);
+      rowErrors.push(...inventoryErrors);
+    }
+
+    // 特殊處理：fg_financials 的業務規則驗證
+    if (uploadType === 'fg_financials') {
+      const fgErrors = validateFgFinancialsRules(cleanedRow);
+      rowErrors.push(...fgErrors);
     }
 
     // 判斷這一行是否有效

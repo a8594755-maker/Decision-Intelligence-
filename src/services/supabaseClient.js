@@ -38,12 +38,14 @@ export const userFilesService = {
       data: { rows: data, version: `v-${Date.now()}` }
     };
 
-    const { error } = await supabase
+    const { data: insertedData, error } = await supabase
       .from('user_files')
-      .insert([payload]);
+      .insert([payload])
+      .select()
+      .single();
 
     if (error) throw error;
-    return payload;
+    return insertedData; // 回傳包含 id 的完整 row
   },
 
   // 獲取所有文件
@@ -128,10 +130,18 @@ export const suppliersService = {
 
     // 插入新供應商
     if (toInsert.length > 0) {
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/35d967fa-aaea-4f36-8ecf-97e2f2e17afa',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'supabaseClient.js:130',message:'Before insert suppliers',data:{count:toInsert.length,firstItem:toInsert[0],columns:Object.keys(toInsert[0]||{})},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A,B'})}).catch(()=>{});
+      // #endregion
+      
       const { data: insertedData, error: insertError } = await supabase
         .from('suppliers')
         .insert(toInsert)
         .select();
+
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/35d967fa-aaea-4f36-8ecf-97e2f2e17afa',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'supabaseClient.js:137',message:'After insert suppliers',data:{success:!insertError,error:insertError?{message:insertError.message,details:insertError.details,hint:insertError.hint,code:insertError.code}:null,insertedCount:insertedData?.length},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A,B,E'})}).catch(()=>{});
+      // #endregion
 
       if (insertError) {
         console.error('Insert error:', insertError);
@@ -282,6 +292,101 @@ export const suppliersService = {
 
     if (error) throw error;
     return data;
+  },
+
+  /**
+   * 批次 Upsert Suppliers（真正的批次處理）
+   * @param {string} userId - 使用者 ID
+   * @param {Array} suppliers - 供應商陣列 [{supplier_name, supplier_code?, batch_id?}, ...]
+   * @param {Object} options - 選項
+   * @param {number} options.chunkSize - 每批大小（預設 200）
+   * @returns {Promise<Map>} 回傳 Map(key -> supplier_id)，key 為 supplier_code 或 supplier_name_norm
+   */
+  async batchUpsertSuppliers(userId, suppliers, options = {}) {
+    const { chunkSize = 200 } = options;
+    
+    if (!suppliers || suppliers.length === 0) {
+      return new Map();
+    }
+
+    console.log(`[batchUpsertSuppliers] Starting upsert for ${suppliers.length} suppliers`);
+
+    // 正規化 supplier_name（模擬 DB 的 normalize 邏輯）
+    const normalizeSupplierName = (name) => {
+      return name.toLowerCase().trim().replace(/\s+/g, ' ');
+    };
+
+    // 正規化 supplier status（確保只寫入 'active' 或 'inactive'）
+    const normalizeSupplierStatus = (status) => {
+      if (!status || typeof status !== 'string') {
+        return 'active';
+      }
+      const normalized = status.toLowerCase().trim();
+      if (normalized === 'active' || normalized === 'inactive') {
+        return normalized;
+      }
+      if (normalized === 'enabled' || normalized === 'enable' || normalized === 'yes' || normalized === '1') {
+        return 'active';
+      }
+      if (normalized === 'disabled' || normalized === 'disable' || normalized === 'no' || normalized === '0' || normalized === 'suspended') {
+        return 'inactive';
+      }
+      return 'active'; // 預設值
+    };
+
+    // 準備 upsert payload
+    const payload = suppliers.map(s => ({
+      user_id: userId,
+      supplier_name: s.supplier_name,
+      supplier_code: s.supplier_code || null,
+      supplier_name_norm: normalizeSupplierName(s.supplier_name),
+      status: normalizeSupplierStatus(s.status),
+      batch_id: s.batch_id || null,
+      contact_info: s.contact_info || null
+    }));
+
+    // 分批 upsert
+    const allUpsertedIds = [];
+    for (let i = 0; i < payload.length; i += chunkSize) {
+      const chunk = payload.slice(i, i + chunkSize);
+      
+      console.log(`[batchUpsertSuppliers] Upserting chunk ${Math.floor(i / chunkSize) + 1}/${Math.ceil(payload.length / chunkSize)} (${chunk.length} items)`);
+
+      // 使用 upsert（ON CONFLICT）
+      // 策略：優先使用 supplier_code，如果沒有則使用 supplier_name_norm
+      const { data: upsertedData, error: upsertError } = await supabase
+        .from('suppliers')
+        .upsert(chunk, {
+          onConflict: 'user_id,supplier_name_norm',  // 使用 name 作為主要衝突鍵
+          ignoreDuplicates: false  // 更新而不是忽略
+        })
+        .select('id, supplier_code, supplier_name_norm');
+
+      if (upsertError) {
+        console.error('[batchUpsertSuppliers] Upsert error:', upsertError);
+        throw new Error(`Supplier batch upsert failed: ${upsertError.message || JSON.stringify(upsertError)}`);
+      }
+
+      allUpsertedIds.push(...(upsertedData || []));
+    }
+
+    console.log(`[batchUpsertSuppliers] Upserted ${allUpsertedIds.length} suppliers`);
+
+    // 建立 Map: key -> supplier_id
+    // key 優先使用 supplier_code，否則使用 supplier_name_norm
+    const supplierIdMap = new Map();
+    allUpsertedIds.forEach(s => {
+      if (s.supplier_code) {
+        supplierIdMap.set(s.supplier_code, s.id);
+      }
+      if (s.supplier_name_norm) {
+        supplierIdMap.set(s.supplier_name_norm, s.id);
+      }
+    });
+
+    console.log(`[batchUpsertSuppliers] Created map with ${supplierIdMap.size} entries`);
+
+    return supplierIdMap;
   }
 };
 
@@ -374,6 +479,71 @@ export const materialsService = {
 
     if (error) throw error;
     return { success: true };
+  },
+
+  /**
+   * 批次 Upsert Materials（真正的批次處理）
+   * @param {string} userId - 使用者 ID
+   * @param {Array} materials - 物料陣列 [{material_code, material_name, category?, uom?, batch_id?}, ...]
+   * @param {Object} options - 選項
+   * @param {number} options.chunkSize - 每批大小（預設 200）
+   * @returns {Promise<Map>} 回傳 Map(material_code -> material_id)
+   */
+  async batchUpsertMaterials(userId, materials, options = {}) {
+    const { chunkSize = 200 } = options;
+    
+    if (!materials || materials.length === 0) {
+      return new Map();
+    }
+
+    console.log(`[batchUpsertMaterials] Starting upsert for ${materials.length} materials`);
+
+    // 準備 upsert payload
+    const payload = materials.map(m => ({
+      user_id: userId,
+      material_code: m.material_code,
+      material_name: m.material_name || m.material_code,
+      category: m.category || null,
+      uom: m.uom || 'pcs',
+      batch_id: m.batch_id || null,
+      notes: m.notes || null
+    }));
+
+    // 分批 upsert
+    const allUpsertedIds = [];
+    for (let i = 0; i < payload.length; i += chunkSize) {
+      const chunk = payload.slice(i, i + chunkSize);
+      
+      console.log(`[batchUpsertMaterials] Upserting chunk ${Math.floor(i / chunkSize) + 1}/${Math.ceil(payload.length / chunkSize)} (${chunk.length} items)`);
+
+      // 使用 upsert（ON CONFLICT (user_id, material_code)）
+      const { data: upsertedData, error: upsertError } = await supabase
+        .from('materials')
+        .upsert(chunk, {
+          onConflict: 'user_id,material_code',
+          ignoreDuplicates: false
+        })
+        .select('id, material_code');
+
+      if (upsertError) {
+        console.error('[batchUpsertMaterials] Upsert error:', upsertError);
+        throw new Error(`Material batch upsert failed: ${upsertError.message || JSON.stringify(upsertError)}`);
+      }
+
+      allUpsertedIds.push(...(upsertedData || []));
+    }
+
+    console.log(`[batchUpsertMaterials] Upserted ${allUpsertedIds.length} materials`);
+
+    // 建立 Map: material_code -> material_id
+    const materialIdMap = new Map();
+    allUpsertedIds.forEach(m => {
+      materialIdMap.set(m.material_code, m.id);
+    });
+
+    console.log(`[batchUpsertMaterials] Created map with ${materialIdMap.size} entries`);
+
+    return materialIdMap;
   }
 };
 
@@ -382,9 +552,25 @@ export const materialsService = {
  */
 export const goodsReceiptsService = {
   // 批量插入收貨記錄
-  async batchInsert(userId, receipts, uploadFileId = null) {
+  // 支援新舊兩種呼叫方式：
+  // - 舊: batchInsert(userId, receipts, uploadFileId)
+  // - 新: batchInsert(userId, receipts, { uploadFileId, batchId })
+  async batchInsert(userId, receipts, options = {}) {
     if (!receipts || receipts.length === 0) {
       return { success: true, count: 0 };
+    }
+
+    // 向後相容 adapter：第三參數可能是字串（舊 API）或物件（新 API）
+    let uploadFileId = null;
+    let batchId = null;
+    
+    if (typeof options === 'string') {
+      // 舊 API：第三參數是 uploadFileId 字串
+      uploadFileId = options;
+    } else if (typeof options === 'object') {
+      // 新 API：第三參數是 { uploadFileId, batchId }
+      uploadFileId = options.uploadFileId || null;
+      batchId = options.batchId || null;
     }
 
     const payload = receipts.map(r => ({
@@ -398,7 +584,8 @@ export const goodsReceiptsService = {
       actual_delivery_date: r.actual_delivery_date,
       receipt_date: r.receipt_date || new Date().toISOString().split('T')[0],
       received_qty: r.received_qty,
-      rejected_qty: r.rejected_qty || 0
+      rejected_qty: r.rejected_qty || 0,
+      batch_id: r.batch_id || batchId // 優先使用 receipt 內的 batch_id，否則用參數
     }));
 
     const { data, error } = await supabase
@@ -408,6 +595,73 @@ export const goodsReceiptsService = {
 
     if (error) throw error;
     return { success: true, count: data.length, data };
+  },
+
+  /**
+   * 批次插入 Goods Receipts（支援進度回調）
+   * @param {string} userId - 使用者 ID
+   * @param {Array} receipts - 收貨記錄陣列（已含 supplier_id/material_id）
+   * @param {Object} options - 選項
+   * @param {number} options.chunkSize - 每批大小（預設 500）
+   * @param {function} options.onProgress - 進度回調 (current, total)
+   * @returns {Promise<Object>} { success, count, data }
+   */
+  async batchInsertReceipts(userId, receipts, options = {}) {
+    const { chunkSize = 500, onProgress = null } = options;
+    
+    if (!receipts || receipts.length === 0) {
+      return { success: true, count: 0, data: [] };
+    }
+
+    console.log(`[batchInsertReceipts] Starting insert for ${receipts.length} receipts`);
+
+    // 準備 payload
+    const payload = receipts.map(r => ({
+      user_id: userId,
+      upload_file_id: r.upload_file_id || null,
+      supplier_id: r.supplier_id,
+      material_id: r.material_id,
+      po_number: r.po_number || null,
+      receipt_number: r.receipt_number || null,
+      planned_delivery_date: r.planned_delivery_date || null,
+      actual_delivery_date: r.actual_delivery_date,
+      receipt_date: r.receipt_date || new Date().toISOString().split('T')[0],
+      received_qty: r.received_qty,
+      rejected_qty: r.rejected_qty || 0,
+      batch_id: r.batch_id || null
+    }));
+
+    // 分批插入
+    const allInsertedData = [];
+    let insertedCount = 0;
+
+    for (let i = 0; i < payload.length; i += chunkSize) {
+      const chunk = payload.slice(i, i + chunkSize);
+      
+      console.log(`[batchInsertReceipts] Inserting chunk ${Math.floor(i / chunkSize) + 1}/${Math.ceil(payload.length / chunkSize)} (${chunk.length} items)`);
+
+      const { data: insertedData, error: insertError } = await supabase
+        .from('goods_receipts')
+        .insert(chunk)
+        .select();
+
+      if (insertError) {
+        console.error('[batchInsertReceipts] Insert error:', insertError);
+        throw new Error(`Goods receipts batch insert failed: ${insertError.message || JSON.stringify(insertError)}`);
+      }
+
+      allInsertedData.push(...(insertedData || []));
+      insertedCount += insertedData?.length || 0;
+
+      // 呼叫進度回調
+      if (onProgress) {
+        onProgress(insertedCount, receipts.length);
+      }
+    }
+
+    console.log(`[batchInsertReceipts] Inserted ${insertedCount} receipts`);
+
+    return { success: true, count: insertedCount, data: allInsertedData };
   },
 
   // 獲取收貨記錄
@@ -492,9 +746,25 @@ export const goodsReceiptsService = {
  */
 export const priceHistoryService = {
   // 批量插入價格記錄
-  async batchInsert(userId, prices, uploadFileId = null) {
+  // 支援新舊兩種呼叫方式：
+  // - 舊: batchInsert(userId, prices, uploadFileId)
+  // - 新: batchInsert(userId, prices, { uploadFileId, batchId })
+  async batchInsert(userId, prices, options = {}) {
     if (!prices || prices.length === 0) {
       return { success: true, count: 0 };
+    }
+
+    // 向後相容 adapter：第三參數可能是字串（舊 API）或物件（新 API）
+    let uploadFileId = null;
+    let batchId = null;
+    
+    if (typeof options === 'string') {
+      // 舊 API：第三參數是 uploadFileId 字串
+      uploadFileId = options;
+    } else if (typeof options === 'object') {
+      // 新 API：第三參數是 { uploadFileId, batchId }
+      uploadFileId = options.uploadFileId || null;
+      batchId = options.batchId || null;
     }
 
     const payload = prices.map(p => ({
@@ -506,7 +776,8 @@ export const priceHistoryService = {
       unit_price: p.unit_price,
       currency: p.currency || 'USD',
       quantity: p.quantity || 0,
-      is_contract_price: p.is_contract_price || false
+      is_contract_price: p.is_contract_price || false,
+      batch_id: p.batch_id || batchId // 優先使用 price 內的 batch_id，否則用參數
     }));
 
     const { data, error } = await supabase
@@ -834,6 +1105,12 @@ export const bomEdgesService = {
       return { success: true, count: 0 };
     }
 
+    // ✅ LOG 1: 印出 table / rows count / batchId type
+    console.info("[ingest] table=bom_edges, rows=", bomEdges.length, ", batchId type=", typeof batchId, ", batchId value=", JSON.stringify(batchId).slice(0, 200));
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/35d967fa-aaea-4f36-8ecf-97e2f2e17afa',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'supabaseClient.js:bomEdgesService.batchInsert',message:'[ingest] LOG1 table/uploadType/rows/batchId',data:{tableName:'bom_edges',uploadType:'bom_edge',rows:bomEdges.length,batchIdType:typeof batchId,batchIdPreview:JSON.stringify(batchId).slice(0,200)},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A'})}).catch(()=>{});
+    // #endregion
+
     const payload = bomEdges.map(edge => ({
       user_id: userId,
       batch_id: batchId,
@@ -855,6 +1132,36 @@ export const bomEdgesService = {
       routing_id: edge.routing_id || null,
       notes: edge.notes || null
     }));
+
+    // ✅ LOG 2: 印出第一筆 row 的 keys + uuid 欄位值型態
+    const sample = payload[0];
+    const uuidFieldTypes = {};
+    if (sample) {
+      console.info("[ingest] sample keys=", Object.keys(sample));
+      const uuidFields = ['user_id', 'batch_id', 'batchId', 'sheet_run_id', 'sheetRunId', 'ingest_key', 'ingestKey'];
+      uuidFields.forEach(field => {
+        if (sample.hasOwnProperty(field)) {
+          const value = sample[field];
+          const valueType = typeof value;
+          const valuePreview = JSON.stringify(value).slice(0, 200);
+          console.info(`[ingest] ${field}: type=${valueType}, value=${valuePreview}`);
+          uuidFieldTypes[field] = { type: valueType, preview: valuePreview };
+          if (valueType === 'object' && value !== null) {
+            console.error(`❌ [ingest] CRITICAL: ${field} is object, not uuid string! This will cause uuid cast error!`);
+          }
+        }
+      });
+    }
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/35d967fa-aaea-4f36-8ecf-97e2f2e17afa',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'supabaseClient.js:bomEdgesService.batchInsert',message:'[ingest] LOG2 sample keys + uuid field types',data:{sampleKeys:sample?Object.keys(sample):null,uuidFieldTypes},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'B'})}).catch(()=>{});
+    // #endregion
+
+    // ✅ LOG 3: 印出 request body top-level structure
+    console.info("[ingest] payload is array:", Array.isArray(payload), ", length=", payload.length);
+    console.info("[ingest] payload preview (first 800 chars):", JSON.stringify(payload).slice(0, 800));
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/35d967fa-aaea-4f36-8ecf-97e2f2e17afa',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'supabaseClient.js:bomEdgesService.batchInsert',message:'[ingest] LOG3 request body top-level',data:{bodyIsArray:Array.isArray(payload),bodyLength:payload.length,bodyTopLevelKeys:Array.isArray(payload)?null:Object.keys(payload),bodyPreview:JSON.stringify(payload).slice(0,800)},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'C'})}).catch(()=>{});
+    // #endregion
 
     const { data, error } = await supabase
       .from('bom_edges')
@@ -1420,6 +1727,675 @@ export const componentDemandTraceService = {
       data: data || [],
       count: count || 0
     };
+  }
+};
+
+/**
+ * PO Open Lines Operations
+ * 管理採購訂單未交貨明細
+ */
+export const poOpenLinesService = {
+  /**
+   * 批量插入 PO Open Lines
+   * @param {string} userId - 使用者 ID
+   * @param {Array} rows - PO Open Lines 資料陣列
+   * @param {string} batchId - 批次 ID（可選）
+   * @returns {Promise<Object>} { success, count, data }
+   */
+  async batchInsert(userId, rows, batchId = null) {
+    if (!rows || rows.length === 0) {
+      return { success: true, count: 0 };
+    }
+
+    const payload = rows.map(row => ({
+      user_id: userId,
+      batch_id: batchId,
+      po_number: row.po_number,
+      po_line: row.po_line,
+      material_code: row.material_code,
+      plant_id: row.plant_id,
+      time_bucket: row.time_bucket,
+      open_qty: row.open_qty,
+      uom: row.uom || 'pcs',
+      supplier_id: row.supplier_id || null,
+      status: row.status || 'open',
+      notes: row.notes || null
+    }));
+
+    // 使用 upsert 避免重複（根據 UNIQUE 約束）
+    const { data, error } = await supabase
+      .from('po_open_lines')
+      .upsert(payload, {
+        onConflict: 'user_id,po_number,po_line,time_bucket',
+        ignoreDuplicates: false
+      })
+      .select();
+
+    if (error) throw error;
+    return { success: true, count: data.length, data };
+  },
+
+  /**
+   * 根據條件查詢 PO Open Lines
+   * @param {string} userId - 使用者 ID
+   * @param {Object} options - 查詢選項
+   * @param {string} options.plantId - 工廠 ID（null = all plants）
+   * @param {Array<string>} options.timeBuckets - 時間桶陣列（null = all time）
+   * @param {string} options.materialCode - 物料代碼（可選）
+   * @param {string} options.poNumber - 採購訂單號碼（可選）
+   * @param {string} options.supplierId - 供應商 ID（可選）
+   * @param {string} options.status - 狀態（可選）
+   * @param {number} options.limit - 限制筆數（預設 1000）
+   * @param {number} options.offset - 偏移量（預設 0）
+   * @returns {Promise<Array>} PO Open Lines 資料陣列
+   */
+  async fetchByFilters(userId, options = {}) {
+    const { 
+      plantId = null, 
+      timeBuckets = null, 
+      materialCode = null,
+      poNumber = null,
+      supplierId = null,
+      status = null,
+      limit = 1000, 
+      offset = 0 
+    } = options;
+
+    let query = supabase
+      .from('po_open_lines')
+      .select('*')
+      .eq('user_id', userId)
+      .order('time_bucket', { ascending: true })
+      .range(offset, offset + limit - 1);
+
+    // 工廠過濾（null = all plants）
+    if (plantId) {
+      query = query.eq('plant_id', plantId);
+    }
+
+    // 時間桶過濾（null = all time）
+    if (timeBuckets && timeBuckets.length > 0) {
+      query = query.in('time_bucket', timeBuckets);
+    }
+
+    // 物料代碼過濾
+    if (materialCode) {
+      query = query.eq('material_code', materialCode);
+    }
+
+    // 採購訂單號碼過濾
+    if (poNumber) {
+      query = query.eq('po_number', poNumber);
+    }
+
+    // 供應商過濾
+    if (supplierId) {
+      query = query.eq('supplier_id', supplierId);
+    }
+
+    // 狀態過濾
+    if (status) {
+      query = query.eq('status', status);
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+    return data || [];
+  },
+
+  /**
+   * 根據批次 ID 刪除 PO Open Lines（支援 undo）
+   * @param {string} batchId - 批次 ID
+   * @returns {Promise<Object>} { success, count }
+   */
+  async deleteByBatch(batchId) {
+    if (!batchId) {
+      return { success: true, count: 0 };
+    }
+
+    const { data, error } = await supabase
+      .from('po_open_lines')
+      .delete()
+      .eq('batch_id', batchId)
+      .select();
+
+    if (error) throw error;
+    return { success: true, count: data?.length || 0 };
+  },
+
+  /**
+   * 獲取 PO Open Lines（通用查詢方法）
+   * @param {string} userId - 使用者 ID
+   * @param {Object} options - 查詢選項
+   * @returns {Promise<Array>} PO Open Lines 資料陣列
+   */
+  async getPoOpenLines(userId, options = {}) {
+    const { 
+      plantId, 
+      materialCode, 
+      startTimeBucket, 
+      endTimeBucket, 
+      limit = 100, 
+      offset = 0 
+    } = options;
+
+    let query = supabase
+      .from('po_open_lines')
+      .select('*')
+      .eq('user_id', userId)
+      .order('time_bucket', { ascending: true })
+      .range(offset, offset + limit - 1);
+
+    if (plantId) {
+      query = query.eq('plant_id', plantId);
+    }
+
+    if (materialCode) {
+      query = query.eq('material_code', materialCode);
+    }
+
+    if (startTimeBucket) {
+      query = query.gte('time_bucket', startTimeBucket);
+    }
+
+    if (endTimeBucket) {
+      query = query.lte('time_bucket', endTimeBucket);
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+    return data || [];
+  }
+};
+
+/**
+ * Inventory Snapshots Operations
+ * 管理庫存快照資料
+ */
+export const inventorySnapshotsService = {
+  /**
+   * 批量插入 Inventory Snapshots
+   * @param {string} userId - 使用者 ID
+   * @param {Array} rows - Inventory Snapshots 資料陣列
+   * @param {string} batchId - 批次 ID（可選）
+   * @returns {Promise<Object>} { success, count, data }
+   */
+  async batchInsert(userId, rows, batchId = null) {
+    if (!rows || rows.length === 0) {
+      return { success: true, count: 0 };
+    }
+
+    const payload = rows.map(row => ({
+      user_id: userId,
+      batch_id: batchId,
+      material_code: row.material_code,
+      plant_id: row.plant_id,
+      snapshot_date: row.snapshot_date,
+      onhand_qty: row.onhand_qty,
+      allocated_qty: row.allocated_qty !== null && row.allocated_qty !== undefined ? row.allocated_qty : 0,
+      safety_stock: row.safety_stock !== null && row.safety_stock !== undefined ? row.safety_stock : 0,
+      uom: row.uom || 'pcs',
+      notes: row.notes || null
+    }));
+
+    // 使用 upsert 避免重複（根據 UNIQUE 約束）
+    const { data, error } = await supabase
+      .from('inventory_snapshots')
+      .upsert(payload, {
+        onConflict: 'user_id,material_code,plant_id,snapshot_date',
+        ignoreDuplicates: false
+      })
+      .select();
+
+    if (error) throw error;
+    return { success: true, count: data.length, data };
+  },
+
+  /**
+   * 根據條件查詢 Inventory Snapshots
+   * @param {string} userId - 使用者 ID
+   * @param {Object} options - 查詢選項
+   * @param {string} options.plantId - 工廠 ID（null = all plants）
+   * @param {string} options.materialCode - 物料代碼（可選）
+   * @param {string} options.snapshotDate - 快照日期（可選）
+   * @param {string} options.startDate - 起始日期（可選）
+   * @param {string} options.endDate - 結束日期（可選）
+   * @param {number} options.limit - 限制筆數（預設 1000）
+   * @param {number} options.offset - 偏移量（預設 0）
+   * @returns {Promise<Array>} Inventory Snapshots 資料陣列
+   */
+  async fetchByFilters(userId, options = {}) {
+    const { 
+      plantId = null, 
+      materialCode = null,
+      snapshotDate = null,
+      startDate = null,
+      endDate = null,
+      limit = 1000, 
+      offset = 0 
+    } = options;
+
+    let query = supabase
+      .from('inventory_snapshots')
+      .select('*')
+      .eq('user_id', userId)
+      .order('snapshot_date', { ascending: false })
+      .range(offset, offset + limit - 1);
+
+    // 工廠過濾（null = all plants）
+    if (plantId) {
+      query = query.eq('plant_id', plantId);
+    }
+
+    // 物料代碼過濾
+    if (materialCode) {
+      query = query.eq('material_code', materialCode);
+    }
+
+    // 特定日期過濾
+    if (snapshotDate) {
+      query = query.eq('snapshot_date', snapshotDate);
+    }
+
+    // 日期範圍過濾
+    if (startDate) {
+      query = query.gte('snapshot_date', startDate);
+    }
+
+    if (endDate) {
+      query = query.lte('snapshot_date', endDate);
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+    return data || [];
+  },
+
+  /**
+   * 根據批次 ID 刪除 Inventory Snapshots（支援 undo）
+   * @param {string} batchId - 批次 ID
+   * @returns {Promise<Object>} { success, count }
+   */
+  async deleteByBatch(batchId) {
+    if (!batchId) {
+      return { success: true, count: 0 };
+    }
+
+    const { data, error } = await supabase
+      .from('inventory_snapshots')
+      .delete()
+      .eq('batch_id', batchId)
+      .select();
+
+    if (error) throw error;
+    return { success: true, count: data?.length || 0 };
+  },
+
+  /**
+   * 獲取最新的庫存快照
+   * @param {string} userId - 使用者 ID
+   * @param {string} materialCode - 物料代碼
+   * @param {string} plantId - 工廠 ID
+   * @returns {Promise<Object|null>} 最新的庫存快照或 null
+   */
+  async getLatestSnapshot(userId, materialCode, plantId) {
+    const { data, error } = await supabase
+      .from('inventory_snapshots')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('material_code', materialCode)
+      .eq('plant_id', plantId)
+      .order('snapshot_date', { ascending: false })
+      .limit(1)
+      .single();
+
+    if (error) {
+      if (error.code === 'PGRST116') return null; // Not found
+      throw error;
+    }
+    return data;
+  },
+
+  /**
+   * 獲取 Inventory Snapshots（通用查詢方法）
+   * @param {string} userId - 使用者 ID
+   * @param {Object} options - 查詢選項
+   * @returns {Promise<Array>} Inventory Snapshots 資料陣列
+   */
+  async getInventorySnapshots(userId, options = {}) {
+    const { 
+      plantId, 
+      materialCode, 
+      snapshotDate,
+      limit = 100, 
+      offset = 0 
+    } = options;
+
+    let query = supabase
+      .from('inventory_snapshots')
+      .select('*')
+      .eq('user_id', userId)
+      .order('snapshot_date', { ascending: false })
+      .range(offset, offset + limit - 1);
+
+    if (plantId) {
+      query = query.eq('plant_id', plantId);
+    }
+
+    if (materialCode) {
+      query = query.eq('material_code', materialCode);
+    }
+
+    if (snapshotDate) {
+      query = query.eq('snapshot_date', snapshotDate);
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+    return data || [];
+  }
+};
+
+/**
+ * FG Financials Operations
+ * 管理成品財務資料（定價與利潤）
+ */
+export const fgFinancialsService = {
+  /**
+   * 批量插入 FG Financials
+   * @param {string} userId - 使用者 ID
+   * @param {Array} rows - FG Financials 資料陣列
+   * @param {string} batchId - 批次 ID（可選）
+   * @returns {Promise<Object>} { success, count, data }
+   */
+  async batchInsert(userId, rows, batchId = null) {
+    if (!rows || rows.length === 0) {
+      return { success: true, count: 0 };
+    }
+
+    const payload = rows.map(row => ({
+      user_id: userId,
+      batch_id: batchId,
+      material_code: row.material_code,
+      unit_margin: row.unit_margin,
+      plant_id: row.plant_id || null, // null = global pricing
+      unit_price: row.unit_price !== null && row.unit_price !== undefined ? row.unit_price : null,
+      currency: row.currency || 'USD',
+      valid_from: row.valid_from || null,
+      valid_to: row.valid_to || null,
+      notes: row.notes || null
+    }));
+
+    // 注意：fg_financials 使用 UNIQUE INDEX with COALESCE
+    // 無法直接使用 onConflict with column names
+    // 改用先查詢再決定 insert/update 的策略
+    try {
+      const { data, error } = await supabase
+        .from('fg_financials')
+        .insert(payload)
+        .select();
+
+      if (error) {
+        // 如果是唯一性衝突，嘗試使用 upsert（需要 DB 支援）
+        if (error.code === '23505') { // Unique violation
+          // Fallback: 逐筆處理 upsert
+          const results = [];
+          for (const row of payload) {
+            const { data: upsertData, error: upsertError } = await supabase
+              .from('fg_financials')
+              .upsert(row, {
+                ignoreDuplicates: false
+              })
+              .select();
+            
+            if (upsertError) throw upsertError;
+            results.push(...(upsertData || []));
+          }
+          return { success: true, count: results.length, data: results };
+        }
+        throw error;
+      }
+
+      return { success: true, count: data.length, data };
+    } catch (error) {
+      console.error('batchInsert fg_financials error:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * 根據條件查詢 FG Financials
+   * 特殊處理：優先查詢指定 plant_id 的資料，找不到則 fallback 到 global (plant_id is null)
+   * @param {string} userId - 使用者 ID
+   * @param {Object} options - 查詢選項
+   * @param {string} options.plantId - 工廠 ID（null = all plants，或用於 fallback 邏輯）
+   * @param {string} options.materialCode - 物料代碼（可選）
+   * @param {string} options.currency - 幣別（可選）
+   * @param {string} options.validDate - 有效日期（用於檢查 valid_from/valid_to，可選）
+   * @param {boolean} options.usePlantFallback - 是否使用 plant fallback 邏輯（預設 true）
+   * @param {number} options.limit - 限制筆數（預設 1000）
+   * @param {number} options.offset - 偏移量（預設 0）
+   * @returns {Promise<Array>} FG Financials 資料陣列
+   */
+  async fetchByFilters(userId, options = {}) {
+    const { 
+      plantId = null, 
+      materialCode = null,
+      currency = null,
+      validDate = null,
+      usePlantFallback = true,
+      limit = 1000, 
+      offset = 0 
+    } = options;
+
+    // 如果指定 plantId 且啟用 fallback 邏輯
+    if (plantId && usePlantFallback) {
+      // 先查詢指定 plant_id 的資料
+      let plantQuery = supabase
+        .from('fg_financials')
+        .select('*')
+        .eq('user_id', userId)
+        .eq('plant_id', plantId)
+        .order('material_code', { ascending: true })
+        .range(offset, offset + limit - 1);
+
+      if (materialCode) {
+        plantQuery = plantQuery.eq('material_code', materialCode);
+      }
+
+      if (currency) {
+        plantQuery = plantQuery.eq('currency', currency);
+      }
+
+      // 有效日期檢查
+      if (validDate) {
+        plantQuery = plantQuery
+          .or(`valid_from.is.null,valid_from.lte.${validDate}`)
+          .or(`valid_to.is.null,valid_to.gte.${validDate}`);
+      }
+
+      const { data: plantData, error: plantError } = await plantQuery;
+      if (plantError) throw plantError;
+
+      // 如果找到資料，直接返回
+      if (plantData && plantData.length > 0) {
+        return plantData;
+      }
+
+      // 找不到，fallback 到 global (plant_id is null)
+      let globalQuery = supabase
+        .from('fg_financials')
+        .select('*')
+        .eq('user_id', userId)
+        .is('plant_id', null)
+        .order('material_code', { ascending: true })
+        .range(offset, offset + limit - 1);
+
+      if (materialCode) {
+        globalQuery = globalQuery.eq('material_code', materialCode);
+      }
+
+      if (currency) {
+        globalQuery = globalQuery.eq('currency', currency);
+      }
+
+      if (validDate) {
+        globalQuery = globalQuery
+          .or(`valid_from.is.null,valid_from.lte.${validDate}`)
+          .or(`valid_to.is.null,valid_to.gte.${validDate}`);
+      }
+
+      const { data: globalData, error: globalError } = await globalQuery;
+      if (globalError) throw globalError;
+
+      return globalData || [];
+    }
+
+    // 一般查詢（不使用 fallback）
+    let query = supabase
+      .from('fg_financials')
+      .select('*')
+      .eq('user_id', userId)
+      .order('material_code', { ascending: true })
+      .range(offset, offset + limit - 1);
+
+    // 工廠過濾（null = all plants）
+    if (plantId) {
+      query = query.eq('plant_id', plantId);
+    } else if (plantId === null && !usePlantFallback) {
+      // 明確查詢 global pricing
+      query = query.is('plant_id', null);
+    }
+
+    // 物料代碼過濾
+    if (materialCode) {
+      query = query.eq('material_code', materialCode);
+    }
+
+    // 幣別過濾
+    if (currency) {
+      query = query.eq('currency', currency);
+    }
+
+    // 有效日期檢查
+    if (validDate) {
+      query = query
+        .or(`valid_from.is.null,valid_from.lte.${validDate}`)
+        .or(`valid_to.is.null,valid_to.gte.${validDate}`);
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+    return data || [];
+  },
+
+  /**
+   * 根據批次 ID 刪除 FG Financials（支援 undo）
+   * @param {string} batchId - 批次 ID
+   * @returns {Promise<Object>} { success, count }
+   */
+  async deleteByBatch(batchId) {
+    if (!batchId) {
+      return { success: true, count: 0 };
+    }
+
+    const { data, error } = await supabase
+      .from('fg_financials')
+      .delete()
+      .eq('batch_id', batchId)
+      .select();
+
+    if (error) throw error;
+    return { success: true, count: data?.length || 0 };
+  },
+
+  /**
+   * 獲取特定成品的財務資料（含 plant fallback）
+   * @param {string} userId - 使用者 ID
+   * @param {string} materialCode - 物料代碼
+   * @param {string} plantId - 工廠 ID（可選）
+   * @param {string} currency - 幣別（預設 USD）
+   * @returns {Promise<Object|null>} FG Financial 資料或 null
+   */
+  async getFgFinancial(userId, materialCode, plantId = null, currency = 'USD') {
+    // 先查詢指定 plant_id 的資料
+    if (plantId) {
+      const { data: plantData, error: plantError } = await supabase
+        .from('fg_financials')
+        .select('*')
+        .eq('user_id', userId)
+        .eq('material_code', materialCode)
+        .eq('plant_id', plantId)
+        .eq('currency', currency)
+        .order('valid_from', { ascending: false, nullsFirst: false })
+        .limit(1)
+        .single();
+
+      if (!plantError && plantData) {
+        return plantData;
+      }
+    }
+
+    // Fallback 到 global (plant_id is null)
+    const { data, error } = await supabase
+      .from('fg_financials')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('material_code', materialCode)
+      .is('plant_id', null)
+      .eq('currency', currency)
+      .order('valid_from', { ascending: false, nullsFirst: false })
+      .limit(1)
+      .single();
+
+    if (error) {
+      if (error.code === 'PGRST116') return null; // Not found
+      throw error;
+    }
+    return data;
+  },
+
+  /**
+   * 獲取 FG Financials（通用查詢方法）
+   * @param {string} userId - 使用者 ID
+   * @param {Object} options - 查詢選項
+   * @returns {Promise<Array>} FG Financials 資料陣列
+   */
+  async getFgFinancials(userId, options = {}) {
+    const { 
+      plantId, 
+      materialCode, 
+      currency,
+      limit = 100, 
+      offset = 0 
+    } = options;
+
+    let query = supabase
+      .from('fg_financials')
+      .select('*')
+      .eq('user_id', userId)
+      .order('material_code', { ascending: true })
+      .range(offset, offset + limit - 1);
+
+    if (plantId !== undefined) {
+      if (plantId === null) {
+        query = query.is('plant_id', null);
+      } else {
+        query = query.eq('plant_id', plantId);
+      }
+    }
+
+    if (materialCode) {
+      query = query.eq('material_code', materialCode);
+    }
+
+    if (currency) {
+      query = query.eq('currency', currency);
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+    return data || [];
   }
 };
 

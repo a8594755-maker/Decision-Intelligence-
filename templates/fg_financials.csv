@@ -1,0 +1,7 @@
+﻿material_code,unit_margin,plant_id,unit_price,currency,valid_from,valid_to,notes
+FG-2000,25.5,PLANT-01,125,USD,2026-01-01,2026-06-30,H1 2026 pricing
+FG-2100,30,PLANT-01,150,USD,2026-01-01,2026-12-31,Premium product line
+FG-2200,18.75,PLANT-02,95,USD,2026-01-01,2026-12-31,
+FG-2300,22,,110,USD,2026-01-01,2026-12-31,Global pricing - all plants
+FG-2400,35.5,PLANT-01,185,USD,2026-01-01,2026-03-31,Q1 2026 promotional pricing
+FG-2500,28.25,PLANT-02,140,EUR,2026-01-01,2026-12-31,European market product

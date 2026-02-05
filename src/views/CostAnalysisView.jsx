@@ -16,7 +16,7 @@ import { analyzeCostAnomaly, generateCostOptimizationSuggestions, callGeminiAPI 
  * Cost Analysis View
  * Features: Daily cost recording, trend analysis, anomaly detection, AI suggestions
  */
-export default function CostAnalysisView({ addNotification, user }) {
+export default function CostAnalysisView({ addNotification, user, setView }) {
   // View Mode: 'operational' or 'material'
   const [viewMode, setViewMode] = useState('material');
 
@@ -1003,7 +1003,7 @@ Please provide in Chinese (Traditional):
               <Button
                 variant="primary"
                 icon={ChevronRight}
-                onClick={() => window.location.hash = '#external-systems'}
+                onClick={() => setView?.('external')}
               >
                 Go to Data Upload
               </Button>
@@ -1310,7 +1310,7 @@ Please provide in Chinese (Traditional):
               <Button
                 variant="primary"
                 icon={ChevronRight}
-                onClick={() => window.location.hash = '#external-systems'}
+                onClick={() => setView?.('external')}
               >
                 Go to Data Upload
               </Button>

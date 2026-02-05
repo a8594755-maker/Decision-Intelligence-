@@ -1,0 +1,7 @@
+﻿material_code,plant_id,snapshot_date,onhand_qty,allocated_qty,safety_stock,uom,notes
+COMP-3100,PLANT-01,2026-01-31,15000,8000,5000,pcs,End of month snapshot
+RM-9000,PLANT-01,2026-01-31,12500,3000,2000,kg,
+COMP-3200,PLANT-02,2026-01-31,25000,15000,8000,pcs,High demand item
+FG-2000,PLANT-01,2026-01-31,5000,4500,1000,pcs,Finished goods ready to ship
+RM-9100,PLANT-01,2026-01-31,8000,2000,3000,kg,
+COMP-3150,PLANT-02,2026-01-31,18000,10000,6000,pcs,Critical component

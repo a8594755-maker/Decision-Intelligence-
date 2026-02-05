@@ -17,6 +17,7 @@ import { callGeminiAPI } from './services/geminiAPI';
 
 // --- Import Utils ---
 import { extractSuppliers } from './utils/dataProcessing';
+import { viewToPath, pathToView } from './utils/router';
 
 // --- Import Views ---
 import SupplierManagementView from './views/SupplierManagementView';
@@ -25,10 +26,45 @@ import EnhancedExternalSystemsView from './views/EnhancedExternalSystemsView';
 import ImportHistoryView from './views/ImportHistoryView';
 import BOMDataView from './views/BOMDataView';
 import ForecastsView from './views/ForecastsView';
+import RiskDashboardView from './views/RiskDashboardView';
 
 // Mock Data
 const MOCK_ALERTS = [{ id: 1, category: "Material Shortage", item: "Lithium Batteries", supplier: "Voltaic Supplies", risk: "High", impact: "Production Stop Risk", rootCause: "Supplier strike.", recommendation: "Activate backup supplier." }, { id: 2, category: "Delivery Delay", item: "Circuit Boards", supplier: "TechTronix", risk: "Medium", impact: "2 Day Delay", rootCause: "Port congestion.", recommendation: "Expedite Air Freight." }, { id: 3, category: "Quantity Mismatch", item: "Steel Casings", supplier: "MetalWorks", risk: "Low", impact: "Inventory Discrepancy", rootCause: "Packing error.", recommendation: "Request credit note." }];
 const MOCK_KPI_CONTEXT = { healthIndex: "94%", goodsReceipt: "98%", productionRate: "87%", onTimeShipment: "92%", activeDelays: 3, riskItems: 12 };
+
+/** Sync view state with URL (pushState) and handle Back/Forward (popstate). Only active when session exists. */
+function useSyncViewWithHistory(view, setView, session) {
+  const isNavigatingRef = useRef(false);
+
+  useEffect(() => {
+    if (!session) return;
+    if (isNavigatingRef.current) {
+      isNavigatingRef.current = false;
+      return;
+    }
+    const nextPath = viewToPath(view);
+    if (nextPath && nextPath !== window.location.pathname) {
+      window.history.pushState({ view }, '', nextPath);
+      try {
+        sessionStorage.setItem('lastVisitedPath', nextPath);
+      } catch (_) {}
+    }
+  }, [view, session]);
+
+  useEffect(() => {
+    if (!session) return;
+    const handlePopState = () => {
+      const currentPath = window.location.pathname;
+      const targetView = pathToView(currentPath);
+      if (targetView && targetView !== view) {
+        isNavigatingRef.current = true;
+        setView(targetView);
+      }
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [view, setView, session]);
+}
 
 // --- Main App ---
 export default function SmartOpsApp() {
@@ -45,7 +81,7 @@ export default function SmartOpsApp() {
   const dropdownRefs = useRef({}); // Multiple dropdown refs
 
   const addNotification = (msg, type = 'info') => {
-    const id = Date.now();
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
     setNotifications(prev => [...prev, { id, msg, type }]);
     setTimeout(() => setNotifications(prev => prev.filter(n => n.id !== id)), 3000);
   };
@@ -54,17 +90,41 @@ export default function SmartOpsApp() {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
       if (session) {
-        setView('home');
+        const currentPath = window.location.pathname;
+        const restoredView = pathToView(currentPath);
+        if (restoredView) {
+          setView(restoredView);
+        } else {
+          const lastPath = sessionStorage.getItem('lastVisitedPath');
+          const fallbackView = lastPath ? pathToView(lastPath) : null;
+          setView(fallbackView || 'home');
+        }
         fetchUserData(session.user.id);
       }
     });
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       setSession(session);
       if (session) {
-        setView('home');
+        if (event === 'SIGNED_IN') {
+          const returnUrl = sessionStorage.getItem('returnUrl');
+          if (returnUrl) {
+            const returnView = pathToView(returnUrl);
+            if (returnView) {
+              setView(returnView);
+              window.history.replaceState({ view: returnView }, '', returnUrl);
+            }
+            sessionStorage.removeItem('returnUrl');
+          } else {
+            setView('home');
+            window.history.replaceState({ view: 'home' }, '', '/home');
+          }
+        }
         fetchUserData(session.user.id);
       } else {
+        try {
+          sessionStorage.setItem('returnUrl', window.location.pathname + window.location.search);
+        } catch (_) {}
         setView('login');
         setExcelData(null);
       }
@@ -90,6 +150,8 @@ export default function SmartOpsApp() {
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  useSyncViewWithHistory(view, setView, session);
 
   const fetchUserData = async (userId) => {
     const { data, error } = await supabase.from('user_files').select('data').eq('user_id', userId).order('created_at', { ascending: false }).limit(1);
@@ -148,11 +210,12 @@ export default function SmartOpsApp() {
     switch (view) {
       case 'home': return <HomeView setView={setView} />;
       case 'forecasts': return <ForecastsView addNotification={addNotification} user={session?.user} />;
+      case 'risk-dashboard': return <RiskDashboardView addNotification={addNotification} user={session?.user} setView={setView} />;
       case 'external': return <EnhancedExternalSystemsView addNotification={addNotification} user={session?.user} setView={setView} />;
       case 'import-history': return <ImportHistoryView addNotification={addNotification} user={session?.user} setView={setView} />;
       case 'bom-data': return <BOMDataView addNotification={addNotification} user={session?.user} />;
       case 'suppliers': return <SupplierManagementView addNotification={addNotification} />;
-      case 'cost-analysis': return <CostAnalysisView addNotification={addNotification} user={session?.user} />;
+      case 'cost-analysis': return <CostAnalysisView addNotification={addNotification} user={session?.user} setView={setView} />;
       case 'integration': return <DataIntegrationView addNotification={addNotification} />;
       case 'alerts': return <SmartAlertsView addNotification={addNotification} excelData={excelData} user={session?.user} />;
       case 'dashboard': return <OperationsDashboardView excelData={excelData} user={session?.user} />;
@@ -206,7 +269,8 @@ export default function SmartOpsApp() {
       label: 'Planning',
       icon: TrendingUp,
       children: [
-        { key: 'forecasts', label: 'Forecasts', icon: TrendingUp, view: 'forecasts' }
+        { key: 'forecasts', label: 'Forecasts', icon: TrendingUp, view: 'forecasts' },
+        { key: 'risk-dashboard', label: 'Risk Dashboard', icon: AlertTriangle, view: 'risk-dashboard' }
       ]
     },
     {

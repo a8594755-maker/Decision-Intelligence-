@@ -1,0 +1,7 @@
+﻿po_number,po_line,material_code,plant_id,time_bucket,open_qty,uom,supplier_id,status,notes
+PO-10001,10,COMP-3100,PLANT-01,2026-W05,5000,pcs,SUP-001,open,Regular weekly delivery
+PO-10001,20,RM-9000,PLANT-01,2026-W06,3500,kg,SUP-001,open,
+PO-10002,10,COMP-3200,PLANT-02,2026-02-10,10000,pcs,SUP-002,open,Rush order - expedite
+PO-10003,10,RM-9100,PLANT-01,2026-W07,2000,kg,SUP-003,open,
+PO-10004,10,COMP-3150,PLANT-02,2026-02-20,7500,pcs,SUP-001,open,Split delivery allowed
+PO-10005,10,RM-9200,PLANT-01,2026-W08,4200,kg,SUP-004,cancelled,Replaced by PO-10006

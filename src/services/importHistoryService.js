@@ -71,12 +71,20 @@ export const importBatchesService = {
       payload.metadata = updates.metadata;
     }
 
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/35d967fa-aaea-4f36-8ecf-97e2f2e17afa',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'importHistoryService.js:74',message:'Before update import_batches',data:{batchId,payload,payloadKeys:Object.keys(payload)},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'D'})}).catch(()=>{});
+    // #endregion
+
     const { data, error } = await supabase
       .from('import_batches')
       .update(payload)
       .eq('id', batchId)
       .select()
       .single();
+
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/35d967fa-aaea-4f36-8ecf-97e2f2e17afa',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'importHistoryService.js:81',message:'After update import_batches',data:{success:!error,error:error?{message:error.message,details:error.details,hint:error.hint,code:error.code}:null,batchId},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'D'})}).catch(()=>{});
+    // #endregion
 
     if (error) throw error;
     return data;
@@ -90,6 +98,7 @@ export const importBatchesService = {
    * @param {number} options.offset - 起始位置
    * @param {string} options.uploadType - 篩選上傳類型
    * @param {string} options.status - 篩選狀態
+   * @param {Array<string>} options.includeStatuses - 預設顯示的狀態列表
    * @returns {Promise<Array>} 批次記錄列表
    */
   async getAllBatches(userId, options = {}) {
@@ -97,7 +106,8 @@ export const importBatchesService = {
       limit = 100, 
       offset = 0, 
       uploadType = null, 
-      status = null 
+      status = null,
+      includeStatuses = ['completed', 'failed', 'undone']  // 預設過濾掉 pending 狀態
     } = options;
 
     let query = supabase
@@ -111,8 +121,11 @@ export const importBatchesService = {
       query = query.eq('upload_type', uploadType);
     }
 
+    // 修改狀態篩選邏輯：如果指定了 status 則使用指定的，否則使用 includeStatuses
     if (status) {
       query = query.eq('status', status);
+    } else {
+      query = query.in('status', includeStatuses);
     }
 
     const { data, error } = await query;
@@ -184,6 +197,51 @@ export const importBatchesService = {
         // 查詢 component_demand（BOM explosion 的結果）
         query = supabase
           .from('component_demand')
+          .select('*')
+          .eq('batch_id', batchId)
+          .order('material_code', { ascending: true })
+          .limit(limit);
+        break;
+        
+      case 'bom_edges':
+        query = supabase
+          .from('bom_edges')
+          .select('*')
+          .eq('batch_id', batchId)
+          .order('parent_material', { ascending: true })
+          .limit(limit);
+        break;
+        
+      case 'demand_fg':
+        query = supabase
+          .from('demand_fg')
+          .select('*')
+          .eq('batch_id', batchId)
+          .order('material_code', { ascending: true })
+          .limit(limit);
+        break;
+        
+      case 'po_open_lines':
+        query = supabase
+          .from('po_open_lines')
+          .select('*')
+          .eq('batch_id', batchId)
+          .order('po_number', { ascending: true })
+          .limit(limit);
+        break;
+        
+      case 'inventory_snapshots':
+        query = supabase
+          .from('inventory_snapshots')
+          .select('*')
+          .eq('batch_id', batchId)
+          .order('material_code', { ascending: true })
+          .limit(limit);
+        break;
+        
+      case 'fg_financials':
+        query = supabase
+          .from('fg_financials')
           .select('*')
           .eq('batch_id', batchId)
           .order('material_code', { ascending: true })
@@ -338,7 +396,7 @@ export const importBatchesService = {
             countQuery = countQuery.ilike('plant_id', `%${filters.plant_id}%`);
           }
           
-          query = query.order('gr_date', { ascending: false });
+          query = query.order('receipt_date', { ascending: false });
           break;
           
         case 'price_history':
@@ -494,6 +552,160 @@ export const importBatchesService = {
           query = query.order('material_code', { ascending: true });
           break;
           
+        case 'bom_edges':
+          query = supabase
+            .from('bom_edges')
+            .select('*')
+            .eq('user_id', userId)
+            .eq('batch_id', batchId);
+          
+          countQuery = supabase
+            .from('bom_edges')
+            .select('*', { count: 'exact', head: true })
+            .eq('user_id', userId)
+            .eq('batch_id', batchId);
+          
+          // Apply filters
+          if (filters.parent_material) {
+            query = query.ilike('parent_material', `%${filters.parent_material}%`);
+            countQuery = countQuery.ilike('parent_material', `%${filters.parent_material}%`);
+          }
+          if (filters.child_material) {
+            query = query.ilike('child_material', `%${filters.child_material}%`);
+            countQuery = countQuery.ilike('child_material', `%${filters.child_material}%`);
+          }
+          if (filters.plant_id) {
+            query = query.ilike('plant_id', `%${filters.plant_id}%`);
+            countQuery = countQuery.ilike('plant_id', `%${filters.plant_id}%`);
+          }
+          
+          query = query.order('parent_material', { ascending: true });
+          break;
+          
+        case 'demand_fg':
+          query = supabase
+            .from('demand_fg')
+            .select('*')
+            .eq('user_id', userId)
+            .eq('batch_id', batchId);
+          
+          countQuery = supabase
+            .from('demand_fg')
+            .select('*', { count: 'exact', head: true })
+            .eq('user_id', userId)
+            .eq('batch_id', batchId);
+          
+          // Apply filters
+          if (filters.material_code) {
+            query = query.ilike('material_code', `%${filters.material_code}%`);
+            countQuery = countQuery.ilike('material_code', `%${filters.material_code}%`);
+          }
+          if (filters.plant_id) {
+            query = query.ilike('plant_id', `%${filters.plant_id}%`);
+            countQuery = countQuery.ilike('plant_id', `%${filters.plant_id}%`);
+          }
+          if (filters.time_bucket) {
+            query = query.ilike('time_bucket', `%${filters.time_bucket}%`);
+            countQuery = countQuery.ilike('time_bucket', `%${filters.time_bucket}%`);
+          }
+          
+          query = query.order('material_code', { ascending: true });
+          break;
+          
+        case 'po_open_lines':
+          query = supabase
+            .from('po_open_lines')
+            .select('*')
+            .eq('user_id', userId)
+            .eq('batch_id', batchId);
+          
+          countQuery = supabase
+            .from('po_open_lines')
+            .select('*', { count: 'exact', head: true })
+            .eq('user_id', userId)
+            .eq('batch_id', batchId);
+          
+          // Apply filters
+          if (filters.po_number) {
+            query = query.ilike('po_number', `%${filters.po_number}%`);
+            countQuery = countQuery.ilike('po_number', `%${filters.po_number}%`);
+          }
+          if (filters.material_code) {
+            query = query.ilike('material_code', `%${filters.material_code}%`);
+            countQuery = countQuery.ilike('material_code', `%${filters.material_code}%`);
+          }
+          if (filters.plant_id) {
+            query = query.ilike('plant_id', `%${filters.plant_id}%`);
+            countQuery = countQuery.ilike('plant_id', `%${filters.plant_id}%`);
+          }
+          if (filters.time_bucket) {
+            query = query.ilike('time_bucket', `%${filters.time_bucket}%`);
+            countQuery = countQuery.ilike('time_bucket', `%${filters.time_bucket}%`);
+          }
+          
+          query = query.order('po_number', { ascending: true });
+          break;
+          
+        case 'inventory_snapshots':
+          query = supabase
+            .from('inventory_snapshots')
+            .select('*')
+            .eq('user_id', userId)
+            .eq('batch_id', batchId);
+          
+          countQuery = supabase
+            .from('inventory_snapshots')
+            .select('*', { count: 'exact', head: true })
+            .eq('user_id', userId)
+            .eq('batch_id', batchId);
+          
+          // Apply filters
+          if (filters.material_code) {
+            query = query.ilike('material_code', `%${filters.material_code}%`);
+            countQuery = countQuery.ilike('material_code', `%${filters.material_code}%`);
+          }
+          if (filters.plant_id) {
+            query = query.ilike('plant_id', `%${filters.plant_id}%`);
+            countQuery = countQuery.ilike('plant_id', `%${filters.plant_id}%`);
+          }
+          if (filters.snapshot_date) {
+            query = query.eq('snapshot_date', filters.snapshot_date);
+            countQuery = countQuery.eq('snapshot_date', filters.snapshot_date);
+          }
+          
+          query = query.order('material_code', { ascending: true });
+          break;
+          
+        case 'fg_financials':
+          query = supabase
+            .from('fg_financials')
+            .select('*')
+            .eq('user_id', userId)
+            .eq('batch_id', batchId);
+          
+          countQuery = supabase
+            .from('fg_financials')
+            .select('*', { count: 'exact', head: true })
+            .eq('user_id', userId)
+            .eq('batch_id', batchId);
+          
+          // Apply filters
+          if (filters.material_code) {
+            query = query.ilike('material_code', `%${filters.material_code}%`);
+            countQuery = countQuery.ilike('material_code', `%${filters.material_code}%`);
+          }
+          if (filters.plant_id) {
+            query = query.ilike('plant_id', `%${filters.plant_id}%`);
+            countQuery = countQuery.ilike('plant_id', `%${filters.plant_id}%`);
+          }
+          if (filters.currency) {
+            query = query.eq('currency', filters.currency);
+            countQuery = countQuery.eq('currency', filters.currency);
+          }
+          
+          query = query.order('material_code', { ascending: true });
+          break;
+          
         default:
           return {
             data: [],
@@ -586,6 +798,23 @@ export const importBatchesService = {
 
     if (error) throw error;
     return { success: true };
+  },
+
+  /**
+   * 批量刪除失敗的批次記錄
+   * @param {string} userId - 使用者 ID
+   * @returns {Promise<Object>} 刪除結果
+   */
+  async deleteFailedBatches(userId) {
+    const { data, error } = await supabase
+      .from('import_batches')
+      .delete()
+      .eq('user_id', userId)
+      .in('status', ['failed', 'pending'])
+      .select();
+
+    if (error) throw error;
+    return { success: true, deletedCount: data?.length || 0 };
   },
 
   /**

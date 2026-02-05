@@ -1,0 +1,247 @@
+# SmartOps Cursor Rules
+
+## 📂 文件系統規範
+
+### ❌ 嚴格禁止
+
+1. **禁止在專案根目錄新增 `.md` 文件**
+   - 根目錄只允許 `README.md`
+   - 所有其他文件必須放入 `docs/` 子目錄
+
+2. **禁止刪除任何文件**
+   - 即使是過時的文件也必須保留（移至 `docs/archive/`）
+   - 保留歷史記錄對 AI 學習與問題追溯至關重要
+
+3. **禁止在 `docs/guides/` 放入超過 12 份文件**
+   - 超過限制時，必須將較少使用的文件移至 `docs/archive/`
+
+### ✅ 正確做法
+
+#### 新增技術文件時：
+
+**Q: 我要寫一份新的架構文件/API 文件/規範文件？**
+- A: 放入 `docs/guides/` 
+- 確保總數不超過 12 份
+- 必須包含 metadata header（見下方範本）
+
+**Q: 我要記錄一個功能的實作過程/完成報告？**
+- A: 放入 `docs/archive/summaries/`
+
+**Q: 我要記錄一個 Bug 的修復過程/除錯記錄？**
+- A: 放入 `docs/archive/troubleshooting/`
+
+**Q: 我要寫測試指南/QA 檢查清單？**
+- A: 放入 `docs/archive/`
+
+**Q: 我要寫一份臨時的 AI prompt 記錄？**
+- A: 放入 `docs/archive/prompts/`
+
+#### Metadata Header 範本：
+
+每個 `docs/guides/` 中的文件必須包含：
+
+```markdown
+---
+owner: team-name
+status: active | outdated | deprecated
+last_reviewed: YYYY-MM-DD
+---
+
+# 文件標題
+
+...內容...
+```
+
+#### 文件生命週期管理：
+
+1. **新文件**：
+   - 建立時 status = `active`
+   - 放入 `docs/guides/` 或 `docs/archive/`
+
+2. **定期審閱**（每季或重大更新後）：
+   - 更新 `last_reviewed` 日期
+   - 如果內容仍有效：保持 `active`
+   - 如果部分過時：改為 `outdated`，考慮移至 archive
+   - 如果已廢棄：改為 `deprecated`，移至 archive
+
+3. **歸檔**：
+   - 從 `docs/guides/` 移至 `docs/archive/`
+   - 在 `docs/README.md` 中更新索引
+
+---
+
+## 🗂️ 目錄結構規範
+
+```
+smartops-app/
+├── docs/
+│   ├── README.md                 # 📌 文件總索引（必須維護）
+│   ├── guides/                   # ✅ 當前有效文件（≤ 12 份）
+│   │   ├── README.md
+│   │   └── [12個核心指南].md
+│   └── archive/                  # 📦 歷史文件
+│       ├── summaries/            # 實作總結
+│       ├── troubleshooting/      # 問題修復
+│       └── prompts/              # AI prompt 記錄
+├── sql/
+│   └── migrations/               # ✅ 所有 .sql 檔案
+├── scripts/                      # ✅ 工具腳本
+├── src/                          # ✅ 原始碼
+├── templates/                    # ✅ 資料模板
+├── README.md                     # ✅ 專案主 README
+├── package.json                  # ✅ 專案配置
+└── [其他配置檔]                  # ✅ eslint, vite, etc.
+```
+
+### 根目錄文件白名單
+
+**允許存在於根目錄的檔案（僅限以下類型）：**
+
+1. **必要配置檔**：
+   - `package.json`, `package-lock.json`
+   - `vite.config.js`, `vitest.config.js`, `eslint.config.js`
+   - `.gitignore`, `.env.example`
+   - `index.html`
+
+2. **專案說明**：
+   - `README.md`（唯一允許的 .md 檔案）
+
+3. **工具腳本**：
+   - `*.cjs`, `*.py`, `*.js`（但建議移至 `scripts/`）
+
+**❌ 不允許在根目錄的檔案：**
+- 除 `README.md` 外的任何 `.md` 文件
+- 測試資料檔案（應放入 `test_data_examples/` 或 `templates/`）
+- SQL 檔案（應放入 `sql/migrations/`）
+
+---
+
+## 🤖 AI Agent 指令
+
+當 AI Agent 準備建立新文件時，必須：
+
+1. **自動檢查**：目標目錄是否符合上述規範
+2. **自動提示**：如果試圖在根目錄建立 .md，顯示警告並建議正確路徑
+3. **自動維護**：更新 `docs/README.md` 索引（如果新增了 guide）
+
+### 範例檢查邏輯：
+
+```javascript
+function validateNewMarkdownFile(filepath) {
+  if (filepath.endsWith('.md')) {
+    // Case 1: Root directory (only README.md allowed)
+    if (!filepath.includes('/') && filepath !== 'README.md') {
+      throw new Error('❌ 禁止在根目錄新增 .md 文件！請放入 docs/ 子目錄');
+    }
+    
+    // Case 2: docs/guides/ (max 12 files)
+    if (filepath.startsWith('docs/guides/')) {
+      const guidesCount = countFiles('docs/guides/*.md') - 1; // exclude README.md
+      if (guidesCount >= 12) {
+        throw new Error('❌ docs/guides/ 已達上限（12份）！請先歸檔舊文件');
+      }
+    }
+    
+    // Case 3: Must have metadata header if in guides/
+    if (filepath.startsWith('docs/guides/') && !hasMetadataHeader(filepath)) {
+      console.warn('⚠️  建議新增 metadata header (owner, status, last_reviewed)');
+    }
+  }
+}
+```
+
+---
+
+## 📝 Git Commit 規範
+
+### Commit Message 格式：
+
+```
+type(scope): subject
+
+body (optional)
+```
+
+**Type 類型：**
+- `feat`: 新功能
+- `fix`: Bug 修復
+- `docs`: 文件更新
+- `refactor`: 程式碼重構
+- `test`: 測試相關
+- `chore`: 維護性工作（依賴更新、配置調整）
+- `style`: 格式調整（不影響邏輯）
+
+**Scope 範圍：**
+- `upload`: 資料上傳相關
+- `validation`: 驗證邏輯
+- `domain`: Domain layer
+- `ui`: UI 元件
+- `db`: 資料庫 schema
+- `docs`: 文件系統
+
+**範例：**
+```
+docs(structure): reorganize documentation into guides and archive
+
+- Move 70+ .md files from root to docs/
+- Keep only 12 core guides in docs/guides/
+- Create comprehensive docs/README.md index
+- Add .cursorrules for documentation management
+```
+
+---
+
+## 🔍 常見問題（FAQ）
+
+### Q1: 我寫了一份新的功能實作文件，應該放哪裡？
+
+**A:** 
+- 如果是「規範/架構/API 文件」→ `docs/guides/`
+- 如果是「實作過程記錄/完成報告」→ `docs/archive/summaries/`
+
+### Q2: `docs/guides/` 已經有 12 份文件了，我還想新增怎麼辦？
+
+**A:** 
+1. 評估現有 12 份文件的重要性
+2. 找出最少使用/已過時的文件
+3. 將其移至 `docs/archive/`
+4. 在 `docs/README.md` 中更新索引
+
+### Q3: 我發現一份舊文件內容錯誤，應該刪除嗎？
+
+**A:** 
+❌ 不要刪除！
+✅ 將其移至 `docs/archive/`，並在文件頂部加上：
+```markdown
+> ⚠️ **已過時**：此文件內容已不適用，請參考 [新文件路徑]
+```
+
+### Q4: 我可以在根目錄建立 `CHANGELOG.md` 嗎？
+
+**A:** 
+❌ 不建議。請建立 `docs/CHANGELOG.md` 或使用 GitHub Releases。
+
+### Q5: 我要怎麼快速找到某個功能的歷史演進？
+
+**A:** 
+1. 查看 `docs/README.md` 索引
+2. 搜尋 `docs/archive/summaries/` 中的相關檔名
+3. 使用 `git log -- <filepath>` 查看 commit 歷史
+
+---
+
+## 🎯 目標與原則
+
+### 核心目標：
+1. **AI 友善**：清晰的結構讓 AI 快速定位相關文件
+2. **可維護**：限制 guides 數量，避免資訊過載
+3. **可追溯**：保留歷史記錄，便於問題排查
+
+### 設計原則：
+1. **單一真相來源（Single Source of Truth）**：每個主題只有一份 active guide
+2. **版本演進透明**：舊版本移至 archive，而非刪除
+3. **最小根目錄**：根目錄僅保留專案必要檔案
+
+---
+
+*Last updated: 2026-02-05*
