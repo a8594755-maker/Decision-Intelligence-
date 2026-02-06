@@ -17,7 +17,8 @@ const RiskTable = ({
   risks = [],
   selectedRowId,
   onRowSelect,
-  loading = false
+  loading = false,
+  probResults = {} // Step 2: P0 - Probabilistic results map
 }) => {
   const [sortConfig, setSortConfig] = useState({
     key: 'profitAtRisk',  // M2: 預設按 Profit at Risk 排序
@@ -25,10 +26,27 @@ const RiskTable = ({
   });
 
   const sortedRisks = React.useMemo(() => {
-    const sorted = [...risks];
-    
+    // Merge probResults into risks
+    const merged = risks.map(risk => {
+      const key = `${risk.item}|${risk.plantId}`;
+      const prob = probResults[key];
+      if (prob) {
+        return {
+          ...risk,
+          pStockout: prob.p_stockout,
+          stockoutBucketP50: prob.stockout_bucket_p50,
+          stockoutBucketP90: prob.stockout_bucket_p90,
+          expectedShortage: prob.expected_shortage_qty,
+          expectedMinAvailable: prob.expected_min_available,
+          trials: prob.trials,
+          seed: prob.seed
+        };
+      }
+      return risk;
+    });
+
     if (sortConfig.key) {
-      sorted.sort((a, b) => {
+      merged.sort((a, b) => {
         let aVal = a[sortConfig.key];
         let bVal = b[sortConfig.key];
         
@@ -43,8 +61,8 @@ const RiskTable = ({
       });
     }
     
-    return sorted;
-  }, [risks, sortConfig]);
+    return merged;
+  }, [risks, probResults, sortConfig]);
 
   const handleSort = (key) => {
     setSortConfig(prev => ({
@@ -154,6 +172,49 @@ const RiskTable = ({
               </div>
             </th>
             
+            <th 
+              onClick={() => handleSort('daysToStockout')}
+              className="px-3 py-3 text-right text-xs font-semibold uppercase text-slate-700 dark:text-slate-300 cursor-pointer hover:bg-slate-200 dark:hover:bg-slate-700"
+              title="需選擇 Forecast Run 並有 component_demand 時顯示"
+            >
+              <div className="flex items-center justify-end gap-1">
+                Days to stockout
+                {renderSortIcon('daysToStockout')}
+              </div>
+            </th>
+
+            {/* Step 2: P0 - Probabilistic columns */}
+            <th 
+              onClick={() => handleSort('pStockout')}
+              className="px-3 py-3 text-right text-xs font-semibold uppercase text-slate-700 dark:text-slate-300 cursor-pointer hover:bg-slate-200 dark:hover:bg-slate-700"
+              title="Monte Carlo P(stockout) from probabilistic forecast"
+            >
+              <div className="flex items-center justify-end gap-1">
+                P(Stockout)
+                {renderSortIcon('pStockout')}
+              </div>
+            </th>
+            
+            <th 
+              onClick={() => handleSort('stockoutBucketP50')}
+              className="px-3 py-3 text-center text-xs font-semibold uppercase text-slate-700 dark:text-slate-300 cursor-pointer hover:bg-slate-200 dark:hover:bg-slate-700"
+            >
+              <div className="flex items-center justify-center gap-1">
+                Stockout P50
+                {renderSortIcon('stockoutBucketP50')}
+              </div>
+            </th>
+            
+            <th 
+              onClick={() => handleSort('stockoutBucketP90')}
+              className="px-3 py-3 text-center text-xs font-semibold uppercase text-slate-700 dark:text-slate-300 cursor-pointer hover:bg-slate-200 dark:hover:bg-slate-700"
+            >
+              <div className="flex items-center justify-center gap-1">
+                Stockout P90
+                {renderSortIcon('stockoutBucketP90')}
+              </div>
+            </th>
+            
             <th className="px-3 py-3 text-center text-xs font-semibold uppercase text-slate-700 dark:text-slate-300">
               Next bucket
             </th>
@@ -224,6 +285,43 @@ const RiskTable = ({
                     </span>
                   ) : (
                     <span className="text-slate-400">0</span>
+                  )}
+                </td>
+                
+                <td className="px-3 py-2.5 text-right text-slate-700 dark:text-slate-300">
+                  {typeof risk.daysToStockout === 'number' && risk.daysToStockout !== Infinity
+                    ? `${risk.daysToStockout} 天`
+                    : '—'}
+                </td>
+
+                {/* Step 2: P0 - Probabilistic data cells */}
+                <td className="px-3 py-2.5 text-right">
+                  {risk.pStockout !== undefined && risk.pStockout !== null ? (
+                    <span className={`font-medium ${
+                      risk.pStockout > 0.5 ? 'text-red-600 dark:text-red-400' :
+                      risk.pStockout > 0.2 ? 'text-amber-600 dark:text-amber-400' :
+                      'text-green-600 dark:text-green-400'
+                    }`}>
+                      {(risk.pStockout * 100).toFixed(1)}%
+                    </span>
+                  ) : (
+                    <span className="text-slate-400" title="Run Monte Carlo in Forecasts→Inventory">—</span>
+                  )}
+                </td>
+                
+                <td className="px-3 py-2.5 text-center text-xs">
+                  {risk.stockoutBucketP50 ? (
+                    <span className="font-mono text-slate-700 dark:text-slate-300">{risk.stockoutBucketP50}</span>
+                  ) : (
+                    <span className="text-slate-400">—</span>
+                  )}
+                </td>
+                
+                <td className="px-3 py-2.5 text-center text-xs">
+                  {risk.stockoutBucketP90 ? (
+                    <span className="font-mono text-slate-700 dark:text-slate-300">{risk.stockoutBucketP90}</span>
+                  ) : (
+                    <span className="text-slate-400">—</span>
                   )}
                 </td>
                 

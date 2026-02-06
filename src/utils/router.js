@@ -43,3 +43,34 @@ export function pathToView(pathname) {
     : pathname;
   return PATH_VIEW_MAP[normalized] ?? null;
 }
+
+/**
+ * Parse current URL search params into a plain object.
+ * @returns {Record<string, string>}
+ */
+export function getSearchParams() {
+  const s = typeof window !== 'undefined' ? window.location.search : '';
+  const params = {};
+  new URLSearchParams(s).forEach((v, k) => { params[k] = v; });
+  return params;
+}
+
+/**
+ * Update URL search params (replaceState). Preserves pathname.
+ * @param {Record<string, string>} params - Keys to set; use null/empty to remove.
+ */
+export function updateUrlSearch(params) {
+  if (typeof window === 'undefined') return;
+  const pathname = window.location.pathname;
+  const prev = new URLSearchParams(window.location.search);
+  Object.entries(params).forEach(([k, v]) => {
+    if (v === undefined || v === null || v === '') prev.delete(k);
+    else prev.set(k, String(v));
+  });
+  const search = prev.toString();
+  const url = pathname + (search ? `?${search}` : '');
+  window.history.replaceState(window.history.state, '', url);
+  try {
+    sessionStorage.setItem('lastVisitedPath', url);
+  } catch (_) {}
+}

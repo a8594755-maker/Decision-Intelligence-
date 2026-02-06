@@ -9,10 +9,10 @@ import {
 } from 'lucide-react';
 import { Card, Button, Badge } from '../components/ui';
 import { supabase } from '../services/supabaseClient';
+import { useUrlTabState } from '../hooks/useUrlTabState';
 
 const BOMDataView = ({ user, addNotification }) => {
-  // State
-  const [activeTab, setActiveTab] = useState('bom_edges'); // 'bom_edges' | 'demand_fg'
+  const [activeTab, setActiveTab] = useUrlTabState('bom_edges', 'tab', ['bom_edges', 'demand_fg']);
   const [data, setData] = useState([]);
   const [totalCount, setTotalCount] = useState(0);
   const [loading, setLoading] = useState(false);

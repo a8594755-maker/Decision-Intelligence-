@@ -47,7 +47,7 @@
 --     suppliers_found: INTEGER,
 --     materials_upserted: INTEGER,
 --     batch_id: UUID,
---     upload_file_id: BIGINT
+--     upload_file_id: UUID
 --   }
 -- ============================================
 
@@ -75,6 +75,18 @@ BEGIN
   v_user_id := auth.uid();
   IF v_user_id IS NULL THEN
     RAISE EXCEPTION 'NOT_AUTHENTICATED: User must be logged in to ingest data';
+  END IF;
+
+  -- ===== Ownership：batch 必須屬於當前使用者 =====
+  IF NOT EXISTS (SELECT 1 FROM import_batches WHERE id = p_batch_id AND user_id = v_user_id) THEN
+    RAISE EXCEPTION 'FORBIDDEN: batch_id does not belong to current user';
+  END IF;
+
+  -- ===== Ownership：upload_file 必須屬於當前使用者（若表存在且有關聯） =====
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'user_files') THEN
+    IF NOT EXISTS (SELECT 1 FROM user_files WHERE id = p_upload_file_id AND user_id = v_user_id) THEN
+      RAISE EXCEPTION 'FORBIDDEN: upload_file_id does not belong to current user';
+    END IF;
   END IF;
 
   -- ===== Idempotency：刪除同 batch_id 的舊資料 =====
@@ -211,7 +223,7 @@ BEGIN
       rejected_qty
     ) VALUES (
       v_user_id,
-      p_upload_file_id::BIGINT, -- UUID 轉 BIGINT（若 schema 允許）
+      p_upload_file_id,
       p_batch_id,
       v_supplier_id,
       v_material_id,
@@ -281,7 +293,7 @@ COMMENT ON FUNCTION ingest_goods_receipts_v1 IS
 --     suppliers_found: INTEGER,
 --     materials_upserted: INTEGER,
 --     batch_id: UUID,
---     upload_file_id: BIGINT
+--     upload_file_id: UUID
 --   }
 -- ============================================
 
@@ -311,6 +323,18 @@ BEGIN
   v_user_id := auth.uid();
   IF v_user_id IS NULL THEN
     RAISE EXCEPTION 'NOT_AUTHENTICATED: User must be logged in to ingest data';
+  END IF;
+
+  -- ===== Ownership：batch 必須屬於當前使用者 =====
+  IF NOT EXISTS (SELECT 1 FROM import_batches WHERE id = p_batch_id AND user_id = v_user_id) THEN
+    RAISE EXCEPTION 'FORBIDDEN: batch_id does not belong to current user';
+  END IF;
+
+  -- ===== Ownership：upload_file 必須屬於當前使用者（若表存在且有關聯） =====
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'user_files') THEN
+    IF NOT EXISTS (SELECT 1 FROM user_files WHERE id = p_upload_file_id AND user_id = v_user_id) THEN
+      RAISE EXCEPTION 'FORBIDDEN: upload_file_id does not belong to current user';
+    END IF;
   END IF;
 
   -- ===== Idempotency：刪除同 batch_id 的舊資料 =====
@@ -449,7 +473,7 @@ BEGIN
       is_contract_price
     ) VALUES (
       v_user_id,
-      p_upload_file_id::BIGINT, -- UUID 轉 BIGINT（若 schema 允許）
+      p_upload_file_id,
       p_batch_id,
       v_supplier_id,
       v_material_id,
@@ -511,9 +535,7 @@ BEGIN
   RAISE NOTICE '  • SECURITY DEFINER（需要 auth.uid() 檢查）';
   RAISE NOTICE '';
   RAISE NOTICE '注意事項:';
-  RAISE NOTICE '  ⚠ upload_file_id 預期為 UUID 但表中為 BIGINT';
-  RAISE NOTICE '    → RPC 內部會做型別轉換（p_upload_file_id::BIGINT）';
-  RAISE NOTICE '    → 若需要，請調整 user_files.id 型別或 RPC 參數型別';
+  RAISE NOTICE '  ✓ upload_file_id 為 UUID（與 user_files.id 一致）';
   RAISE NOTICE '';
   RAISE NOTICE '================================================';
 END $$;
@@ -651,9 +673,8 @@ const { data, error } = await supabase.rpc('ingest_price_history_v1', {
 -- Q1: 為什麼需要 SECURITY DEFINER？
 -- A: 允許 function 繞過 RLS（Row Level Security），但內部會檢查 auth.uid() 確保安全性。
 --
--- Q2: upload_file_id 型別不匹配怎麼辦？
--- A: user_files.id 是 UUID 或 BIGINT，goods_receipts.upload_file_id 是 BIGINT。
---    RPC 接受 UUID 參數後內部轉換為 BIGINT：p_upload_file_id::BIGINT
+-- Q2: upload_file_id 型別？
+-- A: 已統一為 UUID。user_files.id、goods_receipts.upload_file_id、price_history.upload_file_id 皆為 UUID。
 --    若需要完全匹配，請修改 user_files 表或 RPC 參數型別。
 --
 -- Q3: 如何確保 idempotency？

@@ -3,7 +3,7 @@
  * Enhanced external system data upload - Supports multiple upload types, field mapping, and data validation
  */
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import {
   Database, Upload, Download, X, RefreshCw, Sparkles,
@@ -30,6 +30,7 @@ import { generateSheetPlans, importWorkbookSheets, validateSheetPlans } from '..
 import { suggestSheetMapping } from '../services/oneShotAiSuggestService';
 import { runWithConcurrencyAbortable } from '../utils/concurrency';
 import { getRequiredMappingStatus, formatMissingRequiredMessage } from '../utils/requiredMappingStatus';
+import { getSearchParams, updateUrlSearch } from '../utils/router';
 
 // Note: Upload type configuration has been moved to src/utils/uploadSchemas.js
 // Kept here for compatibility, but UPLOAD_SCHEMAS should be used
@@ -71,8 +72,11 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
     message: ''
   });
 
-  // ===== One-shot Import 相關狀態 =====
-  const [oneShotEnabled, setOneShotEnabled] = useState(false);
+  // ===== One-shot Import 相關狀態 (tab=upload|oneshot in URL for persistence) =====
+  const [oneShotEnabled, setOneShotEnabled] = useState(() => getSearchParams().tab === 'oneshot');
+  useEffect(() => {
+    updateUrlSearch({ tab: oneShotEnabled ? 'oneshot' : 'upload' });
+  }, [oneShotEnabled]);
   const [oneShotStep, setOneShotStep] = useState('IDLE'); // ✅ 'IDLE' | 'CLASSIFY' | 'REVIEW' | 'IMPORTING' | 'RESULT'
   const [currentEditingSheetIndex, setCurrentEditingSheetIndex] = useState(0); // ✅ 在 Step 2 中當前編輯的 sheet index
   const [activeReviewSheetId, setActiveReviewSheetId] = useState(null); // ✅ Step 2 當前編輯的 sheetId
@@ -1370,12 +1374,11 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
       fetch('http://127.0.0.1:7242/ingest/35d967fa-aaea-4f36-8ecf-97e2f2e17afa',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'EnhancedExternalSystemsView.jsx:1314',message:'[updateSheetPlan] updates object created with mappingDraft',data:{sheetId,updatesMapping:updates.mapping,updatesMappingDraft:updates.mappingDraft,mappingKeys:Object.keys(updates.mapping||{}),mappingDraftKeys:Object.keys(updates.mappingDraft||{}),hasIsComplete:updates.hasOwnProperty('isComplete'),hasMissingRequired:updates.hasOwnProperty('missingRequired')},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'C'})}).catch(()=>{});
       // #endregion
 
-      // 若 sheet rows > 1000 且無 ingest key support，不要 auto-enable
+      // 大檔 >1000 rows：僅顯示警告，不預設 disabled（由使用者決定是否啟用）
       if (plan.rowCount > 1000 && !hasIngestKeySupport) {
-        updates.enabled = false;
         updates.reasons = [
-          ...result.reasons,
-          '⚠ Sheet has >1000 rows but DB chunk-idempotency not deployed. Please enable manually after reviewing.'
+          ...(updates.reasons || []),
+          '⚠ Sheet has >1000 rows; chunk-idempotency may not be deployed. You can still enable and import after reviewing.'
         ];
       }
 
@@ -1558,12 +1561,11 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
               updates.missingRequired = status.missingRequired;
             }
 
-            // 若 sheet rows > 1000 且無 ingest key support，不要 auto-enable
+            // 大檔 >1000 rows：僅警告，不預設 disabled
             if (plan.rowCount > 1000 && !result.hasIngestKeySupport) {
-              updates.enabled = false;
               updates.reasons = [
-                ...result.reasons,
-                '⚠ Sheet has >1000 rows but DB chunk-idempotency not deployed.'
+                ...(updates.reasons || result.reasons || []),
+                '⚠ Sheet has >1000 rows; you can still enable after reviewing.'
               ];
             }
 
@@ -2081,7 +2083,6 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
                           value={plan.uploadType || ''}
                           onChange={(e) => updateSheetPlan(plan.sheetId, { uploadType: e.target.value })}
                           className="w-full px-3 py-1.5 rounded border dark:bg-slate-800 dark:border-slate-600 text-sm focus:ring-2 focus:ring-purple-500 outline-none"
-                          disabled={plan.reason && plan.reason.includes('rows')}
                         >
                           <option value="">-- Select Type --</option>
                           <option value="bom_edge">🔗 BOM Edge</option>

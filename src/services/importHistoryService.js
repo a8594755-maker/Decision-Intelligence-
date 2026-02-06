@@ -838,6 +838,7 @@ export const importBatchesService = {
     const stats = {
       totalBatches: data.length,
       completedBatches: data.filter(b => b.status === 'completed').length,
+      failedBatches: data.filter(b => b.status === 'failed').length,
       undoneBatches: data.filter(b => b.status === 'undone').length,
       totalRowsImported: data.reduce((sum, b) => sum + (b.success_rows || 0), 0),
       totalRowsFailed: data.reduce((sum, b) => sum + (b.error_rows || 0), 0),

@@ -14,11 +14,16 @@ import { X, Package, AlertCircle, Calendar, TrendingDown, DollarSign, Zap, Rotat
 import { getRiskLevelConfig, formatDate, formatNumber } from './mapDomainToUI';
 import { formatCurrency } from '../../domains/risk/profitAtRiskCalculator';
 import { simulateWhatIfExpedite } from '../../domains/risk/whatIfExpedite';
+import ProbabilisticSection from './ProbabilisticSection';
 
 const DetailsPanel = ({
   details,
   onClose,
-  horizonDays = 30
+  horizonDays = 30,
+  activeForecastRun = null,
+  probSeries = null, // Step 2: P0 - Prob series data
+  loadProbSeriesForKey = null, // Step 2: P0 - Function to load series
+  hasProbResults = false // Step 2: P0 - Whether prob results exist
 }) => {
   // ========== What-if Simulation State ==========
   const [expediteBuckets, setExpediteBuckets] = useState(1);
@@ -103,6 +108,15 @@ const DetailsPanel = ({
 
       {/* Body */}
       <div className="p-4 space-y-4">
+        {/* 追溯：Forecast Run */}
+        {activeForecastRun && (
+          <div className="text-xs text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-slate-900/50 rounded-lg p-2">
+            <span className="font-medium text-slate-600 dark:text-slate-300">Forecast Run:</span>{' '}
+            {activeForecastRun.scenario_name || 'baseline'} ({String(activeForecastRun.id).slice(0, 8)}…)
+            <br />
+            <span>可至 Planning → Forecasts 選對應 BOM Explosion 批次 → Trace 查看 FG→Component 追溯</span>
+          </div>
+        )}
         {/* 風險警示 */}
         {details.riskLevel === 'critical' && (
           <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-3">
@@ -239,14 +253,43 @@ const DetailsPanel = ({
               </span>
             </div>
             <div className="flex justify-between text-sm">
+              <span className="text-slate-600 dark:text-slate-400">Days to stockout</span>
+              <span className="font-semibold text-slate-900 dark:text-slate-100">
+                {typeof details.daysToStockout === 'number' && details.daysToStockout !== Infinity
+                  ? `${details.daysToStockout} 天`
+                  : '—'}
+              </span>
+            </div>
+            {details.shortageDate && (
+              <div className="flex justify-between text-sm">
+                <span className="text-slate-600 dark:text-slate-400">Shortage date</span>
+                <span className="font-semibold text-slate-900 dark:text-slate-100">
+                  {formatDate(details.shortageDate)}
+                </span>
+              </div>
+            )}
+            <div className="flex justify-between text-sm">
               <span className="text-slate-600 dark:text-slate-400">Stockout probability</span>
               <span className="font-semibold text-slate-900 dark:text-slate-100">
                 {(details.probability * 100).toFixed(0)}%
               </span>
             </div>
+            <div className="flex justify-between text-sm">
+              <span className="text-slate-600 dark:text-slate-400">Lead time（本筆 P(stockout) 用）</span>
+              <span className="font-semibold text-slate-900 dark:text-slate-100">
+                {details.leadTimeDaysUsed != null ? `${details.leadTimeDaysUsed} 天` : '—'}
+                {details.leadTimeDaysSource === 'fallback' && (
+                  <span className="ml-1 text-amber-600 dark:text-amber-400 text-xs" title="無 supplier lead_time_days，使用系統預設">(預設)</span>
+                )}
+              </span>
+            </div>
             {/* 公式說明 */}
             <div className="text-xs text-slate-500 dark:text-slate-400 pt-1 border-t border-slate-200 dark:border-slate-700">
               <div className="font-mono">Gap qty = max(0, Safety stock - On hand)</div>
+              {typeof details.daysToStockout === 'number' && details.daysToStockout !== Infinity && (
+                <div className="font-mono mt-0.5">Days to stockout / P(stockout) from Inventory domain (component_demand)</div>
+              )}
+              <div className="mt-0.5">Lead time 來源: {details.leadTimeDaysSource === 'supplier' ? 'suppliers.lead_time_days' : '系統預設 (7 天)'}</div>
             </div>
           </div>
         </div>
@@ -680,6 +723,14 @@ const DetailsPanel = ({
           </div>
         </div>
 
+        {/* Section 6.5: Probabilistic Forecast Fan Chart (Step 2: P0) */}
+        <ProbabilisticSection
+          details={details}
+          probSeries={probSeries}
+          loadProbSeries={loadProbSeriesForKey}
+          hasProbResults={hasProbResults}
+        />
+
         {/* Footer Note */}
         <div className="text-xs text-slate-500 dark:text-slate-400 pt-2 border-t border-slate-200 dark:border-slate-700">
           💡 計算邏輯：
@@ -688,8 +739,10 @@ const DetailsPanel = ({
           <code className="bg-slate-200 dark:bg-slate-700 px-1 rounded mx-1">profitAtRiskCalculator.js</code>
           +
           <code className="bg-slate-200 dark:bg-slate-700 px-1 rounded mx-1">whatIfExpedite.js (M3)</code>
+          +
+          <code className="bg-slate-200 dark:bg-slate-700 px-1 rounded mx-1">inventoryProbForecast.js (4-B Monte Carlo)</code>
           <div className="mt-1 text-amber-600 dark:text-amber-400">
-            ℹ️ Supply Coverage Risk（不依賴 Forecast）+ Profit at Risk（M2）+ What-if Simulator（M3）
+            ℹ️ Supply Coverage Risk + Profit at Risk (M2) + What-if Simulator (M3) + Probabilistic Forecast (4-B)
           </div>
         </div>
       </div>

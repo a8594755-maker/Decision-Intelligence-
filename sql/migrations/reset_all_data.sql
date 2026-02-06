@@ -91,7 +91,7 @@ DO $$
 DECLARE
   tbl text;
   tables_to_truncate text[] := ARRAY[
-    'component_demand_trace', 'component_demand',
+    'component_demand_trace', 'component_demand', 'forecast_runs',
     'goods_receipts', 'price_history',
     'po_open_lines', 'inventory_snapshots', 'fg_financials',
     'bom_edges', 'demand_fg',

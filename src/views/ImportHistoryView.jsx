@@ -281,11 +281,13 @@ const ImportHistoryView = ({ addNotification, user }) => {
    */
   const getStatusBadge = (status) => {
     const statusConfig = {
-      pending: { label: '處理中', color: 'blue' },
+      pending: { label: '待處理', color: 'blue' },
+      processing: { label: '寫入中', color: 'blue' },
       completed: { label: '已完成', color: 'green' },
+      failed: { label: '失敗', color: 'red' },
       undone: { label: '已撤銷', color: 'red' }
     };
-    
+
     const config = statusConfig[status] || { label: status, color: 'gray' };
     return <Badge variant={config.color}>{config.label}</Badge>;
   };
@@ -420,8 +422,10 @@ const ImportHistoryView = ({ addNotification, user }) => {
             >
               <option value="all">所有狀態</option>
               <option value="completed">已完成</option>
+              <option value="failed">失敗</option>
               <option value="undone">已撤銷</option>
-              <option value="pending">處理中</option>
+              <option value="pending">待處理</option>
+              <option value="processing">寫入中</option>
             </select>
           </div>
 
@@ -651,6 +655,9 @@ const ImportHistoryView = ({ addNotification, user }) => {
               <div className="flex items-center gap-4">
                 <span>
                   已完成: {batches.filter(b => b.status === 'completed').length}
+                </span>
+                <span>
+                  失敗: {batches.filter(b => b.status === 'failed').length}
                 </span>
                 <span>
                   已撤銷: {batches.filter(b => b.status === 'undone').length}

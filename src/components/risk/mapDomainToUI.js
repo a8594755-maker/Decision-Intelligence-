@@ -190,6 +190,12 @@ export const mapSupplyCoverageToUI = (domainResult, warnings = []) => {
     safetyStock,
     netAvailable,
     gapQty,
+    // Inventory risk（當有 component_demand 時由 RiskDashboardView 填入）
+    daysToStockout: domainDaysToStockout,
+    stockoutProbability: domainStockoutProbability,
+    // A2: lead time 來源（supplier / fallback）
+    leadTimeDaysUsed,
+    leadTimeDaysSource,
     // M2: Profit at Risk 相關
     profitPerUnit,
     currency,
@@ -263,11 +269,14 @@ export const mapSupplyCoverageToUI = (domainResult, warnings = []) => {
     gapQty: gapQty !== undefined ? gapQty : 0,
     
     // 其他（為了兼容舊 Table/Details 組件）
-    daysToStockout: Infinity, // Bucket-based 無此概念
+    // 若有 component_demand，由 Inventory domain 計算 daysToStockout / P(stockout)
+    daysToStockout: typeof domainDaysToStockout === 'number' ? domainDaysToStockout : Infinity,
     requiredInHorizon: 0,
     inboundQtyInHorizon: inboundQtyHorizon,
-    probability: status === 'CRITICAL' ? 1.0 : (status === 'WARNING' ? 0.6 : 0.2),
-    shortageDate: null,
+    probability: typeof domainStockoutProbability === 'number' ? domainStockoutProbability : (status === 'CRITICAL' ? 1.0 : (status === 'WARNING' ? 0.6 : 0.2)),
+    shortageDate: (typeof domainDaysToStockout === 'number' && domainDaysToStockout !== Infinity && domainDaysToStockout >= 0)
+      ? (() => { const d = new Date(); d.setDate(d.getDate() + Math.floor(domainDaysToStockout)); return d; })()
+      : null,
     horizonDays: horizonBuckets, // 向後兼容（改用 buckets）
     
     // M2: Profit at Risk（貨幣化）
@@ -276,6 +285,10 @@ export const mapSupplyCoverageToUI = (domainResult, warnings = []) => {
     exposureQty: exposureQty || 0,
     profitAtRisk: profitAtRisk || 0,
     profitAtRiskReason: profitAtRiskReason || 'MISSING',
+    
+    // A2: Lead time 來源（Explainability）
+    leadTimeDaysUsed: leadTimeDaysUsed,
+    leadTimeDaysSource: leadTimeDaysSource || 'fallback',
     
     // 警告資訊
     _warnings: warnings.length > 0 ? warnings : undefined,

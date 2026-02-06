@@ -53,16 +53,42 @@ export function calculateBomExplosion(demandFgRows, bomEdgesRows, options = {}) 
  * @returns {Promise<Object>} {success, componentDemandCount, traceCount, errors, batchId}
  */
 export async function executeBomExplosion(userId, batchId, demandFgRows, bomEdgesRows, options = {}) {
-  const { componentDemandService, componentDemandTraceService } = await import('./supabaseClient');
+  const { componentDemandService, componentDemandTraceService, forecastRunsService } = await import('./supabaseClient');
   const { importBatchesService } = await import('./importHistoryService');
-  
+
   const filename = options.filename || 'BOM Explosion Calculation';
   const metadata = options.metadata || {};
-  
-  // Step 1: 如果沒有提供 batchId，建立新的 import_batch 記錄
+
+  // 收集 input batch_ids（用於 forecast_runs 追溯）
+  const demandBatchIds = [...new Set((demandFgRows || []).map(r => r.batch_id).filter(Boolean))];
+  const bomBatchIds = [...new Set((bomEdgesRows || []).map(r => r.batch_id).filter(Boolean))];
+  const inputBatchIds = [...demandBatchIds, ...bomBatchIds];
+
+  // Step 1: 建立 forecast_run（版本化：每次執行一筆 run）
+  let forecastRunId = null;
+  try {
+    const runRow = await forecastRunsService.createRun(userId, {
+      scenarioName: options.scenarioName || 'baseline',
+      parameters: {
+        time_buckets: metadata.time_buckets,
+        plant_id: metadata.plant_id,
+        // Run-level traceability for P0-2
+        demand_source: options.demandSource || 'uploaded',
+        input_demand_forecast_run_id: options.inputDemandForecastRunId || null,
+        ...(options.parameters || {})
+      },
+      inputBatchIds
+    });
+    forecastRunId = runRow.id;
+    console.log('Created forecast_run:', forecastRunId);
+  } catch (error) {
+    console.error('Failed to create forecast_run (continuing without run_id):', error);
+  }
+
+  // Step 2: 如果沒有提供 batchId，建立新的 import_batch 記錄
   let actualBatchId = batchId;
   let batchRecord = null;
-  
+
   if (!actualBatchId) {
     try {
       batchRecord = await importBatchesService.createBatch(userId, {
@@ -74,37 +100,41 @@ export async function executeBomExplosion(userId, batchId, demandFgRows, bomEdge
           ...metadata,
           fg_demands_count: demandFgRows.length,
           bom_edges_count: bomEdgesRows.length,
-          started_at: new Date().toISOString()
+          started_at: new Date().toISOString(),
+          forecast_run_id: forecastRunId
         }
       });
       actualBatchId = batchRecord.id;
       console.log('Created batch record:', actualBatchId);
     } catch (error) {
       console.error('Failed to create batch record:', error);
-      // 即使建立 batch 失敗，仍然繼續執行計算（但不會有 undo 功能）
     }
   }
-  
-  // Step 2: 執行計算（調用 Domain 層）
+
+  // Step 3: 執行計算（調用 Domain 層）
   const result = calculateBomExplosion(demandFgRows, bomEdgesRows, {
     ...options,
     userId,
     batchId: actualBatchId
   });
   
-  // 如果有錯誤，記錄但不中斷
   if (result.errors.length > 0) {
     console.warn('BOM Explosion 計算過程中有錯誤：', result.errors);
   }
-  
-  // Step 3: 寫入 component_demand
+
+  // Step 4: 寫入 component_demand（帶入 forecast_run_id）
   let componentDemandCount = 0;
   let componentDemandIdMap = new Map();
-  
-  if (result.componentDemandRows.length > 0) {
+  const rowsWithRunId = (result.componentDemandRows || []).map(r => ({
+    ...r,
+    batch_id: actualBatchId,
+    forecast_run_id: forecastRunId
+  }));
+
+  if (rowsWithRunId.length > 0) {
     try {
-      const insertResult = await componentDemandService.upsertComponentDemand(result.componentDemandRows);
-      componentDemandCount = insertResult.count || result.componentDemandRows.length;
+      const insertResult = await componentDemandService.upsertComponentDemand(rowsWithRunId);
+      componentDemandCount = insertResult.count || rowsWithRunId.length;
       
       // 建立 material_code + plant_id + time_bucket -> id 的映射
       if (insertResult.data && insertResult.data.length > 0) {
@@ -132,26 +162,24 @@ export async function executeBomExplosion(userId, batchId, demandFgRows, bomEdge
     }
   }
   
-  // Step 4: 寫入 component_demand_trace
+  // Step 5: 寫入 component_demand_trace（帶入 forecast_run_id）
   let traceCount = 0;
   if (result.traceRows.length > 0 && componentDemandIdMap.size > 0) {
     try {
-      // 轉換 traceRows 為資料庫格式
       const tracePayload = [];
       const missingMappings = [];
-      
+
       for (const trace of result.traceRows) {
         const key = getAggregationKey(trace.plant_id, trace.time_bucket, trace.component_material_code);
         const componentDemandId = componentDemandIdMap.get(key);
-        
+
         if (componentDemandId) {
-          // Domain 層返回的 path 是陣列，不需要解析
           const pathArray = trace.path || [];
-          
-          // 構造符合 DB schema 的 payload
+
           tracePayload.push({
             user_id: userId,
             batch_id: actualBatchId,
+            forecast_run_id: forecastRunId,
             component_demand_id: componentDemandId,
             fg_demand_id: trace.fg_demand_id || null,
             bom_edge_id: trace.bom_edge_id || null,
@@ -167,7 +195,8 @@ export async function executeBomExplosion(userId, batchId, demandFgRows, bomEdge
               fg_qty: trace.fg_qty || null,
               component_qty: trace.component_qty || null,
               source_type: trace.source_type || null,
-              source_id: trace.source_id || null
+              source_id: trace.source_id || null,
+              source_fg_demand_id: trace.fg_demand_id || null // P0-3: explicit traceability
             }
           });
         } else {
@@ -216,7 +245,7 @@ export async function executeBomExplosion(userId, batchId, demandFgRows, bomEdge
     }
   }
   
-  // Step 5: 更新 batch 狀態為 completed
+  // Step 6: 更新 batch 狀態為 completed
   if (actualBatchId && batchRecord) {
     try {
       await importBatchesService.updateBatch(actualBatchId, {
@@ -244,6 +273,7 @@ export async function executeBomExplosion(userId, batchId, demandFgRows, bomEdge
     componentDemandCount,
     traceCount,
     errors: result.errors,
-    batchId: actualBatchId
+    batchId: actualBatchId,
+    forecastRunId
   };
 }

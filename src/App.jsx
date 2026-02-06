@@ -3,7 +3,7 @@ import * as XLSX from 'xlsx';
 import {
   LayoutDashboard, Database, Activity, AlertTriangle, BarChart3, Bot, Settings, LogOut,
   Search, User, Upload, RefreshCw, CheckCircle, AlertCircle, FileText, TrendingUp,
-  Menu, X, ChevronRight, Download, Moon, Sun, Send, Sparkles, Loader2, Building2, ChevronDown,
+  Menu, X, ChevronRight, ChevronLeft, Download, Moon, Sun, Send, Sparkles, Loader2, Building2, ChevronDown,
   DollarSign, History
 } from 'lucide-react';
 
@@ -43,7 +43,8 @@ function useSyncViewWithHistory(view, setView, session) {
       return;
     }
     const nextPath = viewToPath(view);
-    if (nextPath && nextPath !== window.location.pathname) {
+    const currentPath = window.location.pathname;
+    if (nextPath && nextPath !== currentPath) {
       window.history.pushState({ view }, '', nextPath);
       try {
         sessionStorage.setItem('lastVisitedPath', nextPath);
@@ -64,6 +65,21 @@ function useSyncViewWithHistory(view, setView, session) {
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
   }, [view, setView, session]);
+}
+
+/** When user returns to tab, re-sync view from URL so we don’t stay on wrong page (e.g. after bfcache). */
+function useVisibilitySync(setView, session) {
+  useEffect(() => {
+    if (!session) return;
+    const handleVisibility = () => {
+      if (document.visibilityState !== 'visible') return;
+      const pathname = window.location.pathname;
+      const targetView = pathToView(pathname);
+      if (targetView) setView(targetView);
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => document.removeEventListener('visibilitychange', handleVisibility);
+  }, [setView, session]);
 }
 
 // --- Main App ---
@@ -152,6 +168,7 @@ export default function SmartOpsApp() {
   }, []);
 
   useSyncViewWithHistory(view, setView, session);
+  useVisibilitySync(setView, session);
 
   const fetchUserData = async (userId) => {
     const { data, error } = await supabase.from('user_files').select('data').eq('user_id', userId).order('created_at', { ascending: false }).limit(1);
@@ -479,6 +496,24 @@ export default function SmartOpsApp() {
       )}
 
       <main className="flex-1 w-full max-w-7xl mx-auto p-4 md:p-6 lg:p-8">
+        {view !== 'home' && (
+          <div className="mb-4">
+            <button
+              type="button"
+              onClick={() => {
+                if (window.history.length > 1) {
+                  window.history.back();
+                } else {
+                  setView('home');
+                }
+              }}
+              className="flex items-center gap-1.5 text-sm font-medium text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200"
+            >
+              <ChevronLeft className="w-4 h-4" />
+              上一頁
+            </button>
+          </div>
+        )}
         {renderView()}
       </main>
     </div>

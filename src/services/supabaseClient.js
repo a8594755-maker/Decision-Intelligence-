@@ -1320,6 +1320,169 @@ export const demandFgService = {
 };
 
 /**
+ * Demand Forecast Service - Store forecast results with P10/P50/P90 confidence intervals
+ */
+export const demandForecastService = {
+  // Batch insert demand forecast results
+  async batchInsert(userId, forecasts) {
+    if (!forecasts || forecasts.length === 0) {
+      return { success: true, count: 0 };
+    }
+
+    const payload = forecasts.map(forecast => ({
+      user_id: userId,
+      forecast_run_id: forecast.forecast_run_id,
+      material_code: forecast.material_code,
+      plant_id: forecast.plant_id,
+      time_bucket: forecast.time_bucket,
+      p10: forecast.p10 ?? null,
+      p50: forecast.p50,
+      p90: forecast.p90 ?? null,
+      model_version: forecast.model_version,
+      train_window_buckets: forecast.train_window_buckets ?? null,
+      metrics: forecast.metrics || {}
+    }));
+
+    const { data, error } = await supabase
+      .from('demand_forecast')
+      .insert(payload)
+      .select();
+
+    if (error) throw error;
+    return { success: true, count: data.length, data };
+  },
+
+  // Get demand forecasts by run ID
+  async getForecastsByRun(userId, forecastRunId, options = {}) {
+    const { materialCode, plantId, limit = 1000, offset = 0 } = options;
+
+    let query = supabase
+      .from('demand_forecast')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('forecast_run_id', forecastRunId)
+      .order('material_code', { ascending: true })
+      .order('time_bucket', { ascending: true })
+      .range(offset, offset + limit - 1);
+
+    if (materialCode) {
+      query = query.eq('material_code', materialCode);
+    }
+
+    if (plantId) {
+      query = query.eq('plant_id', plantId);
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+    return data || [];
+  },
+
+  // Get unique material codes for a forecast run
+  async getMaterialsByRun(userId, forecastRunId) {
+    const { data, error } = await supabase
+      .from('demand_forecast')
+      .select('material_code')
+      .eq('user_id', userId)
+      .eq('forecast_run_id', forecastRunId);
+
+    if (error) throw error;
+    return [...new Set((data || []).map(d => d.material_code))];
+  },
+
+  // Get historical demand_fg data for training the forecast model
+  async getHistoricalDemandFg(userId, plantId, materialCode, endTimeBucket, windowBuckets) {
+    // Get historical data up to endTimeBucket, limited to windowBuckets
+    let query = supabase
+      .from('demand_fg')
+      .select('time_bucket, demand_qty, material_code, plant_id')
+      .eq('user_id', userId)
+      .order('time_bucket', { ascending: false })
+      .limit(windowBuckets);
+
+    // Only filter by material_code if explicitly provided
+    if (materialCode) {
+      query = query.eq('material_code', materialCode);
+    }
+
+    if (plantId) {
+      query = query.eq('plant_id', plantId);
+    }
+
+    // Filter to get only buckets before or equal to endTimeBucket
+    if (endTimeBucket) {
+      query = query.lte('time_bucket', endTimeBucket);
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+    
+    // Return in ascending order (oldest first)
+    return (data || []).reverse();
+  },
+
+  // Delete forecasts by run ID (for cleanup/re-runs)
+  async deleteForecastsByRun(userId, forecastRunId) {
+    const { error } = await supabase
+      .from('demand_forecast')
+      .delete()
+      .eq('user_id', userId)
+      .eq('forecast_run_id', forecastRunId);
+
+    if (error) throw error;
+    return { success: true };
+  }
+};
+
+/**
+ * Forecast Runs - 每次 BOM Explosion 建立一筆，用於追溯
+ */
+export const forecastRunsService = {
+  async createRun(userId, options = {}) {
+    const {
+      scenarioName = 'baseline',
+      parameters = {},
+      inputBatchIds = []
+    } = options;
+    const { data, error } = await supabase
+      .from('forecast_runs')
+      .insert({
+        created_by: userId,
+        scenario_name: scenarioName,
+        parameters: parameters,
+        input_batch_ids: Array.isArray(inputBatchIds) ? inputBatchIds : [inputBatchIds]
+      })
+      .select('id, created_at, scenario_name')
+      .single();
+    if (error) throw error;
+    return data;
+  },
+
+  async getRun(runId) {
+    const { data, error } = await supabase
+      .from('forecast_runs')
+      .select('*')
+      .eq('id', runId)
+      .single();
+    if (error) throw error;
+    return data;
+  },
+
+  async listRuns(userId, options = {}) {
+    const { limit = 50 } = options;
+    let query = supabase
+      .from('forecast_runs')
+      .select('*')
+      .eq('created_by', userId)
+      .order('created_at', { ascending: false })
+      .limit(limit);
+    const { data, error } = await query;
+    if (error) throw error;
+    return data || [];
+  }
+};
+
+/**
  * Component Demand Operations
  */
 export const componentDemandService = {
@@ -1370,24 +1533,22 @@ export const componentDemandService = {
           throw new Error(`Row ${index}: Missing demand_qty`);
         }
 
-        // 構造 payload - 只有當 id 存在時才包含 id 欄位
+        // 構造 payload - 含 forecast_run_id（版本化）
         const record = {
           user_id: row.user_id,
           batch_id: row.batch_id || null,
+          forecast_run_id: row.forecast_run_id ?? null,
           material_code: row.material_code,
           plant_id: row.plant_id,
           time_bucket: row.time_bucket,
           demand_qty: row.demand_qty,
           uom: row.uom || 'pcs',
-          // 注意：根據用戶要求，component_demand 不使用 source_fg_material/bom_level
-          // 但 schema 中有這些欄位，我們設為 null
           source_fg_material: null,
           source_fg_demand_id: null,
           bom_level: null,
           notes: row.notes || null
         };
 
-        // 只有當 row.id 存在時才包含 id（用於 update）
         if (row.id) {
           record.id = row.id;
         }
@@ -1395,12 +1556,11 @@ export const componentDemandService = {
         return record;
       });
 
-      // 嘗試使用 upsert
-      // 如果資料庫有 UNIQUE 約束 (user_id, material_code, plant_id, time_bucket)，會自動處理衝突
+      // 唯一約束：(user_id, forecast_run_id, material_code, plant_id, time_bucket)
       const { data, error } = await supabase
         .from('component_demand')
         .upsert(payload, {
-          onConflict: 'user_id,material_code,plant_id,time_bucket',
+          onConflict: 'user_id,forecast_run_id,material_code,plant_id,time_bucket',
           ignoreDuplicates: false
         })
         .select();
@@ -1412,20 +1572,26 @@ export const componentDemandService = {
           hint: error.hint
         });
 
-        // 如果 upsert 失敗（可能沒有唯一約束），使用先刪除再插入的策略
+        // Fallback：先刪除再插入（依 user_id + forecast_run_id + 維度）
         const userId = rows[0].user_id;
+        const forecastRunId = rows[0].forecast_run_id ?? null;
         const materialCodes = [...new Set(rows.map(r => r.material_code))];
         const plantIds = [...new Set(rows.map(r => r.plant_id))];
         const timeBuckets = [...new Set(rows.map(r => r.time_bucket))];
 
-        // 查詢現有記錄
-        const { data: existingData, error: queryError } = await supabase
+        let existingQuery = supabase
           .from('component_demand')
           .select('id')
           .eq('user_id', userId)
           .in('material_code', materialCodes)
           .in('plant_id', plantIds)
           .in('time_bucket', timeBuckets);
+        if (forecastRunId) {
+          existingQuery = existingQuery.eq('forecast_run_id', forecastRunId);
+        } else {
+          existingQuery = existingQuery.is('forecast_run_id', null);
+        }
+        const { data: existingData, error: queryError } = await existingQuery;
 
         if (queryError) {
           const errorDetails = {
@@ -1542,6 +1708,30 @@ export const componentDemandService = {
     };
   },
 
+  /**
+   * 根據 forecast_run_id 取得該 run 的 component_demand（供 Risk / Inventory Projection 使用）
+   * @param {string} userId
+   * @param {string} forecastRunId
+   * @param {{ timeBuckets?: string[], plantId?: string }} [options]
+   */
+  async getComponentDemandsByForecastRun(userId, forecastRunId, options = {}) {
+    if (!userId || !forecastRunId) return [];
+    let query = supabase
+      .from('component_demand')
+      .select('material_code, plant_id, time_bucket, demand_qty')
+      .eq('user_id', userId)
+      .eq('forecast_run_id', forecastRunId)
+      .order('time_bucket', { ascending: true });
+    const { timeBuckets, plantId } = options;
+    if (plantId) query = query.eq('plant_id', plantId);
+    if (Array.isArray(timeBuckets) && timeBuckets.length > 0) {
+      query = query.in('time_bucket', timeBuckets);
+    }
+    const { data, error } = await query;
+    if (error) throw error;
+    return data || [];
+  },
+
   // 根據 batch_id 獲取 Component 需求（支援篩選和分頁）
   async getComponentDemandsByBatch(userId, batchId, options = {}) {
     const { filters = {}, limit = 100, offset = 0 } = options;
@@ -1627,13 +1817,12 @@ export const componentDemandTraceService = {
         return {
           user_id: row.user_id,
           batch_id: row.batch_id || null,
+          forecast_run_id: row.forecast_run_id ?? null,
           component_demand_id: row.component_demand_id,
           fg_demand_id: row.fg_demand_id,
           bom_edge_id: row.bom_edge_id || null,
           qty_multiplier: row.qty_multiplier || null,
           bom_level: row.bom_level || null,
-          // trace_meta: 額外的追溯信息（JSONB）
-          // 包含 path（JSON array）、material codes、source info 等
           trace_meta: row.trace_meta || {}
         };
       });
@@ -1864,6 +2053,52 @@ export const poOpenLinesService = {
   },
 
   /**
+   * 獲取指定 time_buckets 的入庫資料（供 Inventory Projection 使用）
+   * @param {string} userId - 使用者 ID
+   * @param {string[]} timeBuckets - 時間桶陣列
+   * @param {string|null} plantId - 工廠 ID（null = all plants）
+   * @returns {Promise<Array<{ material_code: string, plant_id: string, time_bucket: string, open_qty: number }>>}
+   */
+  async getInboundByBuckets(userId, timeBuckets, plantId = null) {
+    if (!userId || !Array.isArray(timeBuckets) || timeBuckets.length === 0) {
+      return [];
+    }
+
+    const pickInboundQty = row => {
+      const qty = Number(
+        row.open_qty ??
+        row.qty_open ??
+        row.inbound_qty ??
+        row.order_qty ??
+        row.qty ??
+        row.quantity ??
+        0
+      );
+      return Number.isFinite(qty) ? qty : 0;
+    };
+
+    let query = supabase
+      .from('po_open_lines')
+      .select('*')
+      .eq('user_id', userId)
+      .in('time_bucket', timeBuckets)
+      .order('time_bucket', { ascending: true });
+
+    if (plantId) {
+      query = query.eq('plant_id', plantId);
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+    return (data || []).map(row => ({
+      material_code: row.material_code ?? row.item ?? null,
+      plant_id: row.plant_id ?? row.factory ?? null,
+      time_bucket: row.time_bucket ?? row.timeBucket ?? row.bucket ?? null,
+      open_qty: pickInboundQty(row)
+    }));
+  },
+
+  /**
    * 獲取 PO Open Lines（通用查詢方法）
    * @param {string} userId - 使用者 ID
    * @param {Object} options - 查詢選項
@@ -2009,6 +2244,37 @@ export const inventorySnapshotsService = {
     const { data, error } = await query;
     if (error) throw error;
     return data || [];
+  },
+
+  /**
+   * 取得每個 material+plant 最新一筆庫存快照（供 Inventory Projection / Risk 使用）
+   * @param {string} userId
+   * @param {string|null} plantId
+   * @param {{ limit?: number }} [opts]
+   * @returns {Promise<Array<{ material_code: string, plant_id: string, on_hand_qty: number, safety_stock: number, snapshot_date?: string, created_at?: string }>>}
+   */
+  async getLatestInventorySnapshots(userId, plantId = null, opts = {}) {
+    if (!userId) return [];
+    const limit = opts.limit ?? 10000;
+    let query = supabase
+      .from('inventory_snapshots')
+      .select('*')
+      .eq('user_id', userId)
+      .order('snapshot_date', { ascending: false })
+      .limit(limit);
+    if (plantId) query = query.eq('plant_id', plantId);
+    const { data, error } = await query;
+    if (error) throw error;
+    const rows = (data || []).map(r => ({
+      ...r,
+      on_hand_qty: r.on_hand_qty ?? r.onhand_qty ?? 0
+    }));
+    const byKey = new Map();
+    for (const r of rows) {
+      const key = `${(r.material_code || '').trim().toUpperCase()}|${(r.plant_id || '').trim().toUpperCase()}`;
+      if (!byKey.has(key)) byKey.set(key, { ...r });
+    }
+    return Array.from(byKey.values());
   },
 
   /**
