@@ -28,9 +28,13 @@ const WhatIfSection = ({
   }, [result?.action?.byBuckets]);
 
   // M7.3 WP3: Handle replay draft from audit event
+  const [isReplayMode, setIsReplayMode] = useState(false);
+  
   useEffect(() => {
     if (replayDraft?.action?.byBuckets) {
+      console.log('[WhatIf] Applying replay draft:', replayDraft);
       setByBuckets(replayDraft.action.byBuckets);
+      setIsReplayMode(true);
       // Note: We don't auto-run, user must click Run
     }
   }, [replayDraft]);
@@ -60,6 +64,11 @@ const WhatIfSection = ({
             <Zap className="w-5 h-5 text-blue-500" />
             <h3 className="font-semibold text-lg">What-if Simulator</h3>
             <Badge variant="secondary" className="text-xs">MVP</Badge>
+            {isReplayMode && (
+              <Badge variant="warning" className="text-xs bg-amber-100 text-amber-700">
+                Replay Ready
+              </Badge>
+            )}
           </div>
 
           {/* Action Selector */}
