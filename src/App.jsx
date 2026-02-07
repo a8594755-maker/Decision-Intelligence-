@@ -381,10 +381,7 @@ export default function SmartOpsApp() {
                     title={navItem.taskQuestion}
                   >
                     <navItem.icon className={`w-4 h-4 mr-2 ${navItem.color || ''}`} />
-                    <span className="flex flex-col items-start">
-                      <span className="text-xs opacity-75">{navItem.labelZh}</span>
-                      <span>{navItem.label}</span>
-                    </span>
+                    <span>{navItem.label}</span>
                     <ChevronDown className={`w-4 h-4 ml-1 transition-transform ${openDropdowns[navItem.key] ? 'rotate-180' : ''}`} />
                   </button>
 
@@ -404,10 +401,7 @@ export default function SmartOpsApp() {
                           }`}
                         >
                           <child.icon className="w-4 h-4 mr-2" />
-                          <span className="flex flex-col items-start">
-                            <span>{child.label}</span>
-                            <span className="text-xs opacity-60">{child.labelZh}</span>
-                          </span>
+                          <span>{child.label}</span>
                         </button>
                       ))}
                     </div>
@@ -438,7 +432,6 @@ export default function SmartOpsApp() {
                 <div className="flex items-center gap-2 px-3 py-2 bg-slate-100 dark:bg-slate-700/50 rounded-lg">
                   <navItem.icon className={`w-4 h-4 ${navItem.color || ''}`} />
                   <span className="text-sm font-semibold">{navItem.label}</span>
-                  <span className="text-xs opacity-60 ml-1">{navItem.labelZh}</span>
                 </div>
                 {navItem.children.map(child => (
                   <button 
@@ -454,10 +447,7 @@ export default function SmartOpsApp() {
                     }`}
                   >
                     <child.icon className="w-4 h-4 mr-2" />
-                    <span className="flex flex-col items-start">
-                      <span>{child.label}</span>
-                      <span className="text-xs opacity-60">{child.labelZh}</span>
-                    </span>
+                    <span>{child.label}</span>
                   </button>
                 ))}
               </div>
