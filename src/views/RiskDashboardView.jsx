@@ -113,6 +113,12 @@ const RiskDashboardView = ({ user, addNotification }) => {
   });
   const [calculatingRiskScores, setCalculatingRiskScores] = useState(false);
 
+  // M7.3 WP3: Audit Timeline state
+  const [auditEvents, setAuditEvents] = useState([]);
+  const [auditLoading, setAuditLoading] = useState(false);
+  const [selectedAuditEvent, setSelectedAuditEvent] = useState(null);
+  const [replayDraft, setReplayDraft] = useState(null); // For What-if replay
+
   // ========== 資料載入 ==========
 
   const loadRiskData = async () => {
