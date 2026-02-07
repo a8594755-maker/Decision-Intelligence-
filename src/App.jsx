@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import {
-  LayoutDashboard, Database, Activity, AlertTriangle, BarChart3, Bot, Settings, LogOut,
-  Search, User, Upload, RefreshCw, CheckCircle, AlertCircle, FileText, TrendingUp,
+  Target, Search, Calculator, Zap, BarChart3, Bot, Settings, LogOut,
+  Search as SearchIcon, User, Upload, RefreshCw, CheckCircle, AlertCircle, FileText, TrendingUp,
   Menu, X, ChevronRight, ChevronLeft, Download, Moon, Sun, Send, Sparkles, Loader2, Building2, ChevronDown,
-  DollarSign, History
+  DollarSign, History, LayoutDashboard, Activity, AlertTriangle, Database
 } from 'lucide-react';
 
 // --- Import UI Components ---
@@ -28,9 +28,6 @@ import BOMDataView from './views/BOMDataView';
 import ForecastsView from './views/ForecastsView';
 import RiskDashboardView from './views/RiskDashboardView';
 
-// Mock Data
-const MOCK_ALERTS = [{ id: 1, category: "Material Shortage", item: "Lithium Batteries", supplier: "Voltaic Supplies", risk: "High", impact: "Production Stop Risk", rootCause: "Supplier strike.", recommendation: "Activate backup supplier." }, { id: 2, category: "Delivery Delay", item: "Circuit Boards", supplier: "TechTronix", risk: "Medium", impact: "2 Day Delay", rootCause: "Port congestion.", recommendation: "Expedite Air Freight." }, { id: 3, category: "Quantity Mismatch", item: "Steel Casings", supplier: "MetalWorks", risk: "Low", impact: "Inventory Discrepancy", rootCause: "Packing error.", recommendation: "Request credit note." }];
-const MOCK_KPI_CONTEXT = { healthIndex: "94%", goodsReceipt: "98%", productionRate: "87%", onTimeShipment: "92%", activeDelays: 3, riskItems: 12 };
 
 /** Sync view state with URL (pushState) and handle Back/Forward (popstate). Only active when session exists. */
 function useSyncViewWithHistory(view, setView, session) {
@@ -264,58 +261,70 @@ export default function SmartOpsApp() {
     );
   }
 
-  // Navigation configuration array - hierarchical structure
+  // Navigation configuration - OODA Task-Oriented Structure
   const navigationConfig = [
     {
-      key: 'home',
-      label: 'Home',
-      icon: LayoutDashboard,
-      view: 'home'
-    },
-    {
-      key: 'operations',
-      label: 'Operations',
-      icon: Activity,
+      key: 'command',
+      label: 'Command',
+      labelZh: '指揮中心',
+      icon: Target,
+      color: 'text-red-500',
+      taskQuestion: '今天最該管什麼？',
       children: [
-        { key: 'dashboard', label: 'Dashboard', icon: BarChart3, view: 'dashboard' },
-        { key: 'alerts', label: 'Alerts', icon: AlertTriangle, view: 'alerts' }
+        { key: 'home', label: 'Dashboard', labelZh: '總覽', icon: LayoutDashboard, view: 'home' },
+        { key: 'dashboard', label: 'Operations', labelZh: '營運', icon: Activity, view: 'dashboard' },
+        { key: 'alerts', label: 'Action Items', labelZh: '待辦', icon: AlertCircle, view: 'alerts' }
       ]
     },
     {
-      key: 'planning',
-      label: 'Planning',
-      icon: TrendingUp,
+      key: 'detect',
+      label: 'Detect',
+      labelZh: '風險偵測',
+      icon: Search,
+      color: 'text-amber-500',
+      taskQuestion: '哪裡出問題了？',
       children: [
-        { key: 'forecasts', label: 'Forecasts', icon: TrendingUp, view: 'forecasts' },
-        { key: 'risk-dashboard', label: 'Risk Dashboard', icon: AlertTriangle, view: 'risk-dashboard' }
+        { key: 'risk-dashboard', label: 'Risk Dashboard', labelZh: '風險儀表板', icon: AlertTriangle, view: 'risk-dashboard' },
+        { key: 'forecasts', label: 'Forecasts', labelZh: '預測', icon: TrendingUp, view: 'forecasts' },
+        { key: 'bom-data', label: 'BOM Health', labelZh: 'BOM健康度', icon: Database, view: 'bom-data' }
       ]
     },
     {
-      key: 'analysis',
-      label: 'Analysis',
+      key: 'simulate',
+      label: 'Simulate',
+      labelZh: '決策模擬',
+      icon: Calculator,
+      color: 'text-blue-500',
+      taskQuestion: '該怎麼做最好？',
+      children: [
+        { key: 'cost-analysis', label: 'Cost Optimizer', labelZh: '成本優化', icon: DollarSign, view: 'cost-analysis' },
+        { key: 'decision', label: 'What-if AI', labelZh: '情境模擬', icon: Bot, view: 'decision' },
+        { key: 'analytics', label: 'Scenario Compare', labelZh: '方案比較', icon: BarChart3, view: 'analytics' }
+      ]
+    },
+    {
+      key: 'execute',
+      label: 'Execute',
+      labelZh: '行動執行',
+      icon: Zap,
+      color: 'text-purple-500',
+      taskQuestion: '執行與追蹤',
+      children: [
+        { key: 'suppliers', label: 'Supplier Portal', labelZh: '供應商', icon: Building2, view: 'suppliers' },
+        { key: 'external', label: 'Data Upload', labelZh: '資料上傳', icon: Upload, view: 'external' }
+      ]
+    },
+    {
+      key: 'govern',
+      label: 'Govern',
+      labelZh: '治理分析',
       icon: BarChart3,
+      color: 'text-emerald-500',
+      taskQuestion: '我們決策對嗎？',
       children: [
-        { key: 'cost-analysis', label: 'Cost Analysis', icon: DollarSign, view: 'cost-analysis' },
-        { key: 'analytics', label: 'Analytics', icon: BarChart3, view: 'analytics' }
+        { key: 'import-history', label: 'Audit Trail', labelZh: '審計追蹤', icon: History, view: 'import-history' },
+        { key: 'integration', label: 'Data Hub', labelZh: '數據中心', icon: RefreshCw, view: 'integration' }
       ]
-    },
-    {
-      key: 'data',
-      label: 'Data',
-      icon: Database,
-      children: [
-        { key: 'bom-data', label: 'BOM Data', icon: Database, view: 'bom-data' },
-        { key: 'external', label: 'Data Upload', icon: Upload, view: 'external' },
-        { key: 'import-history', label: 'Import History', icon: History, view: 'import-history' },
-        { key: 'integration', label: 'Data Integration', icon: RefreshCw, view: 'integration' },
-        { key: 'suppliers', label: 'Supplier Management', icon: Building2, view: 'suppliers' }
-      ]
-    },
-    {
-      key: 'decision',
-      label: 'Decision AI',
-      icon: Bot,
-      view: 'decision'
     }
   ];
 
@@ -350,30 +359,12 @@ export default function SmartOpsApp() {
             <span className="text-xl font-bold">SmartOps</span>
           </div>
           
-          {/* Desktop Nav - hierarchical navigation */}
+          {/* Desktop Nav - OODA Task-Oriented Navigation */}
           <nav className="hidden md:flex items-center space-x-1">
             {navigationConfig.map(navItem => {
               const isActive = isNavItemActive(navItem);
               
-              // Single item (no submenu)
-              if (!navItem.children) {
-                return (
-                  <button 
-                    key={navItem.key} 
-                    onClick={() => setView(navItem.view)} 
-                    className={`flex items-center px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                      isActive 
-                        ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400' 
-                        : 'hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300'
-                    }`}
-                  >
-                    <navItem.icon className="w-4 h-4 mr-2" />
-                    {navItem.label}
-                  </button>
-                );
-              }
-              
-              // Item with submenu
+              // All nav items now have children in the new structure
               return (
                 <div 
                   key={navItem.key} 
@@ -387,14 +378,21 @@ export default function SmartOpsApp() {
                         ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400'
                         : 'hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300'
                     }`}
+                    title={navItem.taskQuestion}
                   >
-                    <navItem.icon className="w-4 h-4 mr-2" />
-                    {navItem.label}
+                    <navItem.icon className={`w-4 h-4 mr-2 ${navItem.color || ''}`} />
+                    <span className="flex flex-col items-start">
+                      <span className="text-xs opacity-75">{navItem.labelZh}</span>
+                      <span>{navItem.label}</span>
+                    </span>
                     <ChevronDown className={`w-4 h-4 ml-1 transition-transform ${openDropdowns[navItem.key] ? 'rotate-180' : ''}`} />
                   </button>
 
                   {openDropdowns[navItem.key] && (
-                    <div className="absolute top-full mt-1 left-0 bg-white dark:bg-slate-800 rounded-lg shadow-lg border border-slate-200 dark:border-slate-700 py-1 min-w-[200px] z-50">
+                    <div className="absolute top-full mt-1 left-0 bg-white dark:bg-slate-800 rounded-lg shadow-lg border border-slate-200 dark:border-slate-700 py-1 min-w-[220px] z-50">
+                      <div className="px-4 py-2 border-b border-slate-100 dark:border-slate-700">
+                        <p className="text-xs text-slate-500 dark:text-slate-400 italic">「{navItem.taskQuestion}」</p>
+                      </div>
                       {navItem.children.map(child => (
                         <button
                           key={child.key}
@@ -409,7 +407,10 @@ export default function SmartOpsApp() {
                           }`}
                         >
                           <child.icon className="w-4 h-4 mr-2" />
-                          {child.label}
+                          <span className="flex flex-col items-start">
+                            <span>{child.label}</span>
+                            <span className="text-xs opacity-60">{child.labelZh}</span>
+                          </span>
                         </button>
                       ))}
                     </div>
@@ -431,59 +432,40 @@ export default function SmartOpsApp() {
         </div>
       </header>
 
-      {/* Mobile Menu Dropdown - hierarchical navigation */}
+      {/* Mobile Menu Dropdown - OODA Task-Oriented Navigation */}
       {isMobileMenuOpen && (
         <div className="md:hidden bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 p-4">
-          <div className="space-y-2">
-            {navigationConfig.map(navItem => {
-              // Single item (no submenu)
-              if (!navItem.children) {
-                return (
+          <div className="space-y-3">
+            {navigationConfig.map(navItem => (
+              <div key={navItem.key} className="space-y-1">
+                <div className="flex items-center gap-2 px-3 py-2 bg-slate-100 dark:bg-slate-700/50 rounded-lg">
+                  <navItem.icon className={`w-4 h-4 ${navItem.color || ''}`} />
+                  <span className="text-sm font-semibold">{navItem.label}</span>
+                  <span className="text-xs opacity-60 ml-1">{navItem.labelZh}</span>
+                </div>
+                <p className="text-xs text-slate-500 dark:text-slate-400 px-3 italic">「{navItem.taskQuestion}」</p>
+                {navItem.children.map(child => (
                   <button 
-                    key={navItem.key} 
+                    key={child.key}
                     onClick={() => { 
-                      setView(navItem.view); 
+                      setView(child.view); 
                       setIsMobileMenuOpen(false); 
                     }} 
-                    className={`w-full flex items-center p-3 rounded-lg text-sm font-medium ${
-                      view === navItem.view 
+                    className={`w-full flex items-center p-3 pl-6 rounded-lg text-sm font-medium ${
+                      view === child.view 
                         ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400' 
                         : 'bg-slate-50 dark:bg-slate-700 text-slate-600 dark:text-slate-300'
                     }`}
                   >
-                    <navItem.icon className="w-4 h-4 mr-2" />
-                    {navItem.label}
+                    <child.icon className="w-4 h-4 mr-2" />
+                    <span className="flex flex-col items-start">
+                      <span>{child.label}</span>
+                      <span className="text-xs opacity-60">{child.labelZh}</span>
+                    </span>
                   </button>
-                );
-              }
-              
-              // Item with submenu - expand to show all children in mobile version
-              return (
-                <div key={navItem.key} className="space-y-1">
-                  <div className="text-xs uppercase font-semibold text-slate-400 px-3 py-1 flex items-center gap-2">
-                    <navItem.icon className="w-3 h-3" />
-                    {navItem.label}
-                  </div>
-                  {navItem.children.map(child => (
-                    <button 
-                      key={child.key}
-                      onClick={() => { 
-                        setView(child.view); 
-                        setIsMobileMenuOpen(false); 
-                      }} 
-                      className={`w-full flex items-center p-3 pl-6 rounded-lg text-sm font-medium ${
-                        view === child.view 
-                          ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400' 
-                          : 'bg-slate-50 dark:bg-slate-700 text-slate-600 dark:text-slate-300'
-                      }`}
-                    >
-                      <child.icon className="w-4 h-4 mr-2" />
-                      {child.label}
-                    </button>
-                  ))}
-                </div>
-              );
-            })}
+                ))}
+              </div>
+            ))}
             <button 
               onClick={handleLogout} 
               className="w-full flex items-center p-3 rounded-lg text-sm font-medium bg-red-50 dark:bg-red-900/20 text-red-600 justify-center mt-4"
@@ -495,7 +477,9 @@ export default function SmartOpsApp() {
         </div>
       )}
 
-      <main className="flex-1 w-full max-w-7xl mx-auto p-4 md:p-6 lg:p-8">
+      <main className={`flex-1 w-full min-h-screen bg-gray-50 dark:bg-slate-900 ${
+        view === 'risk-dashboard' ? '' : 'max-w-7xl mx-auto px-4 sm:px-6 lg:px-8'
+      }`}>
         {view !== 'home' && (
           <div className="mb-4">
             <button
@@ -621,22 +605,33 @@ const HomeView = ({ setView }) => {
     },
   ];
 
-  // Mock KPI data (can be fetched from props or API in the future)
-  const kpiData = [
-    { label: "System Health", value: "94%", trend: "+2.1%", color: "text-emerald-600", bgColor: "bg-emerald-50 dark:bg-emerald-900/20", icon: Activity },
-    { label: "On-Time Delivery", value: "92%", trend: "+1.4%", color: "text-blue-600", bgColor: "bg-blue-50 dark:bg-blue-900/20", icon: CheckCircle },
-    { label: "Pending Alerts", value: "3", trend: "Requires Attention", color: "text-red-600", bgColor: "bg-red-50 dark:bg-red-900/20", icon: AlertTriangle },
-  ];
+  // Real-time KPI data - loaded from database
+  const [kpiData, setKpiData] = useState([
+    { label: "System Health", value: "--", trend: "Loading...", color: "text-emerald-600", bgColor: "bg-emerald-50 dark:bg-emerald-900/20", icon: Activity },
+    { label: "On-Time Delivery", value: "--", trend: "Loading...", color: "text-blue-600", bgColor: "bg-blue-50 dark:bg-blue-900/20", icon: CheckCircle },
+    { label: "Pending Alerts", value: "--", trend: "Loading...", color: "text-red-600", bgColor: "bg-red-50 dark:bg-red-900/20", icon: AlertTriangle },
+  ]);
 
-  // Quick action items
-  const quickActions = [
-    { label: "3 high-risk alerts pending", action: 'alerts', icon: AlertTriangle, color: "text-red-600" },
-    { label: "5 suppliers below KPI standards", action: 'suppliers', icon: Building2, color: "text-amber-600" },
-    { label: "12 items approaching shortage", action: 'dashboard', icon: TrendingUp, color: "text-blue-600" },
-  ];
+  // TODO: Load real KPI data from API
+  useEffect(() => {
+    // Placeholder for real KPI data loading
+    // const loadKpiData = async () => { ... };
+    // loadKpiData();
+  }, []);
+
+  // Quick action items - dynamically loaded from real alerts
+  const [quickActions, setQuickActions] = useState([]);
+
+  // TODO: Load real action items from API
+  useEffect(() => {
+    // Placeholder for real action items loading
+    // const loadActionItems = async () => { ... };
+    // loadActionItems();
+  }, []);
 
   return (
-    <div className="space-y-8 animate-fade-in">
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <div className="space-y-8 animate-fade-in">
       {/* Hero Section - Welcome Area + KPI Overview */}
       <div className="space-y-6">
         <div>
@@ -747,11 +742,7 @@ const HomeView = ({ setView }) => {
           External System Connection Status
         </h3>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          {[
-            { name: 'ERP (SAP)', status: 'Connected', lastSync: '2 mins ago', icon: 'E' },
-            { name: 'MES (Siemens)', status: 'Connected', lastSync: '5 mins ago', icon: 'M' },
-            { name: 'WMS (Oracle)', status: 'Connected', lastSync: '1 min ago', icon: 'W' }
-          ].map((sys, i) => (
+          {[ ].map((sys, i) => (
             <div key={i} className="flex items-center gap-3 p-3 bg-white dark:bg-slate-700 rounded-lg">
               <div className="w-10 h-10 rounded-full bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center font-bold text-emerald-600">
                 {sys.icon}
@@ -770,6 +761,7 @@ const HomeView = ({ setView }) => {
           ))}
         </div>
       </Card>
+    </div>
     </div>
   );
 };
@@ -1485,11 +1477,26 @@ const ExternalSystemsView = ({ addNotification, excelData, setExcelData, user })
 
 const DataIntegrationView = ({ addNotification }) => {
   const [etlProgress, setEtlProgress] = useState(0);
-  const runEtl = () => { setEtlProgress(10); const interval = setInterval(() => { setEtlProgress(prev => { if (prev >= 100) { clearInterval(interval); addNotification("ETL Completed", "success"); return 100; } return prev + 10; }); }, 200); };
+  const [etlStats, setEtlStats] = useState({ raw: 0, cleaned: 0, errors: 0 });
+  
+  const runEtl = () => { 
+    setEtlProgress(10); 
+    const interval = setInterval(() => { 
+      setEtlProgress(prev => { 
+        if (prev >= 100) { 
+          clearInterval(interval); 
+          addNotification("ETL Completed", "success"); 
+          return 100; 
+        } 
+        return prev + 10; 
+      }); 
+    }, 200); 
+  };
+  
   return (
     <div className="space-y-6 animate-fade-in">
       <div className="flex justify-between items-center"><h2 className="text-xl md:text-2xl font-bold flex items-center gap-2"><RefreshCw className="w-6 h-6 text-purple-500" />Data Integration</h2><Button onClick={runEtl} disabled={etlProgress > 0 && etlProgress < 100}>Run ETL</Button></div>
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-6"><Card><div className="text-slate-500 text-sm mb-1">Raw</div><div className="text-3xl font-bold">14,205</div></Card><Card><div className="text-slate-500 text-sm mb-1">Cleaned</div><div className="text-3xl font-bold text-blue-600">14,180</div></Card><Card><div className="text-slate-500 text-sm mb-1">Errors</div><div className="text-3xl font-bold text-red-500">25</div></Card></div>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-6"><Card><div className="text-slate-500 text-sm mb-1">Raw</div><div className="text-3xl font-bold">{etlStats.raw || '--'}</div></Card><Card><div className="text-slate-500 text-sm mb-1">Cleaned</div><div className="text-3xl font-bold text-blue-600">{etlStats.cleaned || '--'}</div></Card><Card><div className="text-slate-500 text-sm mb-1">Errors</div><div className="text-3xl font-bold text-red-500">{etlStats.errors || '--'}</div></Card></div>
       {etlProgress > 0 && (<Card className="bg-slate-50 dark:bg-slate-800/50"><div className="flex justify-between text-sm font-medium mb-2"><span>Progress</span><span>{etlProgress}%</span></div><div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-2.5"><div className="bg-purple-600 h-2.5 rounded-full transition-all duration-300" style={{ width: `${etlProgress}%` }}></div></div></Card>)}
     </div>
   );
@@ -1545,7 +1552,7 @@ const SmartAlertsView = ({ addNotification, excelData, user }) => {
     loadKpiAlerts();
   }, [user]);
 
-  const allAlerts = [...kpiAlerts, ...MOCK_ALERTS];
+  const allAlerts = kpiAlerts;
 
   const generateDeepDive = async () => {
     if (!selectedAlert) return;
@@ -1681,7 +1688,7 @@ const OperationsDashboardView = ({ excelData, user }) => {
 
   const lineChartData = hasData && firstNumeric
     ? excelData.slice(0, Math.min(12, excelData.length)).map(row => Number(row[firstNumeric]) || 0)
-    : [65, 78, 80, 85, 70, 88, 92];
+    : [];
 
   const categoryCounts = hasData && categoryColumn ? excelData.reduce((acc, row) => {
     const key = row[categoryColumn] ? String(row[categoryColumn]) : 'Unspecified';
@@ -1696,7 +1703,7 @@ const OperationsDashboardView = ({ excelData, user }) => {
         labels: topCategories.map(([label]) => label),
         values: topCategories.map(([, count]) => Math.round((count / excelData.length) * 100))
       }
-    : { labels: ['Alpha', 'Beta', 'Gamma', 'Delta', 'Epsilon'], values: [95, 82, 88, 75, 98] };
+    : { labels: [], values: [] };
 
   const shortages = topCategories.length
     ? topCategories.map(([label, count], i) => ({
@@ -1704,11 +1711,7 @@ const OperationsDashboardView = ({ excelData, user }) => {
         percent: Math.min(100, Math.round((count / excelData.length) * 100)),
         color: ['bg-blue-500', 'bg-purple-500', 'bg-amber-500', 'bg-emerald-500', 'bg-rose-500'][i % 5]
       }))
-    : [
-        { label: 'Materials', percent: 45, color: 'bg-blue-500' },
-        { label: 'Packing', percent: 30, color: 'bg-purple-500' },
-        { label: 'Chips', percent: 25, color: 'bg-amber-500' }
-      ];
+    : [];
 
   const kpis = hasData ? [
     { label: "Rows", value: excelData.length.toLocaleString(), delta: `${columns.length} columns`, color: "text-emerald-500", icon: Activity },
@@ -1716,10 +1719,10 @@ const OperationsDashboardView = ({ excelData, user }) => {
     { label: "Numeric Fields", value: numericColumns.length || '0', delta: firstNumeric ? `Charting ${firstNumeric}` : "No numeric columns detected", color: "text-amber-500", icon: TrendingUp },
     { label: "Top Category", value: topCategories[0]?.[0] || 'N/A', delta: topCategories[0] ? `${topCategories[0][1]} rows` : "Upload data to populate", color: "text-red-500", icon: AlertTriangle }
   ] : [
-    { label: "Health", value: MOCK_KPI_CONTEXT.healthIndex, delta: "+2.1%", color: "text-emerald-500", icon: Activity },
-    { label: "On-Time", value: MOCK_KPI_CONTEXT.onTimeShipment, delta: "+1.4%", color: "text-blue-500", icon: CheckCircle },
-    { label: "Production", value: MOCK_KPI_CONTEXT.productionRate, delta: "-0.8%", color: "text-amber-500", icon: TrendingUp },
-    { label: "Delays", value: MOCK_KPI_CONTEXT.activeDelays, delta: "3 open", color: "text-red-500", icon: AlertTriangle }
+    { label: "Health", value: "--", delta: "No data", color: "text-emerald-500", icon: Activity },
+    { label: "On-Time", value: "--", delta: "No data", color: "text-blue-500", icon: CheckCircle },
+    { label: "Production", value: "--", delta: "No data", color: "text-amber-500", icon: TrendingUp },
+    { label: "Delays", value: "--", delta: "No data", color: "text-red-500", icon: AlertTriangle }
   ];
 
   return (
@@ -1875,9 +1878,13 @@ const OperationsDashboardView = ({ excelData, user }) => {
           </div>
           <div className="grid grid-cols-7 gap-1 md:gap-2">
             {['M','T','W','T','F','S','S'].map((d, idx) => <div key={`day-${idx}`} className="text-center text-xs text-slate-500">{d}</div>)}
-            {[0, 2, 5, 1, 0, 8, 3, 2, 4, 1, 6, 2, 0, 1].map((val, i) => (
-              <div key={i} className={`h-8 md:h-12 rounded flex items-center justify-center text-xs font-medium text-white ${val === 0 ? 'bg-slate-100 dark:bg-slate-800 text-slate-400' : val < 3 ? 'bg-emerald-400' : val < 6 ? 'bg-amber-400' : 'bg-red-500'}`}>{val > 0 ? val : ''}</div>
-            ))}
+            {hasData ? (
+              lineChartData.slice(0, 14).map((val, i) => (
+                <div key={i} className={`h-8 md:h-12 rounded flex items-center justify-center text-xs font-medium text-white ${val === 0 ? 'bg-slate-100 dark:bg-slate-800 text-slate-400' : val < 3 ? 'bg-emerald-400' : val < 6 ? 'bg-amber-400' : 'bg-red-500'}`}>{val > 0 ? val : ''}</div>
+              ))
+            ) : (
+              <div className="col-span-7 text-center py-8 text-slate-400">Upload data to view heatmap</div>
+            )}
           </div>
         </Card>
         <Card>
@@ -1914,7 +1921,7 @@ const AnalyticsCenterView = ({ excelData }) => {
       </div>
       {report && <Card className="bg-indigo-50 dark:bg-indigo-900/20"><p className="text-indigo-900 dark:text-indigo-200 text-sm whitespace-pre-line">{report}</p></Card>}
       <div className="flex border-b border-slate-200 overflow-x-auto"><button className="px-6 py-3 text-sm font-medium border-b-2 border-indigo-500 text-indigo-600">Cost Analysis</button></div>
-      <Card><h3 className="font-semibold mb-6">Monthly Costs</h3><SimpleLineChart data={[40, 35, 55, 45, 60, 55, 70]} color='#ef4444' /></Card>
+      <Card><h3 className="font-semibold mb-6">Monthly Costs</h3><SimpleLineChart data={[]} color='#ef4444' /></Card>
     </div>
   );
 };
