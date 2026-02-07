@@ -266,64 +266,64 @@ export default function SmartOpsApp() {
     {
       key: 'command',
       label: 'Command',
-      labelZh: '指揮中心',
+      labelZh: 'Center',
       icon: Target,
       color: 'text-red-500',
-      taskQuestion: '今天最該管什麼？',
+      taskQuestion: 'What should I manage today?',
       children: [
-        { key: 'home', label: 'Dashboard', labelZh: '總覽', icon: LayoutDashboard, view: 'home' },
-        { key: 'dashboard', label: 'Operations', labelZh: '營運', icon: Activity, view: 'dashboard' },
-        { key: 'alerts', label: 'Action Items', labelZh: '待辦', icon: AlertCircle, view: 'alerts' }
+        { key: 'home', label: 'Dashboard', labelZh: 'Overview', icon: LayoutDashboard, view: 'home' },
+        { key: 'dashboard', label: 'Operations', labelZh: 'Ops', icon: Activity, view: 'dashboard' },
+        { key: 'alerts', label: 'Action Items', labelZh: 'Tasks', icon: AlertCircle, view: 'alerts' }
       ]
     },
     {
       key: 'detect',
       label: 'Detect',
-      labelZh: '風險偵測',
+      labelZh: 'Risk Detection',
       icon: Search,
       color: 'text-amber-500',
-      taskQuestion: '哪裡出問題了？',
+      taskQuestion: 'Where are the problems?',
       children: [
-        { key: 'risk-dashboard', label: 'Risk Dashboard', labelZh: '風險儀表板', icon: AlertTriangle, view: 'risk-dashboard' },
-        { key: 'forecasts', label: 'Forecasts', labelZh: '預測', icon: TrendingUp, view: 'forecasts' },
-        { key: 'bom-data', label: 'BOM Health', labelZh: 'BOM健康度', icon: Database, view: 'bom-data' }
+        { key: 'risk-dashboard', label: 'Risk Dashboard', labelZh: 'Risk View', icon: AlertTriangle, view: 'risk-dashboard' },
+        { key: 'forecasts', label: 'Forecasts', labelZh: 'Forecast', icon: TrendingUp, view: 'forecasts' },
+        { key: 'bom-data', label: 'BOM Health', labelZh: 'BOM Status', icon: Database, view: 'bom-data' }
       ]
     },
     {
       key: 'simulate',
       label: 'Simulate',
-      labelZh: '決策模擬',
+      labelZh: 'Decision Sim',
       icon: Calculator,
       color: 'text-blue-500',
-      taskQuestion: '該怎麼做最好？',
+      taskQuestion: 'What is the best approach?',
       children: [
-        { key: 'cost-analysis', label: 'Cost Optimizer', labelZh: '成本優化', icon: DollarSign, view: 'cost-analysis' },
-        { key: 'decision', label: 'What-if AI', labelZh: '情境模擬', icon: Bot, view: 'decision' },
-        { key: 'analytics', label: 'Scenario Compare', labelZh: '方案比較', icon: BarChart3, view: 'analytics' }
+        { key: 'cost-analysis', label: 'Cost Optimizer', labelZh: 'Cost Opt', icon: DollarSign, view: 'cost-analysis' },
+        { key: 'decision', label: 'What-if AI', labelZh: 'Scenario AI', icon: Bot, view: 'decision' },
+        { key: 'analytics', label: 'Scenario Compare', labelZh: 'Compare', icon: BarChart3, view: 'analytics' }
       ]
     },
     {
       key: 'execute',
       label: 'Execute',
-      labelZh: '行動執行',
+      labelZh: 'Action Hub',
       icon: Zap,
       color: 'text-purple-500',
-      taskQuestion: '執行與追蹤',
+      taskQuestion: 'Execute and track',
       children: [
-        { key: 'suppliers', label: 'Supplier Portal', labelZh: '供應商', icon: Building2, view: 'suppliers' },
-        { key: 'external', label: 'Data Upload', labelZh: '資料上傳', icon: Upload, view: 'external' }
+        { key: 'suppliers', label: 'Supplier Portal', labelZh: 'Suppliers', icon: Building2, view: 'suppliers' },
+        { key: 'external', label: 'Data Upload', labelZh: 'Upload', icon: Upload, view: 'external' }
       ]
     },
     {
       key: 'govern',
       label: 'Govern',
-      labelZh: '治理分析',
+      labelZh: 'Governance',
       icon: BarChart3,
       color: 'text-emerald-500',
-      taskQuestion: '我們決策對嗎？',
+      taskQuestion: 'Are our decisions correct?',
       children: [
-        { key: 'import-history', label: 'Audit Trail', labelZh: '審計追蹤', icon: History, view: 'import-history' },
-        { key: 'integration', label: 'Data Hub', labelZh: '數據中心', icon: RefreshCw, view: 'integration' }
+        { key: 'import-history', label: 'Audit Trail', labelZh: 'Audit', icon: History, view: 'import-history' },
+        { key: 'integration', label: 'Data Hub', labelZh: 'Data Hub', icon: RefreshCw, view: 'integration' }
       ]
     }
   ];
@@ -490,7 +490,7 @@ export default function SmartOpsApp() {
               className="flex items-center gap-1.5 text-sm font-medium text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200"
             >
               <ChevronLeft className="w-4 h-4" />
-              上一頁
+              Back
             </button>
           </div>
         )}
