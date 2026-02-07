@@ -339,12 +339,16 @@ export default function SmartOpsApp() {
     return false;
   };
 
-  // Helper function: Toggle dropdown
+  // Helper function: Toggle dropdown - only one open at a time
   const toggleDropdown = (key) => {
-    setOpenDropdowns(prev => ({
-      ...prev,
-      [key]: !prev[key]
-    }));
+    setOpenDropdowns(prev => {
+      // If clicking the same key, close it; otherwise open new one and close others
+      const isCurrentlyOpen = prev[key];
+      if (isCurrentlyOpen) {
+        return {};
+      }
+      return { [key]: true };
+    });
   };
 
   return (
