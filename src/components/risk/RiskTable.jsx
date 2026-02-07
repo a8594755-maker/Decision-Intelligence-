@@ -229,6 +229,28 @@ const RiskTable = ({
               </div>
             </th>
             
+            {/* M6 Gate-R5: Revenue at Risk columns */}
+            <th className="px-3 py-3 text-right text-xs font-semibold uppercase text-rose-600 dark:text-rose-400">
+              Margin at Risk
+            </th>
+            <th className="px-3 py-3 text-right text-xs font-semibold uppercase text-orange-600 dark:text-orange-400">
+              Penalty
+            </th>
+            <th className="px-3 py-3 text-right text-xs font-semibold uppercase text-red-600 dark:text-red-400">
+              Total $
+            </th>
+            
+            {/* M7 Gate-7.1: Risk Score column */}
+            <th 
+              onClick={() => handleSort('riskScore')}
+              className="px-3 py-3 text-right text-xs font-semibold uppercase text-purple-600 dark:text-purple-400 cursor-pointer hover:bg-slate-200 dark:hover:bg-slate-700"
+            >
+              <div className="flex items-center justify-end gap-1">
+                Risk Score
+                {renderSortIcon('riskScore')}
+              </div>
+            </th>
+            
             <th className="px-3 py-3 text-center text-xs font-semibold uppercase text-slate-700 dark:text-slate-300">
               操作
             </th>
@@ -351,6 +373,50 @@ const RiskTable = ({
                     </div>
                   ) : (
                     <span className="text-slate-400">$0</span>
+                  )}
+                </td>
+                
+                {/* M6 Gate-R5: Revenue at Risk data cells */}
+                <td className="px-3 py-2.5 text-right">
+                  {risk.revMarginAtRisk ? (
+                    <span className="font-semibold text-rose-600 dark:text-rose-400">
+                      ${risk.revMarginAtRisk.toLocaleString()}
+                    </span>
+                  ) : (
+                    <span className="text-slate-300" title="No revenue data / not FG key">—</span>
+                  )}
+                </td>
+                <td className="px-3 py-2.5 text-right">
+                  {risk.revPenaltyAtRisk ? (
+                    <span className="text-orange-600 dark:text-orange-400">
+                      ${risk.revPenaltyAtRisk.toLocaleString()}
+                    </span>
+                  ) : (
+                    <span className="text-slate-300">—</span>
+                  )}
+                </td>
+                <td className="px-3 py-2.5 text-right">
+                  {risk.revTotalAtRisk ? (
+                    <span className="font-bold text-red-600 dark:text-red-400">
+                      ${risk.revTotalAtRisk.toLocaleString()}
+                    </span>
+                  ) : (
+                    <span className="text-slate-300">—</span>
+                  )}
+                </td>
+                
+                {/* M7 Gate-7.1: Risk Score data cell */}
+                <td className="px-3 py-2.5 text-right">
+                  {risk.riskScore ? (
+                    <span className={`font-bold ${
+                      risk.riskScore > 10000 ? 'text-red-600 dark:text-red-400' :
+                      risk.riskScore > 1000 ? 'text-orange-600 dark:text-orange-400' :
+                      'text-purple-600 dark:text-purple-400'
+                    }`}>
+                      {risk.riskScore.toLocaleString()}
+                    </span>
+                  ) : (
+                    <span className="text-slate-300" title="No risk score calculated">—</span>
                   )}
                 </td>
                 

@@ -15,21 +15,69 @@ import { getRiskLevelConfig, formatDate, formatNumber } from './mapDomainToUI';
 import { formatCurrency } from '../../domains/risk/profitAtRiskCalculator';
 import { simulateWhatIfExpedite } from '../../domains/risk/whatIfExpedite';
 import ProbabilisticSection from './ProbabilisticSection';
+import CostSection from './CostSection';
+import RevenueSection from './RevenueSection';
+import RiskScoreSection from './RiskScoreSection';
+import WhatIfSection from './WhatIfSection';
 
 const DetailsPanel = ({
   details,
+  user, // M7.2: User object for What-if service
   onClose,
   horizonDays = 30,
   activeForecastRun = null,
   probSeries = null, // Step 2: P0 - Prob series data
   loadProbSeriesForKey = null, // Step 2: P0 - Function to load series
-  hasProbResults = false // Step 2: P0 - Whether prob results exist
+  hasProbResults = false, // Step 2: P0 - Whether prob results exist
+  revenueState = { mode: 'none', summaryByKey: {} }, // M6 Gate-R5: Revenue data
+  riskScoreData = null, // M7 Gate-7.1: Risk score from parent
+  replayDraft = null // M7.3 WP3: Replay draft for What-if
 }) => {
   // ========== What-if Simulation State ==========
   const [expediteBuckets, setExpediteBuckets] = useState(1);
   const [simulationResult, setSimulationResult] = useState(null);
+  const [whatIfResult, setWhatIfResult] = useState(null);
+  const [runningWhatIf, setRunningWhatIf] = useState(false);
   
   // ========== What-if Handlers ==========
+  const handleRunWhatIf = async (action) => {
+    if (!details || !activeForecastRun?.id) return;
+    
+    setRunningWhatIf(true);
+    try {
+      const { runWhatIf } = await import('../../services/whatIfService');
+      
+      const keyContext = {
+        materialCode: details.item,
+        plantId: details.plantId,
+        onHand: details.onHand || 0,
+        safetyStock: details.safetyStock || 0,
+        gapQty: details.gapQty || 0,
+        nextStockoutBucket: details.nextTimeBucket,
+        inboundLines: details.poDetails?.map(po => ({
+          poNumber: po.poNumber,
+          bucket: po.timeBucket,
+          qty: po.qty
+        })) || []
+      };
+      
+      const result = await runWhatIf(
+        user?.id, // Use user.id from prop
+        activeForecastRun.id,
+        keyContext,
+        action
+      );
+      
+      if (result.success) {
+        setWhatIfResult(result);
+      }
+    } catch (error) {
+      console.error('What-if failed:', error);
+    } finally {
+      setRunningWhatIf(false);
+    }
+  };
+  
   const handleSimulate = () => {
     if (!details || !details.poDetails || details.poDetails.length === 0) {
       setSimulationResult({
@@ -731,6 +779,57 @@ const DetailsPanel = ({
           hasProbResults={hasProbResults}
         />
 
+        {/* Section 6.6: Cost Forecast Analysis (Milestone 5) */}
+        <CostSection
+          userId={details?.userId}
+          materialCode={details?.item}
+          plantId={details?.plantId}
+          costRunId={activeForecastRun?.id}
+          hasCostResults={!!activeForecastRun?.id}
+        />
+
+        {/* Section 6.7: Revenue at Risk Analysis (Milestone 6 Gate-R5) */}
+        <RevenueSection
+          userId={details?.userId}
+          materialCode={details?.item}
+          plantId={details?.plantId}
+          revenueRunId={activeForecastRun?.id}
+          summaryData={revenueState.summaryByKey?.[`${details?.item}|${details?.plantId}`]}
+          hasRevenueData={!!revenueState.summaryByKey?.[`${details?.item}|${details?.plantId}`]}
+        />
+
+        {/* Section 6.8: Risk Score Analysis (Milestone 7 Gate-7.1) */}
+        <RiskScoreSection
+          userId={details?.userId}
+          materialCode={details?.item}
+          plantId={details?.plantId}
+          forecastRunId={activeForecastRun?.id}
+          riskScoreData={riskScoreData}
+        />
+
+        {/* Section 6.9: What-if Simulator (Milestone 7.2 WP2) */}
+        <WhatIfSection
+          userId={details?.userId}
+          materialCode={details?.item}
+          plantId={details?.plantId}
+          bomRunId={activeForecastRun?.id}
+          keyContext={{
+            onHand: details?.onHand,
+            safetyStock: details?.safetyStock,
+            gapQty: details?.gapQty,
+            inboundLines: details?.poDetails?.map(po => ({
+              poNumber: po.poNumber,
+              bucket: po.timeBucket,
+              qty: po.qty
+            })),
+            pStockout: riskScoreData?.pStockout || (details?.gapQty > 0 ? 1.0 : 0.0),
+            impactUsd: riskScoreData?.impactUsd || 0
+          }}
+          onRunWhatIf={handleRunWhatIf}
+          result={whatIfResult}
+          replayDraft={replayDraft} // M7.3 WP3: Replay draft
+        />
+
         {/* Footer Note */}
         <div className="text-xs text-slate-500 dark:text-slate-400 pt-2 border-t border-slate-200 dark:border-slate-700">
           💡 計算邏輯：
@@ -741,8 +840,12 @@ const DetailsPanel = ({
           <code className="bg-slate-200 dark:bg-slate-700 px-1 rounded mx-1">whatIfExpedite.js (M3)</code>
           +
           <code className="bg-slate-200 dark:bg-slate-700 px-1 rounded mx-1">inventoryProbForecast.js (4-B Monte Carlo)</code>
+          +
+          <code className="bg-slate-200 dark:bg-slate-700 px-1 rounded mx-1">costForecast.js (M5)</code>
+          +
+          <code className="bg-slate-200 dark:bg-slate-700 px-1 rounded mx-1">revenueForecast.js (M6)</code>
           <div className="mt-1 text-amber-600 dark:text-amber-400">
-            ℹ️ Supply Coverage Risk + Profit at Risk (M2) + What-if Simulator (M3) + Probabilistic Forecast (4-B)
+            ℹ️ Supply Coverage Risk + Profit at Risk (M2) + What-if Simulator (M3) + Probabilistic Forecast (4-B) + Cost Forecast (M5) + Revenue at Risk (M6)
           </div>
         </div>
       </div>

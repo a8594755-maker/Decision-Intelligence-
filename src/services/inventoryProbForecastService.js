@@ -11,6 +11,7 @@
  */
 
 import { supabase } from './supabaseClient';
+import { logEvent, EVENT_TYPES, ENTITY_TYPES } from './auditService';
 import { 
   executeInventoryProbForecast, 
   buildBomMultiplierMap,
@@ -178,10 +179,48 @@ export async function runInventoryProbForecast(userId, bomRunId, options = {}) {
     const saveMs = Date.now() - saveStart;
     const duration = Date.now() - startTime;
     
-    // Compute summary KPIs
+    // M7.3 WP3: Log audit event after successful save
+    const fetchMs = duration - computeMs - saveMs;
     const summaries = mcResult.keys.map(k => k.summary);
     const avgPStockout = summaries.reduce((sum, s) => sum + (s.pStockout || 0), 0) / summaries.length;
     const keysAtRisk = summaries.filter(s => s.pStockout > 0.5).length;
+    const topKey = summaries.length > 0 
+      ? summaries.sort((a, b) => (b.pStockout || 0) - (a.pStockout || 0))[0]
+      : null;
+    
+    await logEvent(userId, {
+      eventType: EVENT_TYPES.INVENTORY_PROB_RAN,
+      correlationId: bomRunId,
+      entityType: ENTITY_TYPES.BOM_RUN,
+      entityId: bomRunId,
+      bomRunId: bomRunId,
+      payload: {
+        entity: { type: ENTITY_TYPES.BOM_RUN, id: bomRunId },
+        inputs: {
+          demand_source: inputDemandSource,
+          demand_forecast_run_id: inputDemandForecastRunId,
+          inbound_source: inputInboundSource,
+          supply_forecast_run_id: inputSupplyForecastRunId,
+          trials: actualTrials,
+          seed: seed
+        },
+        outputs: {
+          row_counts: {
+            summary: summaryPayloads.length,
+            series: seriesPayloads.length
+          },
+          kpis: {
+            maxPStockout: Math.max(...summaries.map(s => s.pStockout || 0)),
+            avgPStockout,
+            keysAtRisk
+          },
+          top_key: topKey ? topKey.key : null
+        },
+        perf: { fetchMs, computeMs, saveMs }
+      }
+    });
+    
+    // Use already computed KPIs for return
     
     return {
       mode: (isDegraded || mcResult.metrics.degraded) ? 'degraded' : 'success',

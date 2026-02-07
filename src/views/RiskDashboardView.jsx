@@ -12,7 +12,7 @@
  */
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { Loader2, RefreshCw, AlertCircle } from 'lucide-react';
+import { Loader2, RefreshCw, AlertCircle, Calculator } from 'lucide-react';
 import { Button } from '../components/ui';
 import { supabase } from '../services/supabaseClient';
 import { forecastRunsService, componentDemandService } from '../services/supabaseClient';
@@ -32,6 +32,7 @@ import FilterBar from '../components/risk/FilterBar';
 import KPICards from '../components/risk/KPICards';
 import RiskTable from '../components/risk/RiskTable';
 import DetailsPanel from '../components/risk/DetailsPanel';
+import AuditTimeline from '../components/risk/AuditTimeline'; // M7.3 WP3
 
 // 資料轉換 Adapter（新版）
 import { mapSupplyCoverageToUI } from '../components/risk/mapDomainToUI';
@@ -94,6 +95,23 @@ const RiskDashboardView = ({ user, addNotification }) => {
   const [probSeriesCache, setProbSeriesCache] = useState({}); // Map<key, series[]>
   const [loadingProb, setLoadingProb] = useState(false);
   const [hasProbResults, setHasProbResults] = useState(false);
+
+  // Revenue at Risk data (M6 Gate-R5)
+  const [revenueState, setRevenueState] = useState({
+    mode: 'none', // 'none' | 'loaded' | 'degraded'
+    reason: null,
+    revenueRunId: null,
+    summaryByKey: {}, // Map: key -> { marginAtRisk, penaltyAtRisk, totalAtRisk }
+    perf: { loadMs: 0 }
+  });
+
+  // Risk Score data (M7 Gate-7.1)
+  const [riskScoreState, setRiskScoreState] = useState({
+    mode: 'none', // 'none' | 'loaded' | 'degraded'
+    scoreByKey: {}, // Map: key -> { score, pStockout, impactUsd, urgencyWeight }
+    perf: { loadMs: 0 }
+  });
+  const [calculatingRiskScores, setCalculatingRiskScores] = useState(false);
 
   // ========== 資料載入 ==========
 
@@ -396,7 +414,7 @@ const RiskDashboardView = ({ user, addNotification }) => {
 
   // ========== 派生資料（從 uiRows 單一來源）==========
 
-  // 篩選後的資料
+  // 篩選後的資料（含 Revenue 整合 M6 Gate-R5）
   const filteredRows = useMemo(() => {
     let filtered = [...uiRows];
 
@@ -416,8 +434,26 @@ const RiskDashboardView = ({ user, addNotification }) => {
       filtered = filtered.filter(r => r.riskLevel === selectedRiskLevel);
     }
 
-    return filtered;
-  }, [uiRows, selectedPlant, searchTerm, selectedRiskLevel]);
+    // Merge revenue data (M6 Gate-R5) and risk score data (M7 Gate-7.1)
+    return filtered.map(row => {
+      const key = `${row.item}|${row.plantId}`;
+      const revData = revenueState.summaryByKey[key];
+      const scoreData = riskScoreState.scoreByKey[key];
+      
+      return {
+        ...row,
+        revMarginAtRisk: revData?.marginAtRisk || null,
+        revPenaltyAtRisk: revData?.penaltyAtRisk || null,
+        revTotalAtRisk: revData?.totalAtRisk || null,
+        hasRevenueData: !!revData,
+        riskScore: scoreData?.score || null,
+        riskScorePStockout: scoreData?.pStockout || null,
+        riskScoreImpact: scoreData?.impactUsd || null,
+        riskScoreUrgency: scoreData?.urgencyWeight || null,
+        hasRiskScore: !!scoreData
+      };
+    });
+  }, [uiRows, selectedPlant, searchTerm, selectedRiskLevel, revenueState.summaryByKey, riskScoreState.scoreByKey]);
 
   // KPI 統計（從 filteredRows 派生）
   const kpis = useMemo(() => {
@@ -525,12 +561,221 @@ const RiskDashboardView = ({ user, addNotification }) => {
     }
   };
 
+  /**
+   * Load audit events timeline (M7.3 WP3)
+   */
+  const loadAuditEvents = async () => {
+    if (!user?.id || !activeForecastRun?.id) return;
+    
+    setAuditLoading(true);
+    try {
+      const { listEvents } = await import('../services/auditService');
+      const result = await listEvents(user.id, {
+        bomRunId: activeForecastRun.id,
+        limit: 100
+      });
+      
+      if (result.success) {
+        setAuditEvents(result.events);
+      }
+    } catch (error) {
+      console.warn('Failed to load audit events:', error);
+    } finally {
+      setAuditLoading(false);
+    }
+  };
+
+  /**
+   * Handle What-if Replay from audit event
+   */
+  const handleReplayWhatIf = (event) => {
+    if (!event.payload?.inputs?.action) return;
+    
+    // Extract key from event
+    const key = event.key;
+    if (!key) return;
+    
+    // Find the row in filteredRows
+    const [materialCode, plantId] = key.split('|');
+    const targetRow = filteredRows.find(r => 
+      r.item === materialCode && r.plantId === plantId
+    );
+    
+    if (!targetRow) {
+      addNotification(`Cannot find row for key: ${key}`, 'warning');
+      return;
+    }
+    
+    // Set replay draft with action params
+    setReplayDraft({
+      eventId: event.id,
+      action: event.payload.inputs.action,
+      key
+    });
+    
+    // Open details panel
+    setSelectedRow(targetRow);
+  };
+
   // Load prob data when run changes
   useEffect(() => {
     if (activeForecastRun?.id) {
       loadProbData();
+      loadRevenueSummary(); // M6 Gate-R5: Load revenue data
+      loadRiskScores(); // M7 Gate-7.1: Load risk scores
+      loadAuditEvents(); // M7.3 WP3: Load audit timeline
     }
   }, [activeForecastRun?.id]);
+
+  /**
+   * Load revenue summary for current BOM run (M6 Gate-R5)
+   */
+  const loadRevenueSummary = async () => {
+    console.log('🔍 loadRevenueSummary called', { userId: user?.id, runId: activeForecastRun?.id, kind: activeForecastRun?.kind });
+    if (!user?.id || !activeForecastRun?.id) {
+      console.log('❌ loadRevenueSummary skipped - missing user or run');
+      return;
+    }
+    
+    const startMs = Date.now();
+    try {
+      // Import revenue forecast service functions
+      const { getLatestRevenueRunForBomRun, getRevenueSummaryByRun } = await import('../services/revenueForecastService');
+      
+      let revenueRunId;
+      
+      // If current run is already a revenue run, use it directly
+      if (activeForecastRun.kind === 'revenue_forecast') {
+        console.log('✅ Using current revenue run directly');
+        revenueRunId = activeForecastRun.id;
+      } else {
+        // Otherwise, find revenue run for this BOM run
+        console.log('🔍 Finding revenue run for BOM run:', activeForecastRun.id);
+        const runResult = await getLatestRevenueRunForBomRun(user.id, activeForecastRun.id);
+        console.log('📊 getLatestRevenueRunForBomRun result:', runResult);
+        
+        if (!runResult.success) {
+          if (runResult.notFound) {
+            setRevenueState({
+              mode: 'none',
+              reason: 'no_revenue_run',
+              revenueRunId: null,
+              summaryByKey: {},
+              perf: { loadMs: Date.now() - startMs }
+            });
+            return;
+          }
+          throw new Error(runResult.error);
+        }
+        revenueRunId = runResult.data.id;
+      }
+      
+      // Get summary by key
+      console.log('📊 Getting revenue summary for run:', revenueRunId);
+      const summaryResult = await getRevenueSummaryByRun(user.id, revenueRunId);
+      
+      if (!summaryResult.success) {
+        throw new Error(summaryResult.error);
+      }
+      
+      console.log('💰 Loaded revenue summary:', Object.keys(summaryResult.data).length, 'FG keys');
+      
+      setRevenueState({
+        mode: 'loaded',
+        reason: null,
+        revenueRunId,
+        summaryByKey: summaryResult.data,
+        perf: { loadMs: Date.now() - startMs }
+      });
+      
+    } catch (error) {
+      console.warn('Failed to load revenue summary:', error);
+      setRevenueState({
+        mode: 'degraded',
+        reason: error.message,
+        revenueRunId: null,
+        summaryByKey: {},
+        perf: { loadMs: Date.now() - startMs }
+      });
+    }
+  };
+
+  /**
+   * Load risk scores for current run (M7 Gate-7.1)
+   */
+  const loadRiskScores = async () => {
+    if (!user?.id || !activeForecastRun?.id) return;
+    
+    const startMs = Date.now();
+    try {
+      const { getRiskScoresForRun } = await import('../services/riskScoreService');
+      
+      const result = await getRiskScoresForRun(user.id, activeForecastRun.id);
+      
+      if (!result.success) {
+        setRiskScoreState({
+          mode: 'none',
+          scoreByKey: {},
+          perf: { loadMs: Date.now() - startMs }
+        });
+        return;
+      }
+      
+      setRiskScoreState({
+        mode: 'loaded',
+        scoreByKey: result.data,
+        perf: { loadMs: Date.now() - startMs }
+      });
+      
+      console.log(`🎯 Loaded risk scores: ${result.count} keys`);
+      
+    } catch (error) {
+      console.warn('Failed to load risk scores:', error);
+      setRiskScoreState({
+        mode: 'degraded',
+        scoreByKey: {},
+        perf: { loadMs: Date.now() - startMs }
+      });
+    }
+  };
+
+  /**
+   * Calculate risk scores for current run (M7 Gate-7.1)
+   */
+  const calculateRiskScores = async () => {
+    if (!user?.id || !activeForecastRun?.id) return;
+    
+    setCalculatingRiskScores(true);
+    console.log('🎯 Starting risk score calculation...');
+    
+    try {
+      const { runRiskScoreCalculation } = await import('../services/riskScoreService');
+      
+      // Pass filteredRows for deterministic fallback
+      const result = await runRiskScoreCalculation(
+        user.id,
+        activeForecastRun.id,
+        {
+          riskRows: filteredRows, // Use current risk data for deterministic P(stockout)
+          currentBucket: null,
+          maxKeys: 1000
+        }
+      );
+      
+      if (result.success) {
+        console.log('✅ Risk score calculation complete:', result.kpis);
+        // Reload to get the new scores
+        await loadRiskScores();
+      } else {
+        console.error('❌ Risk score calculation failed:', result.error);
+      }
+      
+    } catch (error) {
+      console.error('Failed to calculate risk scores:', error);
+    } finally {
+      setCalculatingRiskScores(false);
+    }
+  };
 
   // ========== 渲染 ==========
 
@@ -676,6 +921,17 @@ const RiskDashboardView = ({ user, addNotification }) => {
           >
             重新整理
           </Button>
+          
+          {/* M7 Gate-7.1: Calculate Risk Scores button */}
+          <Button
+            onClick={calculateRiskScores}
+            variant="secondary"
+            icon={Calculator}
+            disabled={loading || !activeForecastRun?.id || calculatingRiskScores}
+            title="計算 Risk Score (P(stockout) × $Impact × Urgency)"
+          >
+            {calculatingRiskScores ? '計算中...' : 'Calculate Risk Scores'}
+          </Button>
         </div>
       </div>
 
@@ -762,15 +1018,33 @@ const RiskDashboardView = ({ user, addNotification }) => {
           <div className="lg:col-span-4 transition-all duration-300">
             <DetailsPanel
               details={selectedRow}
+              user={user} // M7.2: Pass user for What-if service
               onClose={handleCloseDetails}
               horizonDays={HORIZON_BUCKETS}
               activeForecastRun={activeForecastRun}
               probSeries={probSeriesCache}
               loadProbSeriesForKey={loadProbSeriesForKey}
               hasProbResults={hasProbResults}
+              revenueState={revenueState}
+              riskScoreData={selectedRow.riskScore ? {
+                score: selectedRow.riskScore,
+                pStockout: selectedRow.riskScorePStockout,
+                impactUsd: selectedRow.riskScoreImpact,
+                urgencyWeight: selectedRow.riskScoreUrgency
+              } : null}
+              replayDraft={replayDraft} // M7.3 WP3: Replay draft
             />
           </div>
         )}
+      </div>
+
+      {/* D) Audit Timeline (M7.3 WP3) */}
+      <div className="mt-6">
+        <AuditTimeline
+          events={auditEvents}
+          loading={auditLoading}
+          onReplay={handleReplayWhatIf}
+        />
       </div>
     </div>
   );

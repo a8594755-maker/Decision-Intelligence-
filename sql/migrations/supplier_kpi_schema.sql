@@ -28,6 +28,9 @@ CREATE TABLE IF NOT EXISTS suppliers (
 
   -- 基本信息
   supplier_name TEXT NOT NULL,
+  plant_id TEXT,                 -- 可選：工廠/站點維度（NULL 表示跨工廠）
+  lead_time_days NUMERIC,        -- 可選：交期天數（MVP 供 Inventory / Risk fallback 使用）
+  on_time_rate NUMERIC CHECK (on_time_rate >= 0 AND on_time_rate <= 1),
   contact_info JSONB,           -- 可存联络人、电话、email 等结构化信息
   notes TEXT,
 
@@ -255,6 +258,9 @@ COMMENT ON COLUMN price_history.is_contract_price IS '是否为合约价格';
 -- ============================================
 ALTER TABLE suppliers
   ADD COLUMN IF NOT EXISTS supplier_code TEXT,
+  ADD COLUMN IF NOT EXISTS plant_id TEXT,
+  ADD COLUMN IF NOT EXISTS lead_time_days NUMERIC,
+  ADD COLUMN IF NOT EXISTS on_time_rate NUMERIC CHECK (on_time_rate >= 0 AND on_time_rate <= 1),
   ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'active' CHECK (status IN ('active', 'inactive')),
   ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
 
