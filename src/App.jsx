@@ -390,9 +390,6 @@ export default function SmartOpsApp() {
 
                   {openDropdowns[navItem.key] && (
                     <div className="absolute top-full mt-1 left-0 bg-white dark:bg-slate-800 rounded-lg shadow-lg border border-slate-200 dark:border-slate-700 py-1 min-w-[220px] z-50">
-                      <div className="px-4 py-2 border-b border-slate-100 dark:border-slate-700">
-                        <p className="text-xs text-slate-500 dark:text-slate-400 italic">「{navItem.taskQuestion}」</p>
-                      </div>
                       {navItem.children.map(child => (
                         <button
                           key={child.key}
@@ -443,7 +440,6 @@ export default function SmartOpsApp() {
                   <span className="text-sm font-semibold">{navItem.label}</span>
                   <span className="text-xs opacity-60 ml-1">{navItem.labelZh}</span>
                 </div>
-                <p className="text-xs text-slate-500 dark:text-slate-400 px-3 italic">「{navItem.taskQuestion}」</p>
                 {navItem.children.map(child => (
                   <button 
                     key={child.key}
