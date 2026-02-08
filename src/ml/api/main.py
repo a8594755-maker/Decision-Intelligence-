@@ -886,3 +886,324 @@ def _drift_recommendation(level: str) -> str:
     elif level == "notice":
         return "暫不需要重訓，但建議加入安全庫存緩衝"
     return "模型運作正常，無需操作"
+
+
+# ══════════════════════════════════════════════════════════════
+# Digital Twin — Supply Chain Simulation Sandbox
+# ══════════════════════════════════════════════════════════════
+
+from ml.simulation.scenarios import list_scenarios, get_scenario
+from ml.simulation.orchestrator import SimulationOrchestrator, SimulationResult
+from ml.simulation.optimizer import ParameterOptimizer
+from ml.simulation.data_generator import DataGenerator, DemandProfile
+from ml.simulation.inventory_sim import InventoryConfig
+
+
+class SimulationRequest(BaseModel):
+    scenario: str = "normal"                   # normal | volatile | disaster | seasonal
+    seed: int = 42
+    duration_days: Optional[int] = None        # 覆寫情境預設天數
+    use_forecaster: bool = False               # True = 用 SmartOps 預測, False = naive baseline
+    forecast_interval: int = 7                 # 每 N 天跑一次預測
+    chaos_intensity: Optional[str] = None      # 覆寫混沌強度
+
+
+class OptimizeRequest(BaseModel):
+    scenario: str = "normal"
+    seed: int = 42
+    n_trials: int = 30
+    method: str = "random"                     # random | grid
+    min_fill_rate: float = 0.95
+    use_forecaster: bool = False
+
+
+class GenerateDataRequest(BaseModel):
+    days: int = 365
+    start_date: str = "2024-01-01"
+    seed: int = 42
+    base_demand: float = 100.0
+    trend_per_day: float = 0.05
+    weekly_amplitude: float = 15.0
+    noise_std: float = 8.0
+    shock_probability: float = 0.02
+
+
+class ComparisonRequest(BaseModel):
+    scenario: str = "normal"
+    seed: int = 42
+    strategies: Optional[dict] = None          # {"conservative": {...}, "aggressive": {...}}
+
+
+@app.get("/scenarios")
+async def get_scenarios():
+    """列出所有可用的模擬情境"""
+    return {
+        "scenarios": list_scenarios(),
+        "total": len(list_scenarios()),
+    }
+
+
+@app.post("/run-simulation")
+async def run_simulation(request: SimulationRequest):
+    """
+    Digital Twin 模擬端點
+    ─────────────────────
+    選擇情境 → 混沌引擎 + 庫存模擬 → 完整 KPI 報告
+    """
+    try:
+        scenario_config = get_scenario(request.scenario)
+
+        # Allow overrides
+        if request.duration_days:
+            scenario_config.duration_days = request.duration_days
+        if request.chaos_intensity:
+            scenario_config.chaos_intensity = request.chaos_intensity
+
+        orch = SimulationOrchestrator(
+            custom_config=scenario_config,
+            seed=request.seed,
+            use_forecaster=request.use_forecaster,
+            forecast_interval=request.forecast_interval,
+        )
+
+        result = orch.run()
+
+        # Get daily log for timeline
+        daily_df = orch.get_daily_log_df()
+        timeline_sample = daily_df.iloc[::7].to_dict(orient="records")  # Every 7 days
+
+        return {
+            "success": True,
+            **result.to_dict(),
+            "timeline_sample": timeline_sample,
+        }
+
+    except Exception as e:
+        import traceback
+        return {"success": False, "error": str(e), "traceback": traceback.format_exc()}
+
+
+@app.post("/optimize")
+async def optimize_params(request: OptimizeRequest):
+    """
+    參數優化端點
+    ─────────────
+    Grid/Random search 找出最佳庫存策略 (安全庫存係數、訂購點、訂購量)
+    目標: 最小化 Total Cost，約束 fill_rate >= 95%
+    """
+    try:
+        opt = ParameterOptimizer(
+            scenario=request.scenario,
+            seed=request.seed,
+            min_fill_rate=request.min_fill_rate,
+            use_forecaster=request.use_forecaster,
+        )
+
+        result = opt.optimize(n_trials=request.n_trials, method=request.method)
+        return {"success": True, **result.to_dict()}
+
+    except Exception as e:
+        import traceback
+        return {"success": False, "error": str(e), "traceback": traceback.format_exc()}
+
+
+@app.post("/generate-data")
+async def generate_synthetic_data(request: GenerateDataRequest):
+    """
+    合成數據生成端點
+    ─────────────────
+    產生具備統計特徵的需求數據，供訓練/測試/展示使用
+    """
+    try:
+        gen = DataGenerator(seed=request.seed)
+        profile = DemandProfile(
+            base_demand=request.base_demand,
+            trend_per_day=request.trend_per_day,
+            weekly_amplitude=request.weekly_amplitude,
+            noise_std=request.noise_std,
+            shock_probability=request.shock_probability,
+        )
+
+        df = gen.generate(profile, days=request.days, start_date=request.start_date)
+
+        demand_list = df["demand"].tolist()
+        shock_events = df.attrs.get("shock_events", [])
+
+        return {
+            "success": True,
+            "data": {
+                "dates": [str(d.date()) for d in df["date"]],
+                "demand": demand_list,
+            },
+            "stats": {
+                "mean": round(float(np.mean(demand_list)), 2),
+                "std": round(float(np.std(demand_list)), 2),
+                "min": int(min(demand_list)),
+                "max": int(max(demand_list)),
+                "total": int(sum(demand_list)),
+                "days": request.days,
+            },
+            "shock_events": shock_events,
+            "profile": {
+                "base_demand": request.base_demand,
+                "trend_per_day": request.trend_per_day,
+                "weekly_amplitude": request.weekly_amplitude,
+                "noise_std": request.noise_std,
+                "shock_probability": request.shock_probability,
+            },
+        }
+
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/simulation-comparison")
+async def simulation_comparison(request: ComparisonRequest):
+    """
+    策略比較端點
+    ─────────────
+    同一情境下，比較不同庫存策略的表現
+    """
+    try:
+        scenario_config = get_scenario(request.scenario)
+
+        # Default strategies if none provided
+        strategies = request.strategies or {
+            "conservative": {
+                "safety_stock_factor": 2.5,
+                "reorder_point": 400,
+                "order_quantity_days": 21,
+            },
+            "balanced": {
+                "safety_stock_factor": 1.5,
+                "reorder_point": 250,
+                "order_quantity_days": 14,
+            },
+            "aggressive": {
+                "safety_stock_factor": 0.8,
+                "reorder_point": 150,
+                "order_quantity_days": 7,
+            },
+        }
+
+        results = {}
+        for name, params in strategies.items():
+            config = InventoryConfig(
+                initial_inventory=scenario_config.inventory_config.initial_inventory,
+                safety_stock_factor=params.get("safety_stock_factor", 1.5),
+                reorder_point=params.get("reorder_point", 200),
+                order_quantity_days=params.get("order_quantity_days", 14),
+                holding_cost_per_unit_day=scenario_config.inventory_config.holding_cost_per_unit_day,
+                stockout_penalty_per_unit=scenario_config.inventory_config.stockout_penalty_per_unit,
+                ordering_cost_per_order=scenario_config.inventory_config.ordering_cost_per_order,
+                unit_cost=scenario_config.inventory_config.unit_cost,
+            )
+
+            scenario_copy = get_scenario(request.scenario)
+            scenario_copy.inventory_config = config
+
+            orch = SimulationOrchestrator(
+                custom_config=scenario_copy,
+                seed=request.seed,
+                use_forecaster=False,
+            )
+            result = orch.run()
+            results[name] = result.to_dict()
+
+        # Find best strategy
+        ranked = sorted(
+            results.items(),
+            key=lambda x: x[1]["kpis"]["total_cost"]
+            if x[1]["kpis"]["fill_rate_pct"] >= 95 else float("inf"),
+        )
+
+        return {
+            "success": True,
+            "scenario": request.scenario,
+            "strategies": results,
+            "ranking": [
+                {
+                    "rank": i + 1,
+                    "strategy": name,
+                    "total_cost": r["kpis"]["total_cost"],
+                    "fill_rate": r["kpis"]["fill_rate_pct"],
+                    "stockout_days": r["kpis"]["stockout_days"],
+                }
+                for i, (name, r) in enumerate(ranked)
+            ],
+            "recommendation": ranked[0][0] if ranked else None,
+        }
+
+    except Exception as e:
+        import traceback
+        return {"success": False, "error": str(e), "traceback": traceback.format_exc()}
+
+
+@app.post("/auto-model-switch")
+async def auto_model_switch(request: ForecastRequest):
+    """
+    Week 3: 自動模型切換
+    ─────────────────────
+    根據近期數據波動率自動選擇最佳預測模型：
+    - 高波動 → LightGBM (擅長非線性)
+    - 低波動 → Prophet (擅長趨勢+季節性)
+    - 極短數據 → Chronos (零樣本)
+    """
+    try:
+        if not request.history or len(request.history) < 14:
+            return {"error": "需要至少 14 天歷史數據"}
+
+        history = request.history
+        n = len(history)
+
+        # 計算波動率指標
+        recent_14 = history[-14:]
+        recent_30 = history[-30:] if n >= 30 else history
+        cv_14 = float(np.std(recent_14)) / max(float(np.mean(recent_14)), 1)
+        cv_30 = float(np.std(recent_30)) / max(float(np.mean(recent_30)), 1)
+
+        # 趨勢強度 (線性回歸斜率)
+        x = np.arange(len(recent_30))
+        slope = float(np.polyfit(x, recent_30, 1)[0]) if len(recent_30) > 2 else 0
+
+        # 決策邏輯
+        if n < 30:
+            chosen_model = "chronos"
+            reason = f"數據僅 {n} 天，使用零樣本模型 Chronos"
+        elif cv_14 > 0.4:
+            chosen_model = "lightgbm"
+            reason = f"近期波動率高 (CV={cv_14:.2f}>0.4)，LightGBM 擅長捕捉非線性模式"
+        elif abs(slope) > 0.5 and cv_14 < 0.2:
+            chosen_model = "prophet"
+            reason = f"趨勢明確 (slope={slope:.2f}) 且波動低 (CV={cv_14:.2f})，Prophet 最適合"
+        elif cv_14 < 0.15:
+            chosen_model = "prophet"
+            reason = f"數據穩定 (CV={cv_14:.2f}<0.15)，Prophet 的趨勢分解最有效"
+        else:
+            chosen_model = "lightgbm"
+            reason = f"中等波動 (CV={cv_14:.2f})，LightGBM 通用性較佳"
+
+        # 執行預測
+        result = forecaster_factory.predict_with_fallback(
+            sku=request.materialCode,
+            inline_history=history,
+            horizon_days=request.horizonDays,
+            preferred_model=chosen_model,
+        )
+
+        return {
+            "success": result.get("success", False),
+            "auto_selected_model": chosen_model,
+            "selection_reason": reason,
+            "volatility_analysis": {
+                "cv_14d": round(cv_14, 3),
+                "cv_30d": round(cv_30, 3),
+                "trend_slope": round(slope, 3),
+                "data_points": n,
+            },
+            "prediction": result.get("prediction", {}),
+            "metadata": result.get("metadata", {}),
+        }
+
+    except Exception as e:
+        return {"error": str(e)}
