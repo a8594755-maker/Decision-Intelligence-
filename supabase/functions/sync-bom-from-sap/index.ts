@@ -18,34 +18,22 @@ const INTEGRATION_USER_ID = Deno.env.get('INTEGRATION_USER_ID')!;
 // Read BOM-specific base URL or fall back to generic SAP_BASE_URL
 const SAP_BASE_URL_INPUT = Deno.env.get('SAP_BOM_BASE_URL') || Deno.env.get('SAP_BASE_URL') || 'https://sandbox.api.sap.com/s4hanacloud';
 
-// URL normalization: only append service path if base doesn't already contain /sap/opu/odata/sap/
+// URL normalization: always construct correct service URL regardless of what base contains
 const SERVICE_NAME = 'API_BILL_OF_MATERIAL_SRV;v=0002';
 
-function normalizeSapServiceBaseUrl(baseUrl: string, serviceName: string): string {
-  const cleanedBase = baseUrl.replace(/\/+$/, '');
-  const sapOdataPrefix = '/sap/opu/odata/sap';
-  const sapOdataMarker = `${sapOdataPrefix}/`;
+function buildSapServiceUrl(baseUrl: string, serviceName: string): string {
+  const cleaned = baseUrl.replace(/\/+$/, '');
+  const odataSegment = '/sap/opu/odata/sap';
 
-  if (cleanedBase.includes(sapOdataMarker)) {
-    if (cleanedBase.includes(`${sapOdataMarker}${serviceName}`)) {
-      return cleanedBase;
-    }
+  // If base already contains /sap/opu/odata/sap, strip everything from that point
+  // to remove any old/wrong service name baked into the env var
+  const idx = cleaned.indexOf(odataSegment);
+  const root = idx >= 0 ? cleaned.substring(0, idx) : cleaned;
 
-    if (cleanedBase.endsWith(sapOdataPrefix)) {
-      return `${cleanedBase}/${serviceName}`;
-    }
-
-    if (cleanedBase.endsWith(sapOdataMarker.replace(/\/+$/, ''))) {
-      return `${cleanedBase}${serviceName}`;
-    }
-
-    return cleanedBase;
-  }
-
-  return `${cleanedBase}${sapOdataMarker}${serviceName}`;
+  return `${root}${odataSegment}/${serviceName}`;
 }
 
-const SAP_BASE_URL = normalizeSapServiceBaseUrl(SAP_BASE_URL_INPUT, SERVICE_NAME);
+const SAP_BASE_URL = buildSapServiceUrl(SAP_BASE_URL_INPUT, SERVICE_NAME);
 
 console.log(`[BOM SYNC] SAP_BASE_URL resolved: ${SAP_BASE_URL}`);
 console.log(`[BOM SYNC] Original input: ${SAP_BASE_URL_INPUT}`);

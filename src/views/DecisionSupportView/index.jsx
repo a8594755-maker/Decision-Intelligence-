@@ -17,7 +17,10 @@ import { streamChatWithAI } from '../../services/geminiAPI';
 
 // ── localStorage helpers for local-first conversations ──
 const STORAGE_KEY = 'smartops_conversations';
-let _conversationsTableUnavailable = false; // Module-level flag: skip Supabase after first 404
+const TABLE_UNAVAILABLE_KEY = 'smartops_conversations_table_unavailable';
+
+const isTableUnavailable = () => sessionStorage.getItem(TABLE_UNAVAILABLE_KEY) === '1';
+const markTableUnavailable = () => sessionStorage.setItem(TABLE_UNAVAILABLE_KEY, '1');
 
 function loadLocalConversations(userId) {
   try {
@@ -199,7 +202,7 @@ export default function DecisionSupportView({ excelData, user, addNotification }
 
     const load = async () => {
       // If we already know the table is missing, skip Supabase entirely
-      if (_conversationsTableUnavailable) {
+      if (isTableUnavailable()) {
         const local = loadLocalConversations(user.id);
         if (active) {
           setConversations(local);
@@ -225,7 +228,7 @@ export default function DecisionSupportView({ excelData, user, addNotification }
           }
           saveLocalConversations(user.id, data);
         } else {
-          _conversationsTableUnavailable = true;
+          markTableUnavailable();
           const local = loadLocalConversations(user.id);
           setConversations(local);
           if (local.length > 0 && !currentConversationId) {
@@ -277,9 +280,9 @@ export default function DecisionSupportView({ excelData, user, addNotification }
     setCurrentConversationId(newConversation.id);
 
     // Try to persist to Supabase (non-blocking, skip if table is missing)
-    if (!_conversationsTableUnavailable) {
+    if (!isTableUnavailable()) {
       supabase.from('conversations').insert([newConversation]).then(({ error }) => {
-        if (error) _conversationsTableUnavailable = true;
+        if (error) markTableUnavailable();
       });
     }
 
@@ -300,7 +303,7 @@ export default function DecisionSupportView({ excelData, user, addNotification }
     });
 
     // Try Supabase delete (non-blocking, skip if table is missing)
-    if (!_conversationsTableUnavailable) {
+    if (!isTableUnavailable()) {
       supabase.from('conversations').delete().eq('id', convId).eq('user_id', user.id).then(() => {});
     }
   }, [user?.id, currentConversationId]);
@@ -370,13 +373,13 @@ export default function DecisionSupportView({ excelData, user, addNotification }
     setIsTyping(false);
 
     // Persist to Supabase (non-blocking, skip if table is missing)
-    if (!_conversationsTableUnavailable) {
+    if (!isTableUnavailable()) {
       supabase.from('conversations').update({
         title: newTitle,
         messages: finalMessages,
         updated_at: new Date().toISOString()
       }).eq('id', currentConversationId).eq('user_id', user.id).then(({ error }) => {
-        if (error) _conversationsTableUnavailable = true;
+        if (error) markTableUnavailable();
       });
     }
   }, [input, currentConversationId, currentMessages, currentConversation, systemPrompt, user?.id]);
