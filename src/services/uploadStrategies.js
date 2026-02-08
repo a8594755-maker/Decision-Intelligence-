@@ -22,6 +22,7 @@ import {
   RpcError,
   BatchSizeError
 } from './ingestRpcService';
+import { batchUpsertOperationalCosts } from './costAnalysisService';
 
 /**
  * Generate idempotency key for a sheet ingest
@@ -629,6 +630,39 @@ class FgFinancialsStrategy {
   }
 }
 
+/**
+ * Operational Cost Strategy
+ * 直接使用 batchUpsertOperationalCosts 批次 upsert
+ * 自動計算衍生欄位（direct_labor_cost, indirect_labor_cost, total_labor_cost, cost_per_unit）
+ * 支援 chunk ingest 和 idempotency（onConflict: user_id, cost_date）
+ */
+class OperationalCostStrategy {
+  async ingest({ userId, rows, batchId, uploadFileId, fileName, sheetName, addNotification, setSaveProgress, options = {} }) {
+    console.log(`[OperationalCostStrategy] Starting for ${rows.length} rows`);
+
+    setSaveProgress({
+      stage: 'writing',
+      current: 0,
+      total: rows.length,
+      message: `正在寫入 ${rows.length} 筆營運成本記錄...`
+    });
+
+    try {
+      const result = await batchUpsertOperationalCosts(userId, rows, batchId, uploadFileId);
+
+      console.log(`[OperationalCostStrategy] 完成！共寫入 ${result.count} 筆記錄`);
+
+      setSaveProgress({ stage: '', current: 0, total: 0, message: '' });
+
+      return { savedCount: result.count };
+    } catch (error) {
+      console.error('[OperationalCostStrategy] Error:', error);
+      setSaveProgress({ stage: '', current: 0, total: 0, message: '' });
+      throw error;
+    }
+  }
+}
+
 // 策略映射表
 const strategies = {
   goods_receipt: new GoodsReceiptStrategy(),
@@ -638,7 +672,8 @@ const strategies = {
   demand_fg: new DemandFgStrategy(),
   po_open_lines: new PoOpenLinesStrategy(),
   inventory_snapshots: new InventorySnapshotsStrategy(),
-  fg_financials: new FgFinancialsStrategy()
+  fg_financials: new FgFinancialsStrategy(),
+  operational_costs: new OperationalCostStrategy()
 };
 
 /**

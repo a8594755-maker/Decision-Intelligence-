@@ -49,15 +49,19 @@ interface SAPMaterialBOM {
   Plant: string;
   BillOfMaterialCategory: string;
   BillOfMaterialVariant: string;
+  BillOfMaterialHeaderUUID: string;
 }
 
 interface SAPMaterialBOMItem {
   BillOfMaterialItemNodeNumber: string;
+  BillOfMaterial: string;
   Material: string;
-  ComponentMaterial: string;
+  BillOfMaterialComponent: string;
   BillOfMaterialItemQuantity: number;
   BillOfMaterialItemUnit: string;
   Plant: string;
+  BillOfMaterialHeaderUUID: string;
+  BillOfMaterialVariant: string;
   IsDeleted?: boolean;
 }
 
@@ -91,7 +95,10 @@ interface DebugInfo {
   joined_count: number;
   upserted_count: number;
   sample_edges: string[];
+  sample_headers_keys: string[];
+  sample_items_keys: string[];
   errors: string[];
+  db_errors: string[];  // Add database errors
   final_request_url?: string;  // Added to debug URL issues
 }
 
@@ -149,10 +156,33 @@ Deno.serve(async (req) => {
     joined_count: 0,
     upserted_count: 0,
     sample_edges: [],
+    sample_headers_keys: [],
+    sample_items_keys: [],
     errors: [],
+    db_errors: [],
   };
 
   try {
+    // First, let's check the service metadata to understand the structure
+    console.log('[BOM SYNC] Checking service metadata...');
+    const metadataUrl = `${SAP_BASE_URL}/$metadata`;
+    console.log(`[BOM SYNC] Metadata URL: ${metadataUrl}`);
+    
+    const metadataResponse = await fetch(metadataUrl, {
+      headers: {
+        'apikey': SAP_API_KEY,
+        'Accept': 'application/xml',
+      },
+    });
+    
+    if (metadataResponse.ok) {
+      const metadataText = await metadataResponse.text();
+      console.log(`[BOM SYNC] Metadata received, length: ${metadataText.length}`);
+      debug.sample_edges.push(`METADATA_PREVIEW: ${metadataText.substring(0, 1000)}...`);
+    } else {
+      console.log(`[BOM SYNC] Metadata request failed: ${metadataResponse.status}`);
+    }
+
     // Initialize Supabase client
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
       auth: { autoRefreshToken: false, persistSession: false },
@@ -197,7 +227,7 @@ Deno.serve(async (req) => {
 
     // Batch upsert to database
     console.log('[BOM SYNC] Starting batch upsert...');
-    const upsertResult = await batchUpsertBOMEdges(supabase, activeEdges);
+    const upsertResult = await batchUpsertBOMEdges(supabase, activeEdges, debug);
     stats.upserted = upsertResult.upserted;
     stats.errors = upsertResult.errors;
     debug.upserted_count = upsertResult.upserted;
@@ -294,7 +324,7 @@ async function fetchAllBOMHeaders(
       break;
     }
 
-    const url = `${SAP_BASE_URL}/MaterialBOM?${filterQuery}$select=BillOfMaterial,Material,Plant,BillOfMaterialCategory,BillOfMaterialVariant&$top=${PAGE_SIZE}&$skip=${skip}`;
+    const url = `${SAP_BASE_URL}/MaterialBOM?${filterQuery}$select=BillOfMaterial,BillOfMaterialCategory,BillOfMaterialVariant,Material,Plant,BillOfMaterialHeaderUUID&$top=${PAGE_SIZE}&$skip=${skip}&$format=json`;
 
     console.log(`[BOM SYNC] Requesting BOM headers: ${url}`);
 
@@ -325,12 +355,24 @@ async function fetchAllBOMHeaders(
     const results = data.d?.results || [];
     console.log(`[BOM SYNC] BOM headers response: ${results.length} items`);
 
+    // Log first result's keys for debugging field names
+    if (results.length > 0 && allHeaders.length === 0) {
+      const headerKeys = Object.keys(results[0]);
+      console.log(`[BOM SYNC] MaterialBOM fields: ${headerKeys.join(', ')}`);
+      debug.sample_headers_keys = headerKeys; // ALL header fields
+      debug.sample_edges.push(`HEADER_FIELDS: ${headerKeys.join(', ')}`);
+      
+      // Also log a sample record to see the structure
+      debug.sample_edges.push(`HEADER_SAMPLE: ${JSON.stringify(results[0], null, 2)}`);
+    }
+
     allHeaders.push(...results.map((r: any) => ({
-      BillOfMaterial: r.BillOfMaterial,
-      Material: r.Material,
-      Plant: r.Plant,
-      BillOfMaterialCategory: r.BillOfMaterialCategory,
-      BillOfMaterialVariant: r.BillOfMaterialVariant,
+      BillOfMaterial: r.BillOfMaterial || '',
+      Material: r.Material || '',
+      Plant: r.Plant || '',
+      BillOfMaterialCategory: r.BillOfMaterialCategory || '',
+      BillOfMaterialVariant: r.BillOfMaterialVariant || '',
+      BillOfMaterialHeaderUUID: r.BillOfMaterialHeaderUUID || '',
     })));
 
     hasMore = results.length === PAGE_SIZE;
@@ -365,7 +407,7 @@ async function fetchAllBOMItems(
       break;
     }
 
-    const url = `${SAP_BASE_URL}/MaterialBOMItem?${filterQuery}$select=BillOfMaterialItemNodeNumber,Material,ComponentMaterial,BillOfMaterialItemQuantity,BillOfMaterialItemUnit,Plant,IsDeleted&$top=${PAGE_SIZE}&$skip=${skip}`;
+    const url = `${SAP_BASE_URL}/MaterialBOMItem?${filterQuery}$select=BillOfMaterial,BillOfMaterialCategory,BillOfMaterialVariant,BillOfMaterialItemNodeNumber,Material,BillOfMaterialComponent,BillOfMaterialItemQuantity,BillOfMaterialItemUnit,Plant,BillOfMaterialHeaderUUID,IsDeleted&$top=${PAGE_SIZE}&$skip=${skip}&$format=json`;
 
     console.log(`[BOM SYNC] Requesting BOM items: ${url}`);
 
@@ -391,13 +433,26 @@ async function fetchAllBOMItems(
     const results = data.d?.results || [];
     console.log(`[BOM SYNC] BOM items response: ${results.length} items`);
 
+    // Log first result's keys for debugging field names
+    if (results.length > 0 && allItems.length === 0) {
+      const itemKeys = Object.keys(results[0]);
+      console.log(`[BOM SYNC] MaterialBOMItem fields: ${itemKeys.join(', ')}`);
+      debug.sample_items_keys = itemKeys; // ALL item fields
+      debug.sample_edges.push(`ITEM_FIELDS: ${itemKeys.join(', ')}`);
+      
+      // Also log a sample record to see the structure
+      debug.sample_edges.push(`ITEM_SAMPLE: ${JSON.stringify(results[0], null, 2)}`);
+    }
+
     allItems.push(...results.map((r: any) => ({
-      BillOfMaterialItemNodeNumber: r.BillOfMaterialItemNodeNumber,
-      Material: r.Material,
-      ComponentMaterial: r.ComponentMaterial,
+      BillOfMaterialItemNodeNumber: r.BillOfMaterialItemNodeNumber || '',
+      BillOfMaterial: r.BillOfMaterial || '',
+      Material: r.Material || '',
+      BillOfMaterialComponent: r.BillOfMaterialComponent || '',
       BillOfMaterialItemQuantity: parseFloat(r.BillOfMaterialItemQuantity) || 0,
-      BillOfMaterialItemUnit: r.BillOfMaterialItemUnit,
-      Plant: r.Plant,
+      BillOfMaterialItemUnit: r.BillOfMaterialItemUnit || '',
+      Plant: r.Plant || '',
+      BillOfMaterialHeaderUUID: r.BillOfMaterialHeaderUUID || '',
       IsDeleted: r.IsDeleted === true || r.IsDeleted === 'X',
     })));
 
@@ -416,26 +471,46 @@ function buildBOMEdges(
 ): (BOMEdgeRecord & { isDeleted: boolean })[] {
   const edges: (BOMEdgeRecord & { isDeleted: boolean })[] = [];
 
-  // Create a map of BOM headers for quick lookup
+  // Create a map of BOM headers for quick lookup using flexible join keys
   const headerMap = new Map<string, SAPMaterialBOM>();
   for (const header of headers) {
-    const key = `${header.BillOfMaterial}_${header.Plant}`;
-    headerMap.set(key, header);
+    // Primary key: BillOfMaterial + Plant
+    const primaryKey = `${header.BillOfMaterial}_${header.Plant}`;
+    headerMap.set(primaryKey, header);
+    
+    // Secondary key with variant (if variant exists)
+    if (header.BillOfMaterialVariant && header.BillOfMaterialVariant !== 'undefined' && header.BillOfMaterialVariant !== '') {
+      const variantKey = `${header.BillOfMaterial}_${header.BillOfMaterialVariant}_${header.Plant}`;
+      headerMap.set(variantKey, header);
+    }
   }
 
+  // Add debug info for first few headers
+  debug.sample_edges.push(`HEADER_KEYS_SAMPLE: ${headers.slice(0, 3).map(h => 
+    `${h.BillOfMaterial}_${h.BillOfMaterialVariant || 'NULL'}_${h.Plant}`
+  ).join(', ')}`);
+
   for (const item of items) {
-    const headerKey = `${item.Material}_${item.Plant}`;
-    const header = headerMap.get(headerKey);
+    // Try primary key first (BillOfMaterial + Plant)
+    let headerKey = `${item.BillOfMaterial}_${item.Plant}`;
+    let header = headerMap.get(headerKey);
+    
+    // If not found and item has variant, try variant key
+    if (!header && item.BillOfMaterialVariant && item.BillOfMaterialVariant !== 'undefined' && item.BillOfMaterialVariant !== '') {
+      headerKey = `${item.BillOfMaterial}_${item.BillOfMaterialVariant}_${item.Plant}`;
+      header = headerMap.get(headerKey);
+    }
 
     if (!header) {
-      console.warn(`[BOM SYNC] No header found for item: ${item.Material} in plant ${item.Plant}`);
+      console.warn(`[BOM SYNC] No header found for item: ${item.BillOfMaterial} variant ${item.BillOfMaterialVariant} in plant ${item.Plant}`);
+      debug.errors.push(`JOIN_MISS: ${item.BillOfMaterial}_${item.BillOfMaterialVariant || 'NULL'}_${item.Plant}`);
       continue;
     }
 
     edges.push({
       user_id: INTEGRATION_USER_ID,
       parent_material: item.Material,
-      child_material: item.ComponentMaterial,
+      child_material: item.BillOfMaterialComponent,
       qty_per: item.BillOfMaterialItemQuantity,
       uom: item.BillOfMaterialItemUnit,
       plant_id: item.Plant,
@@ -449,6 +524,11 @@ function buildBOMEdges(
     });
   }
 
+  // Add debug info for first few items
+  debug.sample_edges.push(`ITEM_KEYS_SAMPLE: ${items.slice(0, 3).map(i => 
+    `${i.BillOfMaterial}_${i.BillOfMaterialVariant || 'NULL'}_${i.Plant}`
+  ).join(', ')}`);
+
   return edges;
 }
 
@@ -457,16 +537,45 @@ function buildBOMEdges(
 // ============================================
 async function batchUpsertBOMEdges(
   supabase: any,
-  edges: (BOMEdgeRecord & { isDeleted: boolean })[]
+  edges: (BOMEdgeRecord & { isDeleted: boolean })[],
+  debug: DebugInfo
 ): Promise<{ upserted: number; errors: number }> {
   let upserted = 0;
   let errors = 0;
 
   // Remove the isDeleted field before upserting (not a DB column)
-  const recordsToUpsert = edges.map(({ isDeleted, ...record }) => record);
+  const recordsToUpsert = edges.map(({ isDeleted, ...record }) => {
+    // Ensure all required fields exist and handle missing optional fields
+    return {
+      user_id: record.user_id,
+      parent_material: record.parent_material,
+      child_material: record.child_material,
+      qty_per: record.qty_per,
+      uom: record.uom,
+      plant_id: record.plant_id || null,
+      alt_group: record.alt_group || null,
+      priority: record.priority || 1,
+      valid_from: record.valid_from || null,
+      valid_to: record.valid_to || null,
+      source: record.source || 'sap_sync',
+      sap_bom_id: record.sap_bom_id || null,
+      // Don't include bom_version, scrap_rate, yield_rate, etc. as they may not exist
+    };
+  });
 
-  for (let i = 0; i < recordsToUpsert.length; i += BATCH_SIZE) {
-    const chunk = recordsToUpsert.slice(i, i + BATCH_SIZE);
+  // Deduplicate records within the same batch to avoid "cannot affect row a second time" error
+  const deduplicatedRecords = new Map();
+  for (const record of recordsToUpsert) {
+    const key = `${record.user_id}_${record.parent_material}_${record.child_material}_${record.plant_id}`;
+    deduplicatedRecords.set(key, record);
+  }
+
+  const uniqueRecords = Array.from(deduplicatedRecords.values());
+  console.log(`[BOM SYNC] Deduplicated ${recordsToUpsert.length} records to ${uniqueRecords.length} unique records`);
+  console.log(`[BOM SYNC] Sample record: ${JSON.stringify(uniqueRecords[0], null, 2)}`);
+
+  for (let i = 0; i < uniqueRecords.length; i += BATCH_SIZE) {
+    const chunk = uniqueRecords.slice(i, i + BATCH_SIZE);
 
     try {
       const { error } = await supabase
@@ -478,12 +587,17 @@ async function batchUpsertBOMEdges(
 
       if (error) {
         console.error(`[BOM SYNC] Batch ${i / BATCH_SIZE + 1} error:`, error);
+        console.error(`[BOM SYNC] Sample failing record:`, JSON.stringify(chunk[0], null, 2));
+        debug.db_errors.push(`Batch ${i / BATCH_SIZE + 1}: ${error.message || JSON.stringify(error)}`);
+        debug.db_errors.push(`Sample record: ${JSON.stringify(chunk[0], null, 2)}`);
         errors += chunk.length;
       } else {
         upserted += chunk.length;
+        console.log(`[BOM SYNC] Batch ${i / BATCH_SIZE + 1} success: ${chunk.length} records`);
       }
     } catch (err) {
       console.error(`[BOM SYNC] Batch ${i / BATCH_SIZE + 1} exception:`, err);
+      debug.db_errors.push(`Batch ${i / BATCH_SIZE + 1} exception: ${err.message || JSON.stringify(err)}`);
       errors += chunk.length;
     }
   }

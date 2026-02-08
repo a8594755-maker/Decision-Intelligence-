@@ -140,6 +140,31 @@ export const UPLOAD_FINGERPRINTS = {
     description: 'Goods receipt transactions'
   },
 
+  operational_costs: {
+    requiredHeaders: ['cost_date', 'direct_labor_hours', 'direct_labor_rate', 'production_output'],
+    optionalHeaders: ['indirect_labor_hours', 'indirect_labor_rate', 'production_unit', 'material_cost', 'overhead_cost', 'notes'],
+    negativeHeaders: ['supplier', 'po_number', 'parent', 'component', 'demand', 'inventory', 'receipt'],
+    strongFeatures: [
+      'direct_labor_hours',   // Operational cost 強訊號
+      'direct_labor_rate',    // Operational cost 特有欄位
+      'production_output',    // Operational cost 特有欄位
+      ['cost_date', 'direct_labor_hours', 'production_output'] // 三欄同時存在（強訊號）
+    ],
+    exclusiveFeatures: ['parent_material', 'component_material', 'demand_qty', 'time_bucket', 'onhand_qty', 'po_number', 'supplier_name'],
+    fieldTypeHints: {
+      cost_date: 'date',
+      direct_labor_hours: 'number',
+      direct_labor_rate: 'number',
+      indirect_labor_hours: 'number',
+      indirect_labor_rate: 'number',
+      production_output: 'number',
+      material_cost: 'number',
+      overhead_cost: 'number'
+    },
+    minConfidenceToAutoEnable: 0.75,
+    description: 'Daily operational cost records (labor, material, overhead)'
+  },
+
   price_history: {
     requiredHeaders: ['supplier_name', 'material_code', 'order_date', 'unit_price'],
     optionalHeaders: ['supplier_code', 'currency', 'quantity', 'is_contract_price'],

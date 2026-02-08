@@ -49,8 +49,10 @@ const BOMDataView = ({ user, addNotification }) => {
         .order('created_at', { ascending: false })
         .range(offset, offset + itemsPerPage - 1);
       
-      // Apply filters
+      // For BOM edges, prioritize SAP sync data by default
       if (activeTab === 'bom_edges') {
+        query = query.eq('source', 'sap_sync');
+        
         if (filters.batch_id) {
           query = query.ilike('batch_id', `%${filters.batch_id}%`);
         }

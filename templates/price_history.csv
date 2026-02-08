@@ -1,0 +1,7 @@
+SupplierName,MaterialCode,OrderDate,UnitPrice,Currency,Quantity
+Acme Steel Co,STL-001,2025-01-10,12.50,USD,500
+Acme Steel Co,STL-001,2025-02-10,12.80,USD,600
+Global Plastics,PLS-002,2025-01-15,3.20,USD,2000
+Global Plastics,PLS-002,2025-02-15,3.15,USD,2200
+Eastern Electronics,ELC-003,2025-01-20,45.00,USD,100
+Eastern Electronics,ELC-003,2025-02-20,46.50,USD,120

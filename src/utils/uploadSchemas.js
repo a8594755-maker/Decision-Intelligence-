@@ -765,6 +765,100 @@ export const UPLOAD_SCHEMAS = {
     ]
   },
 
+  // Operational Costs - Daily operational cost records
+  operational_costs: {
+    label: 'Operational Costs',
+    description: 'Daily operational cost records (labor, material, overhead)',
+    icon: '🏭',
+    fields: [
+      // === Required Fields ===
+      {
+        key: 'cost_date',
+        label: 'Cost Date',
+        type: 'date',
+        required: true,
+        description: 'Cost record date (YYYY-MM-DD)'
+      },
+      {
+        key: 'direct_labor_hours',
+        label: 'Direct Labor Hours',
+        type: 'number',
+        required: true,
+        description: 'Direct labor hours worked',
+        min: 0
+      },
+      {
+        key: 'direct_labor_rate',
+        label: 'Direct Labor Rate',
+        type: 'number',
+        required: true,
+        description: 'Hourly rate for direct labor',
+        min: 0
+      },
+      {
+        key: 'production_output',
+        label: 'Production Output',
+        type: 'number',
+        required: true,
+        description: 'Total production output quantity',
+        min: 0
+      },
+
+      // === Optional Fields ===
+      {
+        key: 'indirect_labor_hours',
+        label: 'Indirect Labor Hours',
+        type: 'number',
+        required: false,
+        description: 'Indirect labor hours (supervision, maintenance, etc.)',
+        min: 0,
+        default: 0
+      },
+      {
+        key: 'indirect_labor_rate',
+        label: 'Indirect Labor Rate',
+        type: 'number',
+        required: false,
+        description: 'Hourly rate for indirect labor',
+        min: 0,
+        default: 0
+      },
+      {
+        key: 'production_unit',
+        label: 'Production Unit',
+        type: 'string',
+        required: false,
+        description: 'Unit of measure for production output (e.g., pcs, kg)',
+        default: 'pcs'
+      },
+      {
+        key: 'material_cost',
+        label: 'Material Cost',
+        type: 'number',
+        required: false,
+        description: 'Total material cost for the day',
+        min: 0,
+        default: 0
+      },
+      {
+        key: 'overhead_cost',
+        label: 'Overhead Cost',
+        type: 'number',
+        required: false,
+        description: 'Factory overhead cost for the day',
+        min: 0,
+        default: 0
+      },
+      {
+        key: 'notes',
+        label: 'Notes',
+        type: 'string',
+        required: false,
+        description: 'Additional notes or remarks'
+      }
+    ]
+  },
+
   // FG Financials - Finished goods financial data
   fg_financials: {
     label: 'FG Financials',

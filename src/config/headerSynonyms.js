@@ -40,6 +40,17 @@ export const HEADER_SYNONYMS = {
   'unit_price': ['price', 'cost', 'unit_cost', 'piece_price'],
   'unit_margin': ['margin', 'profit', 'profit_per_unit', 'contribution_margin'],
   'currency': ['curr', 'currency_code', 'ccy'],
+
+  // Operational Cost
+  'cost_date': ['record_date', 'report_date', 'cost_day', 'costdate'],
+  'direct_labor_hours': ['dl_hours', 'direct_hours', 'labor_hours', 'directlaborhours'],
+  'direct_labor_rate': ['dl_rate', 'hourly_rate', 'labor_rate', 'directlaborrate'],
+  'indirect_labor_hours': ['idl_hours', 'indirect_hours', 'overhead_hours', 'indirectlaborhours'],
+  'indirect_labor_rate': ['idl_rate', 'indirect_rate', 'indirectlaborrate'],
+  'production_output': ['output', 'output_qty', 'production_qty', 'produced_qty', 'productionoutput'],
+  'production_unit': ['output_unit', 'prod_unit', 'productionunit'],
+  'material_cost': ['mat_cost', 'raw_material_cost', 'materialcost'],
+  'overhead_cost': ['oh_cost', 'factory_overhead', 'overheadcost'],
   
   // Supplier
   'supplier_name': ['vendor', 'supplier', 'vendor_name', 'manufacturer'],

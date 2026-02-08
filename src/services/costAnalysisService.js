@@ -66,6 +66,92 @@ export const recordDailyCost = async (userId, costData) => {
 };
 
 /**
+ * 安全轉換為數字（處理空值、逗號、字串）
+ */
+function toNumber(v) {
+  if (v === null || v === undefined || v === '') return 0;
+  const n = Number(String(v).replace(/,/g, '').trim());
+  return Number.isFinite(n) ? n : 0;
+}
+
+/**
+ * 計算營運成本衍生欄位
+ */
+function computeDerived(row) {
+  const directHours = toNumber(row.direct_labor_hours);
+  const directRate = toNumber(row.direct_labor_rate);
+  const indirectHours = toNumber(row.indirect_labor_hours);
+  const indirectRate = toNumber(row.indirect_labor_rate);
+  const output = toNumber(row.production_output);
+  const matCost = toNumber(row.material_cost);
+  const ohCost = toNumber(row.overhead_cost);
+
+  const directCost = directHours * directRate;
+  const indirectCost = indirectHours * indirectRate;
+  const totalLabor = directCost + indirectCost;
+  const costPerUnit = output > 0
+    ? (totalLabor + matCost + ohCost) / output
+    : 0;
+
+  return {
+    ...row,
+    direct_labor_hours: directHours,
+    direct_labor_rate: directRate,
+    direct_labor_cost: directCost,
+    indirect_labor_hours: indirectHours,
+    indirect_labor_rate: indirectRate,
+    indirect_labor_cost: indirectCost,
+    total_labor_cost: totalLabor,
+    production_output: output,
+    material_cost: matCost,
+    overhead_cost: ohCost,
+    cost_per_unit: costPerUnit
+  };
+}
+
+/**
+ * 批次寫入營運成本（Upload Pipeline 使用）
+ * @param {string} userId - 用户 ID
+ * @param {Array<object>} rows - 已正規化的資料列（canonical keys）
+ * @param {string|null} batchId - 批次 ID (UUID)
+ * @param {string|null} uploadFileId - 上傳檔案 ID (UUID)
+ * @returns {Promise<object>} { success, rows }
+ */
+export const batchUpsertOperationalCosts = async (userId, rows, batchId = null, uploadFileId = null) => {
+  const chunkSize = 500;
+
+  const payload = rows.map(r => computeDerived({
+    user_id: userId,
+    cost_date: r.cost_date,
+    direct_labor_hours: r.direct_labor_hours,
+    direct_labor_rate: r.direct_labor_rate,
+    indirect_labor_hours: r.indirect_labor_hours,
+    indirect_labor_rate: r.indirect_labor_rate,
+    production_output: r.production_output,
+    production_unit: r.production_unit || 'pcs',
+    material_cost: r.material_cost,
+    overhead_cost: r.overhead_cost,
+    notes: r.notes ?? null,
+    batch_id: batchId ?? null,
+    upload_file_id: uploadFileId ?? null
+  }));
+
+  let totalUpserted = 0;
+  for (let i = 0; i < payload.length; i += chunkSize) {
+    const chunk = payload.slice(i, i + chunkSize);
+
+    const { error } = await supabase
+      .from('operational_costs')
+      .upsert(chunk, { onConflict: 'user_id,cost_date' });
+
+    if (error) throw error;
+    totalUpserted += chunk.length;
+  }
+
+  return { success: true, count: totalUpserted };
+};
+
+/**
  * 获取指定日期范围的成本记录
  * @param {string} userId - 用户 ID
  * @param {string} startDate - 开始日期 (YYYY-MM-DD)
@@ -420,6 +506,7 @@ export const deleteCostRecord = async (costId) => {
 
 export default {
   recordDailyCost,
+  batchUpsertOperationalCosts,
   getCostRecords,
   getCostTrends,
   analyzeCostStructure,

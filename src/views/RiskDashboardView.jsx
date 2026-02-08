@@ -190,6 +190,7 @@ const RiskDashboardView = ({ user, addNotification }) => {
         .from('po_open_lines')
         .select('*')
         .eq('user_id', user.id)
+        .eq('source', 'sap_sync')
         .order('time_bucket', { ascending: true });
 
       if (poError) {
@@ -207,10 +208,11 @@ const RiskDashboardView = ({ user, addNotification }) => {
       // Step 2: 載入庫存快照（可選）
       let inventoryData = [];
       const { data: invData, error: invError } = await supabase
-        .from('inventory_snapshots')
+        .from('material_stock_snapshots')
         .select('*')
         .eq('user_id', user.id)
-        .order('created_at', { ascending: false });
+        .eq('source', 'sap_sync')
+        .order('snapshot_at', { ascending: false });
 
       if (invError) {
         console.warn('載入庫存資料失敗（將使用 0 庫存）:', invError);
@@ -277,7 +279,7 @@ const RiskDashboardView = ({ user, addNotification }) => {
       });
       const poPairsSet = new Set();
       normalizedPOData.forEach(po => {
-        const key = normalizeKey(po.item, po.factory);
+        const key = normalizeKey(po.material_code || po.item, po.plant_id || po.factory);
         if (key && key !== '|') poPairsSet.add(key);
       });
       const matchedPairsSet = new Set();
@@ -294,18 +296,23 @@ const RiskDashboardView = ({ user, addNotification }) => {
       // Step 3: Domain 計算（Supply Coverage Risk - Bucket-Based）
       const domainResults = calculateSupplyCoverageRiskBatch({
         openPOs: normalizedPOData,
-        inventorySnapshots: inventoryData,
+        inventorySnapshots: inventoryData.map(inv => ({
+          material_code: inv.material_code,
+          plant_id: inv.plant_id,
+          onhand_qty: inv.qty,
+          snapshot_date: inv.snapshot_at
+        })),
         horizonBuckets: HORIZON_BUCKETS
       });
 
       // Step 3.5: 使用 component_demand 彙總 + Inventory domain 計算 daysToStockout / P(stockout)；A2: leadTimeDays 從 supplier 或 fallback
       domainResults.forEach(row => {
-        const key = normalizeKey(row.item, row.factory);
-        const demandInfo = componentDemandAggregated[key];
+        const itemKey = normalizeKey(row.material_code || row.item, row.plant_id || row.factory);
+        const demandInfo = componentDemandAggregated[itemKey];
         const dailyDemand = demandInfo?.dailyDemand;
         const onHand = row.onHand != null ? row.onHand : 0;
         const safetyStock = row.safetyStock != null ? row.safetyStock : 0;
-        const ltInfo = keyToLeadTime[key] || { leadTimeDays: DEFAULT_LEAD_TIME_DAYS, source: 'fallback' };
+        const ltInfo = keyToLeadTime[itemKey] || { leadTimeDays: DEFAULT_LEAD_TIME_DAYS, source: 'fallback' };
         row.leadTimeDaysUsed = ltInfo.leadTimeDays;
         row.leadTimeDaysSource = ltInfo.source;
 
@@ -321,7 +328,7 @@ const RiskDashboardView = ({ user, addNotification }) => {
             row.daysToStockout = invRisk.daysToStockout;
             row.stockoutProbability = invRisk.probability;
           } catch (e) {
-            console.warn(`Inventory risk 計算跳過 ${key}:`, e);
+            console.warn(`Inventory risk 計算跳過 ${itemKey}:`, e);
           }
         }
       });

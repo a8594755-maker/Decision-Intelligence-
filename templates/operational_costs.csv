@@ -1,0 +1,4 @@
+CostDate,DirectLaborHours,DirectLaborRate,IndirectLaborHours,IndirectLaborRate,ProductionOutput,ProductionUnit,MaterialCost,OverheadCost,Notes
+2025-01-15,160,150,80,120,1000,pcs,50000,30000,January mid-month record
+2025-01-31,168,150,84,120,1050,pcs,52000,31000,January end-of-month
+2025-02-15,155,155,78,125,980,pcs,48000,29500,February mid-month record

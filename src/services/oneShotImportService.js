@@ -566,7 +566,8 @@ async function importSingleSheet({
       'demand_fg': 'demand_fg',
       'po_open_lines': 'po_open_lines',
       'inventory_snapshots': 'inventory_snapshots',
-      'fg_financials': 'fg_financials'
+      'fg_financials': 'fg_financials',
+      'operational_costs': 'operational_costs'
     };
     
     const batchRecord = await importBatchesService.createBatch(userId, {
