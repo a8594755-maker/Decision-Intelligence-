@@ -17,6 +17,7 @@ import { streamChatWithAI } from '../../services/geminiAPI';
 
 // ── localStorage helpers for local-first conversations ──
 const STORAGE_KEY = 'smartops_conversations';
+let _conversationsTableUnavailable = false; // Module-level flag: skip Supabase after first 404
 
 function loadLocalConversations(userId) {
   try {
@@ -197,6 +198,18 @@ export default function DecisionSupportView({ excelData, user, addNotification }
     let active = true;
 
     const load = async () => {
+      // If we already know the table is missing, skip Supabase entirely
+      if (_conversationsTableUnavailable) {
+        const local = loadLocalConversations(user.id);
+        if (active) {
+          setConversations(local);
+          if (local.length > 0 && !currentConversationId) {
+            setCurrentConversationId(local[0].id);
+          }
+        }
+        return;
+      }
+
       // Try Supabase
       const { data, error } = await supabase
         .from('conversations')
@@ -210,11 +223,9 @@ export default function DecisionSupportView({ excelData, user, addNotification }
           if (data.length > 0 && !currentConversationId) {
             setCurrentConversationId(data[0].id);
           }
-          // Sync to localStorage as backup
           saveLocalConversations(user.id, data);
         } else {
-          // Supabase failed (404 / network) → load from localStorage
-          console.warn('Conversations table unavailable, using local storage', error?.message);
+          _conversationsTableUnavailable = true;
           const local = loadLocalConversations(user.id);
           setConversations(local);
           if (local.length > 0 && !currentConversationId) {
@@ -265,10 +276,12 @@ export default function DecisionSupportView({ excelData, user, addNotification }
     setConversations(prev => [newConversation, ...prev]);
     setCurrentConversationId(newConversation.id);
 
-    // Try to persist to Supabase (non-blocking)
-    supabase.from('conversations').insert([newConversation]).then(({ error }) => {
-      if (error) console.warn('Conversation saved locally only:', error.message);
-    });
+    // Try to persist to Supabase (non-blocking, skip if table is missing)
+    if (!_conversationsTableUnavailable) {
+      supabase.from('conversations').insert([newConversation]).then(({ error }) => {
+        if (error) _conversationsTableUnavailable = true;
+      });
+    }
 
     addNotification?.("New conversation ready.", "success");
   }, [user?.id, addNotification]);
@@ -286,10 +299,10 @@ export default function DecisionSupportView({ excelData, user, addNotification }
       return updated;
     });
 
-    // Try Supabase delete (non-blocking)
-    supabase.from('conversations').delete().eq('id', convId).eq('user_id', user.id).then(({ error }) => {
-      if (error) console.warn('Remote delete failed:', error.message);
-    });
+    // Try Supabase delete (non-blocking, skip if table is missing)
+    if (!_conversationsTableUnavailable) {
+      supabase.from('conversations').delete().eq('id', convId).eq('user_id', user.id).then(() => {});
+    }
   }, [user?.id, currentConversationId]);
 
   // Send message with streaming
@@ -356,14 +369,16 @@ export default function DecisionSupportView({ excelData, user, addNotification }
     setStreamingContent('');
     setIsTyping(false);
 
-    // Persist to Supabase (non-blocking)
-    supabase.from('conversations').update({
-      title: newTitle,
-      messages: finalMessages,
-      updated_at: new Date().toISOString()
-    }).eq('id', currentConversationId).eq('user_id', user.id).then(({ error }) => {
-      if (error) console.warn('Cloud save failed, kept locally:', error.message);
-    });
+    // Persist to Supabase (non-blocking, skip if table is missing)
+    if (!_conversationsTableUnavailable) {
+      supabase.from('conversations').update({
+        title: newTitle,
+        messages: finalMessages,
+        updated_at: new Date().toISOString()
+      }).eq('id', currentConversationId).eq('user_id', user.id).then(({ error }) => {
+        if (error) _conversationsTableUnavailable = true;
+      });
+    }
   }, [input, currentConversationId, currentMessages, currentConversation, systemPrompt, user?.id]);
 
   // Handle quick prompt click

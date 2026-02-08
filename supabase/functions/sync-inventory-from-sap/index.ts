@@ -20,16 +20,32 @@ const SAP_BASE_URL_INPUT = Deno.env.get('SAP_INV_BASE_URL') || Deno.env.get('SAP
 
 // URL normalization: only append service path if base doesn't already contain /sap/opu/odata/sap/
 const SERVICE_NAME = 'API_MATERIAL_STOCK_SRV';
-const SERVICE_PATH = `/sap/opu/odata/sap/${SERVICE_NAME}`;
 
-let SAP_BASE_URL: string;
-if (SAP_BASE_URL_INPUT.includes('/sap/opu/odata/sap/')) {
-  // Base already has the full OData path, don't duplicate
-  SAP_BASE_URL = SAP_BASE_URL_INPUT;
-} else {
-  // Need to append the service path
-  SAP_BASE_URL = SAP_BASE_URL_INPUT + SERVICE_PATH;
+function normalizeSapServiceBaseUrl(baseUrl: string, serviceName: string): string {
+  const cleanedBase = baseUrl.replace(/\/+$/, '');
+  const sapOdataPrefix = '/sap/opu/odata/sap';
+  const sapOdataMarker = `${sapOdataPrefix}/`;
+
+  if (cleanedBase.includes(sapOdataMarker)) {
+    if (cleanedBase.includes(`${sapOdataMarker}${serviceName}`)) {
+      return cleanedBase;
+    }
+
+    if (cleanedBase.endsWith(sapOdataPrefix)) {
+      return `${cleanedBase}/${serviceName}`;
+    }
+
+    if (cleanedBase.endsWith(sapOdataMarker.replace(/\/+$/, ''))) {
+      return `${cleanedBase}${serviceName}`;
+    }
+
+    return cleanedBase;
+  }
+
+  return `${cleanedBase}${sapOdataMarker}${serviceName}`;
 }
+
+const SAP_BASE_URL = normalizeSapServiceBaseUrl(SAP_BASE_URL_INPUT, SERVICE_NAME);
 
 console.log(`[INV SYNC] SAP_BASE_URL resolved: ${SAP_BASE_URL}`);
 console.log(`[INV SYNC] Original input: ${SAP_BASE_URL_INPUT}`);
