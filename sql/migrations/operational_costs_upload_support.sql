@@ -25,11 +25,31 @@ BEGIN
 END $$;
 
 -- 2) 新增 batch_id / upload_file_id（與其他上傳表一致，做 lineage / undo / batch tracking）
+-- 注意：user_files.id 的類型在不同環境可能為 UUID 或 BIGINT，需要動態判斷
 ALTER TABLE public.operational_costs
   ADD COLUMN IF NOT EXISTS batch_id UUID;
 
-ALTER TABLE public.operational_costs
-  ADD COLUMN IF NOT EXISTS upload_file_id UUID;
+-- 動態決定 upload_file_id 的類型（與 user_files.id 保持一致）
+DO $$
+DECLARE
+  user_files_id_type TEXT;
+BEGIN
+  -- 檢查 user_files.id 的實際類型
+  SELECT data_type INTO user_files_id_type
+  FROM information_schema.columns
+  WHERE table_name = 'user_files' AND column_name = 'id';
+  
+  RAISE NOTICE 'user_files.id type is: %', user_files_id_type;
+  
+  -- 根據實際類型新增 upload_file_id 欄位
+  IF user_files_id_type = 'uuid' THEN
+    EXECUTE 'ALTER TABLE public.operational_costs ADD COLUMN IF NOT EXISTS upload_file_id UUID';
+  ELSIF user_files_id_type = 'bigint' THEN
+    EXECUTE 'ALTER TABLE public.operational_costs ADD COLUMN IF NOT EXISTS upload_file_id BIGINT';
+  ELSE
+    RAISE EXCEPTION 'Unsupported user_files.id type: %', user_files_id_type;
+  END IF;
+END $$;
 
 -- FK: batch_id → import_batches(id)
 DO $$
@@ -46,18 +66,31 @@ BEGIN
   END IF;
 END $$;
 
--- FK: upload_file_id → user_files(id)
+-- FK: upload_file_id → user_files(id)（動態處理類型）
 DO $$
+DECLARE
+  user_files_id_type TEXT;
 BEGIN
-  IF NOT EXISTS (
+  -- 檢查是否已存在 constraint
+  IF EXISTS (
     SELECT 1 FROM pg_constraint WHERE conname = 'operational_costs_upload_file_id_fkey'
   ) THEN
-    ALTER TABLE public.operational_costs
-      ADD CONSTRAINT operational_costs_upload_file_id_fkey
-      FOREIGN KEY (upload_file_id) REFERENCES public.user_files(id) ON DELETE SET NULL;
-    RAISE NOTICE 'Added FK operational_costs_upload_file_id_fkey';
-  ELSE
     RAISE NOTICE 'FK operational_costs_upload_file_id_fkey already exists, skipping';
+    RETURN;
+  END IF;
+  
+  -- 檢查 user_files.id 的實際類型
+  SELECT data_type INTO user_files_id_type
+  FROM information_schema.columns
+  WHERE table_name = 'user_files' AND column_name = 'id';
+  
+  -- 根據實際類型建立 FK
+  IF user_files_id_type = 'uuid' THEN
+    EXECUTE 'ALTER TABLE public.operational_costs ADD CONSTRAINT operational_costs_upload_file_id_fkey FOREIGN KEY (upload_file_id) REFERENCES public.user_files(id) ON DELETE SET NULL';
+    RAISE NOTICE 'Added FK operational_costs_upload_file_id_fkey (UUID)';
+  ELSIF user_files_id_type = 'bigint' THEN
+    EXECUTE 'ALTER TABLE public.operational_costs ADD CONSTRAINT operational_costs_upload_file_id_fkey FOREIGN KEY (upload_file_id) REFERENCES public.user_files(id) ON DELETE SET NULL';
+    RAISE NOTICE 'Added FK operational_costs_upload_file_id_fkey (BIGINT)';
   END IF;
 END $$;
 
