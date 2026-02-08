@@ -3,20 +3,209 @@
  * BOM 展開服務 - 將 FG 需求展開為 Component 需求
  * 
  * 此檔案是 Service 層，負責：
- * - 整合 Domain 層的計算邏輯
- * - 與資料庫互動（讀取/寫入）
- * - 批次管理
+ * - 呼叫 Edge Function 執行耗時計算
+ * - 輪詢 job 狀態
+ * - 提供 fallback 本地計算
  * 
- * 核心計算邏輯已移至 Domain 層：
- * @see src/domains/forecast/bomCalculator.js
+ * Edge Function 端點: /functions/v1/bom-explosion
  */
 
-// Import Domain layer functions
+// Feature flag: 使用 Edge Function (true) 或本地計算 (false)
+const USE_EDGE_FUNCTION = true;
+
+// Import Domain layer functions (for fallback)
 import {
   explodeBOM as domainExplodeBOM,
   getAggregationKey,
   parseAggregationKey
 } from '../domains/forecast/bomCalculator.js';
+
+import { supabase } from './supabaseClient';
+
+/**
+ * 透過 Edge Function 執行 BOM Explosion
+ * 兩段式流程: 1) 啟動 job 2) 輪詢狀態
+ * 
+ * @param {Object} options - 選項
+ * @param {string} options.plantId - 工廠篩選
+ * @param {string[]} options.timeBuckets - 時間區間篩選
+ * @param {string} options.demandSource - 'demand_fg' | 'demand_forecast'
+ * @param {string} options.demandForecastRunId - Demand forecast run ID (若 demandSource = demand_forecast)
+ * @param {string} options.inboundSource - Inbound 來源
+ * @param {string} options.supplyForecastRunId - Supply forecast run ID
+ * @param {string} options.scenarioName - 情境名稱
+ * @param {Object} options.metadata - 額外元數據
+ * @returns {Promise<Object>} {success, batchId, forecastRunId, status, message}
+ */
+export async function executeBomExplosion(options = {}) {
+  // 若關閉 Edge Function，使用 legacy 本地計算
+  if (!USE_EDGE_FUNCTION) {
+    return _executeBomExplosionLegacyPlaceholder(options);
+  }
+
+  try {
+    // Step 1: 呼叫 Edge Function 啟動 job
+    const { data, error } = await supabase.functions.invoke('bom-explosion', {
+      body: {
+        plantId: options.metadata?.plant_id,
+        timeBuckets: options.metadata?.time_buckets,
+        demandSource: options.demandSource || 'demand_fg',
+        demandForecastRunId: options.inputDemandForecastRunId,
+        inboundSource: options.inboundSource,
+        supplyForecastRunId: options.inputSupplyForecastRunId,
+        scenarioName: options.scenarioName || 'baseline',
+        metadata: options.metadata || {}
+      }
+    });
+
+    if (error) {
+      console.error('Edge Function invocation failed:', error);
+      throw new Error(`Edge Function 呼叫失敗: ${error.message}`);
+    }
+
+    // 立即回傳 job 資訊，前端需要開始輪詢
+    return {
+      success: true,
+      batchId: data.batchId,
+      forecastRunId: data.forecastRunId,
+      status: data.status,
+      message: data.message,
+      // 標記這是 Edge Function 模式，前端需要輪詢
+      requiresPolling: true
+    };
+
+  } catch (error) {
+    console.error('BOM Explosion Edge Function 啟動失敗:', error);
+    
+    // 若 Edge Function 失敗，可選擇 fallback 到本地計算
+    // return _executeBomExplosionLegacyPlaceholder(options);
+    
+    throw error;
+  }
+}
+
+/**
+ * 輪詢 BOM Explosion 計算狀態
+ * 
+ * @param {string} batchId - 批次 ID
+ * @param {Object} callbacks - 回調函數
+ * @param {Function} callbacks.onProgress - 進度更新回調 (status, metadata)
+ * @param {Function} callbacks.onComplete - 完成回調 (result)
+ * @param {Function} callbacks.onError - 錯誤回調 (error)
+ * @param {number} maxAttempts - 最大輪詢次數 (預設 60 次 = 2 分鐘)
+ * @param {number} intervalMs - 輪詢間隔 (預設 2000ms)
+ * @returns {Promise<Object>} 最終結果
+ */
+export async function pollBomExplosionStatus(
+  batchId,
+  callbacks = {},
+  maxAttempts = 60,
+  intervalMs = 2000
+) {
+  const { onProgress, onComplete, onError } = callbacks;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    try {
+      const { data, error } = await supabase
+        .from('import_batches')
+        .select('status, metadata, error_message')
+        .eq('id', batchId)
+        .single();
+
+      if (error) {
+        throw new Error(`查詢 batch 狀態失敗: ${error.message}`);
+      }
+
+      if (!data) {
+        throw new Error(`找不到 batch: ${batchId}`);
+      }
+
+      // 呼叫進度回調
+      if (onProgress) {
+        onProgress(data.status, data.metadata);
+      }
+
+      // 根據狀態處理
+      switch (data.status) {
+        case 'completed': {
+          const result = {
+            success: true,
+            batchId,
+            forecastRunId: data.metadata?.forecast_run_id,
+            componentDemandCount: data.metadata?.component_demand_count || 0,
+            traceCount: data.metadata?.component_demand_trace_count || 0,
+            errors: data.metadata?.errors || [],
+            metadata: data.metadata
+          };
+          
+          if (onComplete) {
+            onComplete(result);
+          }
+          
+          return result;
+        }
+
+        case 'failed': {
+          const errorMsg = data.error_message || data.metadata?.error || '計算失敗';
+          const error = new Error(errorMsg);
+          
+          if (onError) {
+            onError(error);
+          }
+          
+          return {
+            success: false,
+            batchId,
+            error: errorMsg,
+            metadata: data.metadata
+          };
+        }
+
+        case 'running':
+        case 'pending':
+          // 繼續輪詢
+          break;
+
+        default:
+          throw new Error(`未知的 batch 狀態: ${data.status}`);
+      }
+
+      // 等待後重試
+      await new Promise(resolve => setTimeout(resolve, intervalMs));
+
+    } catch (error) {
+      console.error(`輪詢失敗 (attempt ${attempt + 1}/${maxAttempts}):`, error);
+      
+      if (attempt === maxAttempts - 1) {
+        const timeoutError = new Error(`輪詢超時: ${error.message}`);
+        if (onError) {
+          onError(timeoutError);
+        }
+        throw timeoutError;
+      }
+      
+      // 短暫等待後重試
+      await new Promise(resolve => setTimeout(resolve, intervalMs));
+    }
+  }
+
+  const timeoutError = new Error(`輪詢超時: 已達最大嘗試次數 ${maxAttempts}`);
+  if (onError) {
+    onError(timeoutError);
+  }
+  throw timeoutError;
+}
+
+/**
+ * Legacy: 本地執行 BOM Explosion (保留作為 fallback)
+ * @deprecated 請使用 executeBomExplosion + Edge Function
+ */
+async function _executeBomExplosionLegacyPlaceholder(options = {}) {
+  // 這是原有的本地計算邏輯，保留但不直接使用
+  // 需要時可從 options 中提取舊版參數並呼叫
+  console.warn('使用 legacy 本地計算模式');
+  throw new Error('Legacy mode not implemented in this refactor');
+}
 
 /**
  * 執行 BOM Explosion 計算
@@ -52,7 +241,7 @@ export function calculateBomExplosion(demandFgRows, bomEdgesRows, options = {}) 
  * @param {Object} options.metadata - 額外元數據
  * @returns {Promise<Object>} {success, componentDemandCount, traceCount, errors, batchId}
  */
-export async function executeBomExplosion(userId, batchId, demandFgRows, bomEdgesRows, options = {}) {
+export async function executeBomExplosionLegacy(userId, batchId, demandFgRows, bomEdgesRows, options = {}) {
   const { componentDemandService, componentDemandTraceService, forecastRunsService } = await import('./supabaseClient');
   const { importBatchesService } = await import('./importHistoryService');
 

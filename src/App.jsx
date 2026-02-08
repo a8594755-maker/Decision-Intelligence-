@@ -27,6 +27,9 @@ import ImportHistoryView from './views/ImportHistoryView';
 import BOMDataView from './views/BOMDataView';
 import ForecastsView from './views/ForecastsView';
 import RiskDashboardView from './views/RiskDashboardView';
+import AdminLogicControlCenter from './views/AdminLogicControlCenter';
+import AdminJobControlCenter from './views/AdminJobControlCenter';
+import DecisionSupportView from './views/DecisionSupportView';
 
 
 /** Sync view state with URL (pushState) and handle Back/Forward (popstate). Only active when session exists. */
@@ -87,6 +90,7 @@ export default function SmartOpsApp() {
   const [notifications, setNotifications] = useState([]);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [role, setRole] = useState('viewer'); // 角色选择：viewer/editor/approver/publisher/admin
   const [loading, setLoading] = useState(false);
   const [excelData, setExcelData] = useState(null);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false); // Mobile Menu State
@@ -182,9 +186,27 @@ export default function SmartOpsApp() {
   const handleLogin = async (e) => {
     e.preventDefault();
     setLoading(true);
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) addNotification(error.message, "error");
-    else addNotification("Login Successful", "success");
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) {
+      addNotification(error.message, "error");
+    } else {
+      // 登录成功后设置/更新用户角色
+      try {
+        const { error: upsertError } = await supabase
+          .from('user_profiles')
+          .upsert({ 
+            user_id: data.user.id, 
+            role: role,
+            updated_at: new Date().toISOString()
+          }, { onConflict: 'user_id' });
+        if (upsertError) {
+          console.error('Failed to update role:', upsertError);
+        }
+      } catch (err) {
+        console.error('Role update error:', err);
+      }
+      addNotification(`Login Successful (Role: ${role})`, "success");
+    }
     setLoading(false);
   };
 
@@ -236,6 +258,8 @@ export default function SmartOpsApp() {
       case 'analytics': return <AnalyticsCenterView excelData={excelData} />;
       case 'decision': return <DecisionSupportView excelData={excelData} user={session?.user} addNotification={addNotification} />;
       case 'settings': return <SettingsView darkMode={darkMode} setDarkMode={setDarkMode} user={session?.user} addNotification={addNotification} />;
+      case 'admin-logic': return <AdminLogicControlCenter setView={setView} />;
+      case 'admin-jobs': return <AdminJobControlCenter setView={setView} />;
       default: return <HomeView setView={setView} />;
     }
   };
@@ -253,6 +277,20 @@ export default function SmartOpsApp() {
           <form onSubmit={handleLogin} className="space-y-4">
             <div><label className="block text-sm font-medium mb-1">Email</label><input type="email" required className="w-full px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-transparent focus:ring-2 focus:ring-blue-500 outline-none" value={email} onChange={(e) => setEmail(e.target.value)} /></div>
             <div><label className="block text-sm font-medium mb-1">Password</label><input type="password" required className="w-full px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-transparent focus:ring-2 focus:ring-blue-500 outline-none" value={password} onChange={(e) => setPassword(e.target.value)} /></div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Role (for testing)</label>
+              <select 
+                value={role} 
+                onChange={(e) => setRole(e.target.value)}
+                className="w-full px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-transparent focus:ring-2 focus:ring-blue-500 outline-none"
+              >
+                <option value="viewer">Viewer (只读)</option>
+                <option value="logic_editor">Logic Editor (编辑)</option>
+                <option value="logic_approver">Logic Approver (审批)</option>
+                <option value="logic_publisher">Logic Publisher (发布)</option>
+                <option value="admin">Admin (管理员)</option>
+              </select>
+            </div>
             <button type="submit" disabled={loading} className="w-full bg-blue-600 hover:bg-blue-700 text-white py-2.5 rounded-lg font-medium transition-colors">{loading ? "Processing..." : "Log In"}</button>
             <button type="button" onClick={handleSignUp} disabled={loading} className="w-full bg-transparent border border-blue-600 text-blue-600 hover:bg-blue-50 py-2.5 rounded-lg font-medium transition-colors">Sign Up</button>
           </form>
@@ -323,7 +361,9 @@ export default function SmartOpsApp() {
       taskQuestion: 'Are our decisions correct?',
       children: [
         { key: 'import-history', label: 'Audit Trail', labelZh: 'Audit', icon: History, view: 'import-history' },
-        { key: 'integration', label: 'Data Hub', labelZh: 'Data Hub', icon: RefreshCw, view: 'integration' }
+        { key: 'integration', label: 'Data Hub', labelZh: 'Data Hub', icon: RefreshCw, view: 'integration' },
+        { key: 'admin-logic', label: 'Logic Control', labelZh: 'Logic Control', icon: Settings, view: 'admin-logic' },
+        { key: 'admin-jobs', label: 'Job Control', labelZh: 'Job Control', icon: Activity, view: 'admin-jobs' }
       ]
     }
   ];
@@ -1916,371 +1956,7 @@ const AnalyticsCenterView = ({ excelData }) => {
   );
 };
 
-const DecisionSupportView = ({ excelData, user, addNotification }) => {
-  const [input, setInput] = useState('');
-  const [conversations, setConversations] = useState([]);
-  const [currentConversationId, setCurrentConversationId] = useState(null);
-  const [isTyping, setIsTyping] = useState(false);
-  const [showNewChatConfirm, setShowNewChatConfirm] = useState(false);
-  const scrollRef = useRef(null);
-
-  // Auto-scroll to bottom when messages change
-  useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
-  }, [conversations, currentConversationId]);
-
-  // Load conversations from Supabase
-  useEffect(() => {
-    if (!user?.id) return;
-    let active = true;
-
-    const loadConversations = async () => {
-      const { data, error } = await supabase
-        .from('conversations')
-        .select('*')
-        .eq('user_id', user.id)
-        .order('updated_at', { ascending: false });
-
-      if (active && !error && data) {
-        setConversations(data);
-        // Set current conversation to the most recent one
-        if (data.length > 0 && !currentConversationId) {
-          setCurrentConversationId(data[0].id);
-        }
-      }
-    };
-
-    loadConversations();
-    return () => { active = false; };
-  }, [user?.id]);
-
-  // Get current conversation
-  const currentConversation = conversations.find(c => c.id === currentConversationId);
-  const currentMessages = currentConversation?.messages || [];
-
-  // Create new conversation
-  const handleNewConversation = async () => {
-    if (!user?.id) {
-      addNotification?.("Please sign in before starting a new conversation.", "error");
-      return;
-    }
-    setShowNewChatConfirm(false);
-
-    const newConversation = {
-      id: Date.now().toString(),
-      user_id: user.id,
-      title: 'New Conversation',
-      messages: [{ role: 'ai', content: 'Hello! I am your SmartOps Decision Assistant. How can I help you today?' }],
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
-    };
-
-    // Optimistically add so chatting keeps working even if Supabase insert fails
-    setConversations(prev => [newConversation, ...prev]);
-    setCurrentConversationId(newConversation.id);
-
-    const { error } = await supabase
-      .from('conversations')
-      .insert([newConversation]);
-
-    if (error) {
-      console.error("Failed to create conversation in Supabase", error);
-      addNotification?.("Conversation could not sync to the cloud; keeping a local copy.", "error");
-      return;
-    }
-
-    addNotification?.("New conversation ready.", "success");
-  };
-
-  // Delete conversation
-  const handleDeleteConversation = async (convId) => {
-    if (!user?.id) return;
-
-    const { error } = await supabase
-      .from('conversations')
-      .delete()
-      .eq('id', convId)
-      .eq('user_id', user.id);
-
-    if (!error) {
-      const newConversations = conversations.filter(c => c.id !== convId);
-      setConversations(newConversations);
-
-      // If deleted current conversation, switch to another
-      if (convId === currentConversationId) {
-        setCurrentConversationId(newConversations.length > 0 ? newConversations[0].id : null);
-      }
-    }
-  };
-
-  // Send message
-  const handleSend = async (e) => {
-    e.preventDefault();
-    if (!input.trim() || !currentConversationId) return;
-
-    const userMsg = { role: 'user', content: input, timestamp: new Date().toISOString() };
-    setInput('');
-    setIsTyping(true);
-
-    // Update messages immediately for UI
-    const updatedMessages = [...currentMessages, userMsg];
-    setConversations(prev => prev.map(c =>
-      c.id === currentConversationId
-        ? { ...c, messages: updatedMessages, updated_at: new Date().toISOString() }
-        : c
-    ));
-
-    // Call AI with error handling
-    let result;
-    try {
-      const context = excelData ? `USER DATA: ${JSON.stringify(excelData.slice(0, 5))}` : "No data available.";
-      result = await callGeminiAPI(input, context);
-    } catch (error) {
-      console.error("AI call failed:", error);
-      result = `❌ AI 服務暫時不可用\n\n錯誤: ${error.message}\n\n請稍後再試，或檢查設定中的 API key。`;
-    }
-
-    const aiMsg = { role: 'ai', content: result, timestamp: new Date().toISOString() };
-    const finalMessages = [...updatedMessages, aiMsg];
-
-    // Update title based on first user message
-    const newTitle = currentMessages.length <= 1 ? input.slice(0, 50) : currentConversation.title;
-
-    // Update conversation
-    const updatedConversation = {
-      ...currentConversation,
-      title: newTitle,
-      messages: finalMessages,
-      updated_at: new Date().toISOString()
-    };
-
-    // Save to Supabase
-    const { error: updateError } = await supabase
-      .from('conversations')
-      .update({
-        title: newTitle,
-        messages: finalMessages,
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', currentConversationId)
-      .eq('user_id', user.id);
-
-    if (updateError) {
-      console.error("Failed to save messages to Supabase", updateError);
-      addNotification?.("Message kept locally; cloud save failed.", "error");
-    }
-
-    // Update local state
-    setConversations(prev => prev.map(c =>
-      c.id === currentConversationId ? updatedConversation : c
-    ));
-
-    setIsTyping(false);
-  };
-
-  // Format timestamp
-  const formatTime = (timestamp) => {
-    if (!timestamp) return '';
-    const date = new Date(timestamp);
-    const now = new Date();
-    const diffMs = now - date;
-    const diffMins = Math.floor(diffMs / 60000);
-
-    if (diffMins < 1) return 'Just now';
-    if (diffMins < 60) return `${diffMins}m ago`;
-    if (diffMins < 1440) return `${Math.floor(diffMins / 60)}h ago`;
-    return date.toLocaleDateString();
-  };
-
-  return (
-    <div className="h-[calc(100vh-140px)] flex flex-col md:flex-row gap-6 animate-fade-in">
-      {/* Conversations Sidebar */}
-      <Card className="md:w-80 w-full h-full max-h-[calc(100vh-180px)] overflow-hidden flex flex-col">
-        <div className="flex items-center justify-between border-b p-4">
-          <h3 className="font-semibold flex items-center gap-2">
-            <Bot className="w-4 h-4" />
-            Conversations
-          </h3>
-          <Button
-            variant="primary"
-            onClick={() => conversations.length > 0 ? setShowNewChatConfirm(true) : handleNewConversation()}
-            className="px-3 py-1 text-xs"
-          >
-            + New
-          </Button>
-        </div>
-
-        <div className="flex-1 overflow-y-auto divide-y">
-          {conversations.length === 0 ? (
-            <div className="p-8 text-center">
-              <Bot className="w-12 h-12 text-slate-300 mx-auto mb-3" />
-              <p className="text-sm text-slate-400 mb-4">No conversations yet</p>
-              <Button variant="primary" onClick={handleNewConversation} className="text-xs">
-                Start Chatting
-              </Button>
-            </div>
-          ) : (
-            conversations.map((conv) => (
-              <div
-                key={conv.id}
-                className={`p-3 hover:bg-slate-50 dark:hover:bg-slate-700 cursor-pointer transition group ${
-                  currentConversationId === conv.id ? 'bg-blue-50 dark:bg-blue-900/20 border-l-4 border-l-blue-600' : ''
-                }`}
-                onClick={() => setCurrentConversationId(conv.id)}
-              >
-                <div className="flex items-start justify-between mb-1">
-                  <h4 className="font-medium text-sm line-clamp-1 flex-1">
-                    {conv.title || 'New Conversation'}
-                  </h4>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleDeleteConversation(conv.id);
-                    }}
-                    className="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-100 dark:hover:bg-red-900/30 rounded transition"
-                  >
-                    <X className="w-3 h-3 text-red-600" />
-                  </button>
-                </div>
-                <div className="flex items-center justify-between">
-                  <p className="text-xs text-slate-400 line-clamp-1 flex-1">
-                    {conv.messages[conv.messages.length - 1]?.content.slice(0, 40)}...
-                  </p>
-                  <span className="text-xs text-slate-400 ml-2">
-                    {formatTime(conv.updated_at)}
-                  </span>
-                </div>
-                <div className="flex items-center gap-2 mt-1">
-                  <Badge type="info">{conv.messages.length} msgs</Badge>
-                </div>
-              </div>
-            ))
-          )}
-        </div>
-      </Card>
-
-      {/* Chat Area */}
-      <Card className="flex-1 flex flex-col overflow-hidden p-0 h-full">
-        {currentConversation ? (
-          <>
-            <div className="bg-slate-50 dark:bg-slate-800 border-b p-4 flex items-center justify-between">
-              <div>
-                <h3 className="font-semibold">{currentConversation.title}</h3>
-                <p className="text-xs text-slate-500">
-                  {currentMessages.length} messages - Updated {formatTime(currentConversation.updated_at)}
-                </p>
-              </div>
-              <button
-                onClick={() => setShowNewChatConfirm(true)}
-                className="p-2 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg transition"
-                title="New conversation"
-              >
-                <FileText className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="flex-1 overflow-y-auto p-4 space-y-4" ref={scrollRef}>
-              {currentMessages.map((msg, i) => (
-                <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} animate-fade-in`}>
-                  <div className={`max-w-[85%] rounded-2xl p-3 md:p-4 ${
-                    msg.role === 'user'
-                      ? 'bg-blue-600 text-white'
-                      : 'bg-slate-100 dark:bg-slate-700 text-slate-900 dark:text-slate-100'
-                  }`}>
-                    <div className="text-sm leading-relaxed whitespace-pre-wrap">{msg.content}</div>
-                    {msg.timestamp && (
-                      <div className={`text-xs mt-2 ${msg.role === 'user' ? 'text-blue-100' : 'text-slate-400'}`}>
-                        {formatTime(msg.timestamp)}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              ))}
-              {isTyping && (
-                <div className="flex justify-start">
-                  <div className="bg-slate-100 dark:bg-slate-700 rounded-2xl p-4">
-                    <div className="flex items-center gap-2">
-                      <Loader2 className="w-4 h-4 animate-spin text-blue-600" />
-                      <span className="text-sm text-slate-600 dark:text-slate-300">AI is thinking...</span>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            <div className="p-4 border-t bg-white dark:bg-slate-800">
-              <form onSubmit={handleSend} className="relative">
-                <input
-                  type="text"
-                  className="w-full pl-4 pr-12 py-3 rounded-xl border border-slate-300 dark:border-slate-600 bg-transparent focus:ring-2 focus:ring-blue-500 outline-none"
-                  placeholder="Ask AI anything..."
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  disabled={isTyping}
-                />
-                <button
-                  type="submit"
-                  disabled={isTyping || !input.trim()}
-                  className="absolute right-2 top-2 p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  <Send className="w-4 h-4" />
-                </button>
-              </form>
-              {excelData && (
-                <div className="mt-2 flex items-center gap-2 text-xs text-slate-500">
-                  <Database className="w-3 h-3" />
-                  <span>Using {excelData.length} rows of data for context</span>
-                </div>
-              )}
-            </div>
-          </>
-        ) : (
-          <div className="flex-1 flex items-center justify-center">
-            <div className="text-center">
-              <Bot className="w-16 h-16 text-slate-300 mx-auto mb-4" />
-              <h3 className="text-lg font-semibold text-slate-600 dark:text-slate-400 mb-2">
-                No Conversation Selected
-              </h3>
-              <p className="text-slate-500 mb-4">
-                Start a new conversation to chat with the AI
-              </p>
-              <Button variant="primary" onClick={handleNewConversation}>
-                Start New Conversation
-              </Button>
-            </div>
-          </div>
-        )}
-      </Card>
-
-      {/* New Chat Confirmation Modal */}
-      {showNewChatConfirm && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <Card className="max-w-md w-full">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-12 h-12 rounded-full bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center">
-                <FileText className="w-6 h-6 text-blue-600" />
-              </div>
-              <div>
-                <h3 className="text-lg font-semibold">Start New Conversation?</h3>
-                <p className="text-sm text-slate-500">Current conversation will be saved</p>
-              </div>
-            </div>
-            <div className="flex gap-2 justify-end">
-              <Button variant="secondary" onClick={() => setShowNewChatConfirm(false)}>
-                Cancel
-              </Button>
-              <Button variant="primary" onClick={handleNewConversation}>
-                New Conversation
-              </Button>
-            </div>
-          </Card>
-        </div>
-      )}
-    </div>
-  );
-};
+// DecisionSupportView is now imported from ./views/DecisionSupportView
 
 const SettingsView = ({ darkMode, setDarkMode, user, addNotification }) => {
   const [apiKey, setApiKey] = useState(localStorage.getItem('gemini_api_key') || '');

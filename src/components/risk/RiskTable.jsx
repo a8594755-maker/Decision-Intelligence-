@@ -118,13 +118,13 @@ const RiskTable = ({
   }
 
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-sm">
+    <div className="overflow-x-auto risk-table-scroll">
+      <table className="w-full text-xs border-collapse">
         <thead className="bg-slate-100 dark:bg-slate-800 sticky top-0 z-10">
           <tr>
             <th 
               onClick={() => handleSort('materialCode')}
-              className="px-3 py-3 text-left text-xs font-semibold uppercase text-slate-700 dark:text-slate-300 cursor-pointer hover:bg-slate-200 dark:hover:bg-slate-700"
+              className="px-3 py-2 text-left text-xs font-semibold uppercase text-slate-700 dark:text-slate-300 cursor-pointer hover:bg-slate-200 dark:hover:bg-slate-700 sticky left-0 z-20 bg-slate-100 dark:bg-slate-800 w-[140px] min-w-[140px]"
             >
               <div className="flex items-center gap-1">
                 料號
@@ -134,7 +134,7 @@ const RiskTable = ({
             
             <th 
               onClick={() => handleSort('plantId')}
-              className="px-3 py-3 text-left text-xs font-semibold uppercase text-slate-700 dark:text-slate-300 cursor-pointer hover:bg-slate-200 dark:hover:bg-slate-700"
+              className="px-2 py-2 text-left text-xs font-semibold uppercase text-slate-700 dark:text-slate-300 cursor-pointer hover:bg-slate-200 dark:hover:bg-slate-700 sticky left-[140px] z-20 bg-slate-100 dark:bg-slate-800 w-[80px] min-w-[80px]"
             >
               <div className="flex items-center gap-1">
                 工廠
@@ -144,7 +144,7 @@ const RiskTable = ({
             
             <th 
               onClick={() => handleSort('riskLevel')}
-              className="px-3 py-3 text-center text-xs font-semibold uppercase text-slate-700 dark:text-slate-300 cursor-pointer hover:bg-slate-200 dark:hover:bg-slate-700"
+              className="px-2 py-2 text-center text-xs font-semibold uppercase text-slate-700 dark:text-slate-300 cursor-pointer hover:bg-slate-200 dark:hover:bg-slate-700 sticky left-[220px] z-20 bg-slate-100 dark:bg-slate-800 w-[70px] min-w-[70px]"
             >
               <div className="flex items-center justify-center gap-1">
                 狀態
@@ -154,104 +154,83 @@ const RiskTable = ({
             
             <th 
               onClick={() => handleSort('netAvailable')}
-              className="px-3 py-3 text-right text-xs font-semibold uppercase text-slate-700 dark:text-slate-300 cursor-pointer hover:bg-slate-200 dark:hover:bg-slate-700"
+              className="px-2 py-2 text-right text-xs font-semibold uppercase text-slate-700 dark:text-slate-300 cursor-pointer hover:bg-slate-200 dark:hover:bg-slate-700 w-[85px] min-w-[85px]"
             >
               <div className="flex items-center justify-end gap-1">
-                Net available
+                Net Avail
                 {renderSortIcon('netAvailable')}
               </div>
             </th>
             
             <th 
               onClick={() => handleSort('gapQty')}
-              className="px-3 py-3 text-right text-xs font-semibold uppercase text-slate-700 dark:text-slate-300 cursor-pointer hover:bg-slate-200 dark:hover:bg-slate-700"
+              className="px-2 py-2 text-right text-xs font-semibold uppercase text-slate-700 dark:text-slate-300 cursor-pointer hover:bg-slate-200 dark:hover:bg-slate-700 w-[75px] min-w-[75px]"
             >
               <div className="flex items-center justify-end gap-1">
-                Gap qty
+                Gap
                 {renderSortIcon('gapQty')}
               </div>
             </th>
             
             <th 
               onClick={() => handleSort('daysToStockout')}
-              className="px-3 py-3 text-right text-xs font-semibold uppercase text-slate-700 dark:text-slate-300 cursor-pointer hover:bg-slate-200 dark:hover:bg-slate-700"
+              className="px-2 py-2 text-right text-xs font-semibold uppercase text-slate-700 dark:text-slate-300 cursor-pointer hover:bg-slate-200 dark:hover:bg-slate-700 w-[80px] min-w-[80px]"
               title="需選擇 Forecast Run 並有 component_demand 時顯示"
             >
               <div className="flex items-center justify-end gap-1">
-                Days to stockout
+                Days Left
                 {renderSortIcon('daysToStockout')}
               </div>
             </th>
 
-            {/* Step 2: P0 - Probabilistic columns */}
             <th 
               onClick={() => handleSort('pStockout')}
-              className="px-3 py-3 text-right text-xs font-semibold uppercase text-slate-700 dark:text-slate-300 cursor-pointer hover:bg-slate-200 dark:hover:bg-slate-700"
+              className="px-2 py-2 text-right text-xs font-semibold uppercase text-slate-700 dark:text-slate-300 cursor-pointer hover:bg-slate-200 dark:hover:bg-slate-700 w-[70px] min-w-[70px]"
               title="Monte Carlo P(stockout) from probabilistic forecast"
             >
               <div className="flex items-center justify-end gap-1">
-                P(Stockout)
+                P(Stock)
                 {renderSortIcon('pStockout')}
               </div>
             </th>
             
-            <th 
-              onClick={() => handleSort('stockoutBucketP50')}
-              className="px-3 py-3 text-center text-xs font-semibold uppercase text-slate-700 dark:text-slate-300 cursor-pointer hover:bg-slate-200 dark:hover:bg-slate-700"
-            >
-              <div className="flex items-center justify-center gap-1">
-                Stockout P50
-                {renderSortIcon('stockoutBucketP50')}
-              </div>
-            </th>
-            
-            <th 
-              onClick={() => handleSort('stockoutBucketP90')}
-              className="px-3 py-3 text-center text-xs font-semibold uppercase text-slate-700 dark:text-slate-300 cursor-pointer hover:bg-slate-200 dark:hover:bg-slate-700"
-            >
-              <div className="flex items-center justify-center gap-1">
-                Stockout P90
-                {renderSortIcon('stockoutBucketP90')}
-              </div>
-            </th>
-            
-            <th className="px-3 py-3 text-center text-xs font-semibold uppercase text-slate-700 dark:text-slate-300">
-              Next bucket
+            <th className="px-2 py-2 text-center text-xs font-semibold uppercase text-slate-700 dark:text-slate-300 w-[85px] min-w-[85px]">
+              Next Bkt
             </th>
             
             <th 
               onClick={() => handleSort('profitAtRisk')}
-              className="px-3 py-3 text-right text-xs font-semibold uppercase text-slate-700 dark:text-slate-300 cursor-pointer hover:bg-slate-200 dark:hover:bg-slate-700"
+              className="px-2 py-2 text-right text-xs font-semibold uppercase text-slate-700 dark:text-slate-300 cursor-pointer hover:bg-slate-200 dark:hover:bg-slate-700 w-[95px] min-w-[95px]"
             >
               <div className="flex items-center justify-end gap-1">
-                Profit at Risk
+                Profit @ Risk
                 {renderSortIcon('profitAtRisk')}
               </div>
             </th>
             
-            {/* M6 Gate-R5: Revenue at Risk columns */}
-            <th className="px-3 py-3 text-right text-xs font-semibold uppercase text-rose-600 dark:text-rose-400">
-              Margin at Risk
-            </th>
-            <th className="px-3 py-3 text-right text-xs font-semibold uppercase text-orange-600 dark:text-orange-400">
-              Penalty
-            </th>
-            <th className="px-3 py-3 text-right text-xs font-semibold uppercase text-red-600 dark:text-red-400">
-              Total $
+            <th className="px-2 py-2 text-right text-xs font-semibold uppercase text-rose-600 dark:text-rose-400 w-[85px] min-w-[85px]">
+              Rev Margin
             </th>
             
-            {/* M7 Gate-7.1: Risk Score column */}
+            <th className="px-2 py-2 text-right text-xs font-semibold uppercase text-orange-600 dark:text-orange-400 w-[85px] min-w-[85px]">
+              Rev Penalty
+            </th>
+            
+            <th className="px-2 py-2 text-right text-xs font-semibold uppercase text-red-600 dark:text-red-400 w-[85px] min-w-[85px]">
+              Rev Total
+            </th>
+            
             <th 
               onClick={() => handleSort('riskScore')}
-              className="px-3 py-3 text-right text-xs font-semibold uppercase text-purple-600 dark:text-purple-400 cursor-pointer hover:bg-slate-200 dark:hover:bg-slate-700"
+              className="px-2 py-2 text-right text-xs font-semibold uppercase text-purple-600 dark:text-purple-400 cursor-pointer hover:bg-slate-200 dark:hover:bg-slate-700 w-[70px] min-w-[70px]"
             >
               <div className="flex items-center justify-end gap-1">
-                Risk Score
+                Score
                 {renderSortIcon('riskScore')}
               </div>
             </th>
             
-            <th className="px-3 py-3 text-center text-xs font-semibold uppercase text-slate-700 dark:text-slate-300">
+            <th className="px-2 py-2 text-center text-xs font-semibold uppercase text-slate-700 dark:text-slate-300 w-[60px] min-w-[60px]">
               操作
             </th>
           </tr>
@@ -270,7 +249,7 @@ const RiskTable = ({
                 onClick={() => onRowSelect(risk)}
                 className={getRowClassName(risk)}
               >
-                <td className="px-3 py-2.5 font-medium">
+                <td className="px-3 py-1.5 font-medium sticky left-0 z-10 bg-white dark:bg-slate-800 border-r border-slate-100 dark:border-slate-700/50 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.05)]">
                   {risk.item === '(unknown)' ? (
                     <span 
                       className="text-slate-400 dark:text-slate-500 italic" 
@@ -285,22 +264,22 @@ const RiskTable = ({
                   )}
                 </td>
                 
-                <td className="px-3 py-2.5 text-slate-700 dark:text-slate-300">
+                <td className="px-2 py-1.5 text-slate-700 dark:text-slate-300 sticky left-[140px] z-10 bg-white dark:bg-slate-800 border-r border-slate-100 dark:border-slate-700/50">
                   {risk.plantId}
                 </td>
                 
-                <td className="px-3 py-2.5 text-center">
-                  <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold ${config.bgColor} ${config.textColor}`}>
+                <td className="px-2 py-1.5 text-center sticky left-[220px] z-10 bg-white dark:bg-slate-800 border-r border-slate-100 dark:border-slate-700/50">
+                  <span className={`inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[10px] font-semibold ${config.bgColor} ${config.textColor}`}>
                     <span>{config.icon}</span>
                     <span>{config.label}</span>
                   </span>
                 </td>
                 
-                <td className="px-3 py-2.5 text-right text-slate-700 dark:text-slate-300">
+                <td className="px-2 py-1.5 text-right text-slate-700 dark:text-slate-300">
                   {formatNumber(risk.netAvailable)}
                 </td>
                 
-                <td className="px-3 py-2.5 text-right">
+                <td className="px-2 py-1.5 text-right">
                   {risk.gapQty > 0 ? (
                     <span className="text-red-600 dark:text-red-400 font-medium">
                       -{formatNumber(risk.gapQty)}
@@ -310,14 +289,13 @@ const RiskTable = ({
                   )}
                 </td>
                 
-                <td className="px-3 py-2.5 text-right text-slate-700 dark:text-slate-300">
+                <td className="px-2 py-1.5 text-right text-slate-700 dark:text-slate-300">
                   {typeof risk.daysToStockout === 'number' && risk.daysToStockout !== Infinity
                     ? `${risk.daysToStockout} 天`
                     : '—'}
                 </td>
 
-                {/* Step 2: P0 - Probabilistic data cells */}
-                <td className="px-3 py-2.5 text-right">
+                <td className="px-2 py-1.5 text-right">
                   {risk.pStockout !== undefined && risk.pStockout !== null ? (
                     <span className={`font-medium ${
                       risk.pStockout > 0.5 ? 'text-red-600 dark:text-red-400' :
@@ -331,23 +309,7 @@ const RiskTable = ({
                   )}
                 </td>
                 
-                <td className="px-3 py-2.5 text-center text-xs">
-                  {risk.stockoutBucketP50 ? (
-                    <span className="font-mono text-slate-700 dark:text-slate-300">{risk.stockoutBucketP50}</span>
-                  ) : (
-                    <span className="text-slate-400">—</span>
-                  )}
-                </td>
-                
-                <td className="px-3 py-2.5 text-center text-xs">
-                  {risk.stockoutBucketP90 ? (
-                    <span className="font-mono text-slate-700 dark:text-slate-300">{risk.stockoutBucketP90}</span>
-                  ) : (
-                    <span className="text-slate-400">—</span>
-                  )}
-                </td>
-                
-                <td className="px-3 py-2.5 text-center text-xs text-slate-600 dark:text-slate-400">
+                <td className="px-2 py-1.5 text-center text-slate-600 dark:text-slate-400">
                   {risk.nextTimeBucket ? (
                     <span className="font-mono">{risk.nextTimeBucket}</span>
                   ) : (
@@ -355,7 +317,7 @@ const RiskTable = ({
                   )}
                 </td>
                 
-                <td className="px-3 py-2.5 text-right">
+                <td className="px-2 py-1.5 text-right">
                   {risk.profitAtRisk > 0 ? (
                     <div className="flex flex-col items-end">
                       <span className={`font-semibold ${
@@ -366,7 +328,7 @@ const RiskTable = ({
                         {formatCurrency(risk.profitAtRisk, risk.currency)}
                       </span>
                       {risk.profitAtRiskReason === 'ASSUMPTION' && (
-                        <span className="text-xs text-amber-600 dark:text-amber-400" title="Using assumption">
+                        <span className="text-[10px] text-amber-600 dark:text-amber-400" title="Using assumption">
                           ~
                         </span>
                       )}
@@ -376,8 +338,7 @@ const RiskTable = ({
                   )}
                 </td>
                 
-                {/* M6 Gate-R5: Revenue at Risk data cells */}
-                <td className="px-3 py-2.5 text-right">
+                <td className="px-2 py-1.5 text-right">
                   {risk.revMarginAtRisk ? (
                     <span className="font-semibold text-rose-600 dark:text-rose-400">
                       ${risk.revMarginAtRisk.toLocaleString()}
@@ -386,7 +347,8 @@ const RiskTable = ({
                     <span className="text-slate-300" title="No revenue data / not FG key">—</span>
                   )}
                 </td>
-                <td className="px-3 py-2.5 text-right">
+                
+                <td className="px-2 py-1.5 text-right">
                   {risk.revPenaltyAtRisk ? (
                     <span className="text-orange-600 dark:text-orange-400">
                       ${risk.revPenaltyAtRisk.toLocaleString()}
@@ -395,7 +357,8 @@ const RiskTable = ({
                     <span className="text-slate-300">—</span>
                   )}
                 </td>
-                <td className="px-3 py-2.5 text-right">
+                
+                <td className="px-2 py-1.5 text-right">
                   {risk.revTotalAtRisk ? (
                     <span className="font-bold text-red-600 dark:text-red-400">
                       ${risk.revTotalAtRisk.toLocaleString()}
@@ -405,8 +368,7 @@ const RiskTable = ({
                   )}
                 </td>
                 
-                {/* M7 Gate-7.1: Risk Score data cell */}
-                <td className="px-3 py-2.5 text-right">
+                <td className="px-2 py-1.5 text-right">
                   {risk.riskScore ? (
                     <span className={`font-bold ${
                       risk.riskScore > 10000 ? 'text-red-600 dark:text-red-400' :
@@ -420,7 +382,7 @@ const RiskTable = ({
                   )}
                 </td>
                 
-                <td className="px-3 py-2.5 text-center">
+                <td className="px-2 py-1.5 text-center">
                   <button
                     onClick={(e) => {
                       e.stopPropagation();

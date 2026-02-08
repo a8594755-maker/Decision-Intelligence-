@@ -346,10 +346,112 @@ ${JSON.stringify(recentData.map(d => ({
   });
 };
 
+/**
+ * Streaming chat with AI - sends tokens to onChunk callback as they arrive.
+ * Falls back to non-streaming callGeminiAPI if streaming fails.
+ * @param {string} message - User message
+ * @param {Array} conversationHistory - Recent messages [{role, content}, ...]
+ * @param {string} systemPrompt - Rich system context (supply-chain state)
+ * @param {function} onChunk - Called with each text chunk as it streams
+ * @returns {Promise<string>} Full concatenated response
+ */
+export const streamChatWithAI = async (message, conversationHistory = [], systemPrompt = '', onChunk = null) => {
+  const apiKey = getApiKey();
+
+  if (!apiKey) {
+    const fallback = "WARNING: No API key found. Add your Google AI API key in Settings.\n\nGet a free key: https://ai.google.dev/";
+    onChunk?.(fallback);
+    return fallback;
+  }
+
+  // Build context with history
+  let fullContext = systemPrompt || '';
+
+  if (conversationHistory.length > 0) {
+    const historyText = conversationHistory
+      .slice(-10)
+      .map(msg => `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}`)
+      .join('\n');
+    fullContext += `\n\nConversation History:\n${historyText}`;
+  }
+
+  const fullPrompt = fullContext
+    ? `${fullContext}\n\nUser Query: ${message}`
+    : message;
+
+  const requestBody = {
+    contents: [{ parts: [{ text: fullPrompt }] }],
+    generationConfig: {
+      temperature: 0.7,
+      maxOutputTokens: 8192,
+    }
+  };
+
+  const apiUrl = `https://generativelanguage.googleapis.com/${API_VERSION}/models/${GEMINI_MODEL}:streamGenerateContent?alt=sse&key=${apiKey}`;
+
+  try {
+    const response = await fetch(apiUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(requestBody)
+    });
+
+    if (!response.ok) {
+      // Fall back to non-streaming
+      console.warn('Streaming failed, falling back to non-streaming');
+      const result = await callGeminiAPI(message, fullContext);
+      onChunk?.(result);
+      return result;
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let fullText = '';
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+
+      // Parse SSE lines
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || ''; // Keep incomplete line in buffer
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const jsonStr = line.slice(6).trim();
+        if (!jsonStr || jsonStr === '[DONE]') continue;
+
+        try {
+          const parsed = JSON.parse(jsonStr);
+          const chunk = parsed.candidates?.[0]?.content?.parts?.[0]?.text;
+          if (chunk) {
+            fullText += chunk;
+            onChunk?.(chunk);
+          }
+        } catch {
+          // Skip malformed JSON chunks
+        }
+      }
+    }
+
+    return fullText || 'No response generated.';
+  } catch (error) {
+    console.warn('Streaming error, falling back:', error.message);
+    // Fall back to non-streaming
+    const result = await callGeminiAPI(message, fullContext);
+    onChunk?.(result);
+    return result;
+  }
+};
+
 export default {
   callGeminiAPI,
   analyzeData,
   chatWithAI,
+  streamChatWithAI,
   generateReportSummary,
   extractJsonFromResponse,
   getApiKey,

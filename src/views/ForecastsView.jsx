@@ -10,7 +10,7 @@ import {
   Package, AlertCircle, Calendar, Hash, DollarSign
 } from 'lucide-react';
 import { Card, Button, Badge } from '../components/ui';
-import { executeBomExplosion } from '../services/bomExplosionService';
+import { executeBomExplosion, pollBomExplosionStatus } from '../services/bomExplosionService';
 import { runDemandForecast } from '../services/demandForecastEngine';
 import { runSupplyForecast, supplyForecastService } from '../services/supplyForecastService';
 import {
@@ -427,6 +427,11 @@ const ForecastsView = ({ user, addNotification }) => {
   /**
    * 執行 BOM Explosion
    */
+  /**
+   * 執行 BOM Explosion - Edge Function 兩段式流程
+   * 1. 啟動 Edge Function job (立即回傳 batchId)
+   * 2. 輪詢 import_batches 狀態直到 completed/failed
+   */
   const handleRunBomExplosion = async () => {
     if (!user?.id) {
       addNotification('請先登入', 'error');
@@ -438,141 +443,103 @@ const ForecastsView = ({ user, addNotification }) => {
     setRunResult(null);
 
     try {
-      // Parse inputs
-      const plantIdFilter = plantId.trim() || null;
-      const timeBucketsFilter = timeBuckets.trim() 
+      // Parse time buckets
+      const timeBucketsFilter = timeBuckets.trim()
         ? timeBuckets.split(',').map(t => t.trim()).filter(Boolean)
         : null;
 
-      console.log('Fetching BOM Explosion data:', { plantIdFilter, timeBucketsFilter, demandSource, selectedBomDemandRunId });
+      const plantIdFilter = plantId.trim() || null;
 
-      // Step 1: Fetch demand data based on selected source
-      let demandFgRows = [];
-      
-      if (demandSource === 'demand_forecast') {
-        // Validate demand forecast run selection
-        if (!selectedBomDemandRunId) {
-          throw new Error('請選擇一個 Demand Forecast Run');
-        }
-        
-        // Fetch demand_forecast data and convert to demand_fg format
-        const forecastRows = await demandForecastService.getForecastsByRun(
-          user.id,
-          selectedBomDemandRunId,
-          { plantId: plantIdFilter }
-        );
-        
-        if (!forecastRows || forecastRows.length === 0) {
-          throw new Error('找不到 Demand Forecast 資料。請確認已選擇正確的 Run。');
-        }
-        
-        // Filter by time buckets if specified
-        const filteredForecastRows = timeBucketsFilter 
-          ? forecastRows.filter(r => timeBucketsFilter.includes(r.time_bucket))
-          : forecastRows;
-        
-        if (filteredForecastRows.length === 0) {
-          throw new Error('找不到符合條件的 Demand Forecast 資料。請檢查 Time Buckets 設定。');
-        }
-        
-        // Convert demand_forecast format to demand_fg format for BOM Explosion
-        demandFgRows = filteredForecastRows.map(f => ({
-          id: f.id, // Source demand_forecast row ID for traceability
-          material_code: f.material_code,
-          plant_id: f.plant_id,
-          time_bucket: f.time_bucket,
-          demand_qty: f.p50, // Use P50 (median) as the demand quantity
-          uom: 'pcs',
-          source_type: 'demand_forecast',
-          source_id: selectedBomDemandRunId,
-          batch_id: null,
-          user_id: user.id
-        }));
-        
-        console.log(`Fetched ${demandFgRows.length} demand forecast rows (converted to demand_fg format)`);
-      } else {
-        // Use uploaded demand_fg
-        demandFgRows = await demandFgService.fetchDemandFg(
-          user.id,
-          plantIdFilter,
-          timeBucketsFilter
-        );
-        
-        if (!demandFgRows || demandFgRows.length === 0) {
-          throw new Error('找不到 FG 需求資料。請確認已上傳 demand_fg 資料，且篩選條件正確。');
-        }
-        
-        console.log(`Fetched ${demandFgRows.length} FG demand rows from demand_fg`);
-      }
+      // Step 1: 啟動 Edge Function job
+      console.log('Starting BOM Explosion via Edge Function:', {
+        plantId: plantIdFilter,
+        timeBuckets: timeBucketsFilter,
+        demandSource,
+        demandForecastRunId: demandSource === 'demand_forecast' ? selectedBomDemandRunId : null
+      });
 
-      // Step 2: Fetch bom_edges
-      const bomEdgesRows = await bomEdgesService.fetchBomEdges(
-        user.id,
-        plantIdFilter
+      const startResult = await executeBomExplosion({
+        filename: `BOM Explosion - ${plantIdFilter || 'All Plants'} - ${new Date().toISOString()}`,
+        metadata: {
+          plant_id: plantIdFilter,
+          time_buckets: timeBucketsFilter,
+          source: 'forecasts_page',
+          demand_source: demandSource,
+          input_demand_forecast_run_id: demandSource === 'demand_forecast' ? selectedBomDemandRunId : null,
+          input_inbound_source: bomInboundSource,
+          input_supply_forecast_run_id: bomInboundSource === 'supply_forecast' ? selectedBomSupplyRunId : null
+        },
+        scenarioName: 'baseline',
+        demandSource: demandSource,
+        inputDemandForecastRunId: demandSource === 'demand_forecast' ? selectedBomDemandRunId : null,
+        inboundSource: bomInboundSource,
+        inputSupplyForecastRunId: bomInboundSource === 'supply_forecast' ? selectedBomSupplyRunId : null
+      });
+
+      console.log('Edge Function job started:', startResult);
+
+      // Step 2: 開始輪詢狀態
+      addNotification(
+        `BOM Explosion 計算中... (Batch: ${startResult.batchId.slice(0, 8)})`,
+        'info'
       );
 
-      if (!bomEdgesRows || bomEdgesRows.length === 0) {
-        throw new Error('找不到 BOM 關係資料。請確認已上傳 bom_edge 資料，且篩選條件正確。');
-      }
-
-      console.log(`Fetched ${bomEdgesRows.length} BOM edge rows`);
-
-      // Step 3: Execute BOM Explosion
-      const result = await executeBomExplosion(
-        user.id,
-        null, // Let the function create batch automatically
-        demandFgRows,
-        bomEdgesRows,
-        {
-          filename: `BOM Explosion - ${plantIdFilter || 'All Plants'} - ${new Date().toISOString()}`,
-          metadata: {
-            plant_id: plantIdFilter,
-            time_buckets: timeBucketsFilter,
-            source: 'forecasts_page',
-            fg_demands_input: demandFgRows.length,
-            bom_edges_input: bomEdgesRows.length,
-            demand_source: demandSource,
-            input_demand_source: demandSource,
-            input_demand_forecast_run_id: demandSource === 'demand_forecast' ? selectedBomDemandRunId : null,
-            input_inbound_source: bomInboundSource,
-            input_supply_forecast_run_id: bomInboundSource === 'supply_forecast' ? selectedBomSupplyRunId : null
-          },
-          // Run-level trace parameters
-          demandSource: demandSource,
-          inputDemandForecastRunId: demandSource === 'demand_forecast' ? selectedBomDemandRunId : null,
-          inboundSource: bomInboundSource,
-          inputSupplyForecastRunId: bomInboundSource === 'supply_forecast' ? selectedBomSupplyRunId : null
+      const callbacks = {
+        onProgress: (status, metadata) => {
+          console.log(`BOM Explosion progress: ${status}`, metadata);
+          // 可選：更新 UI 顯示進度
+          if (status === 'running') {
+            // 顯示計算中的狀態
+          }
+        },
+        onComplete: (result) => {
+          console.log('BOM Explosion completed:', result);
+        },
+        onError: (error) => {
+          console.error('BOM Explosion failed during polling:', error);
         }
+      };
+
+      const finalResult = await pollBomExplosionStatus(
+        startResult.batchId,
+        callbacks,
+        60,  // maxAttempts: 60 * 2s = 2 minutes
+        2000 // intervalMs: 2 seconds
       );
 
-      console.log('BOM Explosion result:', result);
+      // Step 3: 處理結果
+      setRunResult(finalResult);
 
-      // Store result
-      setRunResult(result);
+      if (finalResult.success) {
+        const errorCount = finalResult.errors?.length || 0;
+        if (errorCount > 0) {
+          addNotification(
+            `BOM Explosion 完成！產生 ${finalResult.componentDemandCount} 筆 Component 需求，但有 ${errorCount} 個警告`,
+            'warning'
+          );
+        } else {
+          addNotification(
+            `BOM Explosion 完成！產生 ${finalResult.componentDemandCount} 筆 Component 需求，${finalResult.traceCount} 筆追溯記錄`,
+            'success'
+          );
+        }
 
-      // Show success notification
-      if (result.success) {
-        addNotification(
-          `BOM Explosion 完成！產生 ${result.componentDemandCount} 筆 Component 需求，${result.traceCount} 筆追溯記錄`,
-          'success'
-        );
+        // Reload batches and select the new one
+        await loadBatches();
+        setSelectedBatchId(startResult.batchId);
       } else {
         addNotification(
-          `BOM Explosion 完成但有 ${result.errors?.length || 0} 個錯誤或警告`,
-          'warning'
+          `BOM Explosion 失敗: ${finalResult.error}`,
+          'error'
         );
-      }
-
-      // Reload batches and select the new one
-      await loadBatches();
-      if (result.batchId) {
-        setSelectedBatchId(result.batchId);
+        setRunError(finalResult.error || 'BOM Explosion 執行失敗');
       }
 
     } catch (error) {
       console.error('BOM Explosion failed:', error);
-      setRunError(error.message || 'BOM Explosion 執行失敗');
-      addNotification(`BOM Explosion 執行失敗: ${error.message}`, 'error');
+      const errorMsg = error.message || 'BOM Explosion 執行失敗';
+      setRunError(errorMsg);
+      addNotification(`BOM Explosion 執行失敗: ${errorMsg}`, 'error');
     } finally {
       setRunLoading(false);
     }

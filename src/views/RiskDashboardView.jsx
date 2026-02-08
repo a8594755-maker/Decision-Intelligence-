@@ -34,6 +34,12 @@ import RiskTable from '../components/risk/RiskTable';
 import DetailsPanel from '../components/risk/DetailsPanel';
 import AuditTimeline from '../components/risk/AuditTimeline'; // M7.3 WP3
 
+// 雙模式視圖元件（M8）
+import ViewToggle from '../components/risk/ViewToggle';
+import RiskCardGrid from '../components/risk/RiskCardGrid';
+import RiskListView from '../components/risk/RiskListView';
+import RiskDetailModal from '../components/risk/RiskDetailModal';
+
 // 資料轉換 Adapter（新版）
 import { mapSupplyCoverageToUI } from '../components/risk/mapDomainToUI';
 
@@ -118,6 +124,16 @@ const RiskDashboardView = ({ user, addNotification }) => {
   const [auditLoading, setAuditLoading] = useState(false);
   const [selectedAuditEvent, setSelectedAuditEvent] = useState(null);
   const [replayDraft, setReplayDraft] = useState(null); // For What-if replay
+
+  // M8: View Mode State (Grid/List) - Reserved for future use
+  const [viewMode, setViewMode] = useState(() => {
+    // Load from localStorage on init
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('riskDashboardView');
+      return saved === 'list' ? 'list' : 'grid';
+    }
+    return 'grid';
+  });
 
   // ========== 資料載入 ==========
 
@@ -484,6 +500,12 @@ const RiskDashboardView = ({ user, addNotification }) => {
     setSelectedRow(row);
   };
 
+  // M8: Handle view mode change with localStorage persistence - Reserved
+  const handleViewModeChange = (newMode) => {
+    setViewMode(newMode);
+    localStorage.setItem('riskDashboardView', newMode);
+  };
+
   const handleCloseDetails = () => {
     setSelectedRow(null);
   };
@@ -595,22 +617,38 @@ const RiskDashboardView = ({ user, addNotification }) => {
    * Handle What-if Replay from audit event
    */
   const handleReplayWhatIf = (event) => {
-    if (!event.payload?.inputs?.action) return;
+    console.log('[Replay] Event received:', event);
+    
+    if (!event.payload?.inputs?.action) {
+      console.warn('[Replay] No action in payload');
+      return;
+    }
     
     // Extract key from event
     const key = event.key;
-    if (!key) return;
+    console.log('[Replay] Key:', key);
+    
+    if (!key) {
+      console.warn('[Replay] No key in event');
+      return;
+    }
     
     // Find the row in filteredRows
     const [materialCode, plantId] = key.split('|');
+    console.log('[Replay] Looking for:', materialCode, plantId);
+    console.log('[Replay] filteredRows count:', filteredRows.length);
+    
     const targetRow = filteredRows.find(r => 
       r.item === materialCode && r.plantId === plantId
     );
     
     if (!targetRow) {
+      console.warn('[Replay] Row not found for key:', key);
       addNotification(`Cannot find row for key: ${key}`, 'warning');
       return;
     }
+    
+    console.log('[Replay] Found row, setting replay draft:', event.payload.inputs.action);
     
     // Set replay draft with action params
     setReplayDraft({
@@ -849,208 +887,223 @@ const RiskDashboardView = ({ user, addNotification }) => {
   }
 
   return (
-    <div className="space-y-4 p-4 max-w-[1800px] mx-auto">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <div>
+    <div className="space-y-0">
+      {/* Section A: Header, Notice, Filters, KPI - Constrained Width */}
+      <div className="max-w-[1400px] mx-auto px-4 py-4 space-y-4">
+        {/* Header */}
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div>
-            <h1 className="text-2xl md:text-3xl font-bold text-slate-900 dark:text-slate-100">
-              🚨 Supply Coverage Risk
-            </h1>
-            <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-              Horizon: {HORIZON_BUCKETS} buckets · 最後更新: {dataSnapshotTime ? new Date(dataSnapshotTime).toLocaleString('zh-TW') : 'N/A'}
-              {activeForecastRun && (
-                <span className="ml-2 text-blue-600 dark:text-blue-400">
-                  · Risk based on Forecast Run: {activeForecastRun.scenario_name || 'baseline'} ({String(activeForecastRun.id).slice(0, 8)}…)
-                </span>
-              )}
-              {!activeForecastRun && forecastRunsList.length === 0 && (
-                <span className="ml-2 text-amber-600 dark:text-amber-400">· No forecast run (supply coverage only)</span>
-              )}
-            </p>
-            {/* 診斷 KPI */}
-            <div className="flex items-center gap-3 mt-2 text-xs text-slate-600 dark:text-slate-400">
-              <span title="Inventory pairs (Universe)">
-                Inv: <span className="font-semibold text-slate-900 dark:text-slate-100">{diagnostics.inventoryPairs}</span>
-              </span>
-              <span className="text-slate-300 dark:text-slate-600">|</span>
-              <span title="PO pairs">
-                PO: <span className="font-semibold text-slate-900 dark:text-slate-100">{diagnostics.poPairs}</span>
-              </span>
-              <span className="text-slate-300 dark:text-slate-600">|</span>
-              <span title="Union pairs (Inventory ∪ PO)">
-                Union: <span className="font-semibold text-slate-900 dark:text-slate-100">{diagnostics.unionPairs}</span>
-              </span>
-              <span className="text-slate-300 dark:text-slate-600">|</span>
-              <span title="Matched pairs (Inventory ∩ PO)">
-                Matched: <span className="font-semibold text-blue-600 dark:text-blue-400">{diagnostics.matchedPairs}</span>
-              </span>
-              <span className="text-slate-300 dark:text-slate-600">|</span>
-              <span title="Inbound pairs in horizon (H3)">
-                Inbound(H3): <span className="font-semibold text-green-600 dark:text-green-400">{diagnostics.inboundPairsInHorizon}</span>
-              </span>
-              {(diagnostics.demandKeysWithoutRiskRow > 0 || diagnostics.riskRowsWithoutDemand > 0) && (
-                <>
-                  <span className="text-slate-300 dark:text-slate-600">|</span>
-                  <span title="Key 對齊：demand 有但 risk 無 / risk 有但 demand 無">
-                    Demand↔Risk: <span className="font-semibold text-amber-600 dark:text-amber-400">{diagnostics.demandKeysWithoutRiskRow}</span> / <span className="font-semibold text-amber-600 dark:text-amber-400">{diagnostics.riskRowsWithoutDemand}</span>
+            <div>
+              <h1 className="text-2xl md:text-3xl font-bold text-slate-900 dark:text-slate-100">
+                🚨 Supply Coverage Risk
+              </h1>
+              <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
+                Horizon: {HORIZON_BUCKETS} buckets · 最後更新: {dataSnapshotTime ? new Date(dataSnapshotTime).toLocaleString('zh-TW') : 'N/A'}
+                {activeForecastRun && (
+                  <span className="ml-2 text-blue-600 dark:text-blue-400">
+                    · Risk based on Forecast Run: {activeForecastRun.scenario_name || 'baseline'} ({String(activeForecastRun.id).slice(0, 8)}…)
                   </span>
-                </>
-              )}
+                )}
+                {!activeForecastRun && forecastRunsList.length === 0 && (
+                  <span className="ml-2 text-amber-600 dark:text-amber-400">· No forecast run (supply coverage only)</span>
+                )}
+              </p>
+              {/* 診斷 KPI */}
+              <div className="flex items-center gap-3 mt-2 text-xs text-slate-600 dark:text-slate-400">
+                <span title="Inventory pairs (Universe)">
+                  Inv: <span className="font-semibold text-slate-900 dark:text-slate-100">{diagnostics.inventoryPairs}</span>
+                </span>
+                <span className="text-slate-300 dark:text-slate-600">|</span>
+                <span title="PO pairs">
+                  PO: <span className="font-semibold text-slate-900 dark:text-slate-100">{diagnostics.poPairs}</span>
+                </span>
+                <span className="text-slate-300 dark:text-slate-600">|</span>
+                <span title="Union pairs (Inventory ∪ PO)">
+                  Union: <span className="font-semibold text-slate-900 dark:text-slate-100">{diagnostics.unionPairs}</span>
+                </span>
+                <span className="text-slate-300 dark:text-slate-600">|</span>
+                <span title="Matched pairs (Inventory ∩ PO)">
+                  Matched: <span className="font-semibold text-blue-600 dark:text-blue-400">{diagnostics.matchedPairs}</span>
+                </span>
+                <span className="text-slate-300 dark:text-slate-600">|</span>
+                <span title="Inbound pairs in horizon (H3)">
+                  Inbound(H3): <span className="font-semibold text-green-600 dark:text-green-400">{diagnostics.inboundPairsInHorizon}</span>
+                </span>
+                {(diagnostics.demandKeysWithoutRiskRow > 0 || diagnostics.riskRowsWithoutDemand > 0) && (
+                  <>
+                    <span className="text-slate-300 dark:text-slate-600">|</span>
+                    <span title="Key 對齊：demand 有但 risk 無 / risk 有但 demand 無">
+                      Demand↔Risk: <span className="font-semibold text-amber-600 dark:text-amber-400">{diagnostics.demandKeysWithoutRiskRow}</span> / <span className="font-semibold text-amber-600 dark:text-amber-400">{diagnostics.riskRowsWithoutDemand}</span>
+                    </span>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="text-sm text-slate-600 dark:text-slate-400 whitespace-nowrap">Forecast Run:</label>
+            <select
+              className="rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 px-3 py-1.5 text-sm min-w-[200px]"
+              value={selectedForecastRunId || ''}
+              onChange={(e) => {
+                const v = e.target.value;
+                setSelectedForecastRunId(v || null);
+              }}
+              disabled={loading}
+            >
+              <option value="">Latest run</option>
+              {(forecastRunsList || []).map((run) => (
+                <option key={run.id} value={run.id}>
+                  {run.scenario_name || 'baseline'} — {run.created_at ? new Date(run.created_at).toLocaleString('zh-TW', { dateStyle: 'short', timeStyle: 'short' }) : run.id?.slice(0, 8)}
+                </option>
+              ))}
+            </select>
+            <Button
+              onClick={loadRiskData}
+              variant="primary"
+              icon={RefreshCw}
+              disabled={loading}
+            >
+              重新整理
+            </Button>
+            
+            {/* M7 Gate-7.1: Calculate Risk Scores button */}
+            <Button
+              onClick={calculateRiskScores}
+              variant="secondary"
+              icon={Calculator}
+              disabled={loading || !activeForecastRun?.id || calculatingRiskScores}
+              title="計算 Risk Score (P(stockout) × $Impact × Urgency)"
+            >
+              {calculatingRiskScores ? '計算中...' : 'Calculate Risk Scores'}
+            </Button>
+          </div>
+        </div>
+
+        {/* Scope & Limitation Notice */}
+        <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-3">
+          <div className="flex items-start gap-3">
+            <div className="flex-shrink-0 mt-0.5">
+              <svg className="w-5 h-5 text-blue-600 dark:text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            </div>
+            <div className="flex-1 text-sm">
+              <div className="font-semibold text-blue-900 dark:text-blue-100 mb-1">
+                Supply Coverage Risk (Bucket-Based)
+              </div>
+              <div className="text-blue-800 dark:text-blue-200 space-y-1">
+                <div>• <span className="font-medium">Horizon:</span> {HORIZON_BUCKETS} buckets（約 {HORIZON_BUCKETS} 週）</div>
+                <div>• <span className="font-medium">Data source:</span> Open PO + Inventory snapshots{profitSummary.itemsWithRealFinancials > 0 && ' + FG financials'}{activeForecastRun && (componentDemandCountForRun > 0 ? ` + Demand: component_demand (${componentDemandCountForRun} rows)` : ' + Demand: 無（該 Run 無 component_demand）')}</div>
+                <div>• <span className="font-medium">Days to stockout / P(stockout):</span> {activeForecastRun ? (componentDemandCountForRun > 0 ? '依 Forecast Run 的 component_demand 彙總為日均需求後計算' : '該 Forecast Run 無 component_demand 資料，無法計算（請確認已執行 BOM Explosion 並選對 Run）') : '請選擇 Forecast Run 以顯示（需先執行 BOM Explosion）；目前為 supply coverage only'}</div>
+                {profitSummary.usingFallback && (
+                  <div className="pt-1 border-t border-blue-300 dark:border-blue-700 mt-2">
+                    • <span className="font-medium">Profit at Risk:</span> {profitSummary.itemsWithRealFinancials > 0 
+                      ? `Using real financials for ${profitSummary.itemsWithRealFinancials} items, ${getFallbackAssumption().displayText} for others` 
+                      : `${getFallbackAssumption().displayText} (FG financials not loaded)`}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
-          <label className="text-sm text-slate-600 dark:text-slate-400 whitespace-nowrap">Forecast Run:</label>
-          <select
-            className="rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 px-3 py-1.5 text-sm min-w-[200px]"
-            value={selectedForecastRunId || ''}
-            onChange={(e) => {
-              const v = e.target.value;
-              setSelectedForecastRunId(v || null);
-            }}
-            disabled={loading}
-          >
-            <option value="">Latest run</option>
-            {(forecastRunsList || []).map((run) => (
-              <option key={run.id} value={run.id}>
-                {run.scenario_name || 'baseline'} — {run.created_at ? new Date(run.created_at).toLocaleString('zh-TW', { dateStyle: 'short', timeStyle: 'short' }) : run.id?.slice(0, 8)}
-              </option>
-            ))}
-          </select>
-          <Button
-            onClick={loadRiskData}
-            variant="primary"
-            icon={RefreshCw}
-            disabled={loading}
-          >
-            重新整理
-          </Button>
-          
-          {/* M7 Gate-7.1: Calculate Risk Scores button */}
-          <Button
-            onClick={calculateRiskScores}
-            variant="secondary"
-            icon={Calculator}
-            disabled={loading || !activeForecastRun?.id || calculatingRiskScores}
-            title="計算 Risk Score (P(stockout) × $Impact × Urgency)"
-          >
-            {calculatingRiskScores ? '計算中...' : 'Calculate Risk Scores'}
-          </Button>
-        </div>
+        {/* A) Filter Bar */}
+        <FilterBar
+          plants={plants.filter(p => p !== 'all')}
+          selectedPlant={selectedPlant}
+          onPlantChange={setSelectedPlant}
+          searchTerm={searchTerm}
+          onSearchChange={setSearchTerm}
+          selectedRiskLevel={selectedRiskLevel}
+          onRiskLevelChange={setSelectedRiskLevel}
+          onExport={handleExport}
+          exportDisabled={true}
+          onClearFilters={handleClearFilters}
+        />
+
+        {/* B) KPI Cards */}
+        <KPICards
+          criticalCount={kpis.criticalCount}
+          warningCount={kpis.warningCount}
+          shortageWithinHorizon={kpis.shortageWithinHorizon}
+          profitAtRisk={profitSummary.totalProfitAtRisk}
+          criticalProfitAtRisk={profitSummary.criticalProfitAtRisk}
+          totalItems={kpis.totalItems}
+          dataSnapshotTime={dataSnapshotTime}
+          horizonDays={HORIZON_BUCKETS}
+        />
       </div>
 
-      {/* Scope & Limitation Notice */}
-      <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-3">
-        <div className="flex items-start gap-3">
-          <div className="flex-shrink-0 mt-0.5">
-            <svg className="w-5 h-5 text-blue-600 dark:text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
+      {/* Section B: Risk Table - Limited Width with Internal Scroll */}
+      <div className="px-4 py-6">
+        <div className="max-w-[1400px] mx-auto bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm overflow-hidden">
+          <div className="p-4 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between">
+            <h2 className="font-semibold text-lg text-slate-900 dark:text-slate-100">
+              風險清單
+            </h2>
+            <span className="text-sm text-slate-500 dark:text-slate-400">
+              共 {filteredRows.length} 筆
+            </span>
           </div>
-          <div className="flex-1 text-sm">
-            <div className="font-semibold text-blue-900 dark:text-blue-100 mb-1">
-              Supply Coverage Risk (Bucket-Based)
-            </div>
-            <div className="text-blue-800 dark:text-blue-200 space-y-1">
-              <div>• <span className="font-medium">Horizon:</span> {HORIZON_BUCKETS} buckets（約 {HORIZON_BUCKETS} 週）</div>
-              <div>• <span className="font-medium">Data source:</span> Open PO + Inventory snapshots{profitSummary.itemsWithRealFinancials > 0 && ' + FG financials'}{activeForecastRun && (componentDemandCountForRun > 0 ? ` + Demand: component_demand (${componentDemandCountForRun} rows)` : ' + Demand: 無（該 Run 無 component_demand）')}</div>
-              <div>• <span className="font-medium">Days to stockout / P(stockout):</span> {activeForecastRun ? (componentDemandCountForRun > 0 ? '依 Forecast Run 的 component_demand 彙總為日均需求後計算' : '該 Forecast Run 無 component_demand 資料，無法計算（請確認已執行 BOM Explosion 並選對 Run）') : '請選擇 Forecast Run 以顯示（需先執行 BOM Explosion）；目前為 supply coverage only'}</div>
-              {profitSummary.usingFallback && (
-                <div className="pt-1 border-t border-blue-300 dark:border-blue-700 mt-2">
-                  • <span className="font-medium">Profit at Risk:</span> {profitSummary.itemsWithRealFinancials > 0 
-                    ? `Using real financials for ${profitSummary.itemsWithRealFinancials} items, ${getFallbackAssumption().displayText} for others` 
-                    : `${getFallbackAssumption().displayText} (FG financials not loaded)`}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* A) Filter Bar */}
-      <FilterBar
-        plants={plants.filter(p => p !== 'all')}
-        selectedPlant={selectedPlant}
-        onPlantChange={setSelectedPlant}
-        searchTerm={searchTerm}
-        onSearchChange={setSearchTerm}
-        selectedRiskLevel={selectedRiskLevel}
-        onRiskLevelChange={setSelectedRiskLevel}
-        onExport={handleExport}
-        exportDisabled={true}
-        onClearFilters={handleClearFilters}
-      />
-
-      {/* B) KPI Cards */}
-      <KPICards
-        criticalCount={kpis.criticalCount}
-        warningCount={kpis.warningCount}
-        shortageWithinHorizon={kpis.shortageWithinHorizon}
-        profitAtRisk={profitSummary.totalProfitAtRisk}
-        criticalProfitAtRisk={profitSummary.criticalProfitAtRisk}
-        totalItems={kpis.totalItems}
-        dataSnapshotTime={dataSnapshotTime}
-        horizonDays={HORIZON_BUCKETS}
-      />
-
-      {/* C) 主內容區：左側 Table + 右側 Details Panel */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-        {/* 左側：Risk Table */}
-        <div className={`${selectedRow ? 'lg:col-span-8' : 'lg:col-span-12'} bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm overflow-hidden transition-all duration-300`}>
-          <div className="p-4 border-b border-slate-200 dark:border-slate-700">
-            <div className="flex items-center justify-between">
-              <h2 className="font-semibold text-lg text-slate-900 dark:text-slate-100">
-                風險清單
-              </h2>
-              <span className="text-sm text-slate-500 dark:text-slate-400">
-                共 {filteredRows.length} 筆
-              </span>
-            </div>
-          </div>
-          
-          <RiskTable
-            risks={filteredRows}
-            selectedRowId={selectedRow?.id}
-            onRowSelect={handleRowSelect}
-            loading={loading}
-            probResults={probResults}
-          />
-        </div>
-
-        {/* 右側：Details Panel */}
-        {selectedRow && (
-          <div className="lg:col-span-4 transition-all duration-300">
-            <DetailsPanel
-              details={selectedRow}
-              user={user} // M7.2: Pass user for What-if service
-              onClose={handleCloseDetails}
-              horizonDays={HORIZON_BUCKETS}
-              activeForecastRun={activeForecastRun}
-              probSeries={probSeriesCache}
-              loadProbSeriesForKey={loadProbSeriesForKey}
-              hasProbResults={hasProbResults}
-              revenueState={revenueState}
-              riskScoreData={selectedRow.riskScore ? {
-                score: selectedRow.riskScore,
-                pStockout: selectedRow.riskScorePStockout,
-                impactUsd: selectedRow.riskScoreImpact,
-                urgencyWeight: selectedRow.riskScoreUrgency
-              } : null}
-              replayDraft={replayDraft} // M7.3 WP3: Replay draft
+          <div className="overflow-x-auto">
+            <RiskTable 
+              risks={filteredRows}
+              selectedRowId={selectedRow?.id}
+              onRowSelect={handleRowSelect}
+              loading={loading}
+              probResults={probResults}
+              compactMode={false}
             />
           </div>
-        )}
+        </div>
       </div>
 
-      {/* D) Audit Timeline (M7.3 WP3) */}
-      <div className="mt-6">
-        <AuditTimeline
-          events={auditEvents}
-          loading={auditLoading}
-          onReplay={handleReplayWhatIf}
-        />
+      {/* Risk Detail Modal */}
+      {selectedRow && (
+        <>
+          {/* Overlay */}
+          <div
+            className="fixed inset-0 bg-black/50 z-40 transition-opacity"
+            onClick={handleCloseDetails}
+          />
+          
+          {/* Modal Container */}
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div className="bg-white dark:bg-slate-800 rounded-xl shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-hidden flex flex-col">
+              <DetailsPanel
+                details={selectedRow}
+                user={user}
+                onClose={handleCloseDetails}
+                horizonDays={HORIZON_BUCKETS}
+                activeForecastRun={activeForecastRun}
+                probSeries={probSeriesCache}
+                loadProbSeriesForKey={loadProbSeriesForKey}
+                hasProbResults={hasProbResults}
+                revenueState={revenueState}
+                riskScoreData={selectedRow.riskScore ? {
+                  score: selectedRow.riskScore,
+                  pStockout: selectedRow.riskScorePStockout,
+                  impactUsd: selectedRow.riskScoreImpact,
+                  urgencyWeight: selectedRow.riskScoreUrgency
+                } : null}
+                replayDraft={replayDraft}
+              />
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Section C: Audit Timeline - Aligned Width */}
+      <div className="px-4 py-4 border-t border-slate-200 dark:border-slate-700">
+        <div className="max-w-[1400px] mx-auto">
+          <AuditTimeline
+            events={auditEvents}
+            loading={auditLoading}
+            onReplay={handleReplayWhatIf}
+          />
+        </div>
       </div>
     </div>
   );
