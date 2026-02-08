@@ -326,6 +326,31 @@ export function calculateRiskScoreBatch(inputs, options = {}) {
 // Utilities
 // ============================================================
 
+import axios from 'axios';
+
+const ML_API_ENDPOINT = import.meta.env.VITE_ML_API_ENDPOINT || 'http://localhost:8000';
+
+async function getDemandPrediction(materialCode) {
+  try {
+    const response = await axios.post(`${ML_API_ENDPOINT}/demand-forecast`, {
+      materialCode,
+      horizonDays: 30
+    });
+    return {
+      dailyDemand: response.data.predictedDemand,
+      fluctuation: (response.data.confidenceInterval[1] - response.data.confidenceInterval[0]) / response.data.predictedDemand
+    };
+  } catch (error) {
+    console.error("ML API error", error);
+    return getLegacyDemand(materialCode);
+  }
+}
+
+// Legacy demand calculation (fallback)
+function getLegacyDemand(materialCode) {
+  // Existing implementation
+}
+
 /**
  * Normalize key for consistent lookup
  * 

@@ -7,7 +7,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   TrendingUp, PlayCircle, Loader2, AlertTriangle, Check, ChevronDown, ChevronUp,
   Database, Search, ChevronLeft, ChevronRight, Filter, X, Download, RefreshCw,
-  Package, AlertCircle, Calendar, Hash, DollarSign
+  Package, AlertCircle, Calendar, Hash, DollarSign, Brain, Settings
 } from 'lucide-react';
 import { Card, Button, Badge } from '../components/ui';
 import { executeBomExplosion, pollBomExplosionStatus } from '../services/bomExplosionService';
@@ -38,6 +38,10 @@ import {
   saveRevenueTerm,
   deleteRevenueTerm
 } from '../services/revenueForecastService';
+import dualModelForecastService from '../services/dualModelForecastService';
+import ModelToggle from '../components/forecast/ModelToggle';
+import ConsensusWarning from '../components/forecast/ConsensusWarning';
+import ConfidenceOverlayChart from '../components/forecast/ConfidenceOverlayChart';
 
 const ForecastsView = ({ user, addNotification }) => {
   // ========== Run 區塊 States ==========
@@ -111,6 +115,18 @@ const ForecastsView = ({ user, addNotification }) => {
   const [dfTrainWindow, setDfTrainWindow] = useState(8);
   const [dfRunLoading, setDfRunLoading] = useState(false);
   const [dfRunResult, setDfRunResult] = useState(null);
+  
+  // ========== Dual Model Forecast States ==========
+  const [selectedModel, setSelectedModel] = useState('auto');
+  const [recommendedModel, setRecommendedModel] = useState('lightgbm');
+  const [modelStatus, setModelStatus] = useState({});
+  const [dualModelForecast, setDualModelForecast] = useState(null);
+  const [dualModelLoading, setDualModelLoading] = useState(false);
+  const [dualModelError, setDualModelError] = useState(null);
+  const [skuAnalysis, setSkuAnalysis] = useState(null);
+  const [showComparison, setShowComparison] = useState(true);
+  const [consensusWarning, setConsensusWarning] = useState(null);
+  const [forecastHorizon, setForecastHorizon] = useState(30);
   
   // ========== Supply Forecast Tab States ==========
   const [supplyForecastRuns, setSupplyForecastRuns] = useState([]);
@@ -233,6 +249,174 @@ const ForecastsView = ({ user, addNotification }) => {
       console.error('Error loading forecast runs:', error);
     }
   };
+
+  /**
+   * ========== Dual Model Forecast Functions ==========
+   */
+
+  /**
+   * Load model status on component mount
+   */
+  useEffect(() => {
+    const loadModelStatus = async () => {
+      try {
+        const status = await dualModelForecastService.getModelStatus();
+        setModelStatus(status.models || {});
+      } catch (error) {
+        console.error('Failed to load model status:', error);
+      }
+    };
+    
+    loadModelStatus();
+  }, []);
+
+  /**
+   * Execute dual-model forecast
+   */
+  const executeDualModelForecast = useCallback(async (materialCode) => {
+    if (!materialCode) {
+      addNotification('請選擇一個產品料號', 'error');
+      return;
+    }
+
+    setDualModelLoading(true);
+    setDualModelError(null);
+    setConsensusWarning(null);
+
+    try {
+      // Check cache first
+      const cacheKey = dualModelForecastService.generateCacheKey({
+        materialCode,
+        horizonDays: forecastHorizon,
+        modelType: selectedModel === 'auto' ? null : selectedModel,
+        includeComparison: showComparison
+      });
+      
+      const cachedResult = dualModelForecastService.getCachedForecast(cacheKey);
+      if (cachedResult) {
+        setDualModelForecast(cachedResult);
+        if (cachedResult.consensus_warning) {
+          setConsensusWarning(cachedResult.consensus_warning);
+        }
+        addNotification('使用快取的預測結果', 'info');
+        return;
+      }
+
+      // Execute forecast
+      const result = await dualModelForecastService.executeForecastWithRetry({
+        materialCode,
+        horizonDays: forecastHorizon,
+        modelType: selectedModel === 'auto' ? null : selectedModel,
+        includeComparison: showComparison,
+        userPreference: null
+      });
+
+      if (result.error) {
+        throw new Error(result.error);
+      }
+
+      setDualModelForecast(result);
+      
+      // Handle consensus warning
+      if (result.consensus_warning && result.consensus_warning.warning) {
+        setConsensusWarning(result.consensus_warning);
+        
+        if (result.consensus_warning.level === 'high') {
+          addNotification('檢測到模型預測差異較大，請查看共識警告', 'warning');
+        }
+      }
+
+      // Cache the result
+      dualModelForecastService.cacheForecast(cacheKey, result, 60); // Cache for 60 minutes
+      
+      addNotification(
+        `預測完成！使用 ${result.forecast.model} 模型`,
+        'success'
+      );
+
+    } catch (error) {
+      console.error('Dual model forecast failed:', error);
+      setDualModelError(error.message);
+      addNotification(`預測失敗: ${error.message}`, 'error');
+    } finally {
+      setDualModelLoading(false);
+    }
+  }, [selectedModel, forecastHorizon, showComparison, addNotification]);
+
+  /**
+   * Analyze SKU and get model recommendation
+   */
+  const analyzeSKU = useCallback(async (materialCode) => {
+    if (!materialCode) return;
+
+    try {
+      const analysis = await dualModelForecastService.analyzeSKU(materialCode);
+      
+      if (analysis.error) {
+        throw new Error(analysis.error);
+      }
+
+      setSkuAnalysis(analysis);
+      setRecommendedModel(analysis.recommended_model);
+
+      // Auto-select recommended model if in auto mode
+      if (selectedModel === 'auto' && analysis.recommended_model) {
+        setSelectedModel(analysis.recommended_model);
+      }
+
+    } catch (error) {
+      console.error('SKU analysis failed:', error);
+      addNotification(`SKU 分析失敗: ${error.message}`, 'error');
+    }
+  }, [selectedModel, addNotification]);
+
+  /**
+   * Handle model change
+   */
+  const handleModelChange = useCallback((newModel) => {
+    setSelectedModel(newModel);
+    
+    // Clear current forecast when model changes
+    setDualModelForecast(null);
+    setConsensusWarning(null);
+    setDualModelError(null);
+  }, []);
+
+  /**
+   * Handle consensus warning dismissal
+   */
+  const handleDismissWarning = useCallback(() => {
+    setConsensusWarning(null);
+  }, []);
+
+  /**
+   * Handle model switch from consensus warning
+   */
+  const handleModelSwitch = useCallback((targetModel) => {
+    handleModelChange(targetModel);
+    
+    // Re-execute forecast with new model if we have a material
+    if (selectedDemandMaterial) {
+      executeDualModelForecast(selectedDemandMaterial);
+    }
+  }, [handleModelChange, selectedDemandMaterial, executeDualModelForecast]);
+
+  /**
+   * Handle material selection for dual model forecast
+   */
+  const handleDualModelMaterialSelect = useCallback((materialCode) => {
+    setSelectedDemandMaterial(materialCode);
+    
+    // Auto-analyze SKU when material is selected
+    if (materialCode) {
+      analyzeSKU(materialCode);
+    }
+    
+    // Clear previous forecast
+    setDualModelForecast(null);
+    setConsensusWarning(null);
+    setDualModelError(null);
+  }, [analyzeSKU]);
 
   /**
    * 載入 Inventory Projection 資料
@@ -3040,6 +3224,223 @@ const ForecastsView = ({ user, addNotification }) => {
                 </div>
               </div>
             </Card>
+          )}
+
+          {/* ========== Dual Model Forecast Section ========== */}
+          {selectedDemandRunId && demandForecastMaterials.length > 0 && (
+            <>
+              {/* Model Selection and Controls */}
+              <Card>
+                <div className="space-y-6">
+                  <div className="flex items-center gap-3">
+                    <Brain className="w-6 h-6 text-purple-500" />
+                    <div>
+                      <h3 className="font-semibold text-lg">AI 雙模型預測</h3>
+                      <p className="text-sm text-slate-500">
+                        使用 LightGBM 穩定性與 Amazon Chronos AI 泛化能力的組合預測
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Model Toggle */}
+                  <ModelToggle
+                    selectedModel={selectedModel}
+                    onModelChange={handleModelChange}
+                    recommendedModel={recommendedModel}
+                    modelStatus={modelStatus}
+                    isLoading={dualModelLoading}
+                    disabled={dualModelLoading}
+                  />
+
+                  {/* Forecast Controls */}
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="space-y-2">
+                      <label className="block text-sm font-medium">
+                        預測天數
+                      </label>
+                      <select
+                        value={forecastHorizon}
+                        onChange={(e) => setForecastHorizon(parseInt(e.target.value))}
+                        className="w-full px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 focus:ring-2 focus:ring-purple-500 outline-none"
+                        disabled={dualModelLoading}
+                      >
+                        <option value={7}>7 天</option>
+                        <option value={14}>14 天</option>
+                        <option value={30}>30 天</option>
+                        <option value={60}>60 天</option>
+                        <option value={90}>90 天</option>
+                      </select>
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className="block text-sm font-medium">
+                        顯示模型比較
+                      </label>
+                      <div className="flex items-center space-x-2 mt-3">
+                        <input
+                          type="checkbox"
+                          id="showComparison"
+                          checked={showComparison}
+                          onChange={(e) => setShowComparison(e.target.checked)}
+                          className="rounded border-slate-300 text-purple-600 focus:ring-purple-500"
+                          disabled={dualModelLoading}
+                        />
+                        <label htmlFor="showComparison" className="text-sm text-slate-700">
+                          啟用模型對比分析
+                        </label>
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className="block text-sm font-medium invisible">
+                        執行預測
+                      </label>
+                      <Button
+                        onClick={() => executeDualModelForecast(selectedDemandMaterial)}
+                        disabled={dualModelLoading || !selectedDemandMaterial}
+                        variant="primary"
+                        icon={dualModelLoading ? Loader2 : Brain}
+                        className="w-full"
+                      >
+                        {dualModelLoading ? '預測中...' : '執行 AI 預測'}
+                      </Button>
+                    </div>
+                  </div>
+
+                  {/* SKU Analysis Display */}
+                  {skuAnalysis && (
+                    <div className="bg-slate-50 dark:bg-slate-800 rounded-lg p-4">
+                      <h4 className="font-medium text-slate-900 dark:text-slate-100 mb-2">
+                        SKU 分析結果
+                      </h4>
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                        <div>
+                          <span className="text-slate-500">數據點數:</span>
+                          <div className="font-medium">{skuAnalysis.analysis?.data_points || 'N/A'}</div>
+                        </div>
+                        <div>
+                          <span className="text-slate-500">推薦模型:</span>
+                          <div className="font-medium">{skuAnalysis.recommended_model?.toUpperCase() || 'N/A'}</div>
+                        </div>
+                        <div>
+                          <span className="text-slate-500">數據充足性:</span>
+                          <div className="font-medium">{skuAnalysis.analysis?.data_sufficiency || 'N/A'}</div>
+                        </div>
+                        <div>
+                          <span className="text-slate-500">Chronos 適合性:</span>
+                          <div className="font-medium">
+                            {skuAnalysis.chronos_suitability?.suitable ? '適合' : '不適合'}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </Card>
+
+              {/* Consensus Warning */}
+              {consensusWarning && (
+                <ConsensusWarning
+                  consensusData={{
+                    ...consensusWarning,
+                    primary_model: dualModelForecast?.forecast?.model,
+                    secondary_model: dualModelForecast?.comparison?.secondary_model,
+                    primary_mean: dualModelForecast?.forecast?.median,
+                    secondary_mean: dualModelForecast?.comparison?.secondary_prediction,
+                    deviation_pct: dualModelForecast?.comparison?.deviation_pct
+                  }}
+                  onDismiss={handleDismissWarning}
+                  onModelSwitch={handleModelSwitch}
+                />
+              )}
+
+              {/* Forecast Results */}
+              {dualModelForecast && (
+                <>
+                  {/* Confidence Overlay Chart */}
+                  <ConfidenceOverlayChart
+                    forecastData={dualModelForecast.forecast}
+                    comparisonData={dualModelForecast.comparison}
+                    historicalData={demandHistoricalData.slice(-30)} // Last 30 days of historical data
+                    showHistorical={true}
+                    showComparison={showComparison && dualModelForecast.comparison}
+                    height={400}
+                  />
+
+                  {/* Forecast Statistics */}
+                  <Card>
+                    <div className="space-y-4">
+                      <h3 className="font-semibold text-lg flex items-center gap-2">
+                        <TrendingUp className="w-5 h-5 text-purple-500" />
+                        預測統計分析
+                      </h3>
+                      
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        <div className="bg-blue-50 dark:bg-blue-900/20 rounded-lg p-4">
+                          <div className="text-2xl font-bold text-blue-600">
+                            {dualModelForecast.forecast.median?.toFixed(0) || 'N/A'}
+                          </div>
+                          <div className="text-sm text-blue-600">主要預測均值</div>
+                          <div className="text-xs text-blue-500 mt-1">
+                            {dualModelForecast.forecast.model?.toUpperCase()}
+                          </div>
+                        </div>
+                        
+                        <div className="bg-green-50 dark:bg-green-900/20 rounded-lg p-4">
+                          <div className="text-2xl font-bold text-green-600">
+                            {dualModelForecast.forecast.risk_score?.toFixed(0) || 'N/A'}
+                          </div>
+                          <div className="text-sm text-green-600">風險分數</div>
+                          <div className="text-xs text-green-500 mt-1">
+                            {dualModelForecast.forecast.risk_score < 30 ? '低風險' : 
+                             dualModelForecast.forecast.risk_score < 70 ? '中風險' : '高風險'}
+                          </div>
+                        </div>
+                        
+                        {dualModelForecast.comparison && (
+                          <div className="bg-purple-50 dark:bg-purple-900/20 rounded-lg p-4">
+                            <div className="text-2xl font-bold text-purple-600">
+                              {dualModelForecast.comparison.deviation_pct?.toFixed(1) || '0'}%
+                            </div>
+                            <div className="text-sm text-purple-600">模型偏差</div>
+                            <div className="text-xs text-purple-500 mt-1">
+                              {dualModelForecast.comparison.agreement_level}
+                            </div>
+                          </div>
+                        )}
+                        
+                        <div className="bg-orange-50 dark:bg-orange-900/20 rounded-lg p-4">
+                          <div className="text-2xl font-bold text-orange-600">
+                            {forecastHorizon}
+                          </div>
+                          <div className="text-sm text-orange-600">預測天數</div>
+                          <div className="text-xs text-orange-500 mt-1">
+                            {dualModelForecast.cached ? '快取結果' : '即時計算'}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </Card>
+                </>
+              )}
+
+              {/* Error Display */}
+              {dualModelError && (
+                <Card>
+                  <div className="p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
+                    <div className="flex items-start gap-3">
+                      <AlertTriangle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
+                      <div>
+                        <h4 className="font-semibold text-red-900 dark:text-red-100 mb-1">
+                          AI 預測失敗
+                        </h4>
+                        <p className="text-sm text-red-800 dark:text-red-200">{dualModelError}</p>
+                      </div>
+                    </div>
+                  </div>
+                </Card>
+              )}
+            </>
           )}
 
           {/* Forecast Data Table */}

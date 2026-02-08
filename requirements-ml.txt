@@ -1,0 +1,39 @@
+# Dual Model Architecture Requirements
+# ===================================
+
+# Core ML Libraries
+prophet==1.1.5
+lightgbm==4.3.0
+scikit-learn==1.4.2
+pandas==2.2.2
+numpy==1.26.4
+
+# Deep Learning & Transformers
+torch==2.2.2
+transformers==4.38.2
+accelerate==0.27.2
+
+# API & Web Framework
+fastapi==0.109.2
+uvicorn[standard]==0.29.0
+pydantic==2.6.4
+
+# Database & Storage
+supabase==2.3.0
+psycopg2-binary==2.9.9
+
+# Utilities
+python-dotenv==1.0.1
+requests==2.31.0
+joblib==1.4.0
+
+# Development & Testing
+pytest==8.0.2
+pytest-asyncio==0.23.5
+black==24.2.0
+flake8==7.0.0
+
+# Optional: For enhanced performance
+# xgboost==2.0.3
+# catboost==1.2.2
+# optuna==3.5.0
