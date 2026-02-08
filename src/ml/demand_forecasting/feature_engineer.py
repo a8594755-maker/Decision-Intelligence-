@@ -1,9 +1,13 @@
 import pandas as pd
 import numpy as np
+import hashlib
 try:
     from sklearn.preprocessing import StandardScaler
 except ImportError:
     StandardScaler = None
+
+# ── P0-1.3: 特徵版本治理 ──
+FEATURE_VERSION = "fe_v3"
 
 # LightGBM 训练所需的全部特征列（顺序固定，保证 .pkl 模型兼容）
 FEATURE_COLUMNS = [
@@ -17,15 +21,68 @@ FEATURE_COLUMNS = [
     'ewm_7',
 ]
 
+# 欄位指紋：任何欄位變動都會改變此 hash
+COLUMNS_HASH = hashlib.md5("|".join(FEATURE_COLUMNS).encode()).hexdigest()[:12]
+
 
 class FeatureEngineer:
     """
-    需求预测特征工程模块 (v2 — 工業級)
+    需求预测特征工程模块 (v3 — 工業級 + Schema 防護)
     将原始销售数据转换为 LightGBM / Prophet 可用特征
     """
     def __init__(self):
         self.scaler = StandardScaler() if StandardScaler else None
         self.calendar = self._load_calendar()
+        self.version = FEATURE_VERSION
+        self.columns_hash = COLUMNS_HASH
+
+    # ── P0-1.3: Schema 驗證 ──
+    @staticmethod
+    def assert_feature_schema(X: pd.DataFrame, expected_columns=None):
+        """
+        驗證特徵 DataFrame 的欄位完整性與順序。
+        訓練前、推論前都必須呼叫，防止 Training-Serving Skew。
+        不通過直接 raise，不會 silent wrong。
+        """
+        expected = expected_columns or FEATURE_COLUMNS
+        actual = list(X.columns)
+
+        # 缺失欄位
+        missing = set(expected) - set(actual)
+        if missing:
+            raise ValueError(f"Feature schema mismatch — missing columns: {sorted(missing)}")
+
+        # 多餘欄位
+        extra = set(actual) - set(expected)
+        if extra:
+            raise ValueError(f"Feature schema mismatch — unexpected columns: {sorted(extra)}")
+
+        # 順序檢查
+        if actual != list(expected):
+            raise ValueError(
+                f"Feature column order mismatch.\n"
+                f"  Expected: {expected[:5]}...\n"
+                f"  Actual:   {actual[:5]}..."
+            )
+
+        # NaN / Inf 檢查
+        nan_cols = X.columns[X.isna().any()].tolist()
+        if nan_cols:
+            raise ValueError(f"Features contain NaN in columns: {nan_cols}")
+
+        inf_mask = ~np.isfinite(X.select_dtypes(include=[np.number]).values).all(axis=0)
+        inf_cols = [FEATURE_COLUMNS[i] for i, v in enumerate(inf_mask) if v]
+        if inf_cols:
+            raise ValueError(f"Features contain Inf in columns: {inf_cols}")
+
+    def get_meta(self) -> dict:
+        """回傳特徵工程元資料（寫入 model meta.json）"""
+        return {
+            "feature_version": self.version,
+            "columns_hash": self.columns_hash,
+            "feature_columns": FEATURE_COLUMNS,
+            "num_features": len(FEATURE_COLUMNS),
+        }
     
     def _load_calendar(self):
         """加载业务日历（节假日/促销）"""

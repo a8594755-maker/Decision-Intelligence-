@@ -16,6 +16,8 @@ from .lightgbm_trainer import LightGBMTrainer
 from .chronos_trainer import ChronosTrainer
 from .erp_connector import ERPConnector
 from .feature_engineer import FeatureEngineer, FEATURE_COLUMNS
+from .data_contract import SalesSeries
+from .data_validation import validate_and_clean_series
 
 class ModelType(Enum):
     PROPHET = "prophet"
@@ -34,7 +36,7 @@ class ForecasterStrategy:
         raise NotImplementedError
     
     def _get_sales_sequence(self, sku: str, erp_connector: ERPConnector = None, inline_history: Optional[List[float]] = None) -> List[float]:
-        """获取销量序列：优先使用 inline_history"""
+        """获取销量序列：优先使用 inline_history（向後相容）"""
         if inline_history is not None:
             return [float(v) for v in inline_history]
         if erp_connector is None:
@@ -43,6 +45,28 @@ class ForecasterStrategy:
         if not sales_data:
             raise ValueError(f"No sales data for SKU {sku}")
         return [float(record.get('sales', 0)) for record in sales_data]
+
+    def _get_sales_series(self, sku: str, erp_connector: ERPConnector = None,
+                          inline_history: Optional[List[float]] = None,
+                          base_date: Optional[str] = None,
+                          last_date: Optional[str] = None) -> SalesSeries:
+        """
+        P0-1.1: 取得帶日期的 SalesSeries（不再丟掉日期）。
+        inline_history 場景必須提供 base_date 或 last_date，否則日曆特徵可能錯位。
+        """
+        if inline_history is not None:
+            return SalesSeries.from_inline_history(
+                values=[float(v) for v in inline_history],
+                sku=sku,
+                base_date=base_date,
+                last_date=last_date,
+            )
+        if erp_connector is None:
+            raise ValueError("Either erp_connector or inline_history must be provided")
+        sales_data = erp_connector.fetch_sales_data(sku)
+        if not sales_data:
+            raise ValueError(f"No sales data for SKU {sku}")
+        return SalesSeries.from_erp_records(sales_data, sku=sku)
     
     def get_model_info(self) -> Dict:
         """获取模型信息"""
@@ -164,7 +188,8 @@ class ProphetStrategy(ForecasterStrategy):
         else:
             trend_per_day = 0
 
-        predictions = [max(0, mean_val + trend_per_day * i + np.random.normal(0, std_val * 0.1)) for i in range(horizon_days)]
+        # P0-1.5: 確定性 fallback（不加隨機噪聲）
+        predictions = [max(0, mean_val + trend_per_day * i) for i in range(horizon_days)]
         ci = [[max(0, p - 1.645 * std_val), p + 1.645 * std_val] for p in predictions]
         risk_score = min(100, max(0, float(std_val / (mean_val + 1e-6) * 100)))
 
@@ -180,7 +205,7 @@ class ProphetStrategy(ForecasterStrategy):
             "metadata": {
                 "training_data_points": n,
                 "forecast_horizon": horizon_days,
-                "inference_mode": "statistical_fallback",
+                "inference_mode": "statistical_fallback_deterministic",
                 "features_used": ["mean", "trend", "std"],
                 "generated_at": datetime.now().isoformat()
             }
@@ -216,15 +241,21 @@ class LightGBMStrategy(ForecasterStrategy):
 
     def predict(self, sku: str, erp_connector: ERPConnector = None, horizon_days: int = 30, inline_history: Optional[List[float]] = None, **kwargs) -> Dict:
         try:
-            sales_sequence = self._get_sales_sequence(sku, erp_connector, inline_history)
-            n = len(sales_sequence)
+            # P0-1.1: 建立帶日期的 SalesSeries
+            series = self._get_sales_series(
+                sku, erp_connector, inline_history,
+                base_date=kwargs.get('base_date'),
+                last_date=kwargs.get('last_date'),
+            )
+            sales_sequence = series.to_values_list()
+            n = series.n
 
             if n < 10:
                 raise ValueError(f"LightGBM requires at least 10 data points, got {n}")
 
             # ── 真实推论模式：载入 .pkl 模型 ──
             if self._model is not None:
-                return self._predict_real(sales_sequence, horizon_days, n)
+                return self._predict_real(sales_sequence, horizon_days, n, series=series)
 
             # ── 统计回退模式（未训练时）──
             return self._predict_fallback(sales_sequence, horizon_days, n)
@@ -237,21 +268,22 @@ class LightGBMStrategy(ForecasterStrategy):
                 "model_type": ModelType.LIGHTGBM.value
             }
 
-    def _predict_real(self, sales_sequence: list, horizon_days: int, n: int) -> Dict:
+    def _predict_real(self, sales_sequence: list, horizon_days: int, n: int,
+                       series: SalesSeries = None) -> Dict:
         """
         遞歸預測 (Recursive Forecasting)
         ──────────────────────────────────
-        Day 1: 用真實歷史 → 模型預測 → 得到 pred_1
-        Day 2: 把 pred_1 追加到歷史 → 重算特徵 → 模型預測 → 得到 pred_2
-        Day N: …循環
-        這樣 Lag_7 在第 8 天起就會吃到自己的預測值，形成自回歸。
+        P0-1.5 修正：next_date 從歷史最後日期推導，不再用 now()。
         """
         predictions = []
-        # 複製歷史，避免汙染原始資料
         current_history = list(sales_sequence)
-        # 起始日期（歷史最後一天的隔天）
-        last_date = pd.Timestamp.now().normalize()
-        next_date = last_date + pd.Timedelta(days=1)
+
+        # ★ P0-1.1 修正：從 SalesSeries 取真實 last_date，而非 now()
+        if series is not None:
+            next_date = series.next_date
+        else:
+            # 向後相容 fallback（不應走到這裡）
+            next_date = pd.Timestamp.now().normalize() + pd.Timedelta(days=1)
 
         # 取出模型期望的特徵名（保證訓練/推論特徵完全一致）
         try:
@@ -264,6 +296,8 @@ class LightGBMStrategy(ForecasterStrategy):
             X_next = self._fe.build_next_day_features(current_history, next_date)
             # 確保欄位順序與模型一致
             X_next = X_next[model_features]
+            # P0-1.3: Schema 驗證（推論前）
+            FeatureEngineer.assert_feature_schema(X_next, model_features)
 
             # 2. 模型推論
             pred = float(self._model.predict(X_next)[0])
@@ -316,7 +350,8 @@ class LightGBMStrategy(ForecasterStrategy):
         else:
             trend = 0
 
-        predictions = [max(0, rolling_mean + trend * i + np.random.normal(0, rolling_std * 0.05)) for i in range(horizon_days)]
+        # P0-1.5: 確定性 fallback（不加隨機噪聲）
+        predictions = [max(0, rolling_mean + trend * i) for i in range(horizon_days)]
         ci = [[max(0, p - 1.645 * rolling_std), p + 1.645 * rolling_std] for p in predictions]
         risk_score = min(100, max(0, float(rolling_std / (rolling_mean + 1e-6) * 80)))
 
@@ -332,7 +367,7 @@ class LightGBMStrategy(ForecasterStrategy):
             "metadata": {
                 "training_data_points": n,
                 "forecast_horizon": horizon_days,
-                "inference_mode": "statistical_fallback",
+                "inference_mode": "statistical_fallback_deterministic",
                 "features_used": ["rolling_mean", "rolling_std", "trend"],
                 "generated_at": datetime.now().isoformat()
             }
