@@ -90,7 +90,7 @@ class FeatureEngineer:
         df['ewm_7'] = df['sales'].ewm(span=7, min_periods=1).mean()
 
         # ── 前向填充所有 NaN（lag 产生的空行）──
-        df = df.fillna(method='ffill').fillna(method='bfill').fillna(0)
+        df = df.ffill().bfill().fillna(0)
 
         return df
 
@@ -125,57 +125,60 @@ class FeatureEngineer:
         df = pd.DataFrame({'date': dates, 'sales': sales_sequence})
         return self.create_features(df)
 
-    def build_forecast_features(self, history_df: pd.DataFrame, horizon_days: int = 7) -> pd.DataFrame:
+    def build_next_day_features(self, sales_history: list, next_date: pd.Timestamp) -> pd.DataFrame:
         """
-        为未来 horizon_days 天构建特征行（推论时使用）
-        使用最后已知的滚动/滞后值进行前向延伸
-        :param history_df: 已经过 create_features 的历史 DataFrame
-        :param horizon_days: 预测天数
-        :return: 未来日的特征 DataFrame (len = horizon_days)
+        为「下一天」构建单行特征（递归预测核心方法）
+
+        用法（在递归循环中）：
+            for day in range(horizon):
+                X = fe.build_next_day_features(current_history, next_date)
+                pred = model.predict(X)[0]
+                current_history.append(pred)   # ← 关键：把预测值当作已知
+                next_date += 1 day
+
+        :param sales_history: 截至「今天」的完整销量列表（含已追加的预测值）
+        :param next_date: 要预测的那一天的日期
+        :return: 单行 DataFrame，列 = FEATURE_COLUMNS（可直接喂给 model.predict）
         """
-        last_date = history_df['date'].max()
-        future_dates = pd.date_range(start=last_date + pd.Timedelta(days=1), periods=horizon_days, freq='D')
+        dt = pd.Timestamp(next_date)
+        n = len(sales_history)
 
-        rows = []
-        # 用最后一行的滚动值作为基准
-        last_row = history_df.iloc[-1]
-        sales_tail = history_df['sales'].tolist()
+        row = {}
+        # ── 日历特征 ──
+        row['day_of_week'] = dt.dayofweek
+        row['day_of_month'] = dt.day
+        row['month'] = dt.month
+        row['week_of_year'] = int(dt.isocalendar().week)
 
-        for i, dt in enumerate(future_dates):
-            row = {}
-            row['date'] = dt
-            row['day_of_week'] = dt.dayofweek
-            row['day_of_month'] = dt.day
-            row['month'] = dt.month
-            row['week_of_year'] = int(dt.isocalendar().week)
-            row['month_sin'] = np.sin(2 * np.pi * row['month'] / 12)
-            row['month_cos'] = np.cos(2 * np.pi * row['month'] / 12)
-            row['dow_sin'] = np.sin(2 * np.pi * row['day_of_week'] / 7)
-            row['dow_cos'] = np.cos(2 * np.pi * row['day_of_week'] / 7)
-            row['is_holiday'] = 1 if dt.strftime('%Y-%m-%d') in self.calendar else 0
+        # ── 周期性编码 ──
+        row['month_sin'] = np.sin(2 * np.pi * row['month'] / 12)
+        row['month_cos'] = np.cos(2 * np.pi * row['month'] / 12)
+        row['dow_sin'] = np.sin(2 * np.pi * row['day_of_week'] / 7)
+        row['dow_cos'] = np.cos(2 * np.pi * row['day_of_week'] / 7)
 
-            # Lag: 使用历史尾部
-            row['lag_1'] = sales_tail[-1] if len(sales_tail) >= 1 else 0
-            row['lag_7'] = sales_tail[-7] if len(sales_tail) >= 7 else sales_tail[0]
-            row['lag_14'] = sales_tail[-14] if len(sales_tail) >= 14 else sales_tail[0]
-            row['lag_30'] = sales_tail[-30] if len(sales_tail) >= 30 else sales_tail[0]
+        # ── 节假日 ──
+        row['is_holiday'] = 1 if dt.strftime('%Y-%m-%d') in self.calendar else 0
 
-            # Rolling: 使用尾部窗口
-            tail_7 = sales_tail[-7:] if len(sales_tail) >= 7 else sales_tail
-            tail_14 = sales_tail[-14:] if len(sales_tail) >= 14 else sales_tail
-            tail_30 = sales_tail[-30:] if len(sales_tail) >= 30 else sales_tail
-            row['rolling_mean_7'] = float(np.mean(tail_7))
-            row['rolling_std_7'] = float(np.std(tail_7))
-            row['rolling_mean_14'] = float(np.mean(tail_14))
-            row['rolling_std_14'] = float(np.std(tail_14))
-            row['rolling_mean_30'] = float(np.mean(tail_30))
+        # ── Lag 特征：直接从 sales_history 尾部取 ──
+        row['lag_1']  = sales_history[-1]  if n >= 1  else 0
+        row['lag_7']  = sales_history[-7]  if n >= 7  else (sales_history[0] if n > 0 else 0)
+        row['lag_14'] = sales_history[-14] if n >= 14 else (sales_history[0] if n > 0 else 0)
+        row['lag_30'] = sales_history[-30] if n >= 30 else (sales_history[0] if n > 0 else 0)
 
-            # EWM 近似
-            row['ewm_7'] = float(pd.Series(sales_tail[-7:]).ewm(span=7, min_periods=1).mean().iloc[-1])
+        # ── Rolling 特征：从尾部窗口计算 ──
+        tail_7  = sales_history[-7:]  if n >= 7  else sales_history
+        tail_14 = sales_history[-14:] if n >= 14 else sales_history
+        tail_30 = sales_history[-30:] if n >= 30 else sales_history
 
-            rows.append(row)
-            # 用 rolling_mean 作为下一步的预估销量（自回归）
-            sales_tail.append(row['rolling_mean_7'])
+        row['rolling_mean_7']  = float(np.mean(tail_7))
+        row['rolling_std_7']   = float(np.std(tail_7)) if len(tail_7) > 1 else 0.0
+        row['rolling_mean_14'] = float(np.mean(tail_14))
+        row['rolling_std_14']  = float(np.std(tail_14)) if len(tail_14) > 1 else 0.0
+        row['rolling_mean_30'] = float(np.mean(tail_30))
 
-        future_df = pd.DataFrame(rows)
-        return future_df[FEATURE_COLUMNS]
+        # ── EWM ──
+        row['ewm_7'] = float(
+            pd.Series(tail_7).ewm(span=7, min_periods=1).mean().iloc[-1]
+        )
+
+        return pd.DataFrame([row])[FEATURE_COLUMNS]

@@ -350,37 +350,46 @@ async def backtest(request: ForecastRequest):
 
 
 class TrainRequest(BaseModel):
-    modelType: str = "lightgbm"
+    modelType: str = "lightgbm"       # "lightgbm" | "prophet" | "all"
     days: int = 365
     seed: int = 42
     mape_gate: float = 20.0
     history: Optional[List[float]] = None
+    use_optuna: bool = True            # Task 2: 是否啟用 Optuna 自動調參
+    optuna_trials: int = 30            # Optuna 試驗次數
 
 
 @app.post("/train-model")
 async def train_model(request: TrainRequest):
     """
-    Phase 3: 自動化訓練管道
-    訓練模型 → 回測驗證 → 超過 MAPE 閘門則拒絕部署
+    統一訓練管道 — 支援 LightGBM / Prophet / All
+    ─────────────────────────────────────────────
+    Task 1: Prophet 真實訓練 (model_to_json)
+    Task 2: Optuna 自動調參 (LightGBM)
+    Task 4: 數據漂移檢測 (μ±3σ)
     """
     import time
     t0 = time.time()
 
-    if request.modelType.lower() != "lightgbm":
-        return {"error": f"目前僅支援 lightgbm 訓練，收到: {request.modelType}"}
+    model_type = request.modelType.lower()
+    if model_type not in ("lightgbm", "prophet", "all"):
+        return {"error": f"支援 lightgbm / prophet / all，收到: {request.modelType}"}
 
     try:
         import pandas as pd
         from ml.demand_forecasting.feature_engineer import FeatureEngineer, FEATURE_COLUMNS
 
         fe = FeatureEngineer()
+        model_dir = os.path.join(os.path.dirname(__file__), '..', 'models')
+        os.makedirs(model_dir, exist_ok=True)
 
-        # ── 1. 準備數據 ──
+        # ══════════════════════════════════════════════
+        # 0. 準備數據（共用）
+        # ══════════════════════════════════════════════
         if request.history and len(request.history) >= 60:
             dates = pd.date_range(start='2025-01-01', periods=len(request.history), freq='D')
             df = pd.DataFrame({'date': dates, 'sales': request.history})
         else:
-            # 生成模擬數據
             np.random.seed(request.seed)
             days = request.days
             dates = pd.date_range(start='2025-01-01', periods=days, freq='D')
@@ -393,100 +402,487 @@ async def train_model(request: TrainRequest):
             promos = np.zeros(days)
             for i in range(0, days, 60):
                 if i + 3 < days:
-                    promos[i:i+3] = 20
+                    promos[i:i + 3] = 20
             sales = np.maximum(base + trend + weekly + monthly + yearly + noise + promos, 0).round(1)
             df = pd.DataFrame({'date': dates, 'sales': sales})
 
-        # ── 2. 特徵工程 ──
-        X, y = fe.create_training_data(df, min_rows=30)
+        # ── Task 4: 計算訓練數據統計基線 (用於 Drift Detection) ──
+        training_stats = {
+            "mean": float(df['sales'].mean()),
+            "std": float(df['sales'].std()),
+            "n": len(df),
+            "computed_at": datetime.now().isoformat()
+        }
 
-        # ── 3. 時序分割 ──
-        split_idx = int(len(X) * 0.85)
-        X_train, X_val = X.iloc[:split_idx], X.iloc[split_idx:]
-        y_train, y_val = y.iloc[:split_idx], y.iloc[split_idx:]
+        deploy_results = {}
 
-        # ── 4. 訓練 LightGBM ──
+        # ══════════════════════════════════════════════
+        # A. LightGBM 訓練 + Optuna
+        # ══════════════════════════════════════════════
+        if model_type in ("lightgbm", "all"):
+            lgbm_result = _train_lightgbm(
+                df, fe, model_dir, request, training_stats
+            )
+            deploy_results["lightgbm"] = lgbm_result
+
+        # ══════════════════════════════════════════════
+        # B. Prophet 訓練
+        # ══════════════════════════════════════════════
+        if model_type in ("prophet", "all"):
+            prophet_result = _train_prophet(df, model_dir, request, training_stats)
+            deploy_results["prophet"] = prophet_result
+
+        elapsed = time.time() - t0
+
+        # 統一回應
+        deployed = [k for k, v in deploy_results.items() if v.get("status") == "deployed"]
+        rejected = [k for k, v in deploy_results.items() if v.get("status") == "rejected"]
+
+        return {
+            "status": "deployed" if deployed else "rejected",
+            "deployed_models": deployed,
+            "rejected_models": rejected,
+            "results": deploy_results,
+            "training_stats_baseline": training_stats,
+            "elapsed_seconds": round(elapsed, 2),
+            "message": f"✅ 已完成: {', '.join(deployed) if deployed else '無模型通過閘門'}"
+        }
+
+    except Exception as e:
+        import traceback
+        return {"error": str(e), "traceback": traceback.format_exc()}
+
+
+def _train_lightgbm(df, fe, model_dir, request, training_stats):
+    """LightGBM 訓練 (含 Optuna 自動調參)"""
+    from ml.demand_forecasting.feature_engineer import FEATURE_COLUMNS
+    try:
+        import lightgbm as lgb
+        import joblib as jl
+        from sklearn.metrics import mean_absolute_percentage_error
+    except ImportError as ie:
+        return {"status": "error", "error": f"缺少套件: {ie}"}
+
+    X, y = fe.create_training_data(df, min_rows=30)
+    split_idx = int(len(X) * 0.85)
+    X_train, X_val = X.iloc[:split_idx], X.iloc[split_idx:]
+    y_train, y_val = y.iloc[:split_idx], y.iloc[split_idx:]
+
+    train_data = lgb.Dataset(X_train, label=y_train, feature_name=FEATURE_COLUMNS)
+    val_data = lgb.Dataset(X_val, label=y_val, reference=train_data)
+
+    optuna_info = None
+
+    # ── Task 2: Optuna 自動調參 ──
+    if request.use_optuna:
         try:
-            import lightgbm as lgb
-            import joblib as jl
-            from sklearn.metrics import mean_absolute_percentage_error
-        except ImportError as ie:
-            return {"error": f"缺少必要套件: {ie}"}
+            import optuna
+            optuna.logging.set_verbosity(optuna.logging.WARNING)
 
-        train_data = lgb.Dataset(X_train, label=y_train, feature_name=FEATURE_COLUMNS)
-        val_data = lgb.Dataset(X_val, label=y_val, reference=train_data)
+            def objective(trial):
+                params = {
+                    'boosting_type': 'gbdt',
+                    'objective': 'regression',
+                    'metric': 'mape',
+                    'verbose': -1,
+                    'feature_pre_filter': False,
+                    'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.3, log=True),
+                    'num_leaves': trial.suggest_int('num_leaves', 15, 127),
+                    'feature_fraction': trial.suggest_float('feature_fraction', 0.5, 1.0),
+                    'bagging_fraction': trial.suggest_float('bagging_fraction', 0.5, 1.0),
+                    'bagging_freq': trial.suggest_int('bagging_freq', 1, 10),
+                    'min_child_samples': trial.suggest_int('min_child_samples', 5, 50),
+                    'reg_alpha': trial.suggest_float('reg_alpha', 1e-8, 10.0, log=True),
+                    'reg_lambda': trial.suggest_float('reg_lambda', 1e-8, 10.0, log=True),
+                }
+                m = lgb.train(
+                    params, train_data,
+                    valid_sets=[val_data], valid_names=['valid'],
+                    num_boost_round=500,
+                    callbacks=[lgb.early_stopping(30), lgb.log_evaluation(0)],
+                )
+                preds = m.predict(X_val)
+                return mean_absolute_percentage_error(y_val, preds) * 100
 
-        params = {
+            study = optuna.create_study(direction='minimize')
+            study.optimize(objective, n_trials=request.optuna_trials, show_progress_bar=False)
+
+            best_params = {
+                'boosting_type': 'gbdt', 'objective': 'regression', 'metric': 'mape',
+                'verbose': -1, **study.best_params
+            }
+            optuna_info = {
+                "best_mape": round(study.best_value, 2),
+                "best_params": {k: round(v, 6) if isinstance(v, float) else v for k, v in study.best_params.items()},
+                "n_trials": request.optuna_trials,
+            }
+        except ImportError:
+            best_params = {
+                'boosting_type': 'gbdt', 'objective': 'regression', 'metric': 'mape',
+                'num_leaves': 31, 'learning_rate': 0.05, 'feature_fraction': 0.9,
+                'bagging_fraction': 0.8, 'bagging_freq': 5, 'verbose': -1,
+            }
+            optuna_info = {"skipped": True, "reason": "optuna not installed"}
+    else:
+        best_params = {
             'boosting_type': 'gbdt', 'objective': 'regression', 'metric': 'mape',
             'num_leaves': 31, 'learning_rate': 0.05, 'feature_fraction': 0.9,
             'bagging_fraction': 0.8, 'bagging_freq': 5, 'verbose': -1,
         }
 
-        model = lgb.train(
-            params, train_data,
-            valid_sets=[train_data, val_data], valid_names=['train', 'valid'],
-            num_boost_round=1000,
-            callbacks=[lgb.early_stopping(50), lgb.log_evaluation(0)],
-        )
+    # 用最佳參數正式訓練
+    model = lgb.train(
+        best_params, train_data,
+        valid_sets=[train_data, val_data], valid_names=['train', 'valid'],
+        num_boost_round=1000,
+        callbacks=[lgb.early_stopping(50), lgb.log_evaluation(0)],
+    )
 
-        # ── 5. 評估 ──
-        y_pred_val = model.predict(X_val)
-        val_mape = mean_absolute_percentage_error(y_val, y_pred_val) * 100
+    y_pred_val = model.predict(X_val)
+    val_mape = mean_absolute_percentage_error(y_val, y_pred_val) * 100
 
-        # ── 6. Drift Monitor 質量閘門 ──
-        if val_mape > request.mape_gate:
-            return {
-                "status": "rejected",
-                "reason": f"MAPE {val_mape:.2f}% 超過閘門 {request.mape_gate}%，拒絕部署",
-                "val_mape": round(val_mape, 2),
-                "mape_gate": request.mape_gate,
-                "recommendation": "請檢查數據品質或增加訓練數據量"
-            }
-
-        # ── 7. 保存模型 ──
-        model_dir = os.path.join(os.path.dirname(__file__), '..', 'models')
-        os.makedirs(model_dir, exist_ok=True)
-        model_path = os.path.join(model_dir, 'lgbm_model.pkl')
-        meta_path = os.path.join(model_dir, 'lgbm_meta.json')
-
-        jl.dump(model, model_path)
-
-        # 特徵重要性
-        feat_imp = dict(zip(FEATURE_COLUMNS, [int(x) for x in model.feature_importance(importance_type='gain')]))
-
-        meta = {
-            'val_mape': round(val_mape, 2),
-            'best_iteration': model.best_iteration,
-            'train_samples': len(X_train),
-            'val_samples': len(X_val),
-            'num_features': len(FEATURE_COLUMNS),
-            'feature_importance': feat_imp,
-            'trained_at': datetime.now().isoformat(),
+    # MAPE 閘門
+    if val_mape > request.mape_gate:
+        return {
+            "status": "rejected",
+            "reason": f"MAPE {val_mape:.2f}% > 閘門 {request.mape_gate}%",
+            "val_mape": round(val_mape, 2),
+            "optuna": optuna_info,
         }
-        with open(meta_path, 'w', encoding='utf-8') as f:
-            json.dump(meta, f, indent=2, ensure_ascii=False)
 
-        # ── 8. Hot-reload 模型 ──
-        lgbm_strategy = forecaster_factory.get_strategy(ModelType.LIGHTGBM)
-        if hasattr(lgbm_strategy, 'reload_model'):
-            lgbm_strategy.reload_model()
+    # 保存模型
+    model_path = os.path.join(model_dir, 'lgbm_model.pkl')
+    meta_path = os.path.join(model_dir, 'lgbm_meta.json')
+    jl.dump(model, model_path)
 
-        elapsed = time.time() - t0
-        grade = "A+" if val_mape < 10 else "A" if val_mape < 20 else "B"
+    feat_imp = dict(zip(FEATURE_COLUMNS, [int(x) for x in model.feature_importance(importance_type='gain')]))
+    meta = {
+        'val_mape': round(val_mape, 2),
+        'best_iteration': model.best_iteration,
+        'train_samples': len(X_train),
+        'val_samples': len(X_val),
+        'num_features': len(FEATURE_COLUMNS),
+        'feature_importance': feat_imp,
+        'training_stats': training_stats,
+        'optuna': optuna_info,
+        'params_used': {k: round(v, 6) if isinstance(v, float) else v for k, v in best_params.items() if k != 'verbose'},
+        'trained_at': datetime.now().isoformat(),
+    }
+    with open(meta_path, 'w', encoding='utf-8') as f:
+        json.dump(meta, f, indent=2, ensure_ascii=False)
+
+    # Hot-reload
+    lgbm_strategy = forecaster_factory.get_strategy(ModelType.LIGHTGBM)
+    if hasattr(lgbm_strategy, 'reload_model'):
+        lgbm_strategy.reload_model()
+
+    grade = "A+" if val_mape < 10 else "A" if val_mape < 20 else "B"
+    return {
+        "status": "deployed",
+        "val_mape": round(val_mape, 2),
+        "grade": grade,
+        "best_iteration": model.best_iteration,
+        "train_samples": len(X_train),
+        "val_samples": len(X_val),
+        "feature_importance_top5": dict(sorted(feat_imp.items(), key=lambda x: x[1], reverse=True)[:5]),
+        "optuna": optuna_info,
+        "model_path": model_path,
+    }
+
+
+def _train_prophet(df, model_dir, request, training_stats):
+    """Task 1: Prophet 真實訓練 + model_to_json 序列化"""
+    import pandas as pd
+    try:
+        from prophet import Prophet
+        from prophet.serialize import model_to_json
+    except ImportError as ie:
+        return {"status": "error", "error": f"缺少套件: {ie}"}
+
+    # Prophet 需要 ds, y 格式
+    prophet_df = df.rename(columns={'date': 'ds', 'sales': 'y'}).copy()
+    prophet_df['ds'] = pd.to_datetime(prophet_df['ds'])
+
+    # 時序分割
+    split_idx = int(len(prophet_df) * 0.85)
+    train_df = prophet_df.iloc[:split_idx]
+    val_df = prophet_df.iloc[split_idx:]
+
+    # 訓練 Prophet
+    m = Prophet(
+        yearly_seasonality=True,
+        weekly_seasonality=True,
+        daily_seasonality=False,
+        changepoint_prior_scale=0.05,
+    )
+    try:
+        m.fit(train_df)
+    except RuntimeError as e:
+        return {
+            "status": "error",
+            "error": f"Prophet Stan 後端執行失敗 (常見於 Windows): {str(e)[:200]}",
+            "hint": "建議在 Linux/Docker 環境中訓練 Prophet，或安裝 cmdstan: python -m cmdstanpy.install_cmdstan"
+        }
+
+    # 驗證
+    future = m.make_future_dataframe(periods=len(val_df))
+    forecast = m.predict(future)
+    val_forecast = forecast.tail(len(val_df))
+    y_pred = val_forecast['yhat'].values
+    y_true = val_df['y'].values
+
+    mask = y_true != 0
+    if mask.any():
+        val_mape = float(np.mean(np.abs((y_true[mask] - y_pred[mask]) / y_true[mask])) * 100)
+    else:
+        val_mape = 999.0
+
+    # MAPE 閘門
+    if val_mape > request.mape_gate:
+        return {
+            "status": "rejected",
+            "reason": f"MAPE {val_mape:.2f}% > 閘門 {request.mape_gate}%",
+            "val_mape": round(val_mape, 2),
+        }
+
+    # 用全量數據重新訓練（通過閘門後）
+    m_full = Prophet(
+        yearly_seasonality=True,
+        weekly_seasonality=True,
+        daily_seasonality=False,
+        changepoint_prior_scale=0.05,
+    )
+    m_full.fit(prophet_df)
+
+    # 保存為 JSON
+    model_path = os.path.join(model_dir, 'prophet_model.json')
+    meta_path = os.path.join(model_dir, 'prophet_meta.json')
+
+    with open(model_path, 'w', encoding='utf-8') as f:
+        f.write(model_to_json(m_full))
+
+    meta = {
+        'val_mape': round(val_mape, 2),
+        'train_samples': len(train_df),
+        'val_samples': len(val_df),
+        'full_retrain_samples': len(prophet_df),
+        'training_stats': training_stats,
+        'trained_at': datetime.now().isoformat(),
+    }
+    with open(meta_path, 'w', encoding='utf-8') as f:
+        json.dump(meta, f, indent=2, ensure_ascii=False)
+
+    # Hot-reload
+    prophet_strategy = forecaster_factory.get_strategy(ModelType.PROPHET)
+    if hasattr(prophet_strategy, 'reload_model'):
+        prophet_strategy.reload_model()
+
+    grade = "A+" if val_mape < 10 else "A" if val_mape < 20 else "B"
+    return {
+        "status": "deployed",
+        "val_mape": round(val_mape, 2),
+        "grade": grade,
+        "train_samples": len(train_df),
+        "val_samples": len(val_df),
+        "model_path": model_path,
+    }
+
+
+# ══════════════════════════════════════════════════
+# Task 3: 模型可解釋性 API (Feature Importance)
+# ══════════════════════════════════════════════════
+
+class ExplainRequest(BaseModel):
+    materialCode: str = "EXPLAIN"
+    history: Optional[List[float]] = None
+    horizonDays: int = 7
+
+
+@app.post("/feature-importance")
+async def feature_importance(request: ExplainRequest):
+    """
+    Task 3: AI 說人話 — 模型可解釋性
+    回傳 LightGBM 特徵重要性 + 自然語言解釋
+    """
+    try:
+        # 1. 讀取模型元數據
+        meta_path = os.path.join(os.path.dirname(__file__), '..', 'models', 'lgbm_meta.json')
+        if not os.path.exists(meta_path):
+            return {"error": "尚未訓練 LightGBM 模型，請先呼叫 /train-model"}
+
+        with open(meta_path, 'r', encoding='utf-8') as f:
+            meta = json.load(f)
+
+        feat_imp = meta.get('feature_importance', {})
+        if not feat_imp:
+            return {"error": "模型元數據中無特徵重要性資訊"}
+
+        # 2. 排序 & 計算百分比
+        total_gain = sum(feat_imp.values()) or 1
+        sorted_feats = sorted(feat_imp.items(), key=lambda x: x[1], reverse=True)
+
+        features = []
+        for feat_name, gain in sorted_feats:
+            pct = round(gain / total_gain * 100, 1)
+            features.append({
+                "feature": feat_name,
+                "importance_gain": gain,
+                "importance_pct": pct,
+                "explanation": _explain_feature(feat_name, pct),
+            })
+
+        # 3. 生成整體摘要
+        top3 = features[:3]
+        summary = (
+            f"模型預測主要依據: "
+            f"{top3[0]['feature']}({top3[0]['importance_pct']}%), "
+            f"{top3[1]['feature']}({top3[1]['importance_pct']}%), "
+            f"{top3[2]['feature']}({top3[2]['importance_pct']}%)"
+        ) if len(top3) >= 3 else "特徵不足"
+
+        # 4. Optuna 調參資訊
+        optuna_info = meta.get('optuna', None)
 
         return {
-            "status": "deployed",
-            "model_type": "lightgbm",
-            "val_mape": round(val_mape, 2),
-            "grade": grade,
-            "best_iteration": model.best_iteration,
-            "train_samples": len(X_train),
-            "val_samples": len(X_val),
-            "feature_importance_top5": dict(sorted(feat_imp.items(), key=lambda x: x[1], reverse=True)[:5]),
-            "model_path": model_path,
-            "elapsed_seconds": round(elapsed, 2),
-            "message": f"✅ LightGBM 模型已更新並部署 (MAPE: {val_mape:.2f}%, 評級: {grade})"
+            "success": True,
+            "features": features,
+            "summary": summary,
+            "model_mape": meta.get('val_mape'),
+            "trained_at": meta.get('trained_at'),
+            "optuna": optuna_info,
+            "params_used": meta.get('params_used'),
+            "total_features": len(features),
         }
 
     except Exception as e:
         return {"error": str(e)}
+
+
+def _explain_feature(feat_name: str, pct: float) -> str:
+    """將特徵名轉成人類可讀的解釋"""
+    explanations = {
+        'ewm_7': f"近 7 天指數加權均值貢獻了 {pct}% — 模型非常重視近期銷售趨勢",
+        'lag_1': f"昨日銷量貢獻了 {pct}% — 短期自回歸效應顯著",
+        'lag_7': f"上週同日銷量貢獻了 {pct}% — 週循環模式明確",
+        'lag_14': f"兩週前銷量貢獻了 {pct}% — 中期趨勢參考",
+        'lag_30': f"月前銷量貢獻了 {pct}% — 月度季節性參考",
+        'rolling_mean_7': f"7天移動均值貢獻了 {pct}% — 短期平滑趨勢重要",
+        'rolling_std_7': f"7天波動率貢獻了 {pct}% — 近期不確定性指標",
+        'rolling_mean_14': f"14天移動均值貢獻了 {pct}% — 中期趨勢",
+        'rolling_std_14': f"14天波動率貢獻了 {pct}%",
+        'rolling_mean_30': f"30天移動均值貢獻了 {pct}% — 長期基線水準",
+        'day_of_week': f"星期幾貢獻了 {pct}% — 週循環效應",
+        'day_of_month': f"每月第幾天貢獻了 {pct}% — 月內節奏",
+        'month': f"月份貢獻了 {pct}% — 年度季節性",
+        'week_of_year': f"年內第幾週貢獻了 {pct}%",
+        'month_sin': f"月份正弦編碼貢獻了 {pct}% — 年度週期性",
+        'month_cos': f"月份餘弦編碼貢獻了 {pct}%",
+        'dow_sin': f"星期正弦編碼貢獻了 {pct}% — 週期性",
+        'dow_cos': f"星期餘弦編碼貢獻了 {pct}%",
+        'is_holiday': f"節假日標記貢獻了 {pct}% — 節假日效應",
+    }
+    return explanations.get(feat_name, f"{feat_name} 貢獻了 {pct}%")
+
+
+# ══════════════════════════════════════════════════
+# Task 4: 數據漂移檢測 (Drift Detection μ±3σ)
+# ══════════════════════════════════════════════════
+
+class DriftCheckRequest(BaseModel):
+    history: List[float]
+    window: int = 30     # 用最近 N 天檢測
+
+
+@app.post("/drift-check")
+async def drift_check(request: DriftCheckRequest):
+    """
+    Task 4: MLOps 數據漂移檢測
+    比較當前數據分佈 vs 訓練時基線 (μ±3σ)
+    """
+    try:
+        # 1. 載入訓練基線
+        meta_path = os.path.join(os.path.dirname(__file__), '..', 'models', 'lgbm_meta.json')
+        if not os.path.exists(meta_path):
+            return {"error": "尚未訓練模型，無法檢測漂移"}
+
+        with open(meta_path, 'r', encoding='utf-8') as f:
+            meta = json.load(f)
+
+        baseline = meta.get('training_stats', {})
+        train_mean = baseline.get('mean')
+        train_std = baseline.get('std')
+
+        if train_mean is None or train_std is None:
+            return {"error": "訓練元數據中無統計基線（請重新訓練）"}
+
+        # 2. 計算當前窗口統計
+        recent = request.history[-request.window:] if len(request.history) >= request.window else request.history
+        current_mean = float(np.mean(recent))
+        current_std = float(np.std(recent))
+
+        # 3. μ±3σ 漂移檢測
+        drift_threshold = 3 * train_std
+        upper_bound = train_mean + drift_threshold
+        lower_bound = train_mean - drift_threshold
+        z_score = abs(current_mean - train_mean) / (train_std + 1e-8)
+
+        is_drifted = current_mean > upper_bound or current_mean < lower_bound
+
+        # 4. 額外指標：標準差漂移
+        std_ratio = current_std / (train_std + 1e-8)
+        std_drifted = std_ratio > 2.0 or std_ratio < 0.3
+
+        # 5. 綜合判定
+        drift_level = "none"
+        if is_drifted and std_drifted:
+            drift_level = "critical"
+        elif is_drifted:
+            drift_level = "warning"
+        elif std_drifted:
+            drift_level = "notice"
+
+        return {
+            "success": True,
+            "drift_detected": is_drifted,
+            "drift_level": drift_level,
+            "details": {
+                "training_baseline": {
+                    "mean": round(train_mean, 2),
+                    "std": round(train_std, 2),
+                    "upper_3sigma": round(upper_bound, 2),
+                    "lower_3sigma": round(lower_bound, 2),
+                },
+                "current_window": {
+                    "mean": round(current_mean, 2),
+                    "std": round(current_std, 2),
+                    "window_days": len(recent),
+                },
+                "z_score": round(z_score, 2),
+                "std_ratio": round(std_ratio, 2),
+            },
+            "message": _drift_message(drift_level, current_mean, train_mean, z_score),
+            "recommendation": _drift_recommendation(drift_level),
+        }
+
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def _drift_message(level: str, current: float, baseline: float, z: float) -> str:
+    if level == "critical":
+        return f"⛔ 嚴重漂移: 當前均值 {current:.1f} 偏離訓練基線 {baseline:.1f} 達 {z:.1f}σ，且波動率異常"
+    elif level == "warning":
+        return f"⚠️ 數據漂移: 當前均值 {current:.1f} 偏離訓練基線 {baseline:.1f} 達 {z:.1f}σ (>3σ)"
+    elif level == "notice":
+        return f"📝 波動率變化: 均值正常但數據波動率顯著改變"
+    return f"✅ 數據分佈穩定: 當前均值 {current:.1f} 在訓練基線 {baseline:.1f} ± 3σ 範圍內"
+
+
+def _drift_recommendation(level: str) -> str:
+    if level == "critical":
+        return "建議立即重新訓練模型並檢查數據源是否異常"
+    elif level == "warning":
+        return "建議排程重新訓練，並持續監控。可能是市場結構性變化"
+    elif level == "notice":
+        return "暫不需要重訓，但建議加入安全庫存緩衝"
+    return "模型運作正常，無需操作"

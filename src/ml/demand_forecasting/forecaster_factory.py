@@ -108,26 +108,23 @@ class ProphetStrategy(ForecasterStrategy):
             }
 
     def _predict_real(self, sales_sequence: list, horizon_days: int, n: int) -> Dict:
-        """使用真实 Prophet 模型推论"""
-        import pandas as pd
-        from datetime import datetime, timedelta
+        """
+        使用真实 Prophet 模型推论
+        Prophet 是时间回归模型，不需要递归 — 直接用 make_future_dataframe
+        """
+        # 1. 用 Prophet 原生 API 建立未来日期
+        future = self._model.make_future_dataframe(periods=horizon_days)
 
-        # 1. 构建历史 DataFrame
-        dates = pd.date_range(end=datetime.now(), periods=n, freq='D')
-        history_df = pd.DataFrame({'ds': dates, 'y': sales_sequence})
-
-        # 2. 构建未来日期
-        last_date = history_df['ds'].max()
-        future_dates = pd.date_range(start=last_date + timedelta(days=1), periods=horizon_days, freq='D')
-        future = pd.DataFrame({'ds': future_dates})
-
-        # 3. Prophet 推论
+        # 2. Prophet 推论（含历史拟合 + 未来预测）
         forecast = self._model.predict(future)
-        predictions = [max(0, float(v)) for v in forecast['yhat'].values]
 
-        # 4. 置信区间
-        yhat_lower = forecast['yhat_lower'].values
-        yhat_upper = forecast['yhat_upper'].values
+        # 3. 只取最后 horizon_days 筆（未来部分）
+        future_forecast = forecast.tail(horizon_days)
+        predictions = [max(0, float(v)) for v in future_forecast['yhat'].values]
+
+        # 4. 置信区间（Prophet 原生提供）
+        yhat_lower = future_forecast['yhat_lower'].values
+        yhat_upper = future_forecast['yhat_upper'].values
         ci = [[max(0, float(l)), float(u)] for l, u in zip(yhat_lower, yhat_upper)]
 
         # 5. 风险分数
@@ -241,21 +238,50 @@ class LightGBMStrategy(ForecasterStrategy):
             }
 
     def _predict_real(self, sales_sequence: list, horizon_days: int, n: int) -> Dict:
-        """使用真实 LightGBM 模型推论"""
-        # 1. 将序列转化为特征 DataFrame
-        history_df = self._fe.sequence_to_features(sales_sequence)
-        # 2. 构建未来特征
-        future_X = self._fe.build_forecast_features(history_df, horizon_days)
-        # 3. 模型推论
-        predictions = self._model.predict(future_X).tolist()
-        predictions = [max(0, float(p)) for p in predictions]
+        """
+        遞歸預測 (Recursive Forecasting)
+        ──────────────────────────────────
+        Day 1: 用真實歷史 → 模型預測 → 得到 pred_1
+        Day 2: 把 pred_1 追加到歷史 → 重算特徵 → 模型預測 → 得到 pred_2
+        Day N: …循環
+        這樣 Lag_7 在第 8 天起就會吃到自己的預測值，形成自回歸。
+        """
+        predictions = []
+        # 複製歷史，避免汙染原始資料
+        current_history = list(sales_sequence)
+        # 起始日期（歷史最後一天的隔天）
+        last_date = pd.Timestamp.now().normalize()
+        next_date = last_date + pd.Timedelta(days=1)
 
-        # 4. 置信区间：用训练残差的标准差估算
+        # 取出模型期望的特徵名（保證訓練/推論特徵完全一致）
+        try:
+            model_features = self._model.feature_name()
+        except Exception:
+            model_features = FEATURE_COLUMNS
+
+        for i in range(horizon_days):
+            # 1. 構建「下一天」的單行特徵
+            X_next = self._fe.build_next_day_features(current_history, next_date)
+            # 確保欄位順序與模型一致
+            X_next = X_next[model_features]
+
+            # 2. 模型推論
+            pred = float(self._model.predict(X_next)[0])
+            pred = max(0, pred)  # 銷量不為負
+
+            # 3. 存入結果 & 更新歷史（關鍵：預測值當作已知歷史）
+            predictions.append(pred)
+            current_history.append(pred)
+
+            # 4. 日期 +1
+            next_date += pd.Timedelta(days=1)
+
+        # ── 置信區間：用近期殘差標準差估算 ──
         arr = np.array(sales_sequence)
         residual_std = float(np.std(arr[-min(30, n):]))
         ci = [[max(0, p - 1.645 * residual_std), p + 1.645 * residual_std] for p in predictions]
 
-        # 5. 风险分数
+        # ── 風險分數 ──
         rolling_mean = float(np.mean(arr[-7:])) if n >= 7 else float(np.mean(arr))
         risk_score = min(100, max(0, float(residual_std / (rolling_mean + 1e-6) * 80)))
 
@@ -266,13 +292,13 @@ class LightGBMStrategy(ForecasterStrategy):
                 "predictions": predictions,
                 "confidence_interval": ci,
                 "risk_score": risk_score,
-                "model_version": "lightgbm-v2.0-real"
+                "model_version": "lightgbm-v2.0-recursive"
             },
             "metadata": {
                 "training_data_points": n,
                 "forecast_horizon": horizon_days,
-                "inference_mode": "real_model",
-                "features_used": FEATURE_COLUMNS,
+                "inference_mode": "recursive_real_model",
+                "features_used": model_features,
                 "generated_at": datetime.now().isoformat()
             }
         }

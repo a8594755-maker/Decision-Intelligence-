@@ -1,0 +1,62 @@
+{
+  "val_mape": 7.78,
+  "best_iteration": 104,
+  "train_samples": 284,
+  "val_samples": 51,
+  "num_features": 19,
+  "feature_importance": {
+    "day_of_week": 398,
+    "day_of_month": 5370,
+    "month": 206,
+    "week_of_year": 322,
+    "month_sin": 0,
+    "month_cos": 920,
+    "dow_sin": 1472,
+    "dow_cos": 4621,
+    "is_holiday": 0,
+    "lag_1": 13213,
+    "lag_7": 1340,
+    "lag_14": 1181,
+    "lag_30": 1607,
+    "rolling_mean_7": 984,
+    "rolling_std_7": 3340,
+    "rolling_mean_14": 2663,
+    "rolling_std_14": 1706,
+    "rolling_mean_30": 449,
+    "ewm_7": 47937
+  },
+  "training_stats": {
+    "mean": 54.87506849315069,
+    "std": 12.600159505715459,
+    "n": 365,
+    "computed_at": "2026-02-08T16:20:26.978563"
+  },
+  "optuna": {
+    "best_mape": 8.11,
+    "best_params": {
+      "learning_rate": 0.163922,
+      "num_leaves": 15,
+      "feature_fraction": 0.955246,
+      "bagging_fraction": 0.618899,
+      "bagging_freq": 4,
+      "min_child_samples": 21,
+      "reg_alpha": 0.0,
+      "reg_lambda": 0.000633
+    },
+    "n_trials": 10
+  },
+  "params_used": {
+    "boosting_type": "gbdt",
+    "objective": "regression",
+    "metric": "mape",
+    "learning_rate": 0.163922,
+    "num_leaves": 15,
+    "feature_fraction": 0.955246,
+    "bagging_fraction": 0.618899,
+    "bagging_freq": 4,
+    "min_child_samples": 21,
+    "reg_alpha": 0.0,
+    "reg_lambda": 0.000633
+  },
+  "trained_at": "2026-02-08T16:20:28.035494"
+}
