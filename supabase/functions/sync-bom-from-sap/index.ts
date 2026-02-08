@@ -49,8 +49,6 @@ interface SAPMaterialBOM {
   Plant: string;
   BillOfMaterialCategory: string;
   BillOfMaterialVariant: string;
-  ValidFromDate?: string;
-  ValidToDate?: string;
 }
 
 interface SAPMaterialBOMItem {
@@ -61,8 +59,6 @@ interface SAPMaterialBOMItem {
   BillOfMaterialItemUnit: string;
   Plant: string;
   IsDeleted?: boolean;
-  ValidFromDate?: string;
-  ValidToDate?: string;
 }
 
 interface BOMEdgeRecord {
@@ -298,7 +294,7 @@ async function fetchAllBOMHeaders(
       break;
     }
 
-    const url = `${SAP_BASE_URL}/MaterialBOM?${filterQuery}$select=BillOfMaterial,Material,Plant,BillOfMaterialCategory,BillOfMaterialVariant,ValidFromDate,ValidToDate&$top=${PAGE_SIZE}&$skip=${skip}`;
+    const url = `${SAP_BASE_URL}/MaterialBOM?${filterQuery}$select=BillOfMaterial,Material,Plant,BillOfMaterialCategory,BillOfMaterialVariant&$top=${PAGE_SIZE}&$skip=${skip}`;
 
     console.log(`[BOM SYNC] Requesting BOM headers: ${url}`);
 
@@ -335,8 +331,6 @@ async function fetchAllBOMHeaders(
       Plant: r.Plant,
       BillOfMaterialCategory: r.BillOfMaterialCategory,
       BillOfMaterialVariant: r.BillOfMaterialVariant,
-      ValidFromDate: r.ValidFromDate || null,
-      ValidToDate: r.ValidToDate || null,
     })));
 
     hasMore = results.length === PAGE_SIZE;
@@ -371,7 +365,7 @@ async function fetchAllBOMItems(
       break;
     }
 
-    const url = `${SAP_BASE_URL}/MaterialBOMItem?${filterQuery}$select=BillOfMaterialItemNodeNumber,Material,ComponentMaterial,BillOfMaterialItemQuantity,BillOfMaterialItemUnit,Plant,IsDeleted,ValidFromDate,ValidToDate&$top=${PAGE_SIZE}&$skip=${skip}`;
+    const url = `${SAP_BASE_URL}/MaterialBOMItem?${filterQuery}$select=BillOfMaterialItemNodeNumber,Material,ComponentMaterial,BillOfMaterialItemQuantity,BillOfMaterialItemUnit,Plant,IsDeleted&$top=${PAGE_SIZE}&$skip=${skip}`;
 
     console.log(`[BOM SYNC] Requesting BOM items: ${url}`);
 
@@ -405,8 +399,6 @@ async function fetchAllBOMItems(
       BillOfMaterialItemUnit: r.BillOfMaterialItemUnit,
       Plant: r.Plant,
       IsDeleted: r.IsDeleted === true || r.IsDeleted === 'X',
-      ValidFromDate: r.ValidFromDate || null,
-      ValidToDate: r.ValidToDate || null,
     })));
 
     hasMore = results.length === PAGE_SIZE;
@@ -449,8 +441,8 @@ function buildBOMEdges(
       plant_id: item.Plant,
       alt_group: header.BillOfMaterialVariant || null,
       priority: 1, // Default priority, can be adjusted based on BOM variant
-      valid_from: item.ValidFromDate || header.ValidFromDate || null,
-      valid_to: item.ValidToDate || header.ValidToDate || null,
+      valid_from: null,
+      valid_to: null,
       source: 'sap_sync',
       sap_bom_id: item.BillOfMaterialItemNodeNumber,
       isDeleted: item.IsDeleted || false,

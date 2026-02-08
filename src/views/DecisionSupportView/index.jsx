@@ -19,8 +19,14 @@ import { streamChatWithAI } from '../../services/geminiAPI';
 const STORAGE_KEY = 'smartops_conversations';
 const TABLE_UNAVAILABLE_KEY = 'smartops_conversations_table_unavailable';
 
-const isTableUnavailable = () => sessionStorage.getItem(TABLE_UNAVAILABLE_KEY) === '1';
-const markTableUnavailable = () => sessionStorage.setItem(TABLE_UNAVAILABLE_KEY, '1');
+// Check once at module load time - if unavailable, create no-op supabase wrapper
+const tableUnavailableAtLoad = sessionStorage.getItem(TABLE_UNAVAILABLE_KEY) === '1';
+const conversationsDb = tableUnavailableAtLoad ? null : supabase;
+
+const isTableUnavailable = () => !conversationsDb || sessionStorage.getItem(TABLE_UNAVAILABLE_KEY) === '1';
+const markTableUnavailable = () => {
+  sessionStorage.setItem(TABLE_UNAVAILABLE_KEY, '1');
+};
 
 function loadLocalConversations(userId) {
   try {
@@ -214,7 +220,7 @@ export default function DecisionSupportView({ excelData, user, addNotification }
       }
 
       // Try Supabase
-      const { data, error } = await supabase
+      const { data, error } = await conversationsDb
         .from('conversations')
         .select('*')
         .eq('user_id', user.id)
@@ -229,11 +235,8 @@ export default function DecisionSupportView({ excelData, user, addNotification }
           saveLocalConversations(user.id, data);
         } else {
           markTableUnavailable();
-          const local = loadLocalConversations(user.id);
-          setConversations(local);
-          if (local.length > 0 && !currentConversationId) {
-            setCurrentConversationId(local[0].id);
-          }
+          // Reload to activate module-level null check (conversationsDb)
+          window.location.reload();
         }
       }
     };
@@ -280,8 +283,8 @@ export default function DecisionSupportView({ excelData, user, addNotification }
     setCurrentConversationId(newConversation.id);
 
     // Try to persist to Supabase (non-blocking, skip if table is missing)
-    if (!isTableUnavailable()) {
-      supabase.from('conversations').insert([newConversation]).then(({ error }) => {
+    if (conversationsDb) {
+      conversationsDb.from('conversations').insert([newConversation]).then(({ error }) => {
         if (error) markTableUnavailable();
       });
     }
@@ -303,8 +306,8 @@ export default function DecisionSupportView({ excelData, user, addNotification }
     });
 
     // Try Supabase delete (non-blocking, skip if table is missing)
-    if (!isTableUnavailable()) {
-      supabase.from('conversations').delete().eq('id', convId).eq('user_id', user.id).then(() => {});
+    if (conversationsDb) {
+      conversationsDb.from('conversations').delete().eq('id', convId).eq('user_id', user.id).then(() => {});
     }
   }, [user?.id, currentConversationId]);
 
@@ -373,8 +376,8 @@ export default function DecisionSupportView({ excelData, user, addNotification }
     setIsTyping(false);
 
     // Persist to Supabase (non-blocking, skip if table is missing)
-    if (!isTableUnavailable()) {
-      supabase.from('conversations').update({
+    if (conversationsDb) {
+      conversationsDb.from('conversations').update({
         title: newTitle,
         messages: finalMessages,
         updated_at: new Date().toISOString()
