@@ -4,6 +4,7 @@
  */
 
 import UPLOAD_SCHEMAS from './uploadSchemas';
+import { autoFillRows } from './dataAutoFill';
 
 /**
  * 嘗試解析日期的多種格式
@@ -52,8 +53,9 @@ const parseDate = (dateValue) => {
   const str = String(dateValue).trim();
   if (!str) return null;
 
-  // 檢查是否包含無效字符（如 "+"）
-  if (str.includes('+') && !str.match(/^\d{4}-\d{2}-\d{2}T/)) {
+  // 檢查是否包含無效字符（如非ISO格式的+號）
+  // 允許標準ISO日期格式，如：2022-03-02T13:55:13.263278+00:00 或 2022-03-02 13:55:13.263278+00:00
+  if (str.includes('+') && !str.match(/^\d{4}-\d{2}-\d{2}[T\s]/)) {
     console.warn('Invalid date format detected:', str);
     return null;
   }
@@ -232,6 +234,13 @@ const validateAndCleanField = (value, fieldDef, uploadType, row = {}) => {
   if (fieldDef.required) {
     if (value === null || value === undefined || value === '' || 
         (typeof value === 'string' && value.trim().length === 0)) {
+      
+      // 特殊处理：inventory_snapshots 的 onhand_qty 可以为空，自动设为 0
+      if (uploadType === 'inventory_snapshots' && fieldDef.key === 'onhand_qty') {
+        cleanedValue = 0;
+        return { value: cleanedValue, errors: [] };
+      }
+      
       errors.push(`${fieldDef.label}為必填欄位，不可為空`);
       return { value: null, errors };
     }
@@ -666,15 +675,12 @@ const validateInventorySnapshotsRules = (row) => {
     });
   }
 
-  // 驗證 onhand_qty >= 0
+  // Compute shortage_qty for negative onhand_qty
   if (row.onhand_qty !== null && row.onhand_qty !== undefined) {
     if (row.onhand_qty < 0) {
-      errors.push({ 
-        field: 'onhand_qty', 
-        fieldLabel: 'On-hand Quantity', 
-        error: 'onhand_qty 不能小於 0', 
-        originalValue: row.onhand_qty 
-      });
+      // Compute shortage as positive value
+      row.shortage_qty = Math.abs(row.onhand_qty);
+      // Keep onhand_qty negative for data integrity, but don't treat as error
     }
   }
 
@@ -708,6 +714,9 @@ const validateInventorySnapshotsRules = (row) => {
   }
   if (row.safety_stock === null || row.safety_stock === undefined || row.safety_stock === '') {
     row.safety_stock = 0;
+  }
+  if (row.shortage_qty === null || row.shortage_qty === undefined || row.shortage_qty === '') {
+    row.shortage_qty = 0;
   }
   if (!row.uom || row.uom === '') {
     row.uom = 'pcs';
@@ -909,8 +918,11 @@ export const validateAndCleanData = (rawRows, uploadType, columnMapping) => {
   // Step 1: 根據 mapping 轉換資料結構
   const transformedRows = transformRows(rawRows, columnMapping);
 
-  // Step 2: 驗證並清洗
-  return validateAndCleanRows(transformedRows, uploadType);
+  // Step 2: 先自動補齊可填欄位，避免因缺值導致必填驗證直接失敗
+  const { rows: preValidatedRows } = autoFillRows(transformedRows, uploadType);
+
+  // Step 3: 驗證並清洗
+  return validateAndCleanRows(preValidatedRows, uploadType);
 };
 
 export default validateAndCleanRows;

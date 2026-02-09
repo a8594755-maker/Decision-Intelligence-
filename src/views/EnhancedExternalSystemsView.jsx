@@ -3689,16 +3689,31 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
                 <Button onClick={goBack} variant="secondary" icon={ArrowLeft}>
                   Back to Edit Mapping
                 </Button>
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-3 flex-1 justify-end">
+                  {/* Save Progress */}
+                  {saving && saveProgress.stage && (
+                    <div className="flex items-center gap-2 mr-4">
+                      <Loader2 className="w-4 h-4 text-blue-600 animate-spin" />
+                      <span className="text-sm text-blue-600 dark:text-blue-400">
+                        {saveProgress.message || 'Saving...'}
+                      </span>
+                      {saveProgress.total > 0 && (
+                        <span className="text-xs text-blue-500">
+                          ({saveProgress.current}/{saveProgress.total})
+                        </span>
+                      )}
+                    </div>
+                  )}
+                  
                   {/* 全部資料有效 */}
-                  {validationResult.validRows.length > 0 && validationResult.errorRows.length === 0 && (
+                  {validationResult.validRows.length > 0 && validationResult.errorRows.length === 0 && !saving && (
                     <span className="text-sm text-green-600 dark:text-green-400 font-medium">
                       ✓ All data valid, ready to save {validationResult.validRows.length} rows
                     </span>
                   )}
 
                   {/* Strict mode 且有錯誤 */}
-                  {strictMode && validationResult.errorRows.length > 0 && (
+                  {strictMode && validationResult.errorRows.length > 0 && !saving && (
                     <span className="text-sm text-orange-600 dark:text-orange-400 font-medium flex items-center gap-1">
                       <AlertTriangle className="w-4 h-4" />
                       Strict mode: Fix errors to enable save

@@ -129,12 +129,15 @@ function autoFillInventorySnapshots(row) {
     row._autoFilled.push('onhand_qty=0');
   }
 
-  // allocated_qty / safety_stock 預設為 0
+  // allocated_qty / safety_stock / shortage_qty 預設為 0
   if (row.allocated_qty === null || row.allocated_qty === undefined || row.allocated_qty === '' || isNaN(row.allocated_qty)) {
     row.allocated_qty = 0;
   }
   if (row.safety_stock === null || row.safety_stock === undefined || row.safety_stock === '' || isNaN(row.safety_stock)) {
     row.safety_stock = 0;
+  }
+  if (row.shortage_qty === null || row.shortage_qty === undefined || row.shortage_qty === '' || isNaN(row.shortage_qty)) {
+    row.shortage_qty = 0;
   }
 
   // snapshot_date 必填，若缺失可用今天

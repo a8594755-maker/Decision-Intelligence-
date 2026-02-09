@@ -20,9 +20,24 @@ import {
   ingestGoodsReceiptsRpc,
   ingestPriceHistoryRpc,
   RpcError,
-  BatchSizeError
+  BatchSizeError,
+  MAX_ROWS_PER_BATCH
 } from './ingestRpcService';
 import { batchUpsertOperationalCosts } from './costAnalysisService';
+
+/**
+ * Chunk an array into smaller arrays of specified size
+ * @param {Array} array - The array to chunk
+ * @param {number} chunkSize - Size of each chunk
+ * @returns {Array<Array>} Array of chunked arrays
+ */
+function chunkArray(array, chunkSize) {
+  const chunks = [];
+  for (let i = 0; i < array.length; i += chunkSize) {
+    chunks.push(array.slice(i, i + chunkSize));
+  }
+  return chunks;
+}
 
 /**
  * Generate idempotency key for a sheet ingest
@@ -71,12 +86,68 @@ class GoodsReceiptStrategy {
       return { savedCount: result.inserted_count };
 
     } catch (rpcError) {
-      // ===== RPC 失敗：判斷錯誤類型並 Fallback =====
+      // ===== RPC 失敗：判斷錯誤類型並處理 =====
       
       if (rpcError instanceof BatchSizeError) {
-        console.error('[GoodsReceiptStrategy] ✗ BatchSizeError:', rpcError.message);
+        console.warn('[GoodsReceiptStrategy] Batch too large, auto-chunking:', rpcError.message);
+        
+        // 自動分批處理
+        const chunks = chunkArray(rows, MAX_ROWS_PER_BATCH);
+        let totalInserted = 0;
+        let totalSuppliersCreated = 0;
+        
+        setSaveProgress({
+          stage: 'chunking',
+          current: 0,
+          total: chunks.length,
+          message: `自動分批處理中 (${chunks.length} 批次)...`
+        });
+
+        for (let i = 0; i < chunks.length; i++) {
+          const chunk = chunks[i];
+          
+          try {
+            setSaveProgress({
+              stage: 'chunking',
+              current: i + 1,
+              total: chunks.length,
+              message: `處理第 ${i + 1}/${chunks.length} 批次 (${chunk.length} 筆)...`
+            });
+
+            const result = await ingestGoodsReceiptsRpc({
+              batchId,
+              uploadFileId,
+              rows: chunk
+            });
+
+            totalInserted += result.inserted_count;
+            totalSuppliersCreated += result.suppliers_created || 0;
+            
+            console.log(`[GoodsReceiptStrategy] Chunk ${i + 1}/${chunks.length} completed`);
+            
+          } catch (chunkError) {
+            console.error(`[GoodsReceiptStrategy] Chunk ${i + 1} failed:`, chunkError);
+            
+            // 清理進度並拋出錯誤
+            setSaveProgress({ stage: '', current: 0, total: 0, message: '' });
+            throw new Error(
+              `批次處理失敗：第 ${i + 1}/${chunks.length} 批次無法處理。\n` +
+              `錯誤詳情：${chunkError.message}\n\n` +
+              `已成功處理 ${i} 個批次，共 ${totalInserted} 筆記錄。` +
+              `建議：請檢查失敗批次的資料品質或聯繫系統管理員。`
+            );
+          }
+        }
+
+        // 所有批次成功完成
         setSaveProgress({ stage: '', current: 0, total: 0, message: '' });
-        throw new Error(`${rpcError.message}\n\n💡 建議：請將資料分成多個檔案上傳（每個檔案 ≤ 1000 筆）`);
+        
+        addNotification(
+          `✓ 自動分批完成（共 ${totalInserted} 筆，分 ${chunks.length} 批次處理，建立 ${totalSuppliersCreated} 個供應商）`,
+          'success'
+        );
+
+        return { savedCount: totalInserted };
       }
 
       if (rpcError instanceof RpcError) {
@@ -262,9 +333,65 @@ class PriceHistoryStrategy {
 
     } catch (rpcError) {
       if (rpcError instanceof BatchSizeError) {
-        console.error('[PriceHistoryStrategy] ✗ BatchSizeError:', rpcError.message);
+        console.warn('[PriceHistoryStrategy] Batch too large, auto-chunking:', rpcError.message);
+        
+        // 自動分批處理
+        const chunks = chunkArray(rows, MAX_ROWS_PER_BATCH);
+        let totalInserted = 0;
+        let totalSuppliersCreated = 0;
+        
+        setSaveProgress({
+          stage: 'chunking',
+          current: 0,
+          total: chunks.length,
+          message: `自動分批處理中 (${chunks.length} 批次)...`
+        });
+
+        for (let i = 0; i < chunks.length; i++) {
+          const chunk = chunks[i];
+          
+          try {
+            setSaveProgress({
+              stage: 'chunking',
+              current: i + 1,
+              total: chunks.length,
+              message: `處理第 ${i + 1}/${chunks.length} 批次 (${chunk.length} 筆)...`
+            });
+
+            const result = await ingestPriceHistoryRpc({
+              batchId,
+              uploadFileId,
+              rows: chunk
+            });
+
+            totalInserted += result.inserted_count;
+            totalSuppliersCreated += result.suppliers_created || 0;
+            
+            console.log(`[PriceHistoryStrategy] Chunk ${i + 1}/${chunks.length} completed`);
+            
+          } catch (chunkError) {
+            console.error(`[PriceHistoryStrategy] Chunk ${i + 1} failed:`, chunkError);
+            
+            // 清理進度並拋出錯誤
+            setSaveProgress({ stage: '', current: 0, total: 0, message: '' });
+            throw new Error(
+              `批次處理失敗：第 ${i + 1}/${chunks.length} 批次無法處理。\n` +
+              `錯誤詳情：${chunkError.message}\n\n` +
+              `已成功處理 ${i} 個批次，共 ${totalInserted} 筆記錄。` +
+              `建議：請檢查失敗批次的資料品質或聯繫系統管理員。`
+            );
+          }
+        }
+
+        // 所有批次成功完成
         setSaveProgress({ stage: '', current: 0, total: 0, message: '' });
-        throw new Error(`${rpcError.message}\n\n💡 建議：請將資料分成多個檔案上傳（每個檔案 ≤ 1000 筆）`);
+        
+        addNotification(
+          `✓ 自動分批完成（共 ${totalInserted} 筆，分 ${chunks.length} 批次處理，建立 ${totalSuppliersCreated} 個供應商）`,
+          'success'
+        );
+
+        return { savedCount: totalInserted };
       }
 
       if (rpcError instanceof RpcError) {
@@ -577,6 +704,14 @@ class InventorySnapshotsStrategy {
   async ingest({ userId, rows, batchId, fileName, sheetName, addNotification, setSaveProgress, options = {} }) {
     console.log(`[InventorySnapshotsStrategy] Starting for ${rows.length} rows`);
 
+    // Update progress
+    setSaveProgress({
+      stage: 'inventory_snapshots',
+      current: 0,
+      total: rows.length,
+      message: `Preparing ${rows.length} inventory snapshots...`
+    });
+
     const snapshots = rows.map(row => ({
       user_id: userId,  // ✅ 修復：加入 user_id (UUID, NOT NULL)
       batch_id: batchId || null,  // ✅ 修復：加入 batch_id (UUID, nullable)
@@ -586,14 +721,26 @@ class InventorySnapshotsStrategy {
       onhand_qty: row.onhand_qty,
       allocated_qty: row.allocated_qty !== null && row.allocated_qty !== undefined ? row.allocated_qty : 0,
       safety_stock: row.safety_stock !== null && row.safety_stock !== undefined ? row.safety_stock : 0,
+      shortage_qty: row.shortage_qty !== null && row.shortage_qty !== undefined ? row.shortage_qty : 0,
       uom: row.uom || 'pcs',
       notes: row.notes || null
     }));
+
+    // Update progress before insert
+    setSaveProgress({
+      stage: 'inventory_snapshots',
+      current: rows.length,
+      total: rows.length,
+      message: 'Saving to database...'
+    });
 
     // ✅ 修正：傳入 batchId（uuid 字串），而不是 { batchId }（object）
     const result = await inventorySnapshotsService.batchInsert(userId, snapshots, batchId);
     
     console.log(`[InventorySnapshotsStrategy] Inventory Snapshots saved: ${result.count} records`);
+    
+    // Clear progress
+    setSaveProgress({ stage: '', current: 0, total: 0, message: '' });
     
     return { savedCount: result.count };
   }

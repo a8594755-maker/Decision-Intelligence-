@@ -537,6 +537,15 @@ async function importSingleSheet({
     // 7. Validate and clean
     const validationResult = validateAndCleanData(sheetData, uploadType, columnMapping);
     
+    // 8. Auto-fill common missing fields (for any remaining fillable fields)
+    const autoFillResult = autoFillRows(validationResult.validRows, uploadType);
+    const rowsToIngest = autoFillResult.rows;
+    
+    // Log auto-fill summary
+    if (autoFillResult.autoFillCount > 0) {
+      console.log(`[One-shot] Auto-filled ${autoFillResult.autoFillCount} rows:`, autoFillResult.autoFillSummary.join(', '));
+    }
+    
     if (strictMode && validationResult.errorRows && validationResult.errorRows.length > 0) {
       return {
         sheetName,
@@ -643,19 +652,12 @@ async function importSingleSheet({
       throw new Error('saveFile did not return id');
     }
     
-    // 11. Auto-fill common missing fields (避免因小問題導致整批失敗)
-    const autoFillResult = autoFillRows(validationResult.validRows, uploadType);
-    const rowsToIngest = autoFillResult.rows;
+    // 11. Use already validated and auto-filled rows (rowsToIngest already defined above)
     
-    // Log auto-fill summary
-    if (autoFillResult.autoFillCount > 0) {
-      console.log(`[One-shot] Auto-filled ${autoFillResult.autoFillCount} rows:`, autoFillResult.autoFillSummary.join(', '));
-    }
-    
-    // 11.5. Final validation of critical required fields (after auto-fill)
+    // 11.5. Final validation of critical required fields
     const finalValidation = validateRequiredFields(rowsToIngest, uploadType);
     if (!finalValidation.isValid) {
-      console.error(`[One-shot] Critical required fields still missing after auto-fill:`, finalValidation.missingFields);
+      console.error(`[One-shot] Critical required fields still missing:`, finalValidation.missingFields);
       return {
         sheetName,
         uploadType,

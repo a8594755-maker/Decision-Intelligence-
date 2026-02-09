@@ -724,8 +724,7 @@ export const UPLOAD_SCHEMAS = {
         label: 'On-hand Quantity',
         type: 'number',
         required: true,
-        description: 'On-hand quantity (actual inventory, must be >= 0)',
-        min: 0
+        description: 'On-hand quantity (actual inventory; negative values allowed and treated as shortage)'
       },
       
       // === Optional Fields ===
@@ -744,6 +743,15 @@ export const UPLOAD_SCHEMAS = {
         type: 'number',
         required: false,
         description: 'Safety stock (minimum inventory level, must be >= 0)',
+        min: 0,
+        default: 0
+      },
+      {
+        key: 'shortage_qty',
+        label: 'Shortage Quantity',
+        type: 'number',
+        required: false,
+        description: 'Computed shortage (positive value when onhand_qty is negative)',
         min: 0,
         default: 0
       },
