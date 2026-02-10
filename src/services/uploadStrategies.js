@@ -1,8 +1,8 @@
 /**
- * Upload Strategies - 策略模式實作
- * 每個 uploadType 都有對應的 ingest 策略
+ * Upload Strategies - Strategy pattern implementation
+ * Each uploadType has a corresponding ingest strategy
  * 
- * 支援 chunk ingest 和 idempotency
+ * Supports chunk ingest and idempotency
  */
 
 import {
@@ -30,12 +30,12 @@ import { batchUpsertOperationalCosts } from './costAnalysisService';
  * @returns {string} UUID string
  */
 function generateUUID() {
-  // 优先使用 crypto.randomUUID() 如果可用
+  // Prefer crypto.randomUUID() if available
   if (typeof crypto !== 'undefined' && crypto.randomUUID) {
     return crypto.randomUUID();
   }
   
-  // Fallback: 手动生成
+  // Fallback: manual generation
   const template = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx';
   return template.replace(/[xy]/g, function(c) {
     const r = Math.floor(Math.random() * 16);
@@ -69,14 +69,14 @@ export function getIdempotencyKey({ batchId, sheetName, uploadType }) {
 
 /**
  * Goods Receipt Strategy
- * 優先使用 RPC，失敗則 fallback 到 N+1 舊版
- * 支援 chunk ingest 和 idempotency
+ * Prioritize RPC, fallback to legacy N+1 on failure
+ * Supports chunk ingest and idempotency
  */
 class GoodsReceiptStrategy {
   async ingest({ userId, rows, batchId, uploadFileId, fileName, sheetName, addNotification, setSaveProgress, options = {} }) {
     console.log(`[GoodsReceiptStrategy] Starting for ${rows.length} rows`);
 
-    // ===== 優先嘗試 RPC（Transaction + Bulk Upsert） =====
+    // ===== Try RPC first (Transaction + Bulk Upsert) =====
     try {
       console.log('[GoodsReceiptStrategy] Attempting RPC path...');
       
@@ -84,7 +84,7 @@ class GoodsReceiptStrategy {
         stage: 'rpc',
         current: 0,
         total: rows.length,
-        message: '使用高效能 RPC 寫入...'
+        message: 'Writing via high-performance RPC...'
       });
 
       const result = await ingestGoodsReceiptsRpc({
@@ -98,19 +98,19 @@ class GoodsReceiptStrategy {
       setSaveProgress({ stage: '', current: 0, total: 0, message: '' });
 
       addNotification(
-        `✓ 使用交易性寫入完成（${result.inserted_count} 筆，建立 ${result.suppliers_created} 個供應商）`,
+        `✓ Transactional write completed (${result.inserted_count} rows, created ${result.suppliers_created} suppliers)`,
         'success'
       );
 
       return { savedCount: result.inserted_count };
 
     } catch (rpcError) {
-      // ===== RPC 失敗：判斷錯誤類型並處理 =====
+      // ===== RPC failed: determine error type and handle =====
       
       if (rpcError instanceof BatchSizeError) {
         console.warn('[GoodsReceiptStrategy] Batch too large, auto-chunking:', rpcError.message);
         
-        // 自動分批處理 - 每個 chunk 使用唯一的 batch_id 避免 idempotency 刪除問題
+        // Auto-chunk processing - each chunk uses unique batch_id to avoid idempotency deletion issues
         const chunks = chunkArray(rows, MAX_ROWS_PER_BATCH);
         let totalInserted = 0;
         let totalSuppliersCreated = 0;
@@ -119,12 +119,12 @@ class GoodsReceiptStrategy {
           stage: 'chunking',
           current: 0,
           total: chunks.length,
-          message: `自動分批處理中 (${chunks.length} 批次)...`
+          message: `Auto-chunking in progress (${chunks.length} batches)...`
         });
 
         for (let i = 0; i < chunks.length; i++) {
           const chunk = chunks[i];
-          // 為每個 chunk 生成唯一的 UUID 作為 batch_id
+          // Generate unique UUID as batch_id for each chunk
           const chunkBatchId = generateUUID();
           
           try {
@@ -132,7 +132,7 @@ class GoodsReceiptStrategy {
               stage: 'chunking',
               current: i + 1,
               total: chunks.length,
-              message: `處理第 ${i + 1}/${chunks.length} 批次 (${chunk.length} 筆)...`
+              message: `Processing batch ${i + 1}/${chunks.length} (${chunk.length} rows)...`
             });
 
             const result = await ingestGoodsReceiptsRpc({
@@ -149,22 +149,22 @@ class GoodsReceiptStrategy {
           } catch (chunkError) {
             console.error(`[GoodsReceiptStrategy] Chunk ${i + 1} failed:`, chunkError);
             
-            // 清理進度並拋出錯誤
+            // Clear progress and throw error
             setSaveProgress({ stage: '', current: 0, total: 0, message: '' });
             throw new Error(
-              `批次處理失敗：第 ${i + 1}/${chunks.length} 批次無法處理。\n` +
-              `錯誤詳情：${chunkError.message}\n\n` +
-              `已成功處理 ${i} 個批次，共 ${totalInserted} 筆記錄。` +
-              `建議：請檢查失敗批次的資料品質或聯繫系統管理員。`
+              `Batch processing failed: batch ${i + 1}/${chunks.length} could not be processed.\n` +
+              `Error details: ${chunkError.message}\n\n` +
+              `Successfully processed ${i} batches, ${totalInserted} records total. ` +
+              `Suggestion: check data quality of the failed batch or contact system administrator.`
             );
           }
         }
 
-        // 所有批次成功完成
+        // All batches completed successfully
         setSaveProgress({ stage: '', current: 0, total: 0, message: '' });
         
         addNotification(
-          `✓ 自動分批完成（共 ${totalInserted} 筆，分 ${chunks.length} 批次處理，建立 ${totalSuppliersCreated} 個供應商）`,
+          `✓ Auto-chunking completed (${totalInserted} rows in ${chunks.length} batches, created ${totalSuppliersCreated} suppliers)`,
           'success'
         );
 
@@ -178,28 +178,28 @@ class GoodsReceiptStrategy {
         });
 
         addNotification(
-          `⚠️ 高效能模式失敗，已切換到相容模式（原因：${rpcError.code}）`,
+          `⚠️ High-performance mode failed, switched to compatible mode (reason: ${rpcError.code})`,
           'warning'
         );
       } else {
         console.warn('[RPC_FALLBACK] Unexpected error, using legacy path:', rpcError);
-        addNotification('⚠️ 已切換到相容模式（高效能模式暫時無法使用）', 'warning');
+        addNotification('⚠️ Switched to compatible mode (high-performance mode temporarily unavailable)', 'warning');
       }
     }
 
-    // ===== Fallback: 舊版 N+1 邏輯 =====
+    // ===== Fallback: Legacy N+1 logic =====
     console.log('[GoodsReceiptStrategy] Using legacy path (fallback)...');
 
     const normalizeSupplierName = (name) => {
       return name.toLowerCase().trim().replace(/\s+/g, ' ');
     };
 
-    // Step 1: 收集唯一的 suppliers 和 materials
+    // Step 1: Collect unique suppliers and materials
     setSaveProgress({
       stage: 'collecting',
       current: 0,
       total: rows.length,
-      message: '正在分析資料...'
+      message: 'Analyzing data...'
     });
 
     const uniqueSuppliers = new Map();
@@ -228,12 +228,12 @@ class GoodsReceiptStrategy {
 
     console.log(`[GoodsReceiptStrategy] Found ${uniqueSuppliers.size} unique suppliers, ${uniqueMaterials.size} unique materials`);
 
-    // Step 2: 批次 Upsert Suppliers
+    // Step 2: Batch Upsert Suppliers
     setSaveProgress({
       stage: 'suppliers',
       current: 0,
       total: uniqueSuppliers.size,
-      message: `正在處理 ${uniqueSuppliers.size} 個供應商...`
+      message: `Processing ${uniqueSuppliers.size} suppliers...`
     });
 
     const supplierIdMap = await suppliersService.batchUpsertSuppliers(
@@ -242,12 +242,12 @@ class GoodsReceiptStrategy {
       { chunkSize: 200 }
     );
 
-    // Step 3: 批次 Upsert Materials
+    // Step 3: Batch Upsert Materials
     setSaveProgress({
       stage: 'materials',
       current: 0,
       total: uniqueMaterials.size,
-      message: `正在處理 ${uniqueMaterials.size} 個物料...`
+      message: `Processing ${uniqueMaterials.size} materials...`
     });
 
     const materialIdMap = await materialsService.batchUpsertMaterials(
@@ -256,12 +256,12 @@ class GoodsReceiptStrategy {
       { chunkSize: 200 }
     );
 
-    // Step 4: 組裝 Goods Receipts Payload
+    // Step 4: Assemble Goods Receipts Payload
     setSaveProgress({
       stage: 'receipts',
       current: 0,
       total: rows.length,
-      message: `正在準備 ${rows.length} 筆收貨記錄...`
+      message: `Preparing ${rows.length} goods receipt records...`
     });
 
     const receipts = rows.map(row => {
@@ -270,11 +270,11 @@ class GoodsReceiptStrategy {
       const materialId = materialIdMap.get(row.material_code);
 
       if (!supplierId) {
-        throw new Error(`無法找到供應商 ID: ${row.supplier_name} (key: ${supplierKey})`);
+        throw new Error(`Cannot find supplier ID: ${row.supplier_name} (key: ${supplierKey})`);
       }
 
       if (!materialId) {
-        throw new Error(`無法找到物料 ID: ${row.material_code}`);
+        throw new Error(`Cannot find material ID: ${row.material_code}`);
       }
 
       return {
@@ -294,7 +294,7 @@ class GoodsReceiptStrategy {
       };
     });
 
-    // Step 5: 批次寫入 Goods Receipts
+    // Step 5: Batch write Goods Receipts
     const result = await goodsReceiptsService.batchInsertReceipts(userId, receipts, {
       chunkSize: 500,
       onProgress: (current, total) => {
@@ -302,12 +302,12 @@ class GoodsReceiptStrategy {
           stage: 'receipts',
           current,
           total,
-          message: `正在寫入收貨記錄 (${current}/${total})...`
+          message: `Writing goods receipts (${current}/${total})...`
         });
       }
     });
 
-    console.log(`[GoodsReceiptStrategy] 完成！共寫入 ${result.count} 筆記錄`);
+    console.log(`[GoodsReceiptStrategy] Done! Wrote ${result.count} records`);
 
     setSaveProgress({ stage: '', current: 0, total: 0, message: '' });
 
@@ -317,14 +317,14 @@ class GoodsReceiptStrategy {
 
 /**
  * Price History Strategy
- * 優先使用 RPC，失敗則 fallback 到 N+1 舊版
- * 支援 chunk ingest 和 idempotency
+ * Prioritize RPC, fallback to legacy N+1 on failure
+ * Supports chunk ingest and idempotency
  */
 class PriceHistoryStrategy {
   async ingest({ userId, rows, batchId, uploadFileId, fileName, sheetName, addNotification, setSaveProgress, options = {} }) {
     console.log(`[PriceHistoryStrategy] Starting for ${rows.length} rows`);
 
-    // ===== 優先嘗試 RPC =====
+    // ===== Try RPC first =====
     try {
       console.log('[PriceHistoryStrategy] Attempting RPC path...');
       
@@ -332,7 +332,7 @@ class PriceHistoryStrategy {
         stage: 'rpc',
         current: 0,
         total: rows.length,
-        message: '使用高效能 RPC 寫入...'
+        message: 'Writing via high-performance RPC...'
       });
 
       const result = await ingestPriceHistoryRpc({
@@ -346,7 +346,7 @@ class PriceHistoryStrategy {
       setSaveProgress({ stage: '', current: 0, total: 0, message: '' });
 
       addNotification(
-        `✓ 使用交易性寫入完成（${result.inserted_count} 筆，建立 ${result.suppliers_created} 個供應商）`,
+        `✓ Transactional write completed (${result.inserted_count} rows, created ${result.suppliers_created} suppliers)`,
         'success'
       );
 
@@ -356,7 +356,7 @@ class PriceHistoryStrategy {
       if (rpcError instanceof BatchSizeError) {
         console.warn('[PriceHistoryStrategy] Batch too large, auto-chunking:', rpcError.message);
         
-        // 自動分批處理 - 每個 chunk 使用唯一的 batch_id 避免 idempotency 刪除問題
+        // Auto-chunk processing - each chunk uses unique batch_id to avoid idempotency deletion issues
         const chunks = chunkArray(rows, MAX_ROWS_PER_BATCH);
         let totalInserted = 0;
         let totalSuppliersCreated = 0;
@@ -365,12 +365,12 @@ class PriceHistoryStrategy {
           stage: 'chunking',
           current: 0,
           total: chunks.length,
-          message: `自動分批處理中 (${chunks.length} 批次)...`
+          message: `Auto-chunking in progress (${chunks.length} batches)...`
         });
 
         for (let i = 0; i < chunks.length; i++) {
           const chunk = chunks[i];
-          // 為每個 chunk 生成唯一的 UUID 作為 batch_id
+          // Generate unique UUID as batch_id for each chunk
           const chunkBatchId = generateUUID();
           
           try {
@@ -378,7 +378,7 @@ class PriceHistoryStrategy {
               stage: 'chunking',
               current: i + 1,
               total: chunks.length,
-              message: `處理第 ${i + 1}/${chunks.length} 批次 (${chunk.length} 筆)...`
+              message: `Processing batch ${i + 1}/${chunks.length} (${chunk.length} rows)...`
             });
 
             const result = await ingestPriceHistoryRpc({
@@ -395,22 +395,22 @@ class PriceHistoryStrategy {
           } catch (chunkError) {
             console.error(`[PriceHistoryStrategy] Chunk ${i + 1} failed:`, chunkError);
             
-            // 清理進度並拋出錯誤
+            // Clear progress and throw error
             setSaveProgress({ stage: '', current: 0, total: 0, message: '' });
             throw new Error(
-              `批次處理失敗：第 ${i + 1}/${chunks.length} 批次無法處理。\n` +
-              `錯誤詳情：${chunkError.message}\n\n` +
-              `已成功處理 ${i} 個批次，共 ${totalInserted} 筆記錄。` +
-              `建議：請檢查失敗批次的資料品質或聯繫系統管理員。`
+              `Batch processing failed: batch ${i + 1}/${chunks.length} could not be processed.\n` +
+              `Error details: ${chunkError.message}\n\n` +
+              `Successfully processed ${i} batches, ${totalInserted} records total. ` +
+              `Suggestion: check data quality of the failed batch or contact system administrator.`
             );
           }
         }
 
-        // 所有批次成功完成
+        // All batches completed successfully
         setSaveProgress({ stage: '', current: 0, total: 0, message: '' });
         
         addNotification(
-          `✓ 自動分批完成（共 ${totalInserted} 筆，分 ${chunks.length} 批次處理，建立 ${totalSuppliersCreated} 個供應商）`,
+          `✓ Auto-chunking completed (${totalInserted} rows in ${chunks.length} batches, created ${totalSuppliersCreated} suppliers)`,
           'success'
         );
 
@@ -424,16 +424,16 @@ class PriceHistoryStrategy {
         });
 
         addNotification(
-          `⚠️ 高效能模式失敗，已切換到相容模式（原因：${rpcError.code}）`,
+          `⚠️ High-performance mode failed, switched to compatible mode (reason: ${rpcError.code})`,
           'warning'
         );
       } else {
         console.warn('[RPC_FALLBACK] Unexpected error, using legacy path:', rpcError);
-        addNotification('⚠️ 已切換到相容模式（高效能模式暫時無法使用）', 'warning');
+        addNotification('⚠️ Switched to compatible mode (high-performance mode temporarily unavailable)', 'warning');
       }
     }
 
-    // ===== Fallback: 舊版 N+1 邏輯 =====
+    // ===== Fallback: Legacy N+1 logic =====
     console.log('[PriceHistoryStrategy] Using legacy path (fallback)...');
 
     const normalizeSupplierName = (name) => {
@@ -444,7 +444,7 @@ class PriceHistoryStrategy {
       stage: 'collecting',
       current: 0,
       total: rows.length,
-      message: '正在分析資料...'
+      message: 'Analyzing data...'
     });
 
     const uniqueSuppliers = new Map();
@@ -475,7 +475,7 @@ class PriceHistoryStrategy {
       stage: 'suppliers',
       current: 0,
       total: uniqueSuppliers.size,
-      message: `正在處理 ${uniqueSuppliers.size} 個供應商...`
+      message: `Processing ${uniqueSuppliers.size} suppliers...`
     });
 
     const supplierIdMap = await suppliersService.batchUpsertSuppliers(
@@ -488,7 +488,7 @@ class PriceHistoryStrategy {
       stage: 'materials',
       current: 0,
       total: uniqueMaterials.size,
-      message: `正在處理 ${uniqueMaterials.size} 個物料...`
+      message: `Processing ${uniqueMaterials.size} materials...`
     });
 
     const materialIdMap = await materialsService.batchUpsertMaterials(
@@ -501,7 +501,7 @@ class PriceHistoryStrategy {
       stage: 'receipts',
       current: 0,
       total: rows.length,
-      message: `正在準備 ${rows.length} 筆價格記錄...`
+      message: `Preparing ${rows.length} price records...`
     });
 
     const prices = rows.map(row => {
@@ -510,11 +510,11 @@ class PriceHistoryStrategy {
       const materialId = materialIdMap.get(row.material_code);
 
       if (!supplierId) {
-        throw new Error(`無法找到供應商 ID: ${row.supplier_name}`);
+        throw new Error(`Cannot find supplier ID: ${row.supplier_name}`);
       }
 
       if (!materialId) {
-        throw new Error(`無法找到物料 ID: ${row.material_code}`);
+        throw new Error(`Cannot find material ID: ${row.material_code}`);
       }
 
       return {
@@ -534,7 +534,7 @@ class PriceHistoryStrategy {
 
     await priceHistoryService.batchInsert(userId, prices, { uploadFileId, batchId });
 
-    console.log(`[PriceHistoryStrategy] 完成！共寫入 ${prices.length} 筆記錄`);
+    console.log(`[PriceHistoryStrategy] Done! Wrote ${prices.length} records`);
 
     setSaveProgress({ stage: '', current: 0, total: 0, message: '' });
     
@@ -544,13 +544,13 @@ class PriceHistoryStrategy {
 
 /**
  * Supplier Master Strategy
- * 直接使用 suppliersService.insertSuppliers，確保 batch_id 寫入
- * 支援 chunk ingest 和 idempotency
+ * Directly uses suppliersService.insertSuppliers, ensures batch_id is written
+ * Supports chunk ingest and idempotency
  */
 /**
- * 正規化 supplier status 為合法值
- * @param {string|null|undefined} status - 原始 status 值
- * @returns {string} 'active' 或 'inactive'
+ * Normalize supplier status to valid values
+ * @param {string|null|undefined} status - Original status value
+ * @returns {string} 'active' or 'inactive'
  */
 const normalizeSupplierStatus = (status) => {
   if (!status || typeof status !== 'string') {
@@ -559,22 +559,22 @@ const normalizeSupplierStatus = (status) => {
   
   const normalized = status.toLowerCase().trim();
   
-  // 允許的值：active, inactive
+  // Allowed values: active, inactive
   if (normalized === 'active' || normalized === 'inactive') {
     return normalized;
   }
   
-  // 常見變體 → active
+  // Common variants → active
   if (normalized === 'enabled' || normalized === 'enable' || normalized === 'yes' || normalized === '1') {
     return 'active';
   }
   
-  // 常見變體 → inactive
+  // Common variants → inactive
   if (normalized === 'disabled' || normalized === 'disable' || normalized === 'no' || normalized === '0' || normalized === 'suspended') {
     return 'inactive';
   }
   
-  // 其他未知值 → 預設 active
+  // Other unknown values → default active
   console.warn(`[normalizeSupplierStatus] Unknown status value "${status}", defaulting to 'active'`);
   return 'active';
 };
@@ -611,15 +611,15 @@ class SupplierMasterStrategy {
 
 /**
  * BOM Edge Strategy
- * 支援 chunk ingest 和 idempotency
+ * Supports chunk ingest and idempotency
  */
 class BomEdgeStrategy {
   async ingest({ userId, rows, batchId, fileName, sheetName, addNotification, setSaveProgress, options = {} }) {
     console.log(`[BomEdgeStrategy] Starting for ${rows.length} rows`);
 
     const bomEdges = rows.map(row => ({
-      user_id: userId,  // ✅ 修復：加入 user_id (UUID, NOT NULL)
-      batch_id: batchId || null,  // ✅ 修復：加入 batch_id (UUID, nullable)
+      user_id: userId,  // ✅ Fix: add user_id (UUID, NOT NULL)
+      batch_id: batchId || null,  // ✅ Fix: add batch_id (UUID, nullable)
       parent_material: row.parent_material,
       child_material: row.child_material,
       qty_per: row.qty_per,
@@ -640,7 +640,7 @@ class BomEdgeStrategy {
       ingest_key: options.idempotencyKey || null
     }));
 
-    // ✅ 修正：傳入 batchId（uuid 字串），而不是 { batchId }（object）
+    // ✅ Fix: pass batchId (uuid string), not { batchId } (object)
     const result = await bomEdgesService.batchInsert(userId, bomEdges, batchId);
     
     console.log(`[BomEdgeStrategy] BOM edges saved: ${result.count} records`);
@@ -651,15 +651,15 @@ class BomEdgeStrategy {
 
 /**
  * Demand FG Strategy
- * 支援 chunk ingest 和 idempotency
+ * Supports chunk ingest and idempotency
  */
 class DemandFgStrategy {
   async ingest({ userId, rows, batchId, fileName, sheetName, addNotification, setSaveProgress, options = {} }) {
     console.log(`[DemandFgStrategy] Starting for ${rows.length} rows`);
 
     const demands = rows.map(row => ({
-      user_id: userId,  // ✅ 修復：加入 user_id (UUID, NOT NULL)
-      batch_id: batchId || null,  // ✅ 修復：加入 batch_id (UUID, nullable)
+      user_id: userId,  // ✅ Fix: add user_id (UUID, NOT NULL)
+      batch_id: batchId || null,  // ✅ Fix: add batch_id (UUID, nullable)
       material_code: row.material_code,
       plant_id: row.plant_id,
       time_bucket: row.time_bucket,
@@ -677,7 +677,7 @@ class DemandFgStrategy {
       ingest_key: options.idempotencyKey || null
     }));
 
-    // ✅ 修正：傳入 batchId（uuid 字串），而不是 { batchId }（object）
+    // ✅ Fix: pass batchId (uuid string), not { batchId } (object)
     const result = await demandFgService.batchInsert(userId, demands, batchId);
     
     console.log(`[DemandFgStrategy] Demand FG saved: ${result.count} records`);
@@ -688,15 +688,15 @@ class DemandFgStrategy {
 
 /**
  * PO Open Lines Strategy
- * 支援 chunk ingest 和 idempotency
+ * Supports chunk ingest and idempotency
  */
 class PoOpenLinesStrategy {
   async ingest({ userId, rows, batchId, fileName, sheetName, addNotification, setSaveProgress, options = {} }) {
     console.log(`[PoOpenLinesStrategy] Starting for ${rows.length} rows`);
 
     const poLines = rows.map(row => ({
-      user_id: userId,  // ✅ 修復：加入 user_id (UUID, NOT NULL)
-      batch_id: batchId || null,  // ✅ 修復：加入 batch_id (UUID, nullable)
+      user_id: userId,  // ✅ Fix: add user_id (UUID, NOT NULL)
+      batch_id: batchId || null,  // ✅ Fix: add batch_id (UUID, nullable)
       po_number: row.po_number,
       po_line: row.po_line,
       material_code: row.material_code,
@@ -710,7 +710,7 @@ class PoOpenLinesStrategy {
       ingest_key: options.idempotencyKey || null
     }));
 
-    // ✅ 修正：傳入 batchId（uuid 字串），而不是 { batchId }（object）
+    // ✅ Fix: pass batchId (uuid string), not { batchId } (object)
     const result = await poOpenLinesService.batchInsert(userId, poLines, batchId);
     
     console.log(`[PoOpenLinesStrategy] PO Open Lines saved: ${result.count} records`);
@@ -721,7 +721,7 @@ class PoOpenLinesStrategy {
 
 /**
  * Inventory Snapshots Strategy
- * 支援 chunk ingest 和 idempotency
+ * Supports chunk ingest and idempotency
  */
 class InventorySnapshotsStrategy {
   async ingest({ userId, rows, batchId, fileName, sheetName, addNotification, setSaveProgress, options = {} }) {
@@ -736,8 +736,8 @@ class InventorySnapshotsStrategy {
     });
 
     const snapshots = rows.map(row => ({
-      user_id: userId,  // ✅ 修復：加入 user_id (UUID, NOT NULL)
-      batch_id: batchId || null,  // ✅ 修復：加入 batch_id (UUID, nullable)
+      user_id: userId,  // ✅ Fix: add user_id (UUID, NOT NULL)
+      batch_id: batchId || null,  // ✅ Fix: add batch_id (UUID, nullable)
       material_code: row.material_code,
       plant_id: row.plant_id,
       snapshot_date: row.snapshot_date,
@@ -757,7 +757,7 @@ class InventorySnapshotsStrategy {
       message: 'Saving to database...'
     });
 
-    // ✅ 修正：傳入 batchId（uuid 字串），而不是 { batchId }（object）
+    // ✅ Fix: pass batchId (uuid string), not { batchId } (object)
     const result = await inventorySnapshotsService.batchInsert(userId, snapshots, batchId);
     
     console.log(`[InventorySnapshotsStrategy] Inventory Snapshots saved: ${result.count} records`);
@@ -771,15 +771,15 @@ class InventorySnapshotsStrategy {
 
 /**
  * FG Financials Strategy
- * 支援 chunk ingest 和 idempotency
+ * Supports chunk ingest and idempotency
  */
 class FgFinancialsStrategy {
   async ingest({ userId, rows, batchId, fileName, sheetName, addNotification, setSaveProgress, options = {} }) {
     console.log(`[FgFinancialsStrategy] Starting for ${rows.length} rows`);
 
     const financials = rows.map(row => ({
-      user_id: userId,  // ✅ 修復：加入 user_id (UUID, NOT NULL)
-      batch_id: batchId || null,  // ✅ 修復：加入 batch_id (UUID, nullable)
+      user_id: userId,  // ✅ Fix: add user_id (UUID, NOT NULL)
+      batch_id: batchId || null,  // ✅ Fix: add batch_id (UUID, nullable)
       material_code: row.material_code,
       unit_margin: row.unit_margin,
       plant_id: row.plant_id || null,
@@ -791,7 +791,7 @@ class FgFinancialsStrategy {
       ingest_key: options.idempotencyKey || null
     }));
 
-    // ✅ 修正：傳入 batchId（uuid 字串），而不是 { batchId }（object）
+    // ✅ Fix: pass batchId (uuid string), not { batchId } (object)
     const result = await fgFinancialsService.batchInsert(userId, financials, batchId);
     
     console.log(`[FgFinancialsStrategy] FG Financials saved: ${result.count} records`);
@@ -802,9 +802,9 @@ class FgFinancialsStrategy {
 
 /**
  * Operational Cost Strategy
- * 直接使用 batchUpsertOperationalCosts 批次 upsert
- * 自動計算衍生欄位（direct_labor_cost, indirect_labor_cost, total_labor_cost, cost_per_unit）
- * 支援 chunk ingest 和 idempotency（onConflict: user_id, cost_date）
+ * Directly uses batchUpsertOperationalCosts for batch upsert
+ * Auto-calculates derived fields (direct_labor_cost, indirect_labor_cost, total_labor_cost, cost_per_unit)
+ * Supports chunk ingest and idempotency (onConflict: user_id, cost_date)
  */
 class OperationalCostStrategy {
   async ingest({ userId, rows, batchId, uploadFileId, fileName, sheetName, addNotification, setSaveProgress, options = {} }) {
@@ -814,13 +814,13 @@ class OperationalCostStrategy {
       stage: 'writing',
       current: 0,
       total: rows.length,
-      message: `正在寫入 ${rows.length} 筆營運成本記錄...`
+      message: `Writing ${rows.length} operational cost records...`
     });
 
     try {
       const result = await batchUpsertOperationalCosts(userId, rows, batchId, uploadFileId);
 
-      console.log(`[OperationalCostStrategy] 完成！共寫入 ${result.count} 筆記錄`);
+      console.log(`[OperationalCostStrategy] Done! Wrote ${result.count} records`);
 
       setSaveProgress({ stage: '', current: 0, total: 0, message: '' });
 
@@ -833,7 +833,7 @@ class OperationalCostStrategy {
   }
 }
 
-// 策略映射表
+// Strategy mapping table
 const strategies = {
   goods_receipt: new GoodsReceiptStrategy(),
   price_history: new PriceHistoryStrategy(),
@@ -847,8 +847,8 @@ const strategies = {
 };
 
 /**
- * 獲取上傳策略
- * @param {string} uploadType - 上傳類型
+ * Get upload strategy
+ * @param {string} uploadType - Upload type
  * @returns {Object} Strategy instance with ingest method
  */
 export function getUploadStrategy(uploadType) {
