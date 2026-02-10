@@ -1,9 +1,9 @@
 /**
- * Inventory Projection — Forecasts Inventory Tab 專用
+ * Inventory Projection — Forecasts Inventory Tab only
  *
- * 【單一入口分工】本檔只提供 loadInventoryProjection（Forecasts Tab 用）。
- * Risk Dashboard 的 loadInventoryProjectionForRisk / computeSeriesForKey / WARN|STOP 常數
- * 一律從 inventoryProjectionForRiskService.js 引用，禁止在此檔 export 同名 Risk loader。
+ * [Single entry point] This file only provides loadInventoryProjection (for Forecasts Tab).
+ * Risk Dashboard's loadInventoryProjectionForRisk / computeSeriesForKey / WARN|STOP constants
+ * must be imported from inventoryProjectionForRiskService.js. Do not export same-name Risk loader here.
  */
 
 import {
@@ -20,13 +20,13 @@ import {
   computeSeriesForKey as computeSeriesFromDomain
 } from '../domains/inventory/inventoryProjection.js';
 
-// 效能護欄常數（Forecasts Inventory Tab 專用）
+// Performance guardrail constants (Forecasts Inventory Tab only)
 export const FORECAST_WARN_ROWS = parseInt(import.meta.env.VITE_PROJECTION_WARN_ROWS) || 30_000;
 export const FORECAST_STOP_ROWS = parseInt(import.meta.env.VITE_PROJECTION_STOP_ROWS) || 100_000;
 export const FORECAST_TOP_N = parseInt(import.meta.env.VITE_PROJECTION_TOP_N) || 500;
 
 /**
- * 從 cache 計算單一 key 的 bucket series（供展開列使用）
+ * Compute bucket series for a single key from cache (for expandable rows)
  * @param {{ timeBuckets: string[], startingInventory: Map, demandByBucket: Map, inboundByBucket: Map }} cache
  * @param {string} key
  * @returns {Array<{ bucket: string, begin: number, inbound: number, demand: number, end: number, available: number, shortageFlag: boolean }>}
@@ -36,16 +36,16 @@ export function computeSeriesForKey(cache, key) {
 }
 
 /**
- * 載入 projection 供 Forecasts → Inventory Tab 使用
- * 回傳 summaryRows（含 KPI 資訊）、cache（供展開列使用）、perf、meta、kpis
+ * Load projection for Forecasts → Inventory Tab
+ * Returns summaryRows (with KPI info), cache (for expandable rows), perf, meta, kpis
  *
  * @param {string} userId
  * @param {string} forecastRunId
  * @param {string[]} timeBuckets - run.parameters.time_buckets
- * @param {string|null} plantId - run.parameters.plant_id 或 null
- * @param {Object} options - 額外選項
- * @param {string} options.inboundSource - 'raw_po' | 'supply_forecast'，預設 'raw_po'
- * @param {string|null} options.supplyForecastRunId - 當 inboundSource='supply_forecast' 時使用
+ * @param {string|null} plantId - run.parameters.plant_id or null
+ * @param {Object} options - Additional options
+ * @param {string} options.inboundSource - 'raw_po' | 'supply_forecast', default 'raw_po'
+ * @param {string|null} options.supplyForecastRunId - Used when inboundSource='supply_forecast'
  * @returns {Promise<{
  *   mode: 'FULL' | 'WARN' | 'STOP',
  *   reason?: string,
@@ -122,7 +122,7 @@ export async function loadInventoryProjection(userId, forecastRunId, timeBuckets
   const fetchMs = Date.now() - t0;
   const totalRows = demandRows.length + inboundRows.length + snapshotRows.length;
 
-  // 效能護欄檢查
+  // Performance guardrail check
   let mode = 'FULL';
   if (totalRows > FORECAST_STOP_ROWS) {
     return {
@@ -147,7 +147,7 @@ export async function loadInventoryProjection(userId, forecastRunId, timeBuckets
   const computeMs = Date.now() - t1;
   const keys = results.size;
 
-  // 計算 KPIs
+  // Calculate KPIs
   let atRiskItems = 0;
   let totalShortageQty = 0;
   let earliestStockoutBucket = null;
@@ -175,14 +175,14 @@ export async function loadInventoryProjection(userId, forecastRunId, timeBuckets
     }
   }
 
-  // 排序：有缺口的優先，再按 shortageQty 降序
+  // Sort: items with shortage first, then by shortageQty descending
   summaryRows.sort((a, b) => {
     if (a.shortageQty > 0 && b.shortageQty === 0) return -1;
     if (b.shortageQty > 0 && a.shortageQty === 0) return 1;
     return b.shortageQty - a.shortageQty;
   });
 
-  // 構建 meta
+  // Build meta
   const noSnapshotKeys = [];
   results.forEach((_, key) => {
     if (!startingInventory.has(key)) noSnapshotKeys.push(key);

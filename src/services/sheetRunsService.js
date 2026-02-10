@@ -1,6 +1,6 @@
 /**
  * Sheet Runs Service
- * 管理 ingest_sheet_runs 表（用於 idempotency 和 audit）
+ * Manages ingest_sheet_runs table (for idempotency and audit)
  */
 
 import { supabase } from './supabaseClient';

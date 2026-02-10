@@ -1,13 +1,13 @@
 /**
- * Inventory Projection — Risk Dashboard 專用（唯一入口）
+ * Inventory Projection — Risk Dashboard only (single entry point)
  *
- * 【單一入口】本檔為 loadInventoryProjectionForRisk / computeSeriesForKey / WARN|STOP 常數的
- * 唯一來源。Forecasts Inventory Tab 請用 inventoryProjectionService.js 的 loadInventoryProjection，
- * 禁止在此檔或該檔重複 export 同名 Risk loader，避免 import 錯、邏輯 drift。
+ * [Single entry point] This file is the sole source for loadInventoryProjectionForRisk / computeSeriesForKey / WARN|STOP constants.
+ * Forecasts Inventory Tab should use loadInventoryProjection from inventoryProjectionService.js.
+ * Do not duplicate export same-name Risk loader in this or that file to avoid import errors and logic drift.
  *
- * 介面契約：loadInventoryProjectionForRisk 回傳 mode/summaryByKey/cache/perf/kpis；
- * Details on-demand 使用 computeSeriesForKey(cache, key)。
- * Key 正規化：normalizeKey(material_code, plant_id)；bucket 順序用 run.parameters.time_buckets。
+ * Interface contract: loadInventoryProjectionForRisk returns mode/summaryByKey/cache/perf/kpis;
+ * Details on-demand uses computeSeriesForKey(cache, key).
+ * Key normalization: normalizeKey(material_code, plant_id); bucket order uses run.parameters.time_buckets.
  */
 
 import {
@@ -24,7 +24,7 @@ import {
   computeSeriesForKey as computeSeriesForKeyFromDomain
 } from '../domains/inventory/inventoryProjection.js';
 
-// 效能護欄常數（UI 只讀不寫）
+// Performance guardrail constants (UI read-only)
 export const WARN_TOTAL_ROWS = 50_000;
 export const STOP_TOTAL_ROWS = 150_000;
 
@@ -51,7 +51,7 @@ const EMPTY_RESULT = (mode, reason) => ({
 });
 
 /**
- * 從 cache 算單一 key 的 series（Details on-demand）
+ * Compute series for a single key from cache (Details on-demand)
  * @param {{ timeBuckets: string[], startingInventory: Map, demandByBucket: Map, inboundByBucket: Map }} cache
  * @param {string} key
  * @returns {Array<{ bucket: string, begin: number, inbound: number, demand: number, end: number, available: number, shortageFlag: boolean }>}
@@ -61,12 +61,12 @@ export function computeSeriesForKey(cache, key) {
 }
 
 /**
- * Risk 專用：載入 projection，回傳契約格式。
- * FULL 模式保留 cache（maps）供 Details on-demand；STOP 時 DEGRADED 不帶 cache。
+ * Risk-specific: load projection, return contract format.
+ * FULL mode retains cache (maps) for Details on-demand; STOP returns DEGRADED without cache.
  *
  * @param {string} userId
  * @param {string} forecastRunId
- * @param {{ plantId?: string|null }} [options] - 可覆寫 run.parameters.plant_id
+ * @param {{ plantId?: string|null }} [options] - Can override run.parameters.plant_id
  * @returns {Promise<{
  *   mode: 'FULL' | 'DEGRADED',
  *   reason?: string,

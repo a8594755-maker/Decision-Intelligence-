@@ -1,14 +1,14 @@
 /**
  * Chunk Ingest Service
- * 處理大量資料的分批寫入，支援 abort 和詳細進度回報
+ * Handles batch writing of large datasets, supports abort and detailed progress reporting
  */
 
 export const DEFAULT_CHUNK_SIZE = 500;
-export const RPC_MAX_CHUNK_SIZE = 800; // RPC 有 1000 限制，保留 buffer
+export const RPC_MAX_CHUNK_SIZE = 800; // RPC has 1000 limit, keep buffer
 
 /**
  * Extract detailed error information from Supabase/Postgres error
- * ✅ 改進：能準確定位哪個欄位、哪筆資料、什麼錯誤
+ * ✅ Improved: can accurately locate which column, which row, and what error
  * @param {Error} error - Original error object
  * @param {string} uploadType - Upload type (for field hints)
  * @param {number} chunkIndex - Current chunk index
@@ -26,11 +26,11 @@ function extractErrorDetails(error, uploadType, chunkIndex, chunk) {
     firstFailedRow: null
   };
 
-  // Supabase/Postgres error 結構：error.code, error.details, error.hint
+  // Supabase/Postgres error structure: error.code, error.details, error.hint
   if (error.code) {
     result.code = error.code;
     
-    // Postgres error codes 翻譯
+    // Postgres error codes translation
     const postgresErrors = {
       '22P02': 'Invalid UUID format',
       '23502': 'NOT NULL constraint violation',
@@ -63,18 +63,18 @@ function extractErrorDetails(error, uploadType, chunkIndex, chunk) {
     result.hint = error.hint;
   }
 
-  // 嘗試找出第一筆失敗的資料（用於 debug）
+  // Try to find the first failed row (for debugging)
   if (result.column && chunk && chunk.length > 0) {
-    // 找第一筆該欄位有問題的資料
+    // Find the first row with an issue in that column
     const failedRow = chunk.find(row => {
       const value = row[result.column];
       
-      // UUID 欄位檢查
+      // UUID field check
       if (['user_id', 'batch_id', 'supplier_id', 'material_id'].includes(result.column)) {
         return value && !isValidUUID(value);
       }
       
-      // NOT NULL 檢查
+      // NOT NULL check
       if (result.code === '23502') {
         return value === null || value === undefined || value === '';
       }
@@ -92,7 +92,7 @@ function extractErrorDetails(error, uploadType, chunkIndex, chunk) {
     }
   }
 
-  // 加入 chunk 資訊
+  // Add chunk info
   result.message = `[Chunk ${chunkIndex}] ${result.message}`;
   if (result.column) {
     result.message += ` (column: ${result.column})`;
@@ -141,7 +141,7 @@ function isRpcStrategy(strategy) {
 
 /**
  * Ingest data in chunks
- * 支援 >1000 rows，自動分批，支援 abort
+ * Supports >1000 rows, auto-batching, supports abort
  * 
  * @param {object} params
  * @param {object} params.strategy - Upload strategy (from getUploadStrategy)
@@ -241,7 +241,7 @@ export async function ingestInChunks({
     } catch (chunkError) {
       console.error(`[ChunkIngest] Chunk ${chunkIndex}/${totalChunks} failed:`, chunkError);
       
-      // ✅ 改進：提取詳細錯誤資訊（Supabase error structure）
+      // ✅ Improved: extract detailed error info (Supabase error structure)
       const errorDetails = extractErrorDetails(chunkError, uploadType, chunkIndex, chunk);
       
       chunkResults.push({
@@ -263,8 +263,8 @@ export async function ingestInChunks({
         severity: 'error'
       });
       
-      // 若 chunk 失敗，記錄但繼續下一個 chunk（除非 aborted）
-      // 最後會讓整個 sheet 標記為 partial_success 或 failed
+      // If chunk fails, log but continue to next chunk (unless aborted)
+      // Final sheet status will be marked as partial_success or failed
     }
   }
   
