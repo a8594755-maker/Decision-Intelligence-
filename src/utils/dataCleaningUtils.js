@@ -1,25 +1,25 @@
 /**
  * Data Cleaning Utilities
- * 数据清洗工具 - 处理脏数据、格式转换、验证
+ * Handles dirty data, format conversion, and validation
  */
 
 /**
- * 解析日期（支持多种格式）
- * @param {any} value - 日期值（可能是字符串、数字、Date对象）
- * @returns {string|null} ISO 日期字符串 (YYYY-MM-DD) 或 null
+ * Parse date (supports multiple formats)
+ * @param {any} value - Date value (may be string, number, or Date object)
+ * @returns {string|null} ISO date string (YYYY-MM-DD) or null
  */
 export const parseDate = (value) => {
   if (!value) return null;
 
-  // 如果已经是 Date 对象
+  // If already a Date object
   if (value instanceof Date) {
     return value.toISOString().split('T')[0];
   }
 
-  // 如果是 Excel 序列号 (数字)
+  // If Excel serial number (numeric)
   if (typeof value === 'number') {
-    // Excel 日期从 1900-01-01 开始，序列号 1 = 1900-01-01
-    // 但 Excel 错误地认为 1900 是闰年，所以需要调整
+    // Excel dates start from 1900-01-01, serial 1 = 1900-01-01
+    // But Excel incorrectly treats 1900 as a leap year, so adjustment needed
     const excelEpoch = new Date(1899, 11, 30); // 1899-12-30
     const date = new Date(excelEpoch.getTime() + value * 86400000);
 
@@ -27,20 +27,20 @@ export const parseDate = (value) => {
     return date.toISOString().split('T')[0];
   }
 
-  // 如果是字符串
+  // If string
   if (typeof value === 'string') {
     const trimmed = value.trim();
     if (!trimmed) return null;
 
-    // 尝试多种日期格式
+    // Try multiple date formats
     const formats = [
-      // ISO 格式: 2024-01-15, 2024/01/15
+      // ISO format: 2024-01-15, 2024/01/15
       /^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/,
-      // 中文格式: 2024年1月15日
+      // Chinese format: 2024年1月15日
       /^(\d{4})年(\d{1,2})月(\d{1,2})日?$/,
-      // 美式格式: 01/15/2024, 1/15/2024
+      // US format: 01/15/2024, 1/15/2024
       /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/,
-      // 欧式格式: 15.01.2024, 15-01-2024
+      // European format: 15.01.2024, 15-01-2024
       /^(\d{1,2})[-.](\d{1,2})[-.](\d{4})$/,
     ];
 
@@ -50,13 +50,13 @@ export const parseDate = (value) => {
         let year, month, day;
 
         if (regex === formats[0] || regex === formats[1]) {
-          // YYYY-MM-DD 或 YYYY年MM月DD日
+          // YYYY-MM-DD or YYYY年MM月DD日
           [, year, month, day] = match;
         } else if (regex === formats[2]) {
-          // MM/DD/YYYY (美式)
+          // MM/DD/YYYY (US)
           [, month, day, year] = match;
         } else if (regex === formats[3]) {
-          // DD-MM-YYYY (欧式)
+          // DD-MM-YYYY (European)
           [, day, month, year] = match;
         }
 
@@ -64,12 +64,12 @@ export const parseDate = (value) => {
         month = parseInt(month, 10);
         day = parseInt(day, 10);
 
-        // 验证日期有效性
+        // Validate date validity
         if (year < 1900 || year > 2100) return null;
         if (month < 1 || month > 12) return null;
         if (day < 1 || day > 31) return null;
 
-        // 构造日期
+        // Construct date
         const date = new Date(year, month - 1, day);
         if (isNaN(date.getTime())) return null;
 
@@ -77,7 +77,7 @@ export const parseDate = (value) => {
       }
     }
 
-    // 尝试使用 Date.parse (最后的尝试)
+    // Try using Date.parse (last resort)
     const parsed = Date.parse(trimmed);
     if (!isNaN(parsed)) {
       const date = new Date(parsed);
@@ -89,10 +89,10 @@ export const parseDate = (value) => {
 };
 
 /**
- * 解析数字（支持多种格式）
- * @param {any} value - 数字值
- * @param {object} options - 选项 { allowNegative, decimals }
- * @returns {number|null} 数字或 null
+ * Parse number (supports multiple formats)
+ * @param {any} value - Numeric value
+ * @param {object} options - Options { allowNegative, decimals }
+ * @returns {number|null} Number or null
  */
 export const parseNumber = (value, options = {}) => {
   const { allowNegative = true, decimals = 2 } = options;
@@ -101,22 +101,22 @@ export const parseNumber = (value, options = {}) => {
     return null;
   }
 
-  // 如果已经是数字
+  // If already a number
   if (typeof value === 'number') {
     if (isNaN(value) || !isFinite(value)) return null;
     if (!allowNegative && value < 0) return null;
     return parseFloat(value.toFixed(decimals));
   }
 
-  // 如果是字符串
+  // If string
   if (typeof value === 'string') {
     let cleaned = value.trim();
 
-    // 移除常见的非数字字符
+    // Remove common non-numeric characters
     cleaned = cleaned
-      .replace(/,/g, '')           // 移除千位分隔符逗号
-      .replace(/\s+/g, '')         // 移除空格
-      .replace(/[^\d.-]/g, '');    // 只保留数字、点、负号
+      .replace(/,/g, '')           // Remove thousands separator commas
+      .replace(/\s+/g, '')         // Remove spaces
+      .replace(/[^\d.-]/g, '');    // Keep only digits, dots, minus sign
 
     if (!cleaned) return null;
 
@@ -131,9 +131,9 @@ export const parseNumber = (value, options = {}) => {
 };
 
 /**
- * 解析布尔值
- * @param {any} value - 布尔值
- * @returns {boolean|null} true, false 或 null
+ * Parse boolean value
+ * @param {any} value - Boolean value
+ * @returns {boolean|null} true, false, or null
  */
 export const parseBoolean = (value) => {
   if (value === null || value === undefined || value === '') {
@@ -162,10 +162,10 @@ export const parseBoolean = (value) => {
 };
 
 /**
- * 清理文本（去除多余空格、特殊字符）
- * @param {any} value - 文本值
- * @param {object} options - 选项 { maxLength, allowEmpty }
- * @returns {string|null} 清理后的文本或 null
+ * Clean text (remove extra spaces, special characters)
+ * @param {any} value - Text value
+ * @param {object} options - Options { maxLength, allowEmpty }
+ * @returns {string|null} Cleaned text or null
  */
 export const cleanText = (value, options = {}) => {
   const { maxLength = 500, allowEmpty = false } = options;
@@ -176,17 +176,17 @@ export const cleanText = (value, options = {}) => {
 
   let text = String(value).trim();
 
-  // 替换多个空格为单个空格
+  // Replace multiple spaces with single space
   text = text.replace(/\s+/g, ' ');
 
-  // 移除不可见字符（保留常见的换行、制表符）
+  // Remove invisible characters (keep common newlines, tabs)
   text = text.replace(/[^\S\r\n\t]/g, ' ');
 
   if (!text && !allowEmpty) {
     return null;
   }
 
-  // 限制长度
+  // Limit length
   if (text.length > maxLength) {
     text = text.substring(0, maxLength);
   }
@@ -195,16 +195,16 @@ export const cleanText = (value, options = {}) => {
 };
 
 /**
- * 验证和清洗单行数据（收货记录）
- * @param {object} row - 原始行数据
- * @param {object} fieldMapping - 字段映射 { systemField: excelColumn }
+ * Validate and clean single row data (goods receipt)
+ * @param {object} row - Raw row data
+ * @param {object} fieldMapping - Field mapping { systemField: excelColumn }
  * @returns {object} { isValid, cleanedData, errors }
  */
 export const validateAndCleanGoodsReceipt = (row, fieldMapping) => {
   const errors = [];
   const cleanedData = {};
 
-  // 必填字段
+  // Required fields
   const requiredFields = [
     'supplier_name',
     'material_code',
@@ -212,9 +212,9 @@ export const validateAndCleanGoodsReceipt = (row, fieldMapping) => {
     'received_qty'
   ];
 
-  // 处理每个映射的字段
+  // Process each mapped field
   for (const [systemField, excelColumn] of Object.entries(fieldMapping)) {
-    if (!excelColumn) continue; // 未映射的字段跳过
+    if (!excelColumn) continue; // Skip unmapped fields
 
     const rawValue = row[excelColumn];
 
@@ -223,7 +223,7 @@ export const validateAndCleanGoodsReceipt = (row, fieldMapping) => {
       case 'supplier_code':
         cleanedData[systemField] = cleanText(rawValue, { maxLength: 200 });
         if (!cleanedData[systemField] && requiredFields.includes(systemField)) {
-          errors.push(`${systemField} 不能为空`);
+          errors.push(`${systemField} cannot be empty`);
         }
         break;
 
@@ -233,7 +233,7 @@ export const validateAndCleanGoodsReceipt = (row, fieldMapping) => {
       case 'receipt_number':
         cleanedData[systemField] = cleanText(rawValue, { maxLength: 100 });
         if (!cleanedData[systemField] && requiredFields.includes(systemField)) {
-          errors.push(`${systemField} 不能为空`);
+          errors.push(`${systemField} cannot be empty`);
         }
         break;
 
@@ -242,7 +242,7 @@ export const validateAndCleanGoodsReceipt = (row, fieldMapping) => {
       case 'receipt_date':
         cleanedData[systemField] = parseDate(rawValue);
         if (!cleanedData[systemField] && requiredFields.includes(systemField)) {
-          errors.push(`${systemField} 日期格式无效: ${rawValue}`);
+          errors.push(`${systemField} invalid date format: ${rawValue}`);
         }
         break;
 
@@ -250,11 +250,11 @@ export const validateAndCleanGoodsReceipt = (row, fieldMapping) => {
       case 'rejected_qty':
         cleanedData[systemField] = parseNumber(rawValue, { allowNegative: false, decimals: 2 });
         if (cleanedData[systemField] === null && requiredFields.includes(systemField)) {
-          errors.push(`${systemField} 必须是有效数字`);
+          errors.push(`${systemField} must be a valid number`);
         }
-        // 确保非负数
+        // Ensure non-negative
         if (cleanedData[systemField] !== null && cleanedData[systemField] < 0) {
-          errors.push(`${systemField} 不能为负数`);
+          errors.push(`${systemField} cannot be negative`);
           cleanedData[systemField] = 0;
         }
         break;
@@ -269,21 +269,21 @@ export const validateAndCleanGoodsReceipt = (row, fieldMapping) => {
     }
   }
 
-  // 业务规则验证
+  // Business rule validation
   if (cleanedData.rejected_qty > cleanedData.received_qty) {
-    errors.push('不良数量不能大于收货数量');
+    errors.push('Rejected quantity cannot exceed received quantity');
   }
 
-  // 日期逻辑验证
+  // Date logic validation
   if (cleanedData.planned_delivery_date && cleanedData.actual_delivery_date) {
     const planned = new Date(cleanedData.planned_delivery_date);
     const actual = new Date(cleanedData.actual_delivery_date);
 
-    // 警告（不阻止导入）
+    // Warning (does not block import)
     if (actual < planned) {
-      // 提前交货，可能正常
+      // Early delivery, may be normal
     } else if ((actual - planned) / (1000 * 60 * 60 * 24) > 30) {
-      errors.push(`警告: 延迟交货超过 30 天`);
+      errors.push(`Warning: delivery delayed more than 30 days`);
     }
   }
 
@@ -295,9 +295,9 @@ export const validateAndCleanGoodsReceipt = (row, fieldMapping) => {
 };
 
 /**
- * 验证和清洗单行数据（价格历史）
- * @param {object} row - 原始行数据
- * @param {object} fieldMapping - 字段映射
+ * Validate and clean single row data (price history)
+ * @param {object} row - Raw row data
+ * @param {object} fieldMapping - Field mapping
  * @returns {object} { isValid, cleanedData, errors }
  */
 export const validateAndCleanPriceHistory = (row, fieldMapping) => {
@@ -323,21 +323,21 @@ export const validateAndCleanPriceHistory = (row, fieldMapping) => {
       case 'material_name':
         cleanedData[systemField] = cleanText(rawValue, { maxLength: 200 });
         if (!cleanedData[systemField] && requiredFields.includes(systemField)) {
-          errors.push(`${systemField} 不能为空`);
+          errors.push(`${systemField} cannot be empty`);
         }
         break;
 
       case 'order_date':
         cleanedData[systemField] = parseDate(rawValue);
         if (!cleanedData[systemField] && requiredFields.includes(systemField)) {
-          errors.push(`${systemField} 日期格式无效`);
+          errors.push(`${systemField} invalid date format`);
         }
         break;
 
       case 'unit_price':
         cleanedData[systemField] = parseNumber(rawValue, { allowNegative: false, decimals: 4 });
         if (cleanedData[systemField] === null || cleanedData[systemField] <= 0) {
-          errors.push(`${systemField} 必须是正数`);
+          errors.push(`${systemField} must be a positive number`);
         }
         break;
 
@@ -348,7 +348,7 @@ export const validateAndCleanPriceHistory = (row, fieldMapping) => {
       case 'currency':
         cleanedData[systemField] = cleanText(rawValue, { maxLength: 10 });
         if (!cleanedData[systemField]) {
-          cleanedData[systemField] = 'USD'; // 默认货币
+          cleanedData[systemField] = 'USD'; // Default currency
         }
         break;
 
@@ -369,9 +369,9 @@ export const validateAndCleanPriceHistory = (row, fieldMapping) => {
 };
 
 /**
- * 验证和清洗单行数据（供应商主档）
- * @param {object} row - 原始行数据
- * @param {object} fieldMapping - 字段映射
+ * Validate and clean single row data (supplier master)
+ * @param {object} row - Raw row data
+ * @param {object} fieldMapping - Field mapping
  * @returns {object} { isValid, cleanedData, errors }
  */
 export const validateAndCleanSupplier = (row, fieldMapping) => {
@@ -390,7 +390,7 @@ export const validateAndCleanSupplier = (row, fieldMapping) => {
       case 'supplier_code':
         cleanedData[systemField] = cleanText(rawValue, { maxLength: 200 });
         if (!cleanedData[systemField] && requiredFields.includes(systemField)) {
-          errors.push(`${systemField} 不能为空`);
+          errors.push(`${systemField} cannot be empty`);
         }
         break;
 
@@ -412,7 +412,7 @@ export const validateAndCleanSupplier = (row, fieldMapping) => {
         if (status && ['active', 'inactive'].includes(status.toLowerCase())) {
           cleanedData[systemField] = status.toLowerCase();
         } else {
-          cleanedData[systemField] = 'active'; // 默认状态
+          cleanedData[systemField] = 'active'; // Default status
         }
         break;
 
@@ -429,10 +429,10 @@ export const validateAndCleanSupplier = (row, fieldMapping) => {
 };
 
 /**
- * 批量验证和清洗数据
- * @param {Array} rows - 原始数据行数组
- * @param {string} dataType - 数据类型 (goods_receipt, price_history, supplier_master)
- * @param {object} fieldMapping - 字段映射
+ * Batch validate and clean data
+ * @param {Array} rows - Raw data row array
+ * @param {string} dataType - Data type (goods_receipt, price_history, supplier_master)
+ * @param {object} fieldMapping - Field mapping
  * @returns {object} { validRows, invalidRows, stats }
  */
 export const batchValidateAndClean = (rows, dataType, fieldMapping) => {
@@ -480,16 +480,16 @@ export const batchValidateAndClean = (rows, dataType, fieldMapping) => {
 };
 
 /**
- * AI 辅助字段映射建议
- * @param {Array} excelColumns - Excel 列名数组
- * @param {Array} systemFields - 系统字段数组
- * @param {string} dataType - 数据类型
- * @returns {object} 建议的映射 { systemField: excelColumn }
+ * AI-assisted field mapping suggestions
+ * @param {Array} excelColumns - Excel column name array
+ * @param {Array} systemFields - System field array
+ * @param {string} dataType - Data type
+ * @returns {object} Suggested mapping { systemField: excelColumn }
  */
 export const suggestFieldMapping = (excelColumns, systemFields, dataType) => {
   const suggestions = {};
 
-  // 字段映射规则（基于关键词匹配）
+  // Field mapping rules (keyword-based matching)
   const mappingRules = {
     goods_receipt: {
       supplier_name: ['供应商', 'supplier', '厂商', 'vendor'],
@@ -536,7 +536,7 @@ export const suggestFieldMapping = (excelColumns, systemFields, dataType) => {
   systemFields.forEach(systemField => {
     const keywords = rules[systemField] || [];
 
-    // 尝试匹配
+    // Try matching
     for (const excelColumn of excelColumns) {
       const columnLower = excelColumn.toLowerCase();
 
