@@ -1,15 +1,15 @@
 /**
  * Cost Analysis Service
- * 成本分析服务 - 处理营运成本记录、分析和异常检测
+ * Cost analysis service - handles operational cost records, analysis, and anomaly detection
  */
 
 import { supabase } from './supabaseClient';
 
 /**
- * 记录每日营运成本
- * @param {string} userId - 用户 ID
- * @param {object} costData - 成本数据
- * @returns {Promise<object>} 保存的成本记录
+ * Record daily operational cost
+ * @param {string} userId - User ID
+ * @param {object} costData - Cost data
+ * @returns {Promise<object>} Saved cost record
  */
 export const recordDailyCost = async (userId, costData) => {
   const {
@@ -25,7 +25,7 @@ export const recordDailyCost = async (userId, costData) => {
     notes = ''
   } = costData;
 
-  // 计算成本
+  // Calculate costs
   const direct_labor_cost = direct_labor_hours * direct_labor_rate;
   const indirect_labor_cost = indirect_labor_hours * indirect_labor_rate;
   const total_labor_cost = direct_labor_cost + indirect_labor_cost;
@@ -51,7 +51,7 @@ export const recordDailyCost = async (userId, costData) => {
     notes
   };
 
-  // 使用 upsert 处理重复日期
+  // Use upsert to handle duplicate dates
   const { data, error } = await supabase
     .from('operational_costs')
     .upsert(payload, {
@@ -66,7 +66,7 @@ export const recordDailyCost = async (userId, costData) => {
 };
 
 /**
- * 安全轉換為數字（處理空值、逗號、字串）
+ * Safely convert to number (handles null, commas, strings)
  */
 function toNumber(v) {
   if (v === null || v === undefined || v === '') return 0;
@@ -75,7 +75,7 @@ function toNumber(v) {
 }
 
 /**
- * 計算營運成本衍生欄位
+ * Calculate operational cost derived fields
  */
 function computeDerived(row) {
   const directHours = toNumber(row.direct_labor_hours);
@@ -110,11 +110,11 @@ function computeDerived(row) {
 }
 
 /**
- * 批次寫入營運成本（Upload Pipeline 使用）
- * @param {string} userId - 用户 ID
- * @param {Array<object>} rows - 已正規化的資料列（canonical keys）
- * @param {string|null} batchId - 批次 ID (UUID)
- * @param {string|null} uploadFileId - 上傳檔案 ID (UUID)
+ * Batch upsert operational costs (used by Upload Pipeline)
+ * @param {string} userId - User ID
+ * @param {Array<object>} rows - Normalized data rows (canonical keys)
+ * @param {string|null} batchId - Batch ID (UUID)
+ * @param {string|null} uploadFileId - Upload file ID (UUID)
  * @returns {Promise<object>} { success, rows }
  */
 export const batchUpsertOperationalCosts = async (userId, rows, batchId = null, uploadFileId = null) => {
@@ -152,11 +152,11 @@ export const batchUpsertOperationalCosts = async (userId, rows, batchId = null, 
 };
 
 /**
- * 获取指定日期范围的成本记录
- * @param {string} userId - 用户 ID
- * @param {string} startDate - 开始日期 (YYYY-MM-DD)
- * @param {string} endDate - 结束日期 (YYYY-MM-DD)
- * @returns {Promise<Array>} 成本记录列表
+ * Get cost records for specified date range
+ * @param {string} userId - User ID
+ * @param {string} startDate - Start date (YYYY-MM-DD)
+ * @param {string} endDate - End date (YYYY-MM-DD)
+ * @returns {Promise<Array>} Cost record list
  */
 export const getCostRecords = async (userId, startDate, endDate) => {
   let query = supabase
@@ -179,10 +179,10 @@ export const getCostRecords = async (userId, startDate, endDate) => {
 };
 
 /**
- * 获取成本趋势数据
- * @param {string} userId - 用户 ID
- * @param {number} days - 过去多少天（默认 30 天）
- * @returns {Promise<object>} 趋势数据
+ * Get cost trend data
+ * @param {string} userId - User ID
+ * @param {number} days - Number of past days (default 30)
+ * @returns {Promise<object>} Trend data
  */
 export const getCostTrends = async (userId, days = 30) => {
   const endDate = new Date();
@@ -211,7 +211,7 @@ export const getCostTrends = async (userId, days = 30) => {
     };
   }
 
-  // 按日期排序（升序）
+  // Sort by date (ascending)
   records.sort((a, b) => new Date(a.cost_date) - new Date(b.cost_date));
 
   const dates = records.map(r => r.cost_date);
@@ -220,7 +220,7 @@ export const getCostTrends = async (userId, days = 30) => {
   const indirectCosts = records.map(r => parseFloat(r.indirect_labor_cost) || 0);
   const unitCosts = records.map(r => parseFloat(r.cost_per_unit) || 0);
 
-  // 计算平均值
+  // Calculate averages
   const sum = (arr) => arr.reduce((a, b) => a + b, 0);
   const avg = (arr) => arr.length > 0 ? sum(arr) / arr.length : 0;
 
@@ -241,10 +241,10 @@ export const getCostTrends = async (userId, days = 30) => {
 };
 
 /**
- * 分析成本结构
- * @param {string} userId - 用户 ID
- * @param {string} date - 日期 (可选，默认今天)
- * @returns {Promise<object>} 成本结构分析
+ * Analyze cost structure
+ * @param {string} userId - User ID
+ * @param {string} date - Date (optional, defaults to today)
+ * @returns {Promise<object>} Cost structure analysis
  */
 export const analyzeCostStructure = async (userId, date = null) => {
   const targetDate = date || new Date().toISOString().split('T')[0];
@@ -289,22 +289,22 @@ export const analyzeCostStructure = async (userId, date = null) => {
 };
 
 /**
- * 检测成本异常
- * @param {string} userId - 用户 ID
- * @param {number} days - 检测过去多少天（默认 7 天）
- * @returns {Promise<Array>} 检测到的异常列表
+ * Detect cost anomalies
+ * @param {string} userId - User ID
+ * @param {number} days - Number of past days to detect (default 7)
+ * @returns {Promise<Array>} Detected anomaly list
  */
 export const detectCostAnomalies = async (userId, days = 7) => {
-  // 获取历史数据
-  const trends = await getCostTrends(userId, 30); // 取30天用于计算基准
+  // Get historical data
+  const trends = await getCostTrends(userId, 30); // Use 30 days to calculate baseline
 
   if (trends.records.length < 7) {
-    // 数据不足，无法检测异常
+    // Insufficient data, cannot detect anomalies
     return [];
   }
 
   const { averages, records } = trends;
-  const recentRecords = records.slice(-days); // 最近 N 天的记录
+  const recentRecords = records.slice(-days); // Records from last N days
 
   const anomalies = [];
 
@@ -313,7 +313,7 @@ export const detectCostAnomalies = async (userId, days = 7) => {
     const unitCost = parseFloat(record.cost_per_unit);
     const output = parseFloat(record.production_output);
 
-    // 检测1: 总成本异常高
+    // Detection 1: Abnormally high total cost
     if (totalCost > averages.avgTotalCost * 1.2) {
       const deviation = ((totalCost - averages.avgTotalCost) / averages.avgTotalCost * 100).toFixed(2);
       anomalies.push({
@@ -325,11 +325,11 @@ export const detectCostAnomalies = async (userId, days = 7) => {
         detected_value: totalCost,
         expected_value: averages.avgTotalCost,
         deviation_percent: parseFloat(deviation),
-        description: `总成本 ${totalCost.toFixed(2)} 元，超出平均值 ${deviation}%`
+        description: `Total cost ${totalCost.toFixed(2)}, exceeds average by ${deviation}%`
       });
     }
 
-    // 检测2: 单位成本异常高
+    // Detection 2: Abnormally high unit cost
     if (unitCost > averages.avgUnitCost * 1.3 && averages.avgUnitCost > 0) {
       const deviation = ((unitCost - averages.avgUnitCost) / averages.avgUnitCost * 100).toFixed(2);
       anomalies.push({
@@ -341,11 +341,11 @@ export const detectCostAnomalies = async (userId, days = 7) => {
         detected_value: unitCost,
         expected_value: averages.avgUnitCost,
         deviation_percent: parseFloat(deviation),
-        description: `单位成本 ${unitCost.toFixed(2)} 元，超出平均值 ${deviation}%`
+        description: `Unit cost ${unitCost.toFixed(2)}, exceeds average by ${deviation}%`
       });
     }
 
-    // 检测3: 产出过低
+    // Detection 3: Output too low
     const avgOutput = records.reduce((sum, r) => sum + parseFloat(r.production_output), 0) / records.length;
     if (output < avgOutput * 0.7 && avgOutput > 0) {
       const deviation = ((avgOutput - output) / avgOutput * 100).toFixed(2);
@@ -358,12 +358,12 @@ export const detectCostAnomalies = async (userId, days = 7) => {
         detected_value: output,
         expected_value: avgOutput,
         deviation_percent: parseFloat(deviation),
-        description: `产出 ${output} 件，低于平均值 ${deviation}%`
+        description: `Output ${output} units, below average by ${deviation}%`
       });
     }
   }
 
-  // 保存异常到数据库
+  // Save anomalies to database
   if (anomalies.length > 0) {
     const { error } = await supabase
       .from('cost_anomalies')
@@ -378,10 +378,10 @@ export const detectCostAnomalies = async (userId, days = 7) => {
 };
 
 /**
- * 获取成本异常记录
- * @param {string} userId - 用户 ID
- * @param {string} status - 状态过滤 (可选: pending, investigating, resolved, ignored)
- * @returns {Promise<Array>} 异常记录列表
+ * Get cost anomaly records
+ * @param {string} userId - User ID
+ * @param {string} status - Status filter (optional: pending, investigating, resolved, ignored)
+ * @returns {Promise<Array>} Anomaly record list
  */
 export const getCostAnomalies = async (userId, status = null) => {
   let query = supabase
@@ -401,11 +401,11 @@ export const getCostAnomalies = async (userId, status = null) => {
 };
 
 /**
- * 更新异常状态
- * @param {string} anomalyId - 异常 ID
- * @param {string} status - 新状态
- * @param {string} resolutionNotes - 解决说明 (可选)
- * @returns {Promise<object>} 更新后的记录
+ * Update anomaly status
+ * @param {string} anomalyId - Anomaly ID
+ * @param {string} status - New status
+ * @param {string} resolutionNotes - Resolution notes (optional)
+ * @returns {Promise<object>} Updated record
  */
 export const updateAnomalyStatus = async (anomalyId, status, resolutionNotes = '') => {
   const updates = {
@@ -429,9 +429,9 @@ export const updateAnomalyStatus = async (anomalyId, status, resolutionNotes = '
 };
 
 /**
- * 获取成本比较数据（本月 vs 上月）
- * @param {string} userId - 用户 ID
- * @returns {Promise<object>} 对比数据
+ * Get cost comparison data (this month vs last month)
+ * @param {string} userId - User ID
+ * @returns {Promise<object>} Comparison data
  */
 export const getCostComparison = async (userId) => {
   const now = new Date();
@@ -439,14 +439,14 @@ export const getCostComparison = async (userId) => {
   const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
   const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0);
 
-  // 本月数据
+  // This month's data
   const thisMonthRecords = await getCostRecords(
     userId,
     thisMonthStart.toISOString().split('T')[0],
     now.toISOString().split('T')[0]
   );
 
-  // 上月数据
+  // Last month's data
   const lastMonthRecords = await getCostRecords(
     userId,
     lastMonthStart.toISOString().split('T')[0],
@@ -491,8 +491,8 @@ export const getCostComparison = async (userId) => {
 };
 
 /**
- * 删除成本记录
- * @param {string} costId - 成本记录 ID
+ * Delete cost record
+ * @param {string} costId - Cost record ID
  * @returns {Promise<void>}
  */
 export const deleteCostRecord = async (costId) => {
