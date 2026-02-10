@@ -1,25 +1,25 @@
 /**
  * Ingest RPC Service
- * 提供高效能、交易性的批次資料寫入 API（透過 Supabase RPC）
+ * Provides high-performance, transactional batch data write API (via Supabase RPC)
  * 
- * 特性：
- * - Transaction 保證（全部成功或全部回滾）
- * - Idempotency（基於 batch_id）
- * - 自動處理 supplier/material 查找或建立
- * - Fallback 機制（若 RPC 失敗則回退到舊 API）
+ * Features:
+ * - Transaction guarantee (all succeed or all rollback)
+ * - Idempotency (based on batch_id)
+ * - Auto supplier/material lookup or creation
+ * - Fallback mechanism (falls back to legacy API if RPC fails)
  */
 
 import { supabase } from './supabaseClient';
 
 /**
- * 批次資料大小限制
- * - 建議每次 RPC 呼叫處理 500-1000 筆資料
- * - Supabase RPC 預設 payload limit: 1-2 MB
+ * Batch data size limit
+ * - Recommended 500-1000 rows per RPC call
+ * - Supabase RPC default payload limit: 1-2 MB
  */
 const MAX_ROWS_PER_BATCH = 50000;
 
 /**
- * RPC 呼叫錯誤類型
+ * RPC call error type
  */
 export class RpcError extends Error {
   constructor(message, code, details) {
@@ -31,11 +31,11 @@ export class RpcError extends Error {
 }
 
 /**
- * 批次資料過大錯誤
+ * Batch data too large error
  */
 export class BatchSizeError extends Error {
   constructor(rowCount, maxRows = MAX_ROWS_PER_BATCH) {
-    super(`批次資料過大：${rowCount} 筆 (上限 ${maxRows} 筆)。請分檔上傳或聯繫系統管理員。`);
+    super(`Batch data too large: ${rowCount} rows (limit ${maxRows} rows). Please split the file or contact system administrator.`);
     this.name = 'BatchSizeError';
     this.rowCount = rowCount;
     this.maxRows = maxRows;
@@ -43,29 +43,29 @@ export class BatchSizeError extends Error {
 }
 
 /**
- * 批次寫入收貨記錄（Goods Receipts）
+ * Batch write Goods Receipts
  * 
- * @param {Object} params - 參數物件
- * @param {string} params.batchId - 批次 ID（UUID）
- * @param {string} params.uploadFileId - 上傳檔案 ID（UUID）
- * @param {Array<Object>} params.rows - 資料陣列（canonical keys）
- * @param {Object} params.rows[].material_code - 物料代碼（必填）
- * @param {Object} params.rows[].supplier_name - 供應商名稱（必填 if no supplier_code）
- * @param {Object} params.rows[].actual_delivery_date - 實際交期（必填）
- * @param {Object} params.rows[].received_qty - 收貨數量（必填）
- * @param {number} params.maxRows - 最大行數限制（預設 1000）
+ * @param {Object} params - Parameter object
+ * @param {string} params.batchId - Batch ID (UUID)
+ * @param {string} params.uploadFileId - Upload file ID (UUID)
+ * @param {Array<Object>} params.rows - Data array (canonical keys)
+ * @param {Object} params.rows[].material_code - Material code (required)
+ * @param {Object} params.rows[].supplier_name - Supplier name (required if no supplier_code)
+ * @param {Object} params.rows[].actual_delivery_date - Actual delivery date (required)
+ * @param {Object} params.rows[].received_qty - Received quantity (required)
+ * @param {number} params.maxRows - Max row limit (default 1000)
  * 
- * @returns {Promise<Object>} RPC 回傳結果
- * @returns {boolean} .success - 是否成功
- * @returns {number} .inserted_count - 插入的記錄數量
- * @returns {number} .suppliers_created - 新建立的 supplier 數量
- * @returns {number} .suppliers_found - 找到的現有 supplier 數量
- * @returns {number} .materials_upserted - Upsert 的 material 數量
- * @returns {string} .batch_id - 批次 ID
- * @returns {string} .upload_file_id - 上傳檔案 ID
+ * @returns {Promise<Object>} RPC return result
+ * @returns {boolean} .success - Whether successful
+ * @returns {number} .inserted_count - Number of inserted records
+ * @returns {number} .suppliers_created - Number of newly created suppliers
+ * @returns {number} .suppliers_found - Number of existing suppliers found
+ * @returns {number} .materials_upserted - Number of upserted materials
+ * @returns {string} .batch_id - Batch ID
+ * @returns {string} .upload_file_id - Upload file ID
  * 
- * @throws {BatchSizeError} 若 rows.length > maxRows
- * @throws {RpcError} 若 RPC 呼叫失敗
+ * @throws {BatchSizeError} If rows.length > maxRows
+ * @throws {RpcError} If RPC call fails
  * 
  * @example
  * try {
@@ -74,12 +74,12 @@ export class BatchSizeError extends Error {
  *     uploadFileId: '11111111-2222-3333-4444-555555555555',
  *     rows: validationResult.validRows
  *   });
- *   console.log(`成功插入 ${result.inserted_count} 筆記錄`);
+ *   console.log(`Successfully inserted ${result.inserted_count} records`);
  * } catch (error) {
  *   if (error instanceof BatchSizeError) {
- *     // 提示使用者分檔上傳
+ *     // Prompt user to split file upload
  *   } else if (error instanceof RpcError) {
- *     // Fallback 到舊 API
+ *     // Fallback to legacy API
  *   }
  * }
  */
@@ -89,7 +89,7 @@ export async function ingestGoodsReceiptsRpc({
   rows,
   maxRows = MAX_ROWS_PER_BATCH
 }) {
-  // ===== 驗證參數 =====
+  // ===== Validate parameters =====
   if (!batchId) {
     throw new Error('batchId is required');
   }
@@ -100,7 +100,7 @@ export async function ingestGoodsReceiptsRpc({
     throw new Error('rows must be an array');
   }
 
-  // ===== 檢查批次大小 =====
+  // ===== Check batch size =====
   if (rows.length > maxRows) {
     throw new BatchSizeError(rows.length, maxRows);
   }
@@ -108,33 +108,33 @@ export async function ingestGoodsReceiptsRpc({
   console.log(`[ingestGoodsReceiptsRpc] Starting RPC call for ${rows.length} rows`);
   console.log(`[ingestGoodsReceiptsRpc] batchId: ${batchId}, uploadFileId: ${uploadFileId}`);
 
-  // TODO: Staging + Finalize 機制（Phase 3）
-  // 若需要處理 > 1000 rows：
-  // 1. 分批寫入 staging table
-  // 2. 最後呼叫 finalize RPC 完成 transaction
+  // TODO: Staging + Finalize mechanism (Phase 3)
+  // If need to handle > 1000 rows:
+  // 1. Write to staging table in batches
+  // 2. Call finalize RPC to complete transaction
 
   try {
-    // ===== 呼叫 Supabase RPC =====
+    // ===== Call Supabase RPC =====
     const { data, error } = await supabase.rpc('ingest_goods_receipts_v1', {
       p_batch_id: batchId,
       p_upload_file_id: uploadFileId,
-      p_rows: rows // 直接傳 validRows（必須是 canonical keys）
+      p_rows: rows // Pass validRows directly (must be canonical keys)
     });
 
-    // ===== 錯誤處理 =====
+    // ===== Error handling =====
     if (error) {
       console.error('[ingestGoodsReceiptsRpc] RPC Error:', error);
       throw new RpcError(
-        `RPC 呼叫失敗: ${error.message || JSON.stringify(error)}`,
+        `RPC call failed: ${error.message || JSON.stringify(error)}`,
         error.code,
         error.details || error
       );
     }
 
-    // ===== 驗證回傳資料 =====
+    // ===== Validate response data =====
     if (!data || typeof data !== 'object') {
       throw new RpcError(
-        'RPC 回傳資料格式錯誤（預期 JSONB 物件）',
+        'RPC response format error (expected JSONB object)',
         'INVALID_RESPONSE',
         data
       );
@@ -142,7 +142,7 @@ export async function ingestGoodsReceiptsRpc({
 
     if (!data.success) {
       throw new RpcError(
-        'RPC 執行失敗（success = false）',
+        'RPC execution failed (success = false)',
         'RPC_EXECUTION_FAILED',
         data
       );
@@ -158,15 +158,15 @@ export async function ingestGoodsReceiptsRpc({
     return data;
 
   } catch (error) {
-    // 若已是 RpcError，直接拋出
+    // If already RpcError, throw directly
     if (error instanceof RpcError || error instanceof BatchSizeError) {
       throw error;
     }
 
-    // 其他未預期的錯誤
+    // Other unexpected errors
     console.error('[ingestGoodsReceiptsRpc] Unexpected error:', error);
     throw new RpcError(
-      `未預期的錯誤: ${error.message}`,
+      `Unexpected error: ${error.message}`,
       'UNEXPECTED_ERROR',
       error
     );
@@ -174,21 +174,21 @@ export async function ingestGoodsReceiptsRpc({
 }
 
 /**
- * 批次寫入價格歷史（Price History）
+ * Batch write Price History
  * 
- * @param {Object} params - 參數物件
- * @param {string} params.batchId - 批次 ID（UUID）
- * @param {string} params.uploadFileId - 上傳檔案 ID（UUID）
- * @param {Array<Object>} params.rows - 資料陣列（canonical keys）
- * @param {Object} params.rows[].material_code - 物料代碼（必填）
- * @param {Object} params.rows[].supplier_name - 供應商名稱（必填 if no supplier_code）
- * @param {Object} params.rows[].order_date - 訂單日期（必填）
- * @param {Object} params.rows[].unit_price - 單價（必填）
- * @param {number} params.maxRows - 最大行數限制（預設 1000）
+ * @param {Object} params - Parameter object
+ * @param {string} params.batchId - Batch ID (UUID)
+ * @param {string} params.uploadFileId - Upload file ID (UUID)
+ * @param {Array<Object>} params.rows - Data array (canonical keys)
+ * @param {Object} params.rows[].material_code - Material code (required)
+ * @param {Object} params.rows[].supplier_name - Supplier name (required if no supplier_code)
+ * @param {Object} params.rows[].order_date - Order date (required)
+ * @param {Object} params.rows[].unit_price - Unit price (required)
+ * @param {number} params.maxRows - Max row limit (default 1000)
  * 
- * @returns {Promise<Object>} RPC 回傳結果（同 ingestGoodsReceiptsRpc）
- * @throws {BatchSizeError} 若 rows.length > maxRows
- * @throws {RpcError} 若 RPC 呼叫失敗
+ * @returns {Promise<Object>} RPC return result (same as ingestGoodsReceiptsRpc)
+ * @throws {BatchSizeError} If rows.length > maxRows
+ * @throws {RpcError} If RPC call fails
  */
 export async function ingestPriceHistoryRpc({ 
   batchId, 
@@ -196,7 +196,7 @@ export async function ingestPriceHistoryRpc({
   rows,
   maxRows = MAX_ROWS_PER_BATCH
 }) {
-  // ===== 驗證參數 =====
+  // ===== Validate parameters =====
   if (!batchId) {
     throw new Error('batchId is required');
   }
@@ -207,7 +207,7 @@ export async function ingestPriceHistoryRpc({
     throw new Error('rows must be an array');
   }
 
-  // ===== 檢查批次大小 =====
+  // ===== Check batch size =====
   if (rows.length > maxRows) {
     throw new BatchSizeError(rows.length, maxRows);
   }
@@ -215,30 +215,30 @@ export async function ingestPriceHistoryRpc({
   console.log(`[ingestPriceHistoryRpc] Starting RPC call for ${rows.length} rows`);
   console.log(`[ingestPriceHistoryRpc] batchId: ${batchId}, uploadFileId: ${uploadFileId}`);
 
-  // TODO: Staging + Finalize 機制（Phase 3）
+  // TODO: Staging + Finalize mechanism (Phase 3)
 
   try {
-    // ===== 呼叫 Supabase RPC =====
+    // ===== Call Supabase RPC =====
     const { data, error } = await supabase.rpc('ingest_price_history_v1', {
       p_batch_id: batchId,
       p_upload_file_id: uploadFileId,
-      p_rows: rows // 直接傳 validRows（必須是 canonical keys）
+      p_rows: rows // Pass validRows directly (must be canonical keys)
     });
 
-    // ===== 錯誤處理 =====
+    // ===== Error handling =====
     if (error) {
       console.error('[ingestPriceHistoryRpc] RPC Error:', error);
       throw new RpcError(
-        `RPC 呼叫失敗: ${error.message || JSON.stringify(error)}`,
+        `RPC call failed: ${error.message || JSON.stringify(error)}`,
         error.code,
         error.details || error
       );
     }
 
-    // ===== 驗證回傳資料 =====
+    // ===== Validate response data =====
     if (!data || typeof data !== 'object') {
       throw new RpcError(
-        'RPC 回傳資料格式錯誤（預期 JSONB 物件）',
+        'RPC response format error (expected JSONB object)',
         'INVALID_RESPONSE',
         data
       );
@@ -246,7 +246,7 @@ export async function ingestPriceHistoryRpc({
 
     if (!data.success) {
       throw new RpcError(
-        'RPC 執行失敗（success = false）',
+        'RPC execution failed (success = false)',
         'RPC_EXECUTION_FAILED',
         data
       );
@@ -262,15 +262,15 @@ export async function ingestPriceHistoryRpc({
     return data;
 
   } catch (error) {
-    // 若已是 RpcError，直接拋出
+    // If already RpcError, throw directly
     if (error instanceof RpcError || error instanceof BatchSizeError) {
       throw error;
     }
 
-    // 其他未預期的錯誤
+    // Other unexpected errors
     console.error('[ingestPriceHistoryRpc] Unexpected error:', error);
     throw new RpcError(
-      `未預期的錯誤: ${error.message}`,
+      `Unexpected error: ${error.message}`,
       'UNEXPECTED_ERROR',
       error
     );
@@ -278,26 +278,26 @@ export async function ingestPriceHistoryRpc({
 }
 
 /**
- * 檢查 RPC 是否可用（健康檢查）
+ * Check if RPC is available (health check)
  * 
- * @returns {Promise<boolean>} RPC 是否可用
+ * @returns {Promise<boolean>} Whether RPC is available
  */
 export async function checkRpcHealth() {
   try {
-    // 嘗試呼叫一個簡單的測試（空資料）
+    // Try calling a simple test (empty data)
     const { error } = await supabase.rpc('ingest_goods_receipts_v1', {
       p_batch_id: '00000000-0000-0000-0000-000000000000',
       p_upload_file_id: '00000000-0000-0000-0000-000000000000',
       p_rows: []
     });
 
-    // 若 function 不存在，error.code 會是 '42883' (undefined_function)
+    // If function doesn't exist, error.code will be '42883' (undefined_function)
     if (error && error.code === '42883') {
-      console.warn('[checkRpcHealth] RPC function not found (未部署或名稱錯誤)');
+      console.warn('[checkRpcHealth] RPC function not found (not deployed or wrong name)');
       return false;
     }
 
-    // 其他錯誤（如權限問題）也視為不可用
+    // Other errors (e.g. permission issues) also treated as unavailable
     if (error) {
       console.warn('[checkRpcHealth] RPC health check failed:', error);
       return false;
@@ -311,6 +311,6 @@ export async function checkRpcHealth() {
 }
 
 /**
- * Export 所有錯誤類型（方便前端 catch 判斷）
+ * Export all error types (for frontend catch handling)
  */
 export { MAX_ROWS_PER_BATCH };
