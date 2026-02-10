@@ -1,6 +1,6 @@
 /**
- * Sheet Classifier - 通用、可測試的 sheet 分類器
- * 使用 config-based fingerprints，不寫死邏輯
+ * Sheet Classifier - Generic, testable sheet classifier
+ * Uses config-based fingerprints, no hardcoded logic
  */
 
 import { UPLOAD_FINGERPRINTS, getSupportedUploadTypes } from '../config/uploadFingerprints';
@@ -58,8 +58,8 @@ function scoreUploadType(uploadType, fingerprint, canonicalHeaders, sampleRows, 
     requiredHeaders = [],
     optionalHeaders = [],
     negativeHeaders = [],
-    strongFeatures = [], // 強特徵（高加權）
-    exclusiveFeatures = [], // 互斥特徵（出現則重扣）
+    strongFeatures = [], // Strong features (high weight bonus)
+    exclusiveFeatures = [], // Exclusive features (heavy penalty if present)
     fieldTypeHints = {},
     minConfidenceToAutoEnable = 0.75
   } = fingerprint;
@@ -86,7 +86,7 @@ function scoreUploadType(uploadType, fingerprint, canonicalHeaders, sampleRows, 
   // Check exclusive features (heavy penalty if present)
   const matchedExclusiveFeatures = (exclusiveFeatures || []).filter(h => canonicalHeaders.has(h));
   
-  // Type checking on sample data (擴大到前 50 rows)
+  // Type checking on sample data (expanded to first 50 rows)
   const typeCheckResults = checkFieldTypes(fieldTypeHints, sampleRows.slice(0, 50), headerMapping);
   
   // Calculate base score

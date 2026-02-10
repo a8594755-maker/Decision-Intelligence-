@@ -1,19 +1,19 @@
 /**
- * 將 component_demand 依 (material_code, plant_id) 彙總為 consumption / 日均需求
- * 供 Risk 計算 daysToStockout、P(stockout) 使用。
+ * Aggregate component_demand by (material_code, plant_id) into consumption / daily demand
+ * Used by Risk to calculate daysToStockout, P(stockout).
  *
- * 需求→日需求推導規則（見 docs/RISK_FORECAST_LINKAGE.md）：
- * - time_bucket 視為 week bucket（一 bucket = 7 天；若未來支援 date bucket 需另訂轉換規則）。
- * - horizon 長度依「run 參數」或「實際資料」推導，優先順序：
- *   1) options.timeBuckets（run.parameters.time_buckets）→ horizonDays = timeBuckets.length * daysPerBucket
+ * Demand → daily demand derivation rules (see docs/RISK_FORECAST_LINKAGE.md):
+ * - time_bucket is treated as week bucket (1 bucket = 7 days; if date bucket support is added, conversion rules need updating).
+ * - horizon length derived from "run parameters" or "actual data", priority order:
+ *   1) options.timeBuckets (run.parameters.time_buckets) → horizonDays = timeBuckets.length * daysPerBucket
  *   2) options.horizonBuckets → horizonDays = horizonBuckets * daysPerBucket
- *   3) fallback：從 rows 的 unique time_bucket 數量推導 → horizonDays = bucketCount * daysPerBucket（最少 1 天）
+ *   3) fallback: infer from rows' unique time_bucket count → horizonDays = bucketCount * daysPerBucket (minimum 1 day)
  */
 
 export const DAYS_PER_BUCKET = 7;
 
 /**
- * 正規化 (material_code, plant_id) 為單一 key，供全 pipeline 對齊使用。
+ * Normalize (material_code, plant_id) into a single key for pipeline-wide alignment.
  * @param {string} materialCode
  * @param {string} plantId
  * @returns {string} "MATERIAL_CODE|PLANT_ID"
@@ -26,8 +26,8 @@ export function normalizeKey(materialCode, plantId) {
 
 /**
  * @param {Array<{ material_code: string, plant_id: string, time_bucket: string, demand_qty: number }>} rows
- * @param {number} [horizonBuckets] - 風險評估時間窗（bucket 數），與 timeBuckets 二擇一
- * @param {{ timeBuckets?: string[], daysPerBucket?: number } | number} [options] - 若為 number 則視為 horizonBuckets（向後兼容）
+ * @param {number} [horizonBuckets] - Risk assessment time window (bucket count), mutually exclusive with timeBuckets
+ * @param {{ timeBuckets?: string[], daysPerBucket?: number } | number} [options] - If number, treated as horizonBuckets (backward compatible)
  * @returns {Record<string, { dailyDemand: number, totalQty: number, bucketCount: number, horizonDays: number }>}
  *   key = "MATERIAL_CODE|PLANT_ID"
  */
@@ -55,7 +55,7 @@ export function aggregateComponentDemandToDaily(rows, horizonBuckets = 3, option
     }
   }
 
-  // 推導 horizon 長度（天）：優先 run 參數，再 fallback 實際 bucket 數
+  // Derive horizon length (days): prioritize run parameters, then fallback to actual bucket count
   let horizonDays;
   if (opts.timeBuckets && Array.isArray(opts.timeBuckets) && opts.timeBuckets.length > 0) {
     horizonDays = opts.timeBuckets.length * daysPerBucket;
