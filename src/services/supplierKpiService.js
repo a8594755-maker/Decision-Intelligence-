@@ -1,15 +1,15 @@
 /**
  * Supplier KPI Service
- * 供应商 KPI 服务 - 查询和分析供应商绩效指标
+ * Supplier KPI service - query and analyze supplier performance metrics
  */
 
 import { supabase } from './supabaseClient';
 
 /**
- * 获取供应商 KPI 汇总数据
- * @param {string} userId - 用户 ID
- * @param {string} supplierId - 供应商 ID (可选，不传则返回所有供应商)
- * @returns {Promise<Array|Object>} KPI 汇总数据
+ * Get supplier KPI summary data
+ * @param {string} userId - User ID
+ * @param {string} supplierId - Supplier ID (optional, returns all suppliers if not provided)
+ * @returns {Promise<Array|Object>} KPI summary data
  */
 export const getSupplierKpiSummary = async (userId, supplierId = null) => {
   let query = supabase
@@ -35,11 +35,11 @@ export const getSupplierKpiSummary = async (userId, supplierId = null) => {
 };
 
 /**
- * 获取供应商不良率统计
- * @param {string} userId - 用户 ID
- * @param {string} supplierId - 供应商 ID (可选)
- * @param {number} days - 统计天数 (默认 90 天)
- * @returns {Promise<Array|Object>} 不良率统计数据
+ * Get supplier defect rate statistics
+ * @param {string} userId - User ID
+ * @param {string} supplierId - Supplier ID (optional)
+ * @param {number} days - Statistics period in days (default 90)
+ * @returns {Promise<Array|Object>} Defect rate statistics data
  */
 export const getDefectStats = async (userId, supplierId = null, days = 90) => {
   const startDate = new Date();
@@ -68,11 +68,11 @@ export const getDefectStats = async (userId, supplierId = null, days = 90) => {
 };
 
 /**
- * 获取供应商准时交货统计
- * @param {string} userId - 用户 ID
- * @param {string} supplierId - 供应商 ID (可选)
- * @param {number} days - 统计天数 (默认 90 天)
- * @returns {Promise<Array|Object>} 准时交货统计数据
+ * Get supplier on-time delivery statistics
+ * @param {string} userId - User ID
+ * @param {string} supplierId - Supplier ID (optional)
+ * @param {number} days - Statistics period in days (default 90)
+ * @returns {Promise<Array|Object>} On-time delivery statistics data
  */
 export const getDeliveryStats = async (userId, supplierId = null, days = 90) => {
   const startDate = new Date();
@@ -101,11 +101,11 @@ export const getDeliveryStats = async (userId, supplierId = null, days = 90) => 
 };
 
 /**
- * 获取供应商价格波动统计
- * @param {string} userId - 用户 ID
- * @param {string} supplierId - 供应商 ID (可选)
- * @param {string} materialId - 物料 ID (可选)
- * @returns {Promise<Array|Object>} 价格波动数据
+ * Get supplier price volatility statistics
+ * @param {string} userId - User ID
+ * @param {string} supplierId - Supplier ID (optional)
+ * @param {string} materialId - Material ID (optional)
+ * @returns {Promise<Array|Object>} Price volatility data
  */
 export const getPriceVolatility = async (userId, supplierId = null, materialId = null) => {
   let query = supabase
@@ -139,11 +139,11 @@ export const getPriceVolatility = async (userId, supplierId = null, materialId =
 };
 
 /**
- * 获取供应商详细收货记录
- * @param {string} userId - 用户 ID
- * @param {string} supplierId - 供应商 ID
- * @param {object} options - 可选参数 { startDate, endDate, limit, offset }
- * @returns {Promise<Array>} 收货记录列表
+ * Get supplier detailed goods receipt records
+ * @param {string} userId - User ID
+ * @param {string} supplierId - Supplier ID
+ * @param {object} options - Optional parameters { startDate, endDate, limit, offset }
+ * @returns {Promise<Array>} Goods receipt record list
  */
 export const getGoodsReceipts = async (userId, supplierId, options = {}) => {
   const { startDate, endDate, limit = 50, offset = 0 } = options;
@@ -170,12 +170,12 @@ export const getGoodsReceipts = async (userId, supplierId, options = {}) => {
 };
 
 /**
- * 获取供应商价格历史
- * @param {string} userId - 用户 ID
- * @param {string} supplierId - 供应商 ID
- * @param {string} materialId - 物料 ID (可选)
- * @param {number} months - 获取最近几个月的数据 (默认 6 个月)
- * @returns {Promise<Array>} 价格历史记录
+ * Get supplier price history
+ * @param {string} userId - User ID
+ * @param {string} supplierId - Supplier ID
+ * @param {string} materialId - Material ID (optional)
+ * @param {number} months - Number of recent months to fetch (default 6)
+ * @returns {Promise<Array>} Price history records
  */
 export const getPriceHistory = async (userId, supplierId, materialId = null, months = 6) => {
   const startDate = new Date();
@@ -199,17 +199,17 @@ export const getPriceHistory = async (userId, supplierId, materialId = null, mon
 };
 
 /**
- * 获取供应商 KPI 趋势数据（按月）
- * @param {string} userId - 用户 ID
- * @param {string} supplierId - 供应商 ID
- * @param {number} months - 最近几个月 (默认 12 个月)
- * @returns {Promise<Object>} 趋势数据
+ * Get supplier KPI trend data (monthly)
+ * @param {string} userId - User ID
+ * @param {string} supplierId - Supplier ID
+ * @param {number} months - Number of recent months (default 12)
+ * @returns {Promise<Object>} Trend data
  */
 export const getKpiTrends = async (userId, supplierId, months = 12) => {
   const startDate = new Date();
   startDate.setMonth(startDate.getMonth() - months);
 
-  // 获取收货记录
+  // Get goods receipt records
   const { data: receipts, error } = await supabase
     .from('goods_receipts')
     .select('actual_delivery_date, defect_rate, is_on_time, received_qty, rejected_qty')
@@ -229,7 +229,7 @@ export const getKpiTrends = async (userId, supplierId, months = 12) => {
     };
   }
 
-  // 按月分组统计
+  // Group statistics by month
   const monthlyData = {};
 
   receipts.forEach(r => {
@@ -253,7 +253,7 @@ export const getKpiTrends = async (userId, supplierId, months = 12) => {
     }
   });
 
-  // 转换为数组格式
+  // Convert to array format
   const monthKeys = Object.keys(monthlyData).sort();
   const defectRates = monthKeys.map(m => {
     const data = monthlyData[m];
@@ -278,10 +278,10 @@ export const getKpiTrends = async (userId, supplierId, months = 12) => {
 };
 
 /**
- * 根据风险等级筛选供应商
- * @param {string} userId - 用户 ID
- * @param {string} riskLevel - 风险等级 (low, medium, high)
- * @returns {Promise<Array>} 供应商列表
+ * Filter suppliers by risk level
+ * @param {string} userId - User ID
+ * @param {string} riskLevel - Risk level (low, medium, high)
+ * @returns {Promise<Array>} Supplier list
  */
 export const getSuppliersByRisk = async (userId, riskLevel) => {
   const { data, error } = await supabase
@@ -296,16 +296,16 @@ export const getSuppliersByRisk = async (userId, riskLevel) => {
 };
 
 /**
- * 获取最差表现的供应商（用于告警）
- * @param {string} userId - 用户 ID
- * @param {object} thresholds - 阈值设置
- * @returns {Promise<Array>} 需要关注的供应商列表
+ * Get worst performing suppliers (for alerts)
+ * @param {string} userId - User ID
+ * @param {object} thresholds - Threshold settings
+ * @returns {Promise<Array>} Suppliers requiring attention
  */
 export const getAnomalousSuppliers = async (userId, thresholds = {}) => {
   const {
-    maxDefectRate = 5,        // 不良率 > 5%
-    minOnTimeRate = 90,       // 准时率 < 90%
-    maxPriceVolatility = 15   // 价格波动 > 15%
+    maxDefectRate = 5,        // Defect rate > 5%
+    minOnTimeRate = 90,       // On-time rate < 90%
+    maxPriceVolatility = 15   // Price volatility > 15%
   } = thresholds;
 
   const { data, error } = await supabase
@@ -317,7 +317,7 @@ export const getAnomalousSuppliers = async (userId, thresholds = {}) => {
 
   if (error) throw error;
 
-  // 为每个供应商标注具体的问题
+  // Annotate specific issues for each supplier
   const anomalies = (data || []).map(supplier => {
     const issues = [];
 
@@ -325,7 +325,7 @@ export const getAnomalousSuppliers = async (userId, thresholds = {}) => {
       issues.push({
         type: 'high_defect_rate',
         severity: 'high',
-        message: `不良率 ${supplier.defect_rate.toFixed(2)}% 超出阈值 ${maxDefectRate}%`,
+        message: `Defect rate ${supplier.defect_rate.toFixed(2)}% exceeds threshold ${maxDefectRate}%`,
         value: supplier.defect_rate,
         threshold: maxDefectRate
       });
@@ -335,7 +335,7 @@ export const getAnomalousSuppliers = async (userId, thresholds = {}) => {
       issues.push({
         type: 'low_on_time_rate',
         severity: 'high',
-        message: `准时率 ${supplier.on_time_rate.toFixed(2)}% 低于阈值 ${minOnTimeRate}%`,
+        message: `On-time rate ${supplier.on_time_rate.toFixed(2)}% below threshold ${minOnTimeRate}%`,
         value: supplier.on_time_rate,
         threshold: minOnTimeRate
       });
@@ -345,7 +345,7 @@ export const getAnomalousSuppliers = async (userId, thresholds = {}) => {
       issues.push({
         type: 'high_price_volatility',
         severity: 'medium',
-        message: `价格波动 ${supplier.max_price_volatility.toFixed(2)}% 超出阈值 ${maxPriceVolatility}%`,
+        message: `Price volatility ${supplier.max_price_volatility.toFixed(2)}% exceeds threshold ${maxPriceVolatility}%`,
         value: supplier.max_price_volatility,
         threshold: maxPriceVolatility
       });
@@ -361,10 +361,10 @@ export const getAnomalousSuppliers = async (userId, thresholds = {}) => {
 };
 
 /**
- * 获取供应商综合对比数据（用于排名）
- * @param {string} userId - 用户 ID
- * @param {number} limit - 返回数量 (默认前 10 名)
- * @returns {Promise<Array>} 排名列表
+ * Get supplier comprehensive comparison data (for ranking)
+ * @param {string} userId - User ID
+ * @param {number} limit - Return count (default top 10)
+ * @returns {Promise<Array>} Ranking list
  */
 export const getSupplierRankings = async (userId, limit = 10) => {
   const { data, error } = await supabase
@@ -376,7 +376,7 @@ export const getSupplierRankings = async (userId, limit = 10) => {
 
   if (error) throw error;
 
-  // 添加排名信息
+  // Add ranking information
   return (data || []).map((supplier, index) => ({
     ...supplier,
     rank: index + 1
