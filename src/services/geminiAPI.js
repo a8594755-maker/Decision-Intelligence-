@@ -1,6 +1,6 @@
 /**
  * Gemini AI API Service
- * 處理所有與 Google Gemini AI 的互動
+ * Handles all interactions with Google Gemini AI
  */
 
 // Using environment variable for API key (falls back to empty string)
@@ -10,25 +10,25 @@ const GEMINI_MODEL = "gemini-2.5-flash";
 const API_VERSION = "v1beta"; // Use v1beta for experimental models
 
 /**
- * 從環境變數、localStorage 或預設值獲取 API Key
- * 優先順序：環境變數 > localStorage > 預設值
+ * Get API Key from environment variable, localStorage, or default value
+ * Priority: environment variable > localStorage > default value
  */
 export const getApiKey = () => {
-  // 優先使用環境變數（如果存在）
+  // Prefer environment variable (if exists)
   if (import.meta.env.VITE_GEMINI_API_KEY) {
     return import.meta.env.VITE_GEMINI_API_KEY;
   }
-  // 其次使用 localStorage
+  // Then use localStorage
   const storedKey = localStorage.getItem('gemini_api_key');
   if (storedKey) {
     return storedKey;
   }
-  // 最後使用預設值
+  // Finally use default value
   return DEFAULT_API_KEY;
 };
 
 /**
- * 保存 API Key 到 localStorage
+ * Save API Key to localStorage
  */
 export const saveApiKey = (apiKey) => {
   if (apiKey && apiKey.trim()) {
@@ -39,18 +39,18 @@ export const saveApiKey = (apiKey) => {
 };
 
 /**
- * 清除 API Key
+ * Clear API Key
  */
 export const clearApiKey = () => {
   localStorage.removeItem('gemini_api_key');
 };
 
 /**
- * 調用 Gemini API
- * @param {string} prompt - 用戶提示
- * @param {string} systemContext - 系統上下文（可選）
- * @param {object} options - 配置選項
- * @returns {Promise<string>} AI 回應
+ * Call Gemini API
+ * @param {string} prompt - User prompt
+ * @param {string} systemContext - System context (optional)
+ * @param {object} options - Configuration options
+ * @returns {Promise<string>} AI response
  */
 export const callGeminiAPI = async (prompt, systemContext = "", options = {}) => {
   const apiKey = getApiKey();
@@ -93,17 +93,17 @@ export const callGeminiAPI = async (prompt, systemContext = "", options = {}) =>
 
       // Handle quota errors explicitly
       if (response.status === 429) {
-        return "⚠️ API 配額已用完\n\n請嘗試：\n1. 等待每日重置\n2. 在設定中更換新的 API key\n3. 升級至付費方案\n\n取得新的免費 key: https://ai.google.dev/";
+        return "⚠️ API quota exhausted\n\nPlease try:\n1. Wait for daily reset\n2. Replace with a new API key in Settings\n3. Upgrade to a paid plan\n\nGet a new free key: https://ai.google.dev/";
       }
 
       // Handle service unavailable (503) - model overloaded
       if (response.status === 503) {
-        return "⚠️ AI 服務暫時不可用\n\n模型目前過載，請稍後再試。\n\n建議：\n1. 等待 30 秒後重試\n2. 檢查網路連線\n3. 如果問題持續，請稍後再試";
+        return "⚠️ AI service temporarily unavailable\n\nModel is currently overloaded, please try again later.\n\nSuggestions:\n1. Wait 30 seconds and retry\n2. Check network connection\n3. If the issue persists, try again later";
       }
 
       // Handle other errors
-      const errorMessage = errorData.error?.message || '未知錯誤';
-      return `❌ AI 服務錯誤 (${response.status})\n\n${errorMessage}\n\n請檢查：\n1. API key 是否正確\n2. 網路連線是否正常\n3. 稍後再試`;
+      const errorMessage = errorData.error?.message || 'Unknown error';
+      return `❌ AI service error (${response.status})\n\n${errorMessage}\n\nPlease check:\n1. Is the API key correct\n2. Is the network connection working\n3. Try again later`;
     }
 
     const data = await response.json();
@@ -131,7 +131,7 @@ export const callGeminiAPI = async (prompt, systemContext = "", options = {}) =>
       const partialText = data.candidates?.[0]?.content?.parts?.[0]?.text;
       if (partialText) {
         console.warn("Response was truncated due to MAX_TOKENS, but partial text is available");
-        return partialText + "\n\n[回應因長度限制被截斷]";
+        return partialText + "\n\n[Response truncated due to length limit]";
       }
     }
     
@@ -148,20 +148,20 @@ export const callGeminiAPI = async (prompt, systemContext = "", options = {}) =>
     
     // Handle network errors
     if (error.message.includes('fetch') || error.message.includes('network')) {
-      return "❌ 網路連線錯誤\n\n無法連接到 AI 服務。\n\n請檢查：\n1. 網路連線是否正常\n2. 防火牆是否阻擋請求\n3. 稍後再試";
+      return "❌ Network connection error\n\nUnable to connect to AI service.\n\nPlease check:\n1. Is the network connection working\n2. Is the firewall blocking requests\n3. Try again later";
     }
     
     // Handle timeout errors
     if (error.message.includes('timeout') || error.name === 'AbortError') {
-      return "⏱️ 請求超時\n\nAI 服務回應時間過長。\n\n請嘗試：\n1. 稍後再試\n2. 簡化您的問題\n3. 檢查網路連線";
+      return "⏱️ Request timeout\n\nAI service response took too long.\n\nPlease try:\n1. Try again later\n2. Simplify your question\n3. Check network connection";
     }
     
-    return `❌ AI 服務請求失敗\n\n錯誤訊息: ${error.message}\n\n請檢查：\n1. API key 是否正確設定\n2. 網路連線是否正常\n3. 防火牆是否阻擋請求\n4. 稍後再試`;
+    return `❌ AI service request failed\n\nError message: ${error.message}\n\nPlease check:\n1. Is the API key configured correctly\n2. Is the network connection working\n3. Is the firewall blocking requests\n4. Try again later`;
   }
 };
 
 /**
- * 專門用於數據分析的 AI 調用
+ * AI call specifically for data analysis
  */
 export const analyzeData = async (data, analysisType = "general") => {
   const sample = Array.isArray(data) ? data.slice(0, 30) : data;
@@ -170,26 +170,26 @@ export const analyzeData = async (data, analysisType = "general") => {
 
   switch (analysisType) {
     case "profile":
-      prompt = `You are a data profiler. Given JSON rows, infer field names, data quality issues, and errors. Return JSON {"fields": ["field1", ...], "quality": "Chinese quality summary", "summary": "Chinese content summary"}. Sample rows: ${JSON.stringify(sample).slice(0, 12000)}`;
+      prompt = `You are a data profiler. Given JSON rows, infer field names, data quality issues, and errors. Return JSON {"fields": ["field1", ...], "quality": "quality summary", "summary": "content summary"}. Sample rows: ${JSON.stringify(sample).slice(0, 12000)}`;
       break;
 
     case "quality":
-      prompt = `Analyze data quality of the following dataset. Identify missing values, inconsistencies, and potential errors. Provide recommendations in Chinese: ${JSON.stringify(sample).slice(0, 12000)}`;
+      prompt = `Analyze data quality of the following dataset. Identify missing values, inconsistencies, and potential errors. Provide recommendations: ${JSON.stringify(sample).slice(0, 12000)}`;
       break;
 
     case "insights":
-      prompt = `Analyze this dataset and provide key business insights, trends, and actionable recommendations in Chinese: ${JSON.stringify(sample).slice(0, 12000)}`;
+      prompt = `Analyze this dataset and provide key business insights, trends, and actionable recommendations: ${JSON.stringify(sample).slice(0, 12000)}`;
       break;
 
     default:
-      prompt = `Analyze this data and provide a summary in Chinese: ${JSON.stringify(sample).slice(0, 12000)}`;
+      prompt = `Analyze this data and provide a summary: ${JSON.stringify(sample).slice(0, 12000)}`;
   }
 
   return await callGeminiAPI(prompt);
 };
 
 /**
- * 用於對話式 AI 的調用
+ * AI call for conversational chat
  */
 export const chatWithAI = async (message, conversationHistory = [], dataContext = null) => {
   let systemContext = "";
@@ -198,10 +198,10 @@ export const chatWithAI = async (message, conversationHistory = [], dataContext 
     systemContext = `USER DATA CONTEXT: ${JSON.stringify(dataContext.slice(0, 5))}`;
   }
 
-  // 構建對話歷史
+  // Build conversation history
   if (conversationHistory.length > 0) {
     const historyText = conversationHistory
-      .slice(-5) // 只取最近 5 條對話
+      .slice(-5) // Only take last 5 messages
       .map(msg => `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}`)
       .join('\n');
 
@@ -212,10 +212,10 @@ export const chatWithAI = async (message, conversationHistory = [], dataContext 
 };
 
 /**
- * 生成報告摘要
+ * Generate report summary
  */
 export const generateReportSummary = async (reportType, data) => {
-  const prompt = `Generate a comprehensive ${reportType} report summary based on the following data. Provide insights, trends, and recommendations in Chinese: ${JSON.stringify(data).slice(0, 10000)}`;
+  const prompt = `Generate a comprehensive ${reportType} report summary based on the following data. Provide insights, trends, and recommendations: ${JSON.stringify(data).slice(0, 10000)}`;
 
   return await callGeminiAPI(prompt, "", {
     temperature: 0.5,
@@ -224,7 +224,7 @@ export const generateReportSummary = async (reportType, data) => {
 };
 
 /**
- * 解析 AI 回應中的 JSON
+ * Extract JSON from AI response
  */
 export const extractJsonFromResponse = (text) => {
   if (!text) return {};
@@ -245,32 +245,32 @@ export const extractJsonFromResponse = (text) => {
 };
 
 /**
- * 分析成本异常
- * @param {object} anomaly - 异常数据
- * @param {object} historicalData - 历史数据（可选）
- * @returns {Promise<string>} AI 分析结果
+ * Analyze cost anomaly
+ * @param {object} anomaly - Anomaly data
+ * @param {object} historicalData - Historical data (optional)
+ * @returns {Promise<string>} AI analysis result
  */
 export const analyzeCostAnomaly = async (anomaly, historicalData = null) => {
-  let prompt = `你是一位成本分析专家。请分析以下成本异常情况，并提供详细的分析和建议。
+  let prompt = `You are a cost analysis expert. Please analyze the following cost anomaly and provide detailed analysis and recommendations.
 
-异常类型: ${anomaly.anomaly_type}
-异常日期: ${anomaly.anomaly_date}
-检测值: ${anomaly.detected_value}
-预期值: ${anomaly.expected_value}
-偏差: ${anomaly.deviation_percent}%
-描述: ${anomaly.description || '无'}`;
+Anomaly Type: ${anomaly.anomaly_type}
+Anomaly Date: ${anomaly.anomaly_date}
+Detected Value: ${anomaly.detected_value}
+Expected Value: ${anomaly.expected_value}
+Deviation: ${anomaly.deviation_percent}%
+Description: ${anomaly.description || 'None'}`;
 
   if (historicalData) {
-    prompt += `\n\n历史数据参考:\n${JSON.stringify(historicalData).slice(0, 3000)}`;
+    prompt += `\n\nHistorical data reference:\n${JSON.stringify(historicalData).slice(0, 3000)}`;
   }
 
-  prompt += `\n\n请用中文提供：
-1. 可能的原因分析（2-3个主要原因）
-2. 对业务的影响评估
-3. 具体的改善建议（3-5条可执行的建议）
-4. 预防未来发生的措施
+  prompt += `\n\nPlease provide:
+1. Possible root cause analysis (2-3 main causes)
+2. Business impact assessment
+3. Specific improvement recommendations (3-5 actionable suggestions)
+4. Preventive measures for the future
 
-请保持专业、简洁，重点突出可执行性。`;
+Please be professional, concise, and focus on actionability.`;
 
   return await callGeminiAPI(prompt, "", {
     temperature: 0.5,
@@ -279,33 +279,33 @@ export const analyzeCostAnomaly = async (anomaly, historicalData = null) => {
 };
 
 /**
- * 生成成本优化建议
- * @param {object} costStructure - 成本结构数据
- * @param {object} trends - 成本趋势数据
- * @returns {Promise<string>} AI 优化建议
+ * Generate cost optimization suggestions
+ * @param {object} costStructure - Cost structure data
+ * @param {object} trends - Cost trend data
+ * @returns {Promise<string>} AI optimization suggestions
  */
 export const generateCostOptimizationSuggestions = async (costStructure, trends) => {
-  const prompt = `你是一位营运成本优化顾问。请基于以下数据提供成本优化建议。
+  const prompt = `You are an operational cost optimization consultant. Please provide cost optimization suggestions based on the following data.
 
-成本结构:
-- 直接人工: ${costStructure.breakdown?.directLabor || 0} 元 (${(costStructure.percentages?.directLabor || 0).toFixed(1)}%)
-- 间接人工: ${costStructure.breakdown?.indirectLabor || 0} 元 (${(costStructure.percentages?.indirectLabor || 0).toFixed(1)}%)
-- 材料成本: ${costStructure.breakdown?.material || 0} 元 (${(costStructure.percentages?.material || 0).toFixed(1)}%)
-- 间接费用: ${costStructure.breakdown?.overhead || 0} 元 (${(costStructure.percentages?.overhead || 0).toFixed(1)}%)
-- 总成本: ${costStructure.totalCost || 0} 元
-- 单位成本: ${costStructure.costPerUnit || 0} 元/件
+Cost Structure:
+- Direct Labor: ${costStructure.breakdown?.directLabor || 0} (${(costStructure.percentages?.directLabor || 0).toFixed(1)}%)
+- Indirect Labor: ${costStructure.breakdown?.indirectLabor || 0} (${(costStructure.percentages?.indirectLabor || 0).toFixed(1)}%)
+- Material Cost: ${costStructure.breakdown?.material || 0} (${(costStructure.percentages?.material || 0).toFixed(1)}%)
+- Overhead: ${costStructure.breakdown?.overhead || 0} (${(costStructure.percentages?.overhead || 0).toFixed(1)}%)
+- Total Cost: ${costStructure.totalCost || 0}
+- Cost Per Unit: ${costStructure.costPerUnit || 0}/unit
 
-近期趋势:
-- 平均总成本: ${trends.averages?.avgTotalCost || 0} 元
-- 平均单位成本: ${trends.averages?.avgUnitCost || 0} 元
+Recent Trends:
+- Average Total Cost: ${trends.averages?.avgTotalCost || 0}
+- Average Unit Cost: ${trends.averages?.avgUnitCost || 0}
 
-请用中文提供：
-1. 成本结构分析（哪些部分占比过高？）
-2. 优化机会识别（3-5个具体的优化点）
-3. 优先级排序（哪些应该先做？）
-4. 预期效益评估
+Please provide:
+1. Cost structure analysis (which parts have disproportionately high ratios?)
+2. Optimization opportunity identification (3-5 specific optimization points)
+3. Priority ranking (which should be done first?)
+4. Expected benefit assessment
 
-请务实、具体，避免空泛建议。`;
+Please be practical and specific, avoid generic suggestions.`;
 
   return await callGeminiAPI(prompt, "", {
     temperature: 0.6,
@@ -314,17 +314,17 @@ export const generateCostOptimizationSuggestions = async (costStructure, trends)
 };
 
 /**
- * 预测成本趋势
- * @param {Array} historicalCosts - 历史成本数据
- * @param {number} forecastDays - 预测天数
- * @returns {Promise<string>} AI 预测分析
+ * Predict cost trend
+ * @param {Array} historicalCosts - Historical cost data
+ * @param {number} forecastDays - Number of days to forecast
+ * @returns {Promise<string>} AI prediction analysis
  */
 export const predictCostTrend = async (historicalCosts, forecastDays = 7) => {
-  const recentData = historicalCosts.slice(-30); // 取最近30天
+  const recentData = historicalCosts.slice(-30); // Take last 30 days
 
-  const prompt = `你是一位数据分析师，擅长成本预测。请基于以下历史成本数据，预测未来 ${forecastDays} 天的成本趋势。
+  const prompt = `You are a data analyst specializing in cost prediction. Based on the following historical cost data, predict the cost trend for the next ${forecastDays} days.
 
-历史数据（最近30天）:
+Historical Data (last 30 days):
 ${JSON.stringify(recentData.map(d => ({
   date: d.cost_date,
   total: d.total_labor_cost,
@@ -332,13 +332,13 @@ ${JSON.stringify(recentData.map(d => ({
   output: d.production_output
 }))).slice(0, 4000)}
 
-请用中文提供：
-1. 趋势分析（上升/下降/稳定？）
-2. 关键影响因素识别
-3. 未来${forecastDays}天的预测（大致范围）
-4. 风险提示（需要注意什么？）
+Please provide:
+1. Trend analysis (rising/declining/stable?)
+2. Key influencing factors identification
+3. Forecast for the next ${forecastDays} days (approximate range)
+4. Risk alerts (what should be watched?)
 
-请基于数据说话，避免过度推测。`;
+Please base your analysis on data, avoid excessive speculation.`;
 
   return await callGeminiAPI(prompt, "", {
     temperature: 0.5,
@@ -457,7 +457,7 @@ export default {
   getApiKey,
   saveApiKey,
   clearApiKey,
-  // 成本分析相关 AI 功能
+  // Cost analysis related AI functions
   analyzeCostAnomaly,
   generateCostOptimizationSuggestions,
   predictCostTrend
