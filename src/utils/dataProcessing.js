@@ -1,17 +1,17 @@
 /**
  * Data Processing Utilities
- * 處理數據相關的工具函數
+ * Data-related utility functions
  */
 
 /**
- * 標準化欄位名稱（移除空格並轉小寫）
+ * Normalize field names (remove spaces and convert to lowercase)
  */
 export const normalizeKey = (key) => {
   return key.replace(/\s+/g, '').toLowerCase();
 };
 
 /**
- * 從數據中提取供應商信息
+ * Extract supplier information from data
  */
 export const extractSuppliers = (rows) => {
   if (!Array.isArray(rows) || rows.length === 0) return [];
@@ -65,7 +65,7 @@ export const extractSuppliers = (rows) => {
 };
 
 /**
- * 計算數據統計信息
+ * Calculate data statistics
  */
 export const calculateDataStats = (data) => {
   if (!data || !Array.isArray(data) || data.length === 0) {
@@ -107,7 +107,7 @@ export const calculateDataStats = (data) => {
 };
 
 /**
- * 驗證文件格式
+ * Validate file format
  */
 export const validateFile = (file) => {
   const errors = [];
@@ -140,7 +140,7 @@ export const validateFile = (file) => {
 };
 
 /**
- * 搜索和過濾數據
+ * Search and filter data
  */
 export const filterData = (data, searchTerm) => {
   if (!searchTerm || !searchTerm.trim()) return data;
@@ -155,7 +155,7 @@ export const filterData = (data, searchTerm) => {
 };
 
 /**
- * 排序數據
+ * Sort data
  */
 export const sortData = (data, column, direction = 'asc') => {
   if (!column) return data;
@@ -174,7 +174,7 @@ export const sortData = (data, column, direction = 'asc') => {
 };
 
 /**
- * 分頁數據
+ * Paginate data
  */
 export const paginateData = (data, page, rowsPerPage) => {
   const startIndex = (page - 1) * rowsPerPage;
@@ -191,7 +191,7 @@ export const paginateData = (data, page, rowsPerPage) => {
 };
 
 /**
- * 檢測數據中的數值欄位
+ * Detect numeric columns in data
  */
 export const detectNumericColumns = (data) => {
   if (!data || data.length === 0) return [];
@@ -204,7 +204,7 @@ export const detectNumericColumns = (data) => {
 };
 
 /**
- * 計算欄位類別分布
+ * Calculate column category distribution
  */
 export const getCategoryDistribution = (data, column) => {
   if (!data || !column) return {};
@@ -217,7 +217,7 @@ export const getCategoryDistribution = (data, column) => {
 };
 
 /**
- * 格式化時間戳記
+ * Format timestamp
  */
 export const formatTimestamp = (timestamp) => {
   if (!timestamp) return '';
@@ -235,7 +235,7 @@ export const formatTimestamp = (timestamp) => {
 };
 
 /**
- * 數據導出輔助函數
+ * Data export helper function
  */
 export const prepareDataForExport = (data, columns = null) => {
   if (!data || data.length === 0) return [];

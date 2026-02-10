@@ -1,20 +1,20 @@
 /**
  * Field Mapping Validation Utilities
- * 提供 mapping 完整度檢查，供單檔與 One-shot 共用
+ * Provides mapping completeness checks, shared between single-file and One-shot
  */
 
 import UPLOAD_SCHEMAS from './uploadSchemas';
 
 /**
- * 檢查 required fields mapping 狀態
+ * Check required fields mapping status
  * @param {object} params
- * @param {string} params.uploadType - 上傳類型
- * @param {Array<string>} params.columns - 原始欄位名稱
- * @param {object} params.columnMapping - 欄位映射 { source: target }
+ * @param {string} params.uploadType - Upload type
+ * @param {Array<string>} params.columns - Original column names
+ * @param {object} params.columnMapping - Column mapping { source: target }
  * @returns {object} { missingRequired: string[], isComplete: boolean, coverage: number, mappedRequired: string[] }
  */
 export function getRequiredMappingStatus({ uploadType, columns, columnMapping }) {
-  // 取得 schema
+  // Get schema
   const schema = UPLOAD_SCHEMAS[uploadType];
   if (!schema) {
     console.error(`[getRequiredMappingStatus] Unknown uploadType: ${uploadType}`);
@@ -26,13 +26,13 @@ export function getRequiredMappingStatus({ uploadType, columns, columnMapping })
     };
   }
 
-  // 取得 required fields
+  // Get required fields
   const requiredFields = schema.fields
     .filter(f => f.required)
     .map(f => f.key);
 
   if (requiredFields.length === 0) {
-    // 沒有 required fields，視為完整
+    // No required fields, consider complete
     return {
       missingRequired: [],
       isComplete: true,
@@ -41,7 +41,7 @@ export function getRequiredMappingStatus({ uploadType, columns, columnMapping })
     };
   }
 
-  // 檢查哪些 required fields 已被 mapping
+  // Check which required fields have been mapped
   const mappedTargets = new Set(Object.values(columnMapping || {}));
   
   const mappedRequired = requiredFields.filter(rf => mappedTargets.has(rf));
@@ -59,7 +59,7 @@ export function getRequiredMappingStatus({ uploadType, columns, columnMapping })
 }
 
 /**
- * 驗證 columnMapping 是否符合 schema 定義
+ * Validate if columnMapping conforms to schema definition
  * @param {string} uploadType
  * @param {object} columnMapping
  * @returns {object} { valid: boolean, errors: string[] }
@@ -73,7 +73,7 @@ export function validateColumnMapping(uploadType, columnMapping) {
   const errors = [];
   const validTargets = new Set(schema.fields.map(f => f.key));
 
-  // 檢查所有 target 是否為合法的 schema field
+  // Check all targets are valid schema fields
   Object.entries(columnMapping || {}).forEach(([source, target]) => {
     if (target && !validTargets.has(target)) {
       errors.push(`Invalid target field "${target}" for source "${source}"`);
@@ -87,7 +87,7 @@ export function validateColumnMapping(uploadType, columnMapping) {
 }
 
 /**
- * 格式化 missing required fields 訊息
+ * Format missing required fields message
  * @param {Array<string>} missingRequired
  * @returns {string}
  */
