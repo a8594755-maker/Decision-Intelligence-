@@ -1,26 +1,26 @@
 /**
  * Material Cost Service
- * 材料成本分析服務 - 處理材料價格歷史和成本分析
+ * Material cost analysis service - handles material price history and cost analysis
  */
 
 import { supabase } from './supabaseClient';
 
 /**
- * 獲取指定期間的材料價格數據
- * @param {string} userId - 用戶 ID
- * @param {number|null} days - 天數（30/90/180/365）如果提供
- * @param {Object|null} customRange - 自定義日期範圍 { startDate, endDate }
- * @returns {Promise<Array>} 價格歷史記錄
+ * Get material price data for specified period
+ * @param {string} userId - User ID
+ * @param {number|null} days - Number of days (30/90/180/365) if provided
+ * @param {Object|null} customRange - Custom date range { startDate, endDate }
+ * @returns {Promise<Array>} Price history records
  */
 export const getMaterialPriceHistory = async (userId, days = null, customRange = null) => {
   let startDate, endDate;
 
   if (customRange && customRange.startDate && customRange.endDate) {
-    // 使用自定義日期範圍
+    // Use custom date range
     startDate = customRange.startDate;
     endDate = customRange.endDate;
   } else {
-    // 使用天數計算
+    // Calculate using days
     const daysToUse = days || 30;
     endDate = new Date();
     startDate = new Date();
@@ -55,11 +55,11 @@ export const getMaterialPriceHistory = async (userId, days = null, customRange =
 };
 
 /**
- * 獲取 KPI 數據
- * @param {string} userId - 用戶 ID
- * @param {number|null} days - 天數
- * @param {Object|null} customRange - 自定義日期範圍
- * @returns {Promise<Object>} KPI 統計
+ * Get KPI data
+ * @param {string} userId - User ID
+ * @param {number|null} days - Number of days
+ * @param {Object|null} customRange - Custom date range
+ * @returns {Promise<Object>} KPI statistics
  */
 export const getMaterialCostKPIs = async (userId, days = null, customRange = null) => {
   const priceHistory = await getMaterialPriceHistory(userId, days, customRange);
@@ -75,11 +75,11 @@ export const getMaterialCostKPIs = async (userId, days = null, customRange = nul
     };
   }
 
-  // 檢測 quantity 欄位是否存在
+  // Detect if quantity field exists
   const quantityField = detectQuantityField(priceHistory[0]);
   const hasQuantityData = quantityField !== null;
 
-  // 計算總支出（如果有 quantity 數據）
+  // Calculate total spend (if quantity data available)
   let totalMaterialSpend = null;
   if (hasQuantityData) {
     totalMaterialSpend = priceHistory.reduce((sum, record) => {
@@ -89,7 +89,7 @@ export const getMaterialCostKPIs = async (userId, days = null, customRange = nul
     }, 0);
   }
 
-  // 按 material_id 分組
+  // Group by material_id
   const materialGroups = {};
   priceHistory.forEach(record => {
     const matId = record.material_id;
@@ -106,7 +106,7 @@ export const getMaterialCostKPIs = async (userId, days = null, customRange = nul
     });
   });
 
-  // 計算每個材料的價格變化
+  // Calculate price change for each material
   const materialStats = [];
   Object.values(materialGroups).forEach(mat => {
     if (mat.prices.length < 2) return;
@@ -130,22 +130,22 @@ export const getMaterialCostKPIs = async (userId, days = null, customRange = nul
     });
   });
 
-  // KPI 1: 有價格數據的材料總數
+  // KPI 1: Total materials with price data
   const totalMaterials = Object.keys(materialGroups).length;
 
-  // KPI 2: 平均價格變化百分比
+  // KPI 2: Average price change percentage
   const avgPriceChange = materialStats.length > 0
     ? materialStats.reduce((sum, s) => sum + s.changePercent, 0) / materialStats.length
     : 0;
 
-  // KPI 3: 漲幅最大的材料
+  // KPI 3: Material with largest price increase
   const topIncreaseMaterial = materialStats.length > 0
     ? materialStats.reduce((max, current) =>
         current.changePercent > max.changePercent ? current : max
       )
     : null;
 
-  // KPI 4: 高波動性材料數量 (volatility > 15%)
+  // KPI 4: High volatility material count (volatility > 15%)
   const highVolatilityCount = materialStats.filter(s => s.volatility > 15).length;
 
   return {
@@ -159,9 +159,9 @@ export const getMaterialCostKPIs = async (userId, days = null, customRange = nul
 };
 
 /**
- * 檢測 quantity 欄位名稱
- * @param {Object} record - 單筆記錄
- * @returns {string|null} quantity 欄位名稱或 null
+ * Detect quantity field name
+ * @param {Object} record - Single record
+ * @returns {string|null} Quantity field name or null
  */
 const detectQuantityField = (record) => {
   if (!record) return null;
@@ -178,11 +178,11 @@ const detectQuantityField = (record) => {
 };
 
 /**
- * 獲取按支出排序的材料列表
- * @param {string} userId - 用戶 ID
- * @param {number|null} days - 天數
- * @param {Object|null} customRange - 自定義日期範圍
- * @param {number} limit - 返回數量限制
+ * Get materials list sorted by spend
+ * @param {string} userId - User ID
+ * @param {number|null} days - Number of days
+ * @param {Object|null} customRange - Custom date range
+ * @param {number} limit - Return count limit
  * @returns {Promise<Array>} Top materials by spend
  */
 export const getTopBySpend = async (userId, days = null, customRange = null, limit = 10) => {
@@ -199,7 +199,7 @@ export const getTopBySpend = async (userId, days = null, customRange = null, lim
     return [];
   }
 
-  // 按 material_id 分組並計算支出
+  // Group by material_id and calculate spend
   const materialSpendMap = {};
   
   priceHistory.forEach(record => {
@@ -225,7 +225,7 @@ export const getTopBySpend = async (userId, days = null, customRange = null, lim
     materialSpendMap[matId].prices.push(price);
   });
 
-  // 計算每個材料的統計數據
+  // Calculate statistics for each material
   const materialsWithSpend = Object.values(materialSpendMap).map(mat => {
     const avgPrice = mat.prices.reduce((a, b) => a + b, 0) / mat.prices.length;
     mat.prices.sort((a, b) => a - b);
@@ -245,18 +245,18 @@ export const getTopBySpend = async (userId, days = null, customRange = null, lim
     };
   });
 
-  // 按總支出降序排序
+  // Sort by total spend descending
   materialsWithSpend.sort((a, b) => b.totalSpend - a.totalSpend);
   
   return materialsWithSpend.slice(0, limit);
 };
 
 /**
- * 獲取材料列表（有價格記錄的材料）
- * @param {string} userId - 用戶 ID
- * @param {number|null} days - 天數
- * @param {Object|null} customRange - 自定義日期範圍
- * @returns {Promise<Array>} 材料列表
+ * Get materials list (materials with price records)
+ * @param {string} userId - User ID
+ * @param {number|null} days - Number of days
+ * @param {Object|null} customRange - Custom date range
+ * @returns {Promise<Array>} Materials list
  */
 export const getMaterialsWithPrices = async (userId, days = null, customRange = null) => {
   const priceHistory = await getMaterialPriceHistory(userId, days, customRange);
@@ -281,11 +281,11 @@ export const getMaterialsWithPrices = async (userId, days = null, customRange = 
 };
 
 /**
- * 獲取單一材料的價格趨勢
- * @param {string} userId - 用戶 ID
- * @param {string} materialId - 材料 ID
- * @param {number} days - 天數
- * @returns {Promise<Object>} 價格趨勢數據
+ * Get price trend for a single material
+ * @param {string} userId - User ID
+ * @param {string} materialId - Material ID
+ * @param {number} days - Number of days
+ * @returns {Promise<Object>} Price trend data
  */
 export const getMaterialPriceTrend = async (userId, materialId, days = null, customRange = null) => {
   let startDate, endDate;
@@ -370,21 +370,21 @@ export const getMaterialPriceTrend = async (userId, materialId, days = null, cus
 };
 
 /**
- * 計算動態 Y 軸範圍以使圖表更易讀
- * @param {number} minPrice - 最低價格
- * @param {number} maxPrice - 最高價格
+ * Calculate dynamic Y-axis range for better chart readability
+ * @param {number} minPrice - Minimum price
+ * @param {number} maxPrice - Maximum price
  * @returns {Object} { min, max }
  */
 const calculateDynamicYAxis = (minPrice, maxPrice) => {
   if (minPrice === maxPrice) {
-    // 價格相同時，創建一個小範圍
+    // When prices are the same, create a small range
     return {
       min: minPrice * 0.98,
       max: maxPrice * 1.02
     };
   }
   
-  // 價格有變化時，添加 2% 的緩衝
+  // When prices vary, add 2% buffer
   return {
     min: minPrice * 0.98,
     max: maxPrice * 1.02
@@ -392,10 +392,10 @@ const calculateDynamicYAxis = (minPrice, maxPrice) => {
 };
 
 /**
- * 獲取 Top Movers（價格變化最大的材料）
- * @param {string} userId - 用戶 ID
- * @param {number} days - 天數
- * @returns {Promise<Array>} Top Movers 列表
+ * Get Top Movers (materials with largest price changes)
+ * @param {string} userId - User ID
+ * @param {number} days - Number of days
+ * @returns {Promise<Array>} Top Movers list
  */
 export const getTopMovers = async (userId, days = null, customRange = null) => {
   const priceHistory = await getMaterialPriceHistory(userId, days, customRange);
@@ -404,7 +404,7 @@ export const getTopMovers = async (userId, days = null, customRange = null) => {
     return [];
   }
 
-  // 按 material_id 分組
+  // Group by material_id
   const materialGroups = {};
   priceHistory.forEach(record => {
     const matId = record.material_id;
@@ -429,7 +429,7 @@ export const getTopMovers = async (userId, days = null, customRange = null) => {
     }
   });
 
-  // 計算每個材料的統計數據
+  // Calculate statistics for each material
   const movers = Object.values(materialGroups).map(mat => {
     mat.prices.sort((a, b) => new Date(a.date) - new Date(b.date));
 
@@ -460,16 +460,16 @@ export const getTopMovers = async (userId, days = null, customRange = null) => {
     };
   });
 
-  // 按絕對變化百分比排序（降序）
+  // Sort by absolute change percentage (descending)
   return movers.sort((a, b) => Math.abs(b.changePercent) - Math.abs(a.changePercent));
 };
 
 /**
- * 獲取單一材料的供應商比較
- * @param {string} userId - 用戶 ID
- * @param {string} materialId - 材料 ID
- * @param {number} days - 天數
- * @returns {Promise<Array>} 供應商比較列表
+ * Get supplier comparison for a single material
+ * @param {string} userId - User ID
+ * @param {string} materialId - Material ID
+ * @param {number} days - Number of days
+ * @returns {Promise<Array>} Supplier comparison list
  */
 export const getSupplierComparison = async (userId, materialId, days = null, customRange = null) => {
   let startDate, endDate;
@@ -508,7 +508,7 @@ export const getSupplierComparison = async (userId, materialId, days = null, cus
     return [];
   }
 
-  // 按供應商分組
+  // Group by supplier
   const supplierGroups = {};
   data.forEach(record => {
     const suppId = record.supplier_id;
@@ -530,7 +530,7 @@ export const getSupplierComparison = async (userId, materialId, days = null, cus
     });
   });
 
-  // 計算每個供應商的統計
+  // Calculate statistics for each supplier
   const comparison = Object.values(supplierGroups).map(supp => {
     supp.prices.sort((a, b) => new Date(a.date) - new Date(b.date));
 
@@ -553,15 +553,15 @@ export const getSupplierComparison = async (userId, materialId, days = null, cus
     };
   });
 
-  // 按最新價格排序（升序，便宜的在前）
+  // Sort by latest price ascending (cheapest first)
   return comparison.sort((a, b) => a.latestPrice - b.latestPrice);
 };
 
 /**
- * 檢查數據覆蓋度
- * @param {string} userId - 用戶 ID
- * @param {number} days - 天數
- * @returns {Promise<Object>} 數據覆蓋度報告
+ * Check data coverage
+ * @param {string} userId - User ID
+ * @param {number} days - Number of days
+ * @returns {Promise<Object>} Data coverage report
  */
 export const checkDataCoverage = async (userId, days = null, customRange = null) => {
   const priceHistory = await getMaterialPriceHistory(userId, days, customRange);
@@ -589,12 +589,12 @@ export const checkDataCoverage = async (userId, days = null, customRange = null)
   const totalRecords = priceHistory.length;
   const missingFields = [];
 
-  // 檢查每個欄位的覆蓋度
+  // Check coverage for each field
   const materialCodeCoverage = (priceHistory.filter(r => r.materials?.material_code).length / totalRecords) * 100;
   const supplierNameCoverage = (priceHistory.filter(r => r.suppliers?.supplier_name).length / totalRecords) * 100;
   const currencyCoverage = (priceHistory.filter(r => r.currency).length / totalRecords) * 100;
   
-  // 檢查 quantity 欄位
+  // Check quantity field
   const quantityField = detectQuantityField(priceHistory[0]);
   const hasQuantityData = quantityField !== null;
   let quantityCoverage = 0;
@@ -644,16 +644,16 @@ export const checkDataCoverage = async (userId, days = null, customRange = null)
 };
 
 /**
- * 生成 AI 分析的上下文摘要
- * @param {string} userId - 用戶 ID
- * @param {number} days - 天數
- * @returns {Promise<Object>} AI 上下文摘要
+ * Generate context summary for AI analysis
+ * @param {string} userId - User ID
+ * @param {number} days - Number of days
+ * @returns {Promise<Object>} AI context summary
  */
 export const generateAIContext = async (userId, days = null, customRange = null) => {
   const topMovers = await getTopMovers(userId, days, customRange);
   const kpis = await getMaterialCostKPIs(userId, days, customRange);
 
-  // 取前 10 個 Top Movers
+  // Take top 10 movers
   const topIncreasers = topMovers.filter(m => m.changePercent > 0).slice(0, 5);
   const topDecreasers = topMovers.filter(m => m.changePercent < 0).slice(0, 5);
   const highVolatility = topMovers.filter(m => m.volatility > 15).slice(0, 5);
