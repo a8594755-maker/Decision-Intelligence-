@@ -1,6 +1,6 @@
 /**
  * One-shot AI Suggest Service
- * 為 One-shot Import 的每個 sheet 提供 AI 智能建議
+ * Provides AI-powered suggestions for each sheet in One-shot Import
  */
 
 import { callGeminiAPI } from './geminiAPI';
@@ -10,9 +10,9 @@ import UPLOAD_SCHEMAS from '../utils/uploadSchemas';
 import { normalizeHeader, buildHeaderIndex, alignAiMappings, logHeaderStats, logMappingAlignStats } from '../utils/headerNormalize';
 
 /**
- * 生成 AI uploadType 推薦的 prompt
- * @param {Array} headers - Sheet 欄位
- * @param {Array} sampleRows - 樣本資料（最多30）
+ * Generate prompt for AI uploadType recommendation
+ * @param {Array} headers - Sheet columns
+ * @param {Array} sampleRows - Sample data (max 30)
  * @returns {string} Prompt
  */
 const generateUploadTypePrompt = (headers, sampleRows) => {
@@ -45,14 +45,14 @@ Output JSON ONLY: {"suggestedType":"type_name","confidence":0.9,"reasons":["reas
 
 /**
  * Robust parser for AI mapping response
- * 支援多種回傳格式，避免因格式問題導致整個流程失敗
- * @param {any} aiResponse - AI 回傳的原始資料（可能是 object/array/string）
+ * Supports multiple response formats to avoid entire flow failing due to format issues
+ * @param {any} aiResponse - Raw AI response data (could be object/array/string)
  * @returns {object} { ok: boolean, mappings: Array, error?: string }
  */
 const parseAiMappingResponse = (aiResponse) => {
   console.log('[Robust Parser] Input type:', typeof aiResponse);
   
-  // 策略 1: 空值檢查
+  // Strategy 1: Null check
   if (!aiResponse) {
     console.error('[Robust Parser] Empty response');
     return { ok: false, mappings: [], error: 'Empty AI response' };
@@ -60,7 +60,7 @@ const parseAiMappingResponse = (aiResponse) => {
 
   let parsed = aiResponse;
 
-  // 策略 2: 若是字串，嘗試 JSON.parse
+  // Strategy 2: If string, try JSON.parse
   if (typeof aiResponse === 'string') {
     try {
       parsed = JSON.parse(aiResponse);
@@ -71,21 +71,21 @@ const parseAiMappingResponse = (aiResponse) => {
     }
   }
 
-  // 策略 3: 若直接是陣列 → 視為 mappings
+  // Strategy 3: If directly an array → treat as mappings
   if (Array.isArray(parsed)) {
     console.log('[Robust Parser] Direct array format (length:', parsed.length, ')');
     return { ok: true, mappings: parsed };
   }
 
-  // 策略 4: 若是物件，檢查多種可能的 key
+  // Strategy 4: If object, check multiple possible keys
   if (typeof parsed === 'object' && parsed !== null) {
-    // 4a) mappings (標準格式)
+    // 4a) mappings (standard format)
     if (Array.isArray(parsed.mappings)) {
       console.log('[Robust Parser] Found "mappings" array (length:', parsed.mappings.length, ')');
       return { ok: true, mappings: parsed.mappings };
     }
 
-    // 4b) mapping (單數形式)
+    // 4b) mapping (singular form)
     if (Array.isArray(parsed.mapping)) {
       console.log('[Robust Parser] Found "mapping" array (length:', parsed.mapping.length, ')');
       return { ok: true, mappings: parsed.mapping };
@@ -103,13 +103,13 @@ const parseAiMappingResponse = (aiResponse) => {
       return { ok: true, mappings: parsed.columnMapping };
     }
 
-    // 4e) fields (某些 AI 可能用這個 key)
+    // 4e) fields (some AI may use this key)
     if (Array.isArray(parsed.fields)) {
       console.log('[Robust Parser] Found "fields" array (length:', parsed.fields.length, ')');
       return { ok: true, mappings: parsed.fields };
     }
 
-    // 4f) 若物件只有一個 key 且該 key 是陣列
+    // 4f) If object has only one key and that key is an array
     const keys = Object.keys(parsed);
     if (keys.length === 1 && Array.isArray(parsed[keys[0]])) {
       console.log('[Robust Parser] Single key with array (key:', keys[0], ', length:', parsed[keys[0]].length, ')');
@@ -120,13 +120,13 @@ const parseAiMappingResponse = (aiResponse) => {
     return { ok: false, mappings: [], error: `Unrecognized object keys: ${keys.join(', ')}` };
   }
 
-  // 策略 5: 其他類型（無法解析）
+  // Strategy 5: Other types (cannot parse)
   console.error('[Robust Parser] Unrecognized type:', typeof parsed);
   return { ok: false, mappings: [], error: 'Unrecognized response type' };
 };
 
 /**
- * 驗證 mappings 陣列內容
+ * Validate mappings array content
  * @param {Array} mappings
  * @returns {boolean}
  */
@@ -135,7 +135,7 @@ const validateMappings = (mappings) => {
     return false;
   }
 
-  // 至少要有一個 mapping 有 source 或 target
+  // At least one mapping must have source or target
   const hasValidMapping = mappings.some(m => 
     m && typeof m === 'object' && (m.source || m.target || m.column || m.field)
   );
@@ -144,10 +144,10 @@ const validateMappings = (mappings) => {
 };
 
 /**
- * 使用 LLM 只建議 uploadType（Step 1: Classification only）
+ * Use LLM to suggest uploadType only (Step 1: Classification only)
  * @param {object} params
  * @param {Array<string>} params.headers - Sheet headers
- * @param {Array<object>} params.sampleRows - Sample data (前 30-50 筆)
+ * @param {Array<object>} params.sampleRows - Sample data (first 30-50 rows)
  * @returns {Promise<object>} { suggestedType, confidence, reasons }
  */
 export async function suggestSheetType({ headers, sampleRows }) {
@@ -183,11 +183,11 @@ export async function suggestSheetType({ headers, sampleRows }) {
 }
 
 /**
- * 使用 LLM 建議 field mapping（純 mapping，不判斷 uploadType）
+ * Use LLM to suggest field mapping (mapping only, no uploadType classification)
  * @param {object} params
- * @param {string} params.uploadType - 目標 uploadType
- * @param {Array<string>} params.headers - 原始 header 名稱（不要 normalize）
- * @param {Array<object>} params.sampleRows - 樣本資料（前 N 筆）
+ * @param {string} params.uploadType - Target uploadType
+ * @param {Array<string>} params.headers - Original header names (do not normalize)
+ * @param {Array<object>} params.sampleRows - Sample data (first N rows)
  * @param {Array<string>} params.requiredFields - Canonical required fields
  * @param {Array<string>} params.optionalFields - Canonical optional fields
  * @returns {Promise<object>} { mappings, mappingConfidence, reasons }
@@ -204,7 +204,7 @@ export async function suggestMappingWithLLM({
   console.log(`[suggestMappingWithLLM] Required fields:`, requiredFields);
 
   try {
-    // 建立 prompt
+    // Build prompt
     const targetFields = [...requiredFields, ...optionalFields];
     const sampleData = sampleRows.slice(0, 5).map(row => {
       const sample = {};
@@ -251,7 +251,7 @@ Return JSON only. No explanation outside JSON.`;
     
     console.log(`[suggestMappingWithLLM] AI response length:`, aiResponse.length);
     
-    // 使用 robust parser
+    // Use robust parser
     const extracted = extractAiJson(aiResponse);
     const parsed = parseAiMappingResponse(extracted);
     
@@ -261,32 +261,32 @@ Return JSON only. No explanation outside JSON.`;
 
     const mappings = parsed.mappings;
     
-    // 嚴格驗證每個 mapping
+    // Strictly validate each mapping
     const validMappings = [];
     const errors = [];
     
     mappings.forEach((m, idx) => {
-      // 檢查必要欄位
+      // Check required fields
       if (!m.source || !m.target) {
         errors.push(`Mapping ${idx}: missing source or target`);
         return;
       }
       
-      // ✅ B) 移除嚴格的 headers.includes 檢查
-      // 因為 AI 回傳的 source 可能有微小差異（大小寫、空白、底線等）
-      // 對齊工作由 handleAiFieldSuggestion 中的 alignAiMappings 處理
+      // ✅ B) Remove strict headers.includes check
+      // Because AI-returned source may have minor differences (case, whitespace, underscores, etc.)
+      // Alignment is handled by alignAiMappings in handleAiFieldSuggestion
       // if (!headers.includes(m.source)) {
       //   errors.push(`Mapping ${idx}: source "${m.source}" not in headers`);
       //   return;
       // }
       
-      // 檢查 target 是否在允許的 fields 中
+      // Check if target is in allowed fields
       if (!targetFields.includes(m.target)) {
         errors.push(`Mapping ${idx}: target "${m.target}" not in allowed fields`);
         return;
       }
       
-      // 檢查 confidence
+      // Check confidence
       if (typeof m.confidence !== 'number' || m.confidence < 0 || m.confidence > 1) {
         errors.push(`Mapping ${idx}: invalid confidence ${m.confidence}`);
         return;
@@ -299,7 +299,7 @@ Return JSON only. No explanation outside JSON.`;
       console.warn('[suggestMappingWithLLM] Validation errors:', errors);
     }
 
-    // 去重：同一 target 只保留最高 confidence 的 source
+    // Deduplicate: keep only highest confidence source for each target
     const targetMap = new Map();
     validMappings.forEach(m => {
       const existing = targetMap.get(m.target);
@@ -312,7 +312,7 @@ Return JSON only. No explanation outside JSON.`;
     
     console.log(`[suggestMappingWithLLM] Valid mappings: ${deduplicatedMappings.length}/${mappings.length}`);
 
-    // 計算 mapping confidence（基於 required fields coverage）
+    // Calculate mapping confidence (based on required fields coverage)
     const mappedRequiredCount = deduplicatedMappings.filter(m => 
       requiredFields.includes(m.target) && m.confidence >= 0.7
     ).length;
@@ -349,13 +349,13 @@ Return JSON only. No explanation outside JSON.`;
 }
 
 /**
- * 為單個 sheet 提供 AI 智能建議（包含 uploadType 判斷 + mapping）
+ * Provide AI-powered suggestions for a single sheet (includes uploadType classification + mapping)
  * @param {object} params
- * @param {string} params.sheetName - Sheet 名稱
- * @param {Array} params.headers - 欄位名稱
- * @param {Array} params.sampleRows - 樣本資料（最多30）
- * @param {string} params.currentUploadType - 當前選擇的 uploadType（可選）
- * @param {boolean} params.hasIngestKeySupport - DB 是否支援 chunk idempotency
+ * @param {string} params.sheetName - Sheet name
+ * @param {Array} params.headers - Column names
+ * @param {Array} params.sampleRows - Sample data (max 30)
+ * @param {string} params.currentUploadType - Currently selected uploadType (optional)
+ * @param {boolean} params.hasIngestKeySupport - Whether DB supports chunk idempotency
  * @returns {Promise<object>} { suggestedUploadType, mapping, confidence, reasons, autoEnable }
  */
 export async function suggestSheetMapping({
@@ -374,7 +374,7 @@ export async function suggestSheetMapping({
     fetch('http://127.0.0.1:7242/ingest/35d967fa-aaea-4f36-8ecf-97e2f2e17afa',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'oneShotAiSuggestService.js:367',message:'[Entry] suggestSheetMapping called',data:{sheetName,headers,headersCount:headers.length,currentUploadType},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A,B,D'})}).catch(()=>{});
     // #endregion
 
-    // Step 1: 若沒有指定 uploadType，先用 AI 推薦
+    // Step 1: If no uploadType specified, use AI to recommend
     let uploadType = currentUploadType;
     let typeConfidence = 0;
     let typeReasons = [];
@@ -382,12 +382,12 @@ export async function suggestSheetMapping({
     if (!uploadType) {
       console.log('[AI Suggest] No uploadType specified, asking AI for suggestion...');
       
-      // 先用本地 classifier 快速篩選
+      // First use local classifier for quick screening
       const classifyResult = classifySheet({ sheetName, headers, sampleRows: sampleRows.slice(0, 20) });
       console.log('[AI Suggest] Local classifier result:', classifyResult);
 
       if (classifyResult.confidence >= 0.6) {
-        // 本地分類器有信心，直接使用
+        // Local classifier is confident, use directly
         uploadType = classifyResult.suggestedType;
         typeConfidence = classifyResult.confidence;
         typeReasons = classifyResult.candidates
@@ -396,7 +396,7 @@ export async function suggestSheetMapping({
         
         console.log('[AI Suggest] Using local classifier result:', uploadType);
       } else {
-        // 本地分類器信心不足，呼叫 AI
+        // Local classifier confidence too low, call AI
         console.log('[AI Suggest] Local classifier confidence too low, calling AI...');
         
         const typePrompt = generateUploadTypePrompt(headers, sampleRows);
@@ -416,13 +416,13 @@ export async function suggestSheetMapping({
         }
       }
     } else {
-      // 已指定 uploadType，直接使用
+      // uploadType already specified, use directly
       typeConfidence = 1.0;
       typeReasons = ['User specified'];
       console.log('[AI Suggest] Using user-specified uploadType:', uploadType);
     }
 
-    // Step 2: 取得 schema
+    // Step 2: Get schema
     const schema = UPLOAD_SCHEMAS[uploadType];
     if (!schema) {
       throw new Error(`Unknown uploadType: ${uploadType}`);
@@ -430,7 +430,7 @@ export async function suggestSheetMapping({
 
     console.log('[AI Suggest] Schema fields:', schema.fields.length);
 
-    // Step 3: 呼叫 AI 生成 mapping
+    // Step 3: Call AI to generate mapping
     const limitedSampleRows = sampleRows.slice(0, 30);
     const mappingPrompt = generateMappingPrompt(uploadType, schema.fields, headers, limitedSampleRows);
     
@@ -443,20 +443,20 @@ export async function suggestSheetMapping({
     const extractedJson = extractAiJson(aiMappingResponse);
     console.log('[AI Suggest] Extracted JSON:', extractedJson);
 
-    // Step 4: 使用 robust parser 解析 mapping
+    // Step 4: Use robust parser to parse mapping
     const parseResult = parseAiMappingResponse(extractedJson);
     
     if (!parseResult.ok) {
       console.error('[AI Suggest] Failed to parse mappings:', parseResult.error);
-      // 不 throw，而是回傳失敗結果
+      // Don't throw, return failure result instead
       return {
         suggestedUploadType: uploadType,
         mapping: {},
         mappings: [],
         confidence: 0,
         reasons: [
-          `AI 回傳格式不正確: ${parseResult.error}`,
-          '請手動選擇 Upload Type 並調整 mapping'
+          `AI response format incorrect: ${parseResult.error}`,
+          'Please manually select Upload Type and adjust mapping'
         ],
         autoEnable: false,
         requiredCoverage: 0,
@@ -471,7 +471,7 @@ export async function suggestSheetMapping({
     fetch('http://127.0.0.1:7242/ingest/35d967fa-aaea-4f36-8ecf-97e2f2e17afa',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'oneShotAiSuggestService.js:462',message:'[BEFORE alignment] AI mappings from LLM',data:{mappingsCount:mappings.length,aiMappings:mappings.slice(0,5).map(m=>({source:m.source,target:m.target,confidence:m.confidence})),allAiSources:mappings.map(m=>m.source)},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A,D'})}).catch(()=>{});
     // #endregion
 
-    // Step 4b: 驗證 mappings 內容
+    // Step 4b: Validate mappings content
     if (!validateMappings(mappings)) {
       console.error('[AI Suggest] Mappings validation failed');
       return {
@@ -480,8 +480,8 @@ export async function suggestSheetMapping({
         mappings: [],
         confidence: 0,
         reasons: [
-          'AI 回傳的 mappings 內容無效',
-          '請手動選擇 Upload Type 並調整 mapping'
+          'AI returned mappings content is invalid',
+          'Please manually select Upload Type and adjust mapping'
         ],
         autoEnable: false,
         requiredCoverage: 0,
@@ -489,7 +489,7 @@ export async function suggestSheetMapping({
       };
     }
 
-    // Step 5: 計算 required fields 覆蓋率
+    // Step 5: Calculate required fields coverage
     const requiredFields = schema.fields.filter(f => f.required).map(f => f.key);
     const mappedFields = mappings
       .filter(m => m.target && m.confidence >= 0.6)
@@ -501,7 +501,7 @@ export async function suggestSheetMapping({
     console.log('[AI Suggest] Mapped fields (conf >= 0.6):', mappedFields);
     console.log('[AI Suggest] Required coverage:', requiredCoverage);
 
-    // Step 6: 計算 overall confidence（綜合 type confidence 和 mapping confidence）
+    // Step 6: Calculate overall confidence (combining type confidence and mapping confidence)
     const avgMappingConfidence = mappings.reduce((sum, m) => sum + (m.confidence || 0), 0) / mappings.length;
     const overallConfidence = (typeConfidence + avgMappingConfidence) / 2;
 
@@ -509,13 +509,13 @@ export async function suggestSheetMapping({
     console.log('[AI Suggest] Avg mapping confidence:', avgMappingConfidence);
     console.log('[AI Suggest] Overall confidence:', overallConfidence);
 
-    // Step 7: 決定是否 auto-enable
-    // 規則：confidence >= 0.75 且 required coverage >= 1.0（必須兩者都達標）
-    // 修正：requiredCoverage < 1.0 不得 auto-enable（避免錯誤匯入）
+    // Step 7: Decide whether to auto-enable
+    // Rule: confidence >= 0.75 AND required coverage >= 1.0 (both must be met)
+    // Fix: requiredCoverage < 1.0 must not auto-enable (avoid incorrect import)
     let autoEnable = overallConfidence >= 0.75 && requiredCoverage >= 1.0;
 
-    // 這裡無法判斷 row count（需要 caller 傳入），所以假設 caller 會處理
-    // 但我們可以在 reasons 中提示
+    // Cannot determine row count here (caller needs to pass it), so assume caller will handle
+    // But we can hint in reasons
     const reasons = [
       ...typeReasons,
       `Mapping confidence: ${Math.round(avgMappingConfidence * 100)}%`,
@@ -523,25 +523,25 @@ export async function suggestSheetMapping({
       `Overall confidence: ${Math.round(overallConfidence * 100)}%`
     ];
 
-    // Step 8: 使用 header normalization 對齊 AI mappings 到實際 headers
+    // Step 8: Use header normalization to align AI mappings to actual headers
     // #region agent log
     fetch('http://127.0.0.1:7242/ingest/35d967fa-aaea-4f36-8ecf-97e2f2e17afa',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'oneShotAiSuggestService.js:518',message:'[BEFORE alignment] About to align AI mappings',data:{originalHeaders:headers,aiMappings:mappings.map(m=>({source:m.source,target:m.target,conf:m.confidence}))},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A,C'})}).catch(()=>{});
     // #endregion
     
-    // ✅ 使用 headerNormalize 工具對齊 AI mappings
+    // ✅ Use headerNormalize utility to align AI mappings
     const headerIndexResult = buildHeaderIndex(headers);
     logHeaderStats(headers, headerIndexResult);
     
     const alignResult = alignAiMappings(mappings, headerIndexResult.index);
     logMappingAlignStats(alignResult);
     
-    // ✅ 使用對齊後的 mappings（source 已經是實際的 originalHeader）
+    // ✅ Use aligned mappings (source is now the actual originalHeader)
     const alignedMappings = alignResult.alignedMappings;
     
     const columnMapping = {};
     alignedMappings.forEach(m => {
       if (m.target && m.confidence >= 0.6) {
-        // ✅ m.source 現在已經是實際的 Excel header（來自 headerIndex）
+        // ✅ m.source is now the actual Excel header (from headerIndex)
         columnMapping[m.source] = m.target;
       }
     });
@@ -550,7 +550,7 @@ export async function suggestSheetMapping({
     fetch('http://127.0.0.1:7242/ingest/35d967fa-aaea-4f36-8ecf-97e2f2e17afa',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'oneShotAiSuggestService.js:540',message:'[AFTER alignment] columnMapping built with aligned headers',data:{columnMapping,columnMappingKeys:Object.keys(columnMapping),alignedCount:alignedMappings.length,unmatchedCount:alignResult.unmatchedSources.length,unmatchedSources:alignResult.unmatchedSources,keysMatch:Object.keys(columnMapping).every(k=>headers.includes(k))},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A,C'})}).catch(()=>{});
     // #endregion
     
-    // ⚠️ 警告：若有 unmatched sources，記錄詳細資訊
+    // ⚠️ Warning: if there are unmatched sources, log detailed info
     if (alignResult.unmatchedSources.length > 0) {
       console.warn('[AI Suggest] Some AI mappings could not be aligned to actual headers:');
       alignResult.unmatchedSources.forEach(unmatched => {
@@ -573,7 +573,7 @@ export async function suggestSheetMapping({
     return {
       suggestedUploadType: uploadType,
       mapping: columnMapping,
-      mappings: mappings, // 保留完整 mappings（含 confidence）
+      mappings: mappings, // Keep full mappings (with confidence)
       confidence: overallConfidence,
       reasons,
       autoEnable,
@@ -583,15 +583,15 @@ export async function suggestSheetMapping({
   } catch (error) {
     console.error('[AI Suggest] Failed:', error);
     
-    // 不要直接 throw，改為回傳錯誤結果（讓 caller 可以決定如何處理）
+    // Don't throw directly, return error result instead (let caller decide how to handle)
     return {
       suggestedUploadType: null,
       mapping: {},
       mappings: [],
       confidence: 0,
       reasons: [
-        `AI Suggest 執行失敗: ${error.message}`,
-        '請手動選擇 Upload Type'
+        `AI Suggest failed: ${error.message}`,
+        'Please manually select Upload Type'
       ],
       autoEnable: false,
       requiredCoverage: 0,
