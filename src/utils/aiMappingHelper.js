@@ -1,12 +1,12 @@
 /**
- * AI 欄位映射輔助函數
- * 用於生成 AI prompt 和解析 AI 回應
+ * AI Field Mapping Helper Functions
+ * Used for generating AI prompts and parsing AI responses
  */
 
 /**
- * 從 AI 回應文字中提取 JSON（增強版）
- * @param {string} text - AI 回應的原始文字
- * @returns {Object} 解析後的 JSON 物件，失敗則返回空物件
+ * Extract JSON from AI response text (enhanced version)
+ * @param {string} text - Raw AI response text
+ * @returns {Object} Parsed JSON object, returns empty object on failure
  */
 export const extractAiJson = (text) => {
   if (!text) {
@@ -16,16 +16,16 @@ export const extractAiJson = (text) => {
   
   console.log('Extracting JSON from:', text.substring(0, 200));
   
-  // 策略 1: 直接解析
+  // Strategy 1: Direct parse
   try {
     const parsed = JSON.parse(text);
     console.log('Strategy 1 (direct parse) succeeded');
     return parsed;
   } catch (_) {
-    // 繼續嘗試其他策略
+    // Continue trying other strategies
   }
   
-  // 策略 2: 移除 markdown
+  // Strategy 2: Remove markdown
   try {
     let cleaned = text
       .replace(/```json\s*/gi, '')
@@ -37,19 +37,19 @@ export const extractAiJson = (text) => {
     console.log('Strategy 2 (remove markdown) succeeded');
     return parsed;
   } catch (_) {
-    // 繼續嘗試
+    // Continue trying
   }
   
-  // 策略 3: 提取 {...} 區塊（更智能）
+  // Strategy 3: Extract {...} block (smarter)
   try {
-    // 找到第一個 { 和對應的 }
+    // Find the first { and its matching }
     const startIdx = text.indexOf('{');
     if (startIdx === -1) {
       console.error('No opening brace found');
       return {};
     }
     
-    // 使用括號配對找到正確的結束位置
+    // Use brace matching to find correct end position
     let braceCount = 0;
     let endIdx = -1;
     
@@ -75,16 +75,16 @@ export const extractAiJson = (text) => {
     console.error('Strategy 3 failed:', e);
   }
   
-  // 策略 4: 尋找 "mappings" 關鍵字附近的 JSON
+  // Strategy 4: Find JSON near "mappings" keyword
   try {
     const mappingsIdx = text.toLowerCase().indexOf('"mappings"');
     if (mappingsIdx !== -1) {
-      // 從 mappings 前面找 {
+      // Find { before mappings
       let searchStart = Math.max(0, mappingsIdx - 50);
       const startIdx = text.lastIndexOf('{', mappingsIdx);
       
       if (startIdx !== -1) {
-        // 使用括號配對
+        // Use brace matching
         let braceCount = 0;
         let endIdx = -1;
         
@@ -109,23 +109,23 @@ export const extractAiJson = (text) => {
     console.error('Strategy 4 failed:', e);
   }
   
-  // 所有策略都失敗
+  // All strategies failed
   console.error('All extraction strategies failed');
   console.error('Original text:', text);
   return {};
 };
 
 /**
- * 智能規則式映射（AI 失敗時的備選方案）
- * @param {Array} originalColumns - 原始 Excel 欄位
- * @param {string} uploadType - 上傳類型
- * @param {Array} schemaFields - Schema 欄位定義
- * @returns {Array} 映射建議
+ * Smart rule-based mapping (fallback when AI fails)
+ * @param {Array} originalColumns - Original Excel columns
+ * @param {string} uploadType - Upload type
+ * @param {Array} schemaFields - Schema field definitions
+ * @returns {Array} Mapping suggestions
  */
 export const ruleBasedMapping = (originalColumns, uploadType, schemaFields) => {
   const mappings = [];
   
-  // 定義規則：Excel 欄位模式 -> 系統欄位 key
+  // Define rules: Excel column pattern -> system field key
   const rules = {
     price_history: {
       supplier_name: [
@@ -268,16 +268,16 @@ export const ruleBasedMapping = (originalColumns, uploadType, schemaFields) => {
 
   const typeRules = rules[uploadType] || {};
   
-  // 為每個 Excel 欄位找最佳匹配
+  // Find best match for each Excel column
   originalColumns.forEach(col => {
     let bestMatch = null;
     let bestConfidence = 0;
 
-    // 遍歷所有系統欄位規則
+    // Iterate all system field rules
     Object.entries(typeRules).forEach(([systemField, patterns]) => {
       patterns.forEach(pattern => {
         if (pattern.test(col)) {
-          // 計算信心度：完全匹配 > 包含匹配
+          // Calculate confidence: exact match > contains match
           const confidence = col.toLowerCase() === systemField.toLowerCase() ? 0.95 : 0.80;
           if (confidence > bestConfidence) {
             bestMatch = systemField;
@@ -300,15 +300,15 @@ export const ruleBasedMapping = (originalColumns, uploadType, schemaFields) => {
 
 
 /**
- * 生成 AI 欄位映射建議的 prompt（極簡版本）
- * @param {string} uploadType - 上傳類型
- * @param {Array} schemaFields - Schema 欄位定義
- * @param {Array} originalColumns - 原始 Excel 欄位
- * @param {Array} sampleRows - 樣本資料（前 20 筆）
- * @returns {string} 組合好的 prompt
+ * Generate AI field mapping suggestion prompt (minimal version)
+ * @param {string} uploadType - Upload type
+ * @param {Array} schemaFields - Schema field definitions
+ * @param {Array} originalColumns - Original Excel columns
+ * @param {Array} sampleRows - Sample data (first 20 rows)
+ * @returns {string} Composed prompt
  */
 /**
- * 簡化樣本資料 - 只顯示前幾個字元，避免 prompt 過長
+ * Simplify sample data - only show first few characters to avoid overly long prompt
  */
 const simplifyFirstRow = (row) => {
   if (!row || typeof row !== 'object') return {};
@@ -320,7 +320,7 @@ const simplifyFirstRow = (row) => {
       simplified[key] = '';
     } else {
       const strValue = String(value);
-      // 只保留前 20 個字元
+      // Keep only first 20 characters
       simplified[key] = strValue.length > 20 ? strValue.substring(0, 20) + '...' : strValue;
     }
   });
@@ -331,32 +331,32 @@ const simplifyFirstRow = (row) => {
 export const generateMappingPrompt = (uploadType, schemaFields, originalColumns, sampleRows) => {
   const systemKeys = schemaFields.map(f => f.key);
   
-  // 單行超極簡 Prompt - 避免 AI 返回解釋文字
+  // Single-line ultra-minimal Prompt - avoid AI returning explanatory text
   
-  // Supplier Master - 單行版本
+  // Supplier Master - single-line version
   if (uploadType === 'supplier_master') {
     return `Match columns: EXCEL=${JSON.stringify(originalColumns)} to SYSTEM=${JSON.stringify(systemKeys)}. Rules: supplier_code/vendor_code/code→supplier_code, supplier_name/company_name/company/name→supplier_name, contact/rep→contact_person, phone/tel→phone, email/mail→email. Output JSON only: {"mappings":[{"source":"excel_col","target":"system_key","confidence":0.9}]}`;
   }
   
-  // Price History - 單行版本
+  // Price History - single-line version
   if (uploadType === 'price_history') {
     return `Match columns: EXCEL=${JSON.stringify(originalColumns)} to SYSTEM=${JSON.stringify(systemKeys)}. Rules: supplier/vendor→supplier_name, material_code/part_no→material_code, order_date/quote_date→order_date, price/unit_price→unit_price, currency/curr→currency. Output JSON only: {"mappings":[{"source":"excel_col","target":"system_key","confidence":0.9}]}`;
   }
   
-  // Goods Receipt - 單行版本
+  // Goods Receipt - single-line version
   if (uploadType === 'goods_receipt') {
     return `Match columns: EXCEL=${JSON.stringify(originalColumns)} to SYSTEM=${JSON.stringify(systemKeys)}. Rules: supplier/vendor→supplier_name, material_code/part_no→material_code, delivery_date/received_date→actual_delivery_date, qty/quantity→received_qty. Output JSON only: {"mappings":[{"source":"excel_col","target":"system_key","confidence":0.9}]}`;
   }
   
-  // 其他類型 - 單行通用版本
+  // Other types - single-line generic version
   const firstRow = simplifyFirstRow(sampleRows[0] || {});
   return `Match columns: EXCEL=${JSON.stringify(originalColumns)} to SYSTEM=${JSON.stringify(systemKeys)}. Sample=${JSON.stringify(firstRow)}. Output JSON only: {"mappings":[{"source":"excel_col","target":"system_key","confidence":0.9}]}`;
 };
 
 /**
- * 驗證 AI 回應的 mappings 格式（寬鬆版本）
- * @param {Object} aiResponse - AI 回應的物件
- * @returns {boolean} 是否為有效格式
+ * Validate AI response mappings format (lenient version)
+ * @param {Object} aiResponse - AI response object
+ * @returns {boolean} Whether format is valid
  */
 export const validateMappingResponse = (aiResponse) => {
   if (!aiResponse || typeof aiResponse !== 'object') {
@@ -376,41 +376,41 @@ export const validateMappingResponse = (aiResponse) => {
 
   console.log(`Validating ${aiResponse.mappings.length} mappings...`);
 
-  // 檢查每個 mapping（使用寬鬆驗證）
+  // Check each mapping (using lenient validation)
   let validCount = 0;
   let invalidCount = 0;
 
   const cleanedMappings = aiResponse.mappings
     .map((m, index) => {
-      // 必須是物件
+      // Must be an object
       if (!m || typeof m !== 'object') {
         console.warn(`⚠️ Mapping ${index} is not an object`);
         invalidCount++;
         return null;
       }
 
-      // 必須有 source
+      // Must have source
       if (!m.source || typeof m.source !== 'string') {
         console.warn(`⚠️ Mapping ${index} missing valid source:`, m);
         invalidCount++;
         return null;
       }
 
-      // target 可以是 null 或 string
+      // target can be null or string
       if (m.target !== null && typeof m.target !== 'string') {
         console.warn(`⚠️ Mapping ${index} has invalid target:`, m.target);
         invalidCount++;
         return null;
       }
 
-      // confidence 如果不是數字，給預設值
+      // If confidence is not a number, use default
       let confidence = m.confidence;
       if (typeof confidence !== 'number' || confidence < 0 || confidence > 1) {
         console.warn(`⚠️ Mapping ${index} has invalid confidence (${confidence}), using 0.5`);
         confidence = 0.5;
       }
 
-      // reason 是可選的
+      // reason is optional
       const reason = m.reason || 'AI suggestion';
 
       validCount++;
@@ -421,13 +421,13 @@ export const validateMappingResponse = (aiResponse) => {
         reason: reason
       };
     })
-    .filter(m => m !== null); // 移除無效的 mappings
+    .filter(m => m !== null); // Remove invalid mappings
 
   console.log(`✅ Valid mappings: ${validCount}, ❌ Invalid: ${invalidCount}`);
 
-  // 只要有至少一個有效的 mapping 就算成功
+  // As long as there's at least one valid mapping, consider it successful
   if (cleanedMappings.length > 0) {
-    // 替換原始 mappings 為清理後的版本
+    // Replace original mappings with cleaned version
     aiResponse.mappings = cleanedMappings;
     return true;
   }
@@ -437,11 +437,11 @@ export const validateMappingResponse = (aiResponse) => {
 };
 
 /**
- * 將 AI 建議的 mappings 合併到現有的 columnMapping
- * @param {Object} currentMapping - 現有的 columnMapping
- * @param {Array} aiMappings - AI 建議的 mappings
- * @param {number} minConfidence - 最低信心度閾值（預設 0.6）
- * @returns {Object} 合併後的 mapping 和統計資訊
+ * Merge AI-suggested mappings into existing columnMapping
+ * @param {Object} currentMapping - Existing columnMapping
+ * @param {Array} aiMappings - AI-suggested mappings
+ * @param {number} minConfidence - Minimum confidence threshold (default 0.6)
+ * @returns {Object} Merged mapping and statistics
  */
 export const mergeMappings = (currentMapping, aiMappings, minConfidence = 0.6) => {
   const newMapping = { ...currentMapping };
@@ -449,9 +449,9 @@ export const mergeMappings = (currentMapping, aiMappings, minConfidence = 0.6) =
   let skippedCount = 0;
 
   aiMappings.forEach(({ source, target, confidence }) => {
-    // 只處理信心度達到閾值且有 target 的建議
+    // Only process suggestions with confidence above threshold and valid target
     if (confidence >= minConfidence && target !== null) {
-      // 只更新尚未手動設定的欄位（空的或未定義）
+      // Only update fields not yet manually set (empty or undefined)
       if (!currentMapping[source] || currentMapping[source] === '') {
         newMapping[source] = target;
         appliedCount++;
