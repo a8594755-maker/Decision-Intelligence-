@@ -1,6 +1,6 @@
 /**
- * One-shot Import Service - 泛用多 sheet 匯入框架
- * 支援 chunk ingest (>1000 rows), idempotency, abort, 詳細報告
+ * One-shot Import Service - Generic multi-sheet import framework
+ * Supports chunk ingest (>1000 rows), idempotency, abort, detailed reporting
  */
 
 import * as XLSX from 'xlsx';
@@ -37,7 +37,7 @@ export function generateSheetPlans(workbook, fileName = 'unknown', fileSize = 0,
   for (let sheetIndex = 0; sheetIndex < sheetNames.length; sheetIndex++) {
     const sheetName = sheetNames[sheetIndex];
     
-    // 建立穩定唯一的 sheetId
+    // Create stable unique sheetId
     const sheetId = `${fileName}:${fileSize}:${fileLastModified}:${sheetIndex}`;
     
     try {
@@ -55,7 +55,7 @@ export function generateSheetPlans(workbook, fileName = 'unknown', fileSize = 0,
         enabled: false,
         disabledReason: 'Sheet is empty (0 rows)',
         rowCount: 0,
-        // ✅ Two-step Gate: 初始化 mapping 狀態
+        // ✅ Two-step Gate: Initialize mapping state
         headers: [],
         mappingDraft: {},
         mappingFinal: null,
@@ -69,13 +69,13 @@ export function generateSheetPlans(workbook, fileName = 'unknown', fileSize = 0,
       
       // Get headers and sample rows
       const headers = Object.keys(sheetData[0]);
-      const sampleRows = sheetData.slice(0, 50); // 增加到 50 rows for better type checking
+      const sampleRows = sheetData.slice(0, 50); // Increased to 50 rows for better type checking
       
       // Classify sheet
       const classification = classifySheet({ sheetName, headers, sampleRows });
       const reasons = classification.reasons || getClassificationReasons(classification);
       
-      // ✅ A) 計算真正的 mapping 狀態（使用 rule-based mapping）
+      // ✅ A) Calculate actual mapping state (using rule-based mapping)
       const uploadType = classification.suggestedType;
       let mappingStatus = {
         coverage: 0,
@@ -87,7 +87,7 @@ export function generateSheetPlans(workbook, fileName = 'unknown', fileSize = 0,
       if (uploadType && UPLOAD_SCHEMAS[uploadType]) {
         const schema = UPLOAD_SCHEMAS[uploadType];
         
-        // 使用 rule-based mapping 計算初始 coverage
+        // Use rule-based mapping to calculate initial coverage
         const ruleMappings = ruleBasedMapping(headers, uploadType, schema.fields);
         initialMapping = {};
         ruleMappings.forEach(m => {
@@ -96,7 +96,7 @@ export function generateSheetPlans(workbook, fileName = 'unknown', fileSize = 0,
           }
         });
         
-        // 計算 mapping status
+        // Calculate mapping status
         mappingStatus = getRequiredMappingStatus({
           uploadType,
           columns: headers,
@@ -106,20 +106,20 @@ export function generateSheetPlans(workbook, fileName = 'unknown', fileSize = 0,
         console.log(`[generateSheetPlans] ${sheetName} (${uploadType}): coverage=${Math.round(mappingStatus.coverage * 100)}%, missing=[${mappingStatus.missingRequired.join(', ')}], typeConfidence=${Math.round(classification.confidence * 100)}%`);
       }
       
-      // ✅ B) 修正 auto-enable 規則：只看 mapping 完整度，不看 type confidence
+      // ✅ B) Fix auto-enable rule: only check mapping completeness, not type confidence
       let enabled = mappingStatus.isComplete === true;
       let warningMessage = null;
       
-      // 大檔案警告（但不禁用）
+      // Large file warning (but don't disable)
       if (sheetData.length > 10000) {
         warningMessage = `⚠ Large sheet (${sheetData.length.toLocaleString()} rows), will use chunk ingest`;
-        // 不強制 disable，允許使用者勾選
+        // Don't force disable, allow user to check
       }
       
       const planPayload = {
         sheetId,
         sheetName,
-        uploadType: classification.suggestedType, // 初始值
+        uploadType: classification.suggestedType, // Initial value
         suggestedType: classification.suggestedType,
         confidence: classification.confidence,
         enabled,
@@ -129,7 +129,7 @@ export function generateSheetPlans(workbook, fileName = 'unknown', fileSize = 0,
         candidates: classification.candidates,
         needsChunking: sheetData.length > 500,
         warningMessage,
-        // ✅ Two-step Gate: 寫入真正的 mapping 狀態（mappingDraft 使用 rule-based 結果，與 coverage/isComplete 一致）
+        // ✅ Two-step Gate: Write actual mapping state (mappingDraft uses rule-based result, consistent with coverage/isComplete)
         headers: Object.keys(sheetData[0] || {}),
         mappingDraft: { ...initialMapping },
         mappingFinal: null,
@@ -154,7 +154,7 @@ export function generateSheetPlans(workbook, fileName = 'unknown', fileSize = 0,
         enabled: false,
         disabledReason: `Analysis failed: ${error.message}`,
         rowCount: 0,
-        // ✅ Two-step Gate: 初始化 mapping 狀態
+        // ✅ Two-step Gate: Initialize mapping state
         headers: [],
         mappingDraft: {},
         mappingFinal: null,
@@ -179,7 +179,7 @@ export function generateSheetPlans(workbook, fileName = 'unknown', fileSize = 0,
 
 /**
  * Import multiple sheets from a workbook
- * 支援 chunk ingest, idempotency, abort, 詳細報告
+ * Supports chunk ingest, idempotency, abort, detailed reporting
  * 
  * @param {object} params
  * @param {string} params.userId - User ID
@@ -229,7 +229,7 @@ export async function importWorkbookSheets({ userId, workbook, fileName, sheetPl
     needsReviewSheets: 0,
     hasIngestKeySupport,
     mode,
-    rolledBack: false, // 標記是否觸發 rollback
+    rolledBack: false, // Flag whether rollback was triggered
     sheetReports: []
   };
   
@@ -263,7 +263,7 @@ export async function importWorkbookSheets({ userId, workbook, fileName, sheetPl
       break;
     }
     
-    // ✅ Two-step Gate: 硬性門檻檢查 mappingFinal
+    // ✅ Two-step Gate: Hard gate check for mappingFinal
     if (!plan.mappingFinal || Object.keys(plan.mappingFinal).length === 0) {
       console.log(`[One-shot] Sheet "${sheetName}" NEEDS_REVIEW: no mappingFinal`);
       report.needsReviewSheets++;
@@ -276,7 +276,7 @@ export async function importWorkbookSheets({ userId, workbook, fileName, sheetPl
       continue;
     }
     
-    // 硬性門檻檢查：在 ingest 前驗證 mapping 完整度
+    // Hard gate check: validate mapping completeness before ingest
     try {
       const sheet = workbook.Sheets[sheetName];
       const sheetData = XLSX.utils.sheet_to_json(sheet, { defval: '' });
@@ -286,7 +286,7 @@ export async function importWorkbookSheets({ userId, workbook, fileName, sheetPl
         const schema = UPLOAD_SCHEMAS[uploadType];
         
         if (schema) {
-          // ✅ 使用 plan.mappingFinal（來自 Step 2 人工確認）
+          // ✅ Use plan.mappingFinal (from Step 2 manual confirmation)
           const columnMapping = plan.mappingFinal;
           
           const mappingStatus = getRequiredMappingStatus({
@@ -298,7 +298,7 @@ export async function importWorkbookSheets({ userId, workbook, fileName, sheetPl
           console.log(`[One-shot] Pre-import check for ${sheetName}: coverage=${Math.round(mappingStatus.coverage * 100)}%, missing=${mappingStatus.missingRequired.join(',')}`);
           
           if (!mappingStatus.isComplete) {
-            // 硬性阻擋：不允許匯入
+            // Hard block: import not allowed
             console.warn(`[One-shot] BLOCKED: ${sheetName} mapping incomplete`);
             
             report.needsReviewSheets++;
@@ -320,7 +320,7 @@ export async function importWorkbookSheets({ userId, workbook, fileName, sheetPl
               status: 'NEEDS_REVIEW'
             });
             
-            continue; // 跳過，完全不執行 ingest
+            continue; // Skip, do not execute ingest at all
           }
         }
       }
@@ -358,7 +358,7 @@ export async function importWorkbookSheets({ userId, workbook, fileName, sheetPl
         signal,
         hasIngestKeySupport,
         forceRerun,
-        columnMapping: plan.mappingFinal  // ✅ Two-step Gate: 只使用 mappingFinal（來自 Step 2 人工確認）
+        columnMapping: plan.mappingFinal  // ✅ Two-step Gate: Only use mappingFinal (from Step 2 manual confirmation)
       });
       
       if (sheetResult.status === 'IMPORTED') {
@@ -419,7 +419,7 @@ export async function importWorkbookSheets({ userId, workbook, fileName, sheetPl
 
 /**
  * Rollback succeeded sheets (All-or-nothing mode)
- * 使用 ingest_key 刪除已成功匯入的資料
+ * Uses ingest_key to delete successfully imported data
  * 
  * @param {Array} succeededSheets - Array of { sheetName, uploadType, idempotencyKey, savedCount }
  * @param {string} userId - User ID
@@ -442,7 +442,7 @@ async function rollbackSucceededSheets(succeededSheets, userId) {
       
     } catch (error) {
       console.error(`[One-shot] Failed to rollback "${sheet.sheetName}":`, error);
-      // 繼續回滾其他 sheets，不中斷
+      // Continue rolling back other sheets, don't interrupt
     }
   }
   
@@ -467,7 +467,7 @@ async function importSingleSheet({
   signal,
   hasIngestKeySupport,
   forceRerun,
-  columnMapping: providedMapping = null  // ✅ 接收外部傳入的 mapping（來自 AI Suggest / UI）
+  columnMapping: providedMapping = null  // ✅ Accept externally provided mapping (from AI Suggest / UI)
 }) {
   let sheetRunId = null;
   
@@ -498,7 +498,7 @@ async function importSingleSheet({
       };
     }
     
-    // ✅ Two-step Gate: 只使用 providedMapping（mappingFinal），禁止 fallback
+    // ✅ Two-step Gate: Only use providedMapping (mappingFinal), no fallback allowed
     if (!providedMapping || Object.keys(providedMapping).length === 0) {
       console.log(`[importSingleSheet] GATE: No providedMapping for ${sheetName}, marking NEEDS_REVIEW`);
       return {
@@ -509,7 +509,7 @@ async function importSingleSheet({
       };
     }
     
-    // ✅ 使用 providedMapping（mappingFinal from Step 2）
+    // ✅ Use providedMapping (mappingFinal from Step 2)
     const columnMapping = providedMapping;
     console.log(`[importSingleSheet] ✅ Using mappingFinal:`, Object.keys(columnMapping).length, 'mappings');
     
@@ -522,7 +522,7 @@ async function importSingleSheet({
     
     console.log(`[importSingleSheet] Final coverage: ${Math.round(mappingStatus.coverage * 100)}%, missing:`, mappingStatus.missingRequired);
     
-    // 若 mapping 不足，標記為 NEEDS_REVIEW（不允許匯入）
+    // If mapping insufficient, mark as NEEDS_REVIEW (import not allowed)
     if (!mappingStatus.isComplete) {
       return {
         sheetName,
@@ -636,7 +636,7 @@ async function importSingleSheet({
         console.log(`[One-shot] Deleted ${deletedCount} previous rows for sheet "${sheetName}"`);
       } catch (deleteError) {
         console.warn(`[One-shot] Failed to delete previous data:`, deleteError);
-        // Continue anyway (可能是首次匯入)
+        // Continue anyway (may be first import)
       }
     }
     
@@ -664,7 +664,7 @@ async function importSingleSheet({
         status: 'FAILED',
         reason: `Critical required fields missing: ${finalValidation.missingFields.join(', ')}`,
         invalidRows: finalValidation.invalidRows.length,
-        errorDetails: finalValidation.invalidRows.slice(0, 5)  // 前 5 筆
+        errorDetails: finalValidation.invalidRows.slice(0, 5)  // First 5 rows
       };
     }
     
