@@ -1,6 +1,6 @@
 /**
  * Data Auto-Fill Utility
- * 自動補齊最常見的資料缺漏，避免因小問題導致整批失敗
+ * Auto-fill most common data gaps to avoid entire batch failures due to minor issues
  */
 
 /**
@@ -14,12 +14,12 @@ export function autoFillRow(row, uploadType) {
 
   const filled = { ...row };
 
-  // 共通欄位：UOM (單位)
+  // Common field: UOM (unit of measure)
   if (!filled.uom || filled.uom === '') {
     filled.uom = 'pcs';
   }
 
-  // 依 uploadType 處理
+  // Process by uploadType
   switch (uploadType) {
     case 'bom_edge':
       return autoFillBomEdge(filled);
@@ -42,19 +42,19 @@ export function autoFillRow(row, uploadType) {
  * Auto-fill for BOM Edge
  */
 function autoFillBomEdge(row) {
-  // qty_per 必填，但如果是 null/"" 可嘗試預設為 1
+  // qty_per required, but if null/"" try defaulting to 1
   if (!row.qty_per || row.qty_per === '' || isNaN(row.qty_per)) {
     row.qty_per = 1;
     row._autoFilled = row._autoFilled || [];
     row._autoFilled.push('qty_per=1');
   }
 
-  // scrap_rate / yield_rate 預設
+  // scrap_rate / yield_rate defaults
   if (row.scrap_rate === null || row.scrap_rate === undefined || row.scrap_rate === '') {
-    row.scrap_rate = null;  // 允許 null
+    row.scrap_rate = null;  // Allow null
   }
   if (row.yield_rate === null || row.yield_rate === undefined || row.yield_rate === '') {
-    row.yield_rate = null;  // 允許 null
+    row.yield_rate = null;  // Allow null
   }
 
   return row;
@@ -64,14 +64,14 @@ function autoFillBomEdge(row) {
  * Auto-fill for Demand FG
  */
 function autoFillDemandFg(row) {
-  // demand_qty 必填，但如果是 null/"" 可嘗試預設為 0
+  // demand_qty required, but if null/"" try defaulting to 0
   if (!row.demand_qty || row.demand_qty === '' || isNaN(row.demand_qty)) {
     row.demand_qty = 0;
     row._autoFilled = row._autoFilled || [];
     row._autoFilled.push('demand_qty=0');
   }
 
-  // time_bucket 必填，若缺失但有 week_bucket 或 date 可補
+  // time_bucket required, if missing but has week_bucket or date, can fill
   if (!row.time_bucket || row.time_bucket === '') {
     if (row.week_bucket) {
       row.time_bucket = row.week_bucket;
@@ -84,7 +84,7 @@ function autoFillDemandFg(row) {
     }
   }
 
-  // status 預設
+  // status default
   if (!row.status || row.status === '') {
     row.status = 'confirmed';
   }
@@ -96,19 +96,19 @@ function autoFillDemandFg(row) {
  * Auto-fill for PO Open Lines
  */
 function autoFillPoOpenLines(row) {
-  // open_qty 必填
+  // open_qty required
   if (!row.open_qty || row.open_qty === '' || isNaN(row.open_qty)) {
     row.open_qty = 0;
     row._autoFilled = row._autoFilled || [];
     row._autoFilled.push('open_qty=0');
   }
 
-  // status 預設
+  // status default
   if (!row.status || row.status === '') {
     row.status = 'open';
   }
 
-  // po_line 預設（如果缺失）
+  // po_line default (if missing)
   if (!row.po_line || row.po_line === '') {
     row.po_line = '10';
     row._autoFilled = row._autoFilled || [];
@@ -122,14 +122,14 @@ function autoFillPoOpenLines(row) {
  * Auto-fill for Inventory Snapshots
  */
 function autoFillInventorySnapshots(row) {
-  // onhand_qty 必填
+  // onhand_qty required
   if (!row.onhand_qty || row.onhand_qty === '' || isNaN(row.onhand_qty)) {
     row.onhand_qty = 0;
     row._autoFilled = row._autoFilled || [];
     row._autoFilled.push('onhand_qty=0');
   }
 
-  // allocated_qty / safety_stock / shortage_qty 預設為 0
+  // allocated_qty / safety_stock / shortage_qty default to 0
   if (row.allocated_qty === null || row.allocated_qty === undefined || row.allocated_qty === '' || isNaN(row.allocated_qty)) {
     row.allocated_qty = 0;
   }
@@ -140,7 +140,7 @@ function autoFillInventorySnapshots(row) {
     row.shortage_qty = 0;
   }
 
-  // snapshot_date 必填，若缺失可用今天
+  // snapshot_date required, if missing use today
   if (!row.snapshot_date || row.snapshot_date === '') {
     const today = new Date().toISOString().split('T')[0];
     row.snapshot_date = today;
@@ -155,19 +155,19 @@ function autoFillInventorySnapshots(row) {
  * Auto-fill for FG Financials
  */
 function autoFillFgFinancials(row) {
-  // unit_margin 必填
+  // unit_margin required
   if (!row.unit_margin || row.unit_margin === '' || isNaN(row.unit_margin)) {
     row.unit_margin = 0;
     row._autoFilled = row._autoFilled || [];
     row._autoFilled.push('unit_margin=0');
   }
 
-  // unit_price 可選，但如果是 "" 應改為 null
+  // unit_price optional, but if "" should be changed to null
   if (row.unit_price === '') {
     row.unit_price = null;
   }
 
-  // currency 預設
+  // currency default
   if (!row.currency || row.currency === '') {
     row.currency = 'USD';
   }
@@ -179,13 +179,13 @@ function autoFillFgFinancials(row) {
  * Auto-fill for Supplier Master
  */
 function autoFillSupplierMaster(row) {
-  // supplier_code 可選，如果缺失可用 supplier_name
+  // supplier_code optional, if missing can use supplier_name
   if (!row.supplier_code || row.supplier_code === '') {
     row.supplier_code = row.supplier_name || 'UNKNOWN';
   }
 
-  // status 必須合法化（已有 normalizeSupplierStatus 會處理）
-  // 這裡只確保不是空字串
+  // status must be valid (normalizeSupplierStatus handles this)
+  // Here just ensure it's not an empty string
   if (!row.status || row.status === '') {
     row.status = 'active';
   }
@@ -206,11 +206,11 @@ export function autoFillRows(rows, uploadType) {
 
   const filled = rows.map(row => autoFillRow(row, uploadType));
   
-  // 統計自動補齊次數
+  // Count auto-fill occurrences
   const autoFilledRows = filled.filter(row => row._autoFilled && row._autoFilled.length > 0);
   const autoFillCount = autoFilledRows.length;
   
-  // 統計哪些欄位被自動補齊
+  // Track which fields were auto-filled
   const fieldCounts = {};
   autoFilledRows.forEach(row => {
     row._autoFilled.forEach(field => {
@@ -226,7 +226,7 @@ export function autoFillRows(rows, uploadType) {
       return countB - countA;
     });
 
-  // 移除 _autoFilled 標記（不寫入 DB）
+  // Remove _autoFilled markers (not written to DB)
   filled.forEach(row => {
     delete row._autoFilled;
   });
@@ -281,6 +281,6 @@ export function validateRequiredFields(rows, uploadType) {
   return {
     isValid: invalidRows.length === 0,
     missingFields: [...new Set(invalidRows.flatMap(r => r.missingFields))],
-    invalidRows: invalidRows.slice(0, 10)  // 最多回傳前 10 筆
+    invalidRows: invalidRows.slice(0, 10)  // Return at most first 10 rows
   };
 }

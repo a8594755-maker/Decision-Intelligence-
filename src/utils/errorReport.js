@@ -1,16 +1,16 @@
 /**
  * Error Report Utilities
- * 生成與下載錯誤報告 CSV
+ * Generate and download error report CSV
  */
 
 /**
- * 將錯誤資料轉換為 CSV 格式並觸發下載
+ * Convert error data to CSV format and trigger download
  * @param {Object} options
- * @param {Array} options.errorRows - 驗證錯誤的資料行
- * @param {Array} options.rawRows - 原始資料（可選，用於完整資料參考）
- * @param {Array} options.columns - 欄位名稱（可選）
- * @param {string} options.uploadType - 上傳類型
- * @param {string} options.fileName - 原始檔案名稱
+ * @param {Array} options.errorRows - Validation error data rows
+ * @param {Array} options.rawRows - Raw data (optional, for complete data reference)
+ * @param {Array} options.columns - Column names (optional)
+ * @param {string} options.uploadType - Upload type
+ * @param {string} options.fileName - Original file name
  */
 export function downloadErrorReport({ errorRows, rawRows = [], columns = [], uploadType, fileName }) {
   if (!errorRows || errorRows.length === 0) {
@@ -18,7 +18,7 @@ export function downloadErrorReport({ errorRows, rawRows = [], columns = [], upl
     return;
   }
 
-  // CSV 標題列
+  // CSV header row
   const headers = [
     'Row Index',
     'Field',
@@ -27,58 +27,58 @@ export function downloadErrorReport({ errorRows, rawRows = [], columns = [], upl
     'Full Row Data (JSON)'
   ];
 
-  // 組裝 CSV 資料行
+  // Assemble CSV data rows
   const csvRows = [];
   
-  // 加入標題列
+  // Add header row
   csvRows.push(headers.join(','));
 
-  // 處理每個錯誤行
+  // Process each error row
   errorRows.forEach((errorRow) => {
     const { rowIndex, errors, originalRow } = errorRow;
 
-    // 取得完整的原始資料（如果有提供 rawRows）
+    // Get complete raw data (if rawRows provided)
     const fullRowData = rawRows[rowIndex - 1] || originalRow || {};
-    const fullRowJson = JSON.stringify(fullRowData).replace(/"/g, '""'); // 轉義雙引號
+    const fullRowJson = JSON.stringify(fullRowData).replace(/"/g, '""'); // Escape double quotes
 
-    // 每個欄位錯誤都生成一行
+    // Generate one row per field error
     errors.forEach((error) => {
       const row = [
         rowIndex,
         escapeCsvValue(error.fieldLabel || error.field),
         escapeCsvValue(error.originalValue),
         escapeCsvValue(error.error),
-        `"${fullRowJson}"` // JSON 用雙引號包裹
+        `"${fullRowJson}"` // JSON wrapped in double quotes
       ];
       csvRows.push(row.join(','));
     });
   });
 
-  // 組裝完整 CSV 內容
+  // Assemble complete CSV content
   const csvContent = csvRows.join('\n');
 
-  // 加上 BOM (Byte Order Mark) 讓 Excel 正確識別 UTF-8
+  // Add BOM (Byte Order Mark) for Excel to correctly recognize UTF-8
   const BOM = '\uFEFF';
   const csvWithBom = BOM + csvContent;
 
-  // 建立 Blob
+  // Create Blob
   const blob = new Blob([csvWithBom], { type: 'text/csv;charset=utf-8;' });
 
-  // 產生檔名
+  // Generate filename
   const timestamp = new Date().toISOString().slice(0, 19).replace(/:/g, '-');
   const baseFileName = fileName ? fileName.replace(/\.[^/.]+$/, '') : 'upload';
   const downloadFileName = `error-report_${uploadType}_${baseFileName}_${timestamp}.csv`;
 
-  // 觸發下載
+  // Trigger download
   downloadBlob(blob, downloadFileName);
 
   console.log(`Error report downloaded: ${downloadFileName} (${errorRows.length} error rows)`);
 }
 
 /**
- * CSV 值轉義（處理逗號、雙引號、換行）
- * @param {any} value - 要轉義的值
- * @returns {string} 轉義後的字串
+ * CSV value escaping (handles commas, double quotes, newlines)
+ * @param {any} value - Value to escape
+ * @returns {string} Escaped string
  */
 function escapeCsvValue(value) {
   if (value === null || value === undefined) {
@@ -87,9 +87,9 @@ function escapeCsvValue(value) {
 
   const strValue = String(value);
 
-  // 如果包含逗號、雙引號或換行，需要用雙引號包裹
+  // If contains commas, double quotes, or newlines, wrap in double quotes
   if (strValue.includes(',') || strValue.includes('"') || strValue.includes('\n')) {
-    // 雙引號需要轉義為兩個雙引號
+    // Double quotes need to be escaped as two double quotes
     const escapedValue = strValue.replace(/"/g, '""');
     return `"${escapedValue}"`;
   }
@@ -98,34 +98,34 @@ function escapeCsvValue(value) {
 }
 
 /**
- * 使用 Blob 和 URL.createObjectURL 觸發檔案下載
- * @param {Blob} blob - 要下載的 Blob
- * @param {string} filename - 檔案名稱
+ * Trigger file download using Blob and URL.createObjectURL
+ * @param {Blob} blob - Blob to download
+ * @param {string} filename - File name
  */
 function downloadBlob(blob, filename) {
-  // 建立 Object URL
+  // Create Object URL
   const url = URL.createObjectURL(blob);
 
-  // 建立臨時 <a> 元素
+  // Create temporary <a> element
   const link = document.createElement('a');
   link.href = url;
   link.download = filename;
   link.style.display = 'none';
 
-  // 加入 DOM、觸發點擊、移除
+  // Add to DOM, trigger click, remove
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
 
-  // 釋放 Object URL（延遲釋放，確保下載開始）
+  // Release Object URL (delayed to ensure download starts)
   setTimeout(() => {
     URL.revokeObjectURL(url);
   }, 100);
 }
 
 /**
- * 生成錯誤報告摘要（用於 UI 顯示）
- * @param {Array} errorRows - 驗證錯誤的資料行
+ * Generate error report summary (for UI display)
+ * @param {Array} errorRows - Validation error data rows
  * @returns {Object} { totalErrors, affectedRows, topErrors }
  */
 export function generateErrorSummary(errorRows) {
@@ -137,13 +137,13 @@ export function generateErrorSummary(errorRows) {
     };
   }
 
-  // 統計總錯誤數
+  // Count total errors
   const totalErrors = errorRows.reduce((sum, row) => sum + row.errors.length, 0);
 
-  // 受影響的行數
+  // Affected row count
   const affectedRows = errorRows.length;
 
-  // 統計最常見的錯誤訊息（前 5 個）
+  // Count most common error messages (top 5)
   const errorCounts = {};
   errorRows.forEach((row) => {
     row.errors.forEach((error) => {
@@ -152,7 +152,7 @@ export function generateErrorSummary(errorRows) {
     });
   });
 
-  // 排序並取前 5 個
+  // Sort and take top 5
   const topErrors = Object.entries(errorCounts)
     .sort((a, b) => b[1] - a[1])
     .slice(0, 5)

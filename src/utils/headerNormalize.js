@@ -1,70 +1,70 @@
 /**
  * Header Normalization Utilities
- * 解決 AI mapping 時 header 字串不一致的問題（大小寫、空白、底線、全形、不可見字元等）
+ * Resolves header string inconsistencies during AI mapping (case, whitespace, underscores, fullwidth, invisible characters, etc.)
  */
 
 /**
- * 正規化單個 header 字串
- * 解決 AI mapping 時 header 字串不一致的問題（大小寫、空白、底線、全形、不可見字元等）
+ * Normalize a single header string
+ * Resolves header string inconsistencies during AI mapping (case, whitespace, underscores, fullwidth, invisible characters, etc.)
  * 
- * @param {string} str - 原始 header
- * @returns {string} - 正規化後的 header
+ * @param {string} str - Original header
+ * @returns {string} - Normalized header
  * 
  * @example
  * normalizeHeader('Plant ID')         // → 'plant id'
  * normalizeHeader('Plant_ID')         // → 'plant id'
- * normalizeHeader('Plant ID ')        // → 'plant id' (尾隨空白)
- * normalizeHeader('Plant\nID')        // → 'plant id' (換行)
+ * normalizeHeader('Plant ID ')        // → 'plant id' (trailing whitespace)
+ * normalizeHeader('Plant\nID')        // → 'plant id' (newline)
  * normalizeHeader('Plant\u00A0ID')    // → 'plant id' (NBSP)
- * normalizeHeader('Ｐｌａｎｔ　ＩＤ')  // → 'plant id' (全形)
+ * normalizeHeader('Ｐｌａｎｔ　ＩＤ')  // → 'plant id' (fullwidth)
  */
 export function normalizeHeader(str) {
   if (!str || typeof str !== 'string') return '';
   
   let normalized = str;
   
-  // 1. Trim（移除前後空白）
+  // 1. Trim (remove leading/trailing whitespace)
   normalized = normalized.trim();
   
-  // 2. 移除不可見字元（零寬空格、BOM、軟連字符等）
+  // 2. Remove invisible characters (zero-width spaces, BOM, soft hyphens, etc.)
   normalized = normalized.replace(/[\u200B-\u200D\uFEFF\u00AD]/g, '');
   
-  // 3. 移除 NBSP (Non-Breaking Space, \u00A0)
+  // 3. Remove NBSP (Non-Breaking Space, \u00A0)
   normalized = normalized.replace(/\u00A0/g, ' ');
   
-  // 4. 移除控制字元（換行、tab、回車等）
+  // 4. Remove control characters (newline, tab, carriage return, etc.)
   normalized = normalized.replace(/[\r\n\t\f\v]/g, ' ');
   
-  // 5. 全形轉半形（全形空白、全形字符）
+  // 5. Fullwidth to halfwidth conversion (fullwidth spaces, fullwidth characters)
   normalized = normalized.replace(/[\uFF01-\uFF5E]/g, (ch) => {
     return String.fromCharCode(ch.charCodeAt(0) - 0xFEE0);
   });
-  normalized = normalized.replace(/\u3000/g, ' '); // 全形空白
+  normalized = normalized.replace(/\u3000/g, ' '); // Fullwidth space
   
-  // 6. 全部轉小寫
+  // 6. Convert to lowercase
   normalized = normalized.toLowerCase();
   
-  // 7. 底線、連字符、點 轉成空白
+  // 7. Convert underscores, hyphens, dots to spaces
   normalized = normalized.replace(/[_\-\.]/g, ' ');
   
-  // 8. 連續空白變單一空白
+  // 8. Collapse consecutive spaces to single space
   normalized = normalized.replace(/\s+/g, ' ');
   
-  // 9. 再次 trim（去除前後空白）
+  // 9. Trim again (remove leading/trailing whitespace)
   normalized = normalized.trim();
   
   return normalized;
 }
 
 /**
- * 建立 header 索引：normalized -> originalHeader
- * @param {string[]} headers - 原始 headers 陣列
+ * Build header index: normalized -> originalHeader
+ * @param {string[]} headers - Original headers array
  * @returns {object} - { index: Map<normalized, originalHeader>, duplicates: string[] }
  */
 export function buildHeaderIndex(headers) {
   const index = new Map();
   const duplicates = [];
-  const seenNormalized = new Map(); // 記錄每個 normalized 出現的原始 header
+  const seenNormalized = new Map(); // Track original headers for each normalized value
   
   headers.forEach((originalHeader, idx) => {
     const normalized = normalizeHeader(originalHeader);
@@ -75,7 +75,7 @@ export function buildHeaderIndex(headers) {
     }
     
     if (index.has(normalized)) {
-      // 重複的 normalized header
+      // Duplicate normalized header
       const firstOriginal = index.get(normalized);
       if (!seenNormalized.has(normalized)) {
         duplicates.push(normalized);
@@ -87,7 +87,7 @@ export function buildHeaderIndex(headers) {
         duplicate: originalHeader
       });
     } else {
-      // 第一次出現，記錄到 index
+      // First occurrence, record in index
       index.set(normalized, originalHeader);
     }
   });
@@ -104,9 +104,9 @@ export function buildHeaderIndex(headers) {
 }
 
 /**
- * 對齊 AI mapping：將 AI 回傳的 source 對應到實際的 originalHeader
- * @param {Array} aiMappings - AI 回傳的 mappings: [{ source, target, confidence }]
- * @param {Map} headerIndex - buildHeaderIndex 回傳的 index
+ * Align AI mapping: map AI-returned source to actual originalHeader
+ * @param {Array} aiMappings - AI-returned mappings: [{ source, target, confidence }]
+ * @param {Map} headerIndex - Index returned by buildHeaderIndex
  * @returns {object} - { alignedMappings: Array, unmatchedSources: Array }
  */
 export function alignAiMappings(aiMappings, headerIndex) {
@@ -118,16 +118,16 @@ export function alignAiMappings(aiMappings, headerIndex) {
     const srcNorm = normalizeHeader(source);
     
     if (headerIndex.has(srcNorm)) {
-      // ✅ 成功對齊：使用實際的 originalHeader
+      // ✅ Successfully aligned: use actual originalHeader
       const originalHeader = headerIndex.get(srcNorm);
       alignedMappings.push({
-        source: originalHeader,  // ✅ 替換成真實的 header
+        source: originalHeader,  // ✅ Replaced with actual header
         target,
         confidence,
-        _aiOriginalSource: source  // 保留 AI 原始 source（debug 用）
+        _aiOriginalSource: source  // Keep AI original source (for debug)
       });
     } else {
-      // ❌ 對不上：記錄 unmatchedSource
+      // ❌ Unmatched: record unmatchedSource
       unmatchedSources.push({
         aiSource: source,
         normalized: srcNorm
@@ -148,9 +148,9 @@ export function alignAiMappings(aiMappings, headerIndex) {
 }
 
 /**
- * Debug 輸出：header normalize 統計
- * @param {string[]} headers - 原始 headers
- * @param {object} headerIndexResult - buildHeaderIndex 回傳結果
+ * Debug output: header normalize statistics
+ * @param {string[]} headers - Original headers
+ * @param {object} headerIndexResult - Result from buildHeaderIndex
  */
 export function logHeaderStats(headers, headerIndexResult) {
   const { stats, duplicates } = headerIndexResult;
@@ -163,8 +163,8 @@ export function logHeaderStats(headers, headerIndexResult) {
 }
 
 /**
- * Debug 輸出：AI mapping 對齊統計
- * @param {object} alignResult - alignAiMappings 回傳結果
+ * Debug output: AI mapping alignment statistics
+ * @param {object} alignResult - Result from alignAiMappings
  */
 export function logMappingAlignStats(alignResult) {
   const { stats, unmatchedSources } = alignResult;
