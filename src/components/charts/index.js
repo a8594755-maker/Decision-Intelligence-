@@ -1,6 +1,6 @@
 /**
  * Charts Components Index
- * 統一導出所有圖表組件
+ * Unified export of all chart components
  */
 
 export { SimpleLineChart } from './SimpleLineChart';

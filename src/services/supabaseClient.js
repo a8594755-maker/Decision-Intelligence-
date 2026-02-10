@@ -17,7 +17,7 @@ export const supabase = createClient(supabaseUrl, supabaseKey);
  * User Files Operations
  */
 export const userFilesService = {
-  // 獲取用戶最新上傳的文件
+  // Get user's latest uploaded file
   async getLatestFile(userId) {
     const { data, error } = await supabase
       .from('user_files')
@@ -30,7 +30,7 @@ export const userFilesService = {
     return data && data.length > 0 ? data[0] : null;
   },
 
-  // 保存文件到雲端
+  // Save file to cloud
   async saveFile(userId, filename, data) {
     const payload = {
       user_id: userId,
@@ -45,10 +45,10 @@ export const userFilesService = {
       .single();
 
     if (error) throw error;
-    return insertedData; // 回傳包含 id 的完整 row
+    return insertedData; // Return complete row with id
   },
 
-  // 獲取所有文件
+  // Get all files
   async getAllFiles(userId) {
     const { data, error } = await supabase
       .from('user_files')
@@ -65,13 +65,13 @@ export const userFilesService = {
  * Suppliers Operations
  */
 export const suppliersService = {
-  // 批量插入供應商（使用 upsert 避免重複）
+  // Batch insert suppliers (using upsert to avoid duplicates)
   async insertSuppliers(suppliers) {
     if (!suppliers || suppliers.length === 0) {
       return { success: true, count: 0 };
     }
 
-    // 先檢查資料庫中已存在的供應商
+    // Check existing suppliers in database first
     const supplierNames = suppliers.map(s => s.supplier_name).filter(Boolean);
     const supplierCodes = suppliers.map(s => s.supplier_code).filter(Boolean);
     
@@ -79,7 +79,7 @@ export const suppliersService = {
       .from('suppliers')
       .select('id, supplier_name, supplier_code');
     
-    // 建立 OR 查詢條件
+    // Build OR query conditions
     const orConditions = [];
     if (supplierNames.length > 0) {
       orConditions.push(`supplier_name.in.(${supplierNames.map(n => `"${n}"`).join(',')})`);
@@ -97,7 +97,7 @@ export const suppliersService = {
       // Continue with insert anyway
     }
 
-    // 建立已存在供應商的 Map
+    // Build Map of existing suppliers
     const existingMap = new Map();
     if (existingSuppliers) {
       existingSuppliers.forEach(s => {
@@ -106,7 +106,7 @@ export const suppliersService = {
       });
     }
 
-    // 分離新供應商和需要更新的供應商
+    // Separate new suppliers and suppliers to update
     const toInsert = [];
     const toUpdate = [];
 
@@ -117,10 +117,10 @@ export const suppliersService = {
       const existingId = codeKey && existingMap.get(codeKey) || nameKey && existingMap.get(nameKey);
       
       if (existingId) {
-        // 已存在，準備更新
+        // Already exists, prepare update
         toUpdate.push({ ...supplier, id: existingId });
       } else {
-        // 新供應商，準備插入
+        // New supplier, prepare insert
         toInsert.push(supplier);
       }
     });
@@ -128,7 +128,7 @@ export const suppliersService = {
     let insertedCount = 0;
     let updatedCount = 0;
 
-    // 插入新供應商
+    // Insert new suppliers
     if (toInsert.length > 0) {
       // #region agent log
       fetch('http://127.0.0.1:7242/ingest/35d967fa-aaea-4f36-8ecf-97e2f2e17afa',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'supabaseClient.js:130',message:'Before insert suppliers',data:{count:toInsert.length,firstItem:toInsert[0],columns:Object.keys(toInsert[0]||{})},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A,B'})}).catch(()=>{});
@@ -150,12 +150,12 @@ export const suppliersService = {
       insertedCount = insertedData?.length || 0;
     }
 
-    // 更新已存在的供應商（合併資訊）
+    // Update existing suppliers (merge info)
     if (toUpdate.length > 0) {
       for (const supplier of toUpdate) {
         const { id, ...updateData } = supplier;
         
-        // 只更新非空欄位（保留現有資料）
+        // Only update non-empty fields (preserve existing data)
         const fieldsToUpdate = {};
         Object.keys(updateData).forEach(key => {
           if (updateData[key] !== null && updateData[key] !== undefined && updateData[key] !== '') {
@@ -184,7 +184,7 @@ export const suppliersService = {
     };
   },
 
-  // 獲取所有供應商
+  // Get all suppliers
   async getAllSuppliers() {
     const { data, error } = await supabase
       .from('suppliers')
@@ -195,7 +195,7 @@ export const suppliersService = {
     return data || [];
   },
 
-  // 更新供應商
+  // Update supplier
   async updateSupplier(id, updates) {
     const { data, error } = await supabase
       .from('suppliers')
@@ -207,7 +207,7 @@ export const suppliersService = {
     return data[0];
   },
 
-  // 刪除供應商
+  // Delete supplier
   async deleteSupplier(id) {
     const { error } = await supabase
       .from('suppliers')
@@ -218,7 +218,7 @@ export const suppliersService = {
     return { success: true };
   },
 
-  // 搜索供應商
+  // Search suppliers
   async searchSuppliers(searchTerm) {
     const { data, error } = await supabase
       .from('suppliers')
@@ -230,7 +230,7 @@ export const suppliersService = {
     return data || [];
   },
 
-  // 根據名稱查找供應商（用於數據導入時去重）
+  // Find supplier by name (for deduplication during data import)
   async findByName(userId, supplierName) {
     const { data, error } = await supabase
       .from('suppliers')
@@ -246,7 +246,7 @@ export const suppliersService = {
     return data;
   },
 
-  // 根據編碼查找供應商
+  // Find supplier by code
   async findByCode(userId, supplierCode) {
     const { data, error } = await supabase
       .from('suppliers')
@@ -262,21 +262,21 @@ export const suppliersService = {
     return data;
   },
 
-  // 創建或獲取供應商（用於導入時自動創建）
+  // Find or create supplier (for auto-creation during import)
   async findOrCreate(userId, supplierData) {
     const { supplier_name, supplier_code } = supplierData;
 
-    // 優先根據編碼查找
+    // Prioritize search by code
     if (supplier_code) {
       const existing = await this.findByCode(userId, supplier_code);
       if (existing) return existing;
     }
 
-    // 根據名稱查找
+    // Search by name
     const existingByName = await this.findByName(userId, supplier_name);
     if (existingByName) return existingByName;
 
-    // 不存在則創建
+    // Create if not exists
     const newSupplier = {
       user_id: userId,
       supplier_name,
@@ -295,12 +295,12 @@ export const suppliersService = {
   },
 
   /**
-   * 批次 Upsert Suppliers（真正的批次處理）
-   * @param {string} userId - 使用者 ID
-   * @param {Array} suppliers - 供應商陣列 [{supplier_name, supplier_code?, batch_id?}, ...]
-   * @param {Object} options - 選項
-   * @param {number} options.chunkSize - 每批大小（預設 200）
-   * @returns {Promise<Map>} 回傳 Map(key -> supplier_id)，key 為 supplier_code 或 supplier_name_norm
+   * Batch Upsert Suppliers (true batch processing)
+   * @param {string} userId - User ID
+   * @param {Array} suppliers - Supplier array [{supplier_name, supplier_code?, batch_id?}, ...]
+   * @param {Object} options - Options
+   * @param {number} options.chunkSize - Batch size (default 200)
+   * @returns {Promise<Map>} Returns Map(key -> supplier_id), key is supplier_code or supplier_name_norm
    */
   async batchUpsertSuppliers(userId, suppliers, options = {}) {
     const { chunkSize = 200 } = options;
@@ -311,12 +311,12 @@ export const suppliersService = {
 
     console.log(`[batchUpsertSuppliers] Starting upsert for ${suppliers.length} suppliers`);
 
-    // 正規化 supplier_name（模擬 DB 的 normalize 邏輯）
+    // Normalize supplier_name (simulating DB normalize logic)
     const normalizeSupplierName = (name) => {
       return name.toLowerCase().trim().replace(/\s+/g, ' ');
     };
 
-    // 正規化 supplier status（確保只寫入 'active' 或 'inactive'）
+    // Normalize supplier status (ensure only 'active' or 'inactive' is written)
     const normalizeSupplierStatus = (status) => {
       if (!status || typeof status !== 'string') {
         return 'active';
@@ -331,10 +331,10 @@ export const suppliersService = {
       if (normalized === 'disabled' || normalized === 'disable' || normalized === 'no' || normalized === '0' || normalized === 'suspended') {
         return 'inactive';
       }
-      return 'active'; // 預設值
+      return 'active'; // Default value
     };
 
-    // 準備 upsert payload
+    // Prepare upsert payload
     const payload = suppliers.map(s => ({
       user_id: userId,
       supplier_name: s.supplier_name,
@@ -345,20 +345,20 @@ export const suppliersService = {
       contact_info: s.contact_info || null
     }));
 
-    // 分批 upsert
+    // Batch upsert
     const allUpsertedIds = [];
     for (let i = 0; i < payload.length; i += chunkSize) {
       const chunk = payload.slice(i, i + chunkSize);
       
       console.log(`[batchUpsertSuppliers] Upserting chunk ${Math.floor(i / chunkSize) + 1}/${Math.ceil(payload.length / chunkSize)} (${chunk.length} items)`);
 
-      // 使用 upsert（ON CONFLICT）
-      // 策略：優先使用 supplier_code，如果沒有則使用 supplier_name_norm
+      // Use upsert (ON CONFLICT)
+      // Strategy: prioritize supplier_code, fallback to supplier_name_norm
       const { data: upsertedData, error: upsertError } = await supabase
         .from('suppliers')
         .upsert(chunk, {
-          onConflict: 'user_id,supplier_name_norm',  // 使用 name 作為主要衝突鍵
-          ignoreDuplicates: false  // 更新而不是忽略
+          onConflict: 'user_id,supplier_name_norm',  // Use name as primary conflict key
+          ignoreDuplicates: false  // Update instead of ignore
         })
         .select('id, supplier_code, supplier_name_norm');
 
@@ -372,8 +372,8 @@ export const suppliersService = {
 
     console.log(`[batchUpsertSuppliers] Upserted ${allUpsertedIds.length} suppliers`);
 
-    // 建立 Map: key -> supplier_id
-    // key 優先使用 supplier_code，否則使用 supplier_name_norm
+    // Build Map: key -> supplier_id
+    // key prioritizes supplier_code, otherwise uses supplier_name_norm
     const supplierIdMap = new Map();
     allUpsertedIds.forEach(s => {
       if (s.supplier_code) {
@@ -394,11 +394,11 @@ export const suppliersService = {
  * Materials Operations
  */
 export const materialsService = {
-  // 創建或獲取物料
+  // Find or create material
   async findOrCreate(userId, materialData) {
     const { material_code, material_name, category, uom } = materialData;
 
-    // 根據 material_code 查找
+    // Search by material_code
     const { data: existing, error: findError } = await supabase
       .from('materials')
       .select('*')
@@ -410,7 +410,7 @@ export const materialsService = {
       return existing;
     }
 
-    // 不存在則創建
+    // Create if not exists
     const newMaterial = {
       user_id: userId,
       material_code,
@@ -429,7 +429,7 @@ export const materialsService = {
     return data;
   },
 
-  // 獲取所有物料
+  // Get all materials
   async getAll(userId) {
     const { data, error } = await supabase
       .from('materials')
@@ -441,7 +441,7 @@ export const materialsService = {
     return data || [];
   },
 
-  // 根據編碼查找物料
+  // Find material by code
   async findByCode(userId, materialCode) {
     const { data, error } = await supabase
       .from('materials')
@@ -457,7 +457,7 @@ export const materialsService = {
     return data;
   },
 
-  // 更新物料
+  // Update material
   async update(materialId, updates) {
     const { data, error } = await supabase
       .from('materials')
@@ -470,7 +470,7 @@ export const materialsService = {
     return data;
   },
 
-  // 刪除物料
+  // Delete material
   async delete(materialId) {
     const { error } = await supabase
       .from('materials')
@@ -482,12 +482,12 @@ export const materialsService = {
   },
 
   /**
-   * 批次 Upsert Materials（真正的批次處理）
-   * @param {string} userId - 使用者 ID
-   * @param {Array} materials - 物料陣列 [{material_code, material_name, category?, uom?, batch_id?}, ...]
-   * @param {Object} options - 選項
-   * @param {number} options.chunkSize - 每批大小（預設 200）
-   * @returns {Promise<Map>} 回傳 Map(material_code -> material_id)
+   * Batch Upsert Materials (true batch processing)
+   * @param {string} userId - User ID
+   * @param {Array} materials - Material array [{material_code, material_name, category?, uom?, batch_id?}, ...]
+   * @param {Object} options - Options
+   * @param {number} options.chunkSize - Batch size (default 200)
+   * @returns {Promise<Map>} Returns Map(material_code -> material_id)
    */
   async batchUpsertMaterials(userId, materials, options = {}) {
     const { chunkSize = 200 } = options;
@@ -498,7 +498,7 @@ export const materialsService = {
 
     console.log(`[batchUpsertMaterials] Starting upsert for ${materials.length} materials`);
 
-    // 準備 upsert payload
+    // Prepare upsert payload
     const payload = materials.map(m => ({
       user_id: userId,
       material_code: m.material_code,
@@ -509,14 +509,14 @@ export const materialsService = {
       notes: m.notes || null
     }));
 
-    // 分批 upsert
+    // Batch upsert
     const allUpsertedIds = [];
     for (let i = 0; i < payload.length; i += chunkSize) {
       const chunk = payload.slice(i, i + chunkSize);
       
       console.log(`[batchUpsertMaterials] Upserting chunk ${Math.floor(i / chunkSize) + 1}/${Math.ceil(payload.length / chunkSize)} (${chunk.length} items)`);
 
-      // 使用 upsert（ON CONFLICT (user_id, material_code)）
+      // Use upsert (ON CONFLICT (user_id, material_code))
       const { data: upsertedData, error: upsertError } = await supabase
         .from('materials')
         .upsert(chunk, {
@@ -535,7 +535,7 @@ export const materialsService = {
 
     console.log(`[batchUpsertMaterials] Upserted ${allUpsertedIds.length} materials`);
 
-    // 建立 Map: material_code -> material_id
+    // Build Map: material_code -> material_id
     const materialIdMap = new Map();
     allUpsertedIds.forEach(m => {
       materialIdMap.set(m.material_code, m.id);
@@ -551,24 +551,24 @@ export const materialsService = {
  * Goods Receipts Operations
  */
 export const goodsReceiptsService = {
-  // 批量插入收貨記錄
-  // 支援新舊兩種呼叫方式：
-  // - 舊: batchInsert(userId, receipts, uploadFileId)
-  // - 新: batchInsert(userId, receipts, { uploadFileId, batchId })
+  // Batch insert goods receipts
+  // Supports both old and new calling conventions:
+  // - Old: batchInsert(userId, receipts, uploadFileId)
+  // - New: batchInsert(userId, receipts, { uploadFileId, batchId })
   async batchInsert(userId, receipts, options = {}) {
     if (!receipts || receipts.length === 0) {
       return { success: true, count: 0 };
     }
 
-    // 向後相容 adapter：第三參數可能是字串（舊 API）或物件（新 API）
+    // Backward compatible adapter: third param may be string (old API) or object (new API)
     let uploadFileId = null;
     let batchId = null;
     
     if (typeof options === 'string') {
-      // 舊 API：第三參數是 uploadFileId 字串
+      // Old API: third param is uploadFileId string
       uploadFileId = options;
     } else if (typeof options === 'object') {
-      // 新 API：第三參數是 { uploadFileId, batchId }
+      // New API: third param is { uploadFileId, batchId }
       uploadFileId = options.uploadFileId || null;
       batchId = options.batchId || null;
     }
@@ -585,7 +585,7 @@ export const goodsReceiptsService = {
       receipt_date: r.receipt_date || new Date().toISOString().split('T')[0],
       received_qty: r.received_qty,
       rejected_qty: r.rejected_qty || 0,
-      batch_id: r.batch_id || batchId // 優先使用 receipt 內的 batch_id，否則用參數
+      batch_id: r.batch_id || batchId // Prioritize receipt's batch_id, otherwise use param
     }));
 
     const { data, error } = await supabase
@@ -598,12 +598,12 @@ export const goodsReceiptsService = {
   },
 
   /**
-   * 批次插入 Goods Receipts（支援進度回調）
-   * @param {string} userId - 使用者 ID
-   * @param {Array} receipts - 收貨記錄陣列（已含 supplier_id/material_id）
-   * @param {Object} options - 選項
-   * @param {number} options.chunkSize - 每批大小（預設 500）
-   * @param {function} options.onProgress - 進度回調 (current, total)
+   * Batch insert Goods Receipts (with progress callback)
+   * @param {string} userId - User ID
+   * @param {Array} receipts - Goods receipt array (with supplier_id/material_id)
+   * @param {Object} options - Options
+   * @param {number} options.chunkSize - Batch size (default 500)
+   * @param {function} options.onProgress - Progress callback (current, total)
    * @returns {Promise<Object>} { success, count, data }
    */
   async batchInsertReceipts(userId, receipts, options = {}) {
@@ -615,7 +615,7 @@ export const goodsReceiptsService = {
 
     console.log(`[batchInsertReceipts] Starting insert for ${receipts.length} receipts`);
 
-    // 準備 payload
+    // Prepare payload
     const payload = receipts.map(r => ({
       user_id: userId,
       upload_file_id: r.upload_file_id || null,
@@ -631,7 +631,7 @@ export const goodsReceiptsService = {
       batch_id: r.batch_id || null
     }));
 
-    // 分批插入
+    // Batch insert
     const allInsertedData = [];
     let insertedCount = 0;
 
@@ -653,7 +653,7 @@ export const goodsReceiptsService = {
       allInsertedData.push(...(insertedData || []));
       insertedCount += insertedData?.length || 0;
 
-      // 呼叫進度回調
+      // Call progress callback
       if (onProgress) {
         onProgress(insertedCount, receipts.length);
       }
@@ -664,7 +664,7 @@ export const goodsReceiptsService = {
     return { success: true, count: insertedCount, data: allInsertedData };
   },
 
-  // 獲取收貨記錄
+  // Get goods receipts
   async getReceipts(userId, options = {}) {
     const { supplierId, materialId, startDate, endDate, limit = 100, offset = 0 } = options;
 
@@ -696,7 +696,7 @@ export const goodsReceiptsService = {
     return data || [];
   },
 
-  // 刪除收貨記錄
+  // Delete goods receipt
   async delete(receiptId) {
     const { error } = await supabase
       .from('goods_receipts')
@@ -707,7 +707,7 @@ export const goodsReceiptsService = {
     return { success: true };
   },
 
-  // 獲取統計數據
+  // Get statistics
   async getStats(userId, days = 30) {
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - days);
@@ -745,24 +745,24 @@ export const goodsReceiptsService = {
  * Price History Operations
  */
 export const priceHistoryService = {
-  // 批量插入價格記錄
-  // 支援新舊兩種呼叫方式：
-  // - 舊: batchInsert(userId, prices, uploadFileId)
-  // - 新: batchInsert(userId, prices, { uploadFileId, batchId })
+  // Batch insert price records
+  // Supports both old and new calling conventions:
+  // - Old: batchInsert(userId, prices, uploadFileId)
+  // - New: batchInsert(userId, prices, { uploadFileId, batchId })
   async batchInsert(userId, prices, options = {}) {
     if (!prices || prices.length === 0) {
       return { success: true, count: 0 };
     }
 
-    // 向後相容 adapter：第三參數可能是字串（舊 API）或物件（新 API）
+    // Backward compatible adapter: third param may be string (old API) or object (new API)
     let uploadFileId = null;
     let batchId = null;
     
     if (typeof options === 'string') {
-      // 舊 API：第三參數是 uploadFileId 字串
+      // Old API: third param is uploadFileId string
       uploadFileId = options;
     } else if (typeof options === 'object') {
-      // 新 API：第三參數是 { uploadFileId, batchId }
+      // New API: third param is { uploadFileId, batchId }
       uploadFileId = options.uploadFileId || null;
       batchId = options.batchId || null;
     }
@@ -777,7 +777,7 @@ export const priceHistoryService = {
       currency: p.currency || 'USD',
       quantity: p.quantity || 0,
       is_contract_price: p.is_contract_price || false,
-      batch_id: p.batch_id || batchId // 優先使用 price 內的 batch_id，否則用參數
+      batch_id: p.batch_id || batchId // Prioritize price's batch_id, otherwise use param
     }));
 
     const { data, error } = await supabase
@@ -789,7 +789,7 @@ export const priceHistoryService = {
     return { success: true, count: data.length, data };
   },
 
-  // 獲取價格歷史
+  // Get price history
   async getPrices(userId, options = {}) {
     const { supplierId, materialId, startDate, endDate, limit = 100, offset = 0 } = options;
 
@@ -821,7 +821,7 @@ export const priceHistoryService = {
     return data || [];
   },
 
-  // 刪除價格記錄
+  // Delete price record
   async delete(priceId) {
     const { error } = await supabase
       .from('price_history')
@@ -832,7 +832,7 @@ export const priceHistoryService = {
     return { success: true };
   },
 
-  // 獲取最新價格
+  // Get latest price
   async getLatestPrice(userId, supplierId, materialId) {
     const { data, error } = await supabase
       .from('price_history')
@@ -856,7 +856,7 @@ export const priceHistoryService = {
  * Conversations Operations (AI Chat)
  */
 export const conversationsService = {
-  // 獲取所有對話
+  // Get all conversations
   async getConversations(userId) {
     const { data, error } = await supabase
       .from('conversations')
@@ -868,7 +868,7 @@ export const conversationsService = {
     return data || [];
   },
 
-  // 創建新對話
+  // Create new conversation
   async createConversation(userId, title = 'New Conversation') {
     const newConversation = {
       id: Date.now().toString(),
@@ -890,7 +890,7 @@ export const conversationsService = {
     return newConversation;
   },
 
-  // 更新對話
+  // Update conversation
   async updateConversation(conversationId, userId, updates) {
     const { data, error } = await supabase
       .from('conversations')
@@ -906,7 +906,7 @@ export const conversationsService = {
     return data[0];
   },
 
-  // 刪除對話
+  // Delete conversation
   async deleteConversation(conversationId, userId) {
     const { error } = await supabase
       .from('conversations')
@@ -923,7 +923,7 @@ export const conversationsService = {
  * Authentication Operations
  */
 export const authService = {
-  // 登入
+  // Sign in
   async signIn(email, password) {
     const { data, error } = await supabase.auth.signInWithPassword({
       email,
@@ -934,7 +934,7 @@ export const authService = {
     return data;
   },
 
-  // 註冊
+  // Sign up
   async signUp(email, password) {
     const { data, error } = await supabase.auth.signUp({
       email,
@@ -945,21 +945,21 @@ export const authService = {
     return data;
   },
 
-  // 登出
+  // Sign out
   async signOut() {
     const { error } = await supabase.auth.signOut();
     if (error) throw error;
     return { success: true };
   },
 
-  // 獲取當前 session
+  // Get current session
   async getSession() {
     const { data: { session }, error } = await supabase.auth.getSession();
     if (error) throw error;
     return session;
   },
 
-  // 監聽認證狀態變化
+  // Listen for auth state changes
   onAuthStateChange(callback) {
     return supabase.auth.onAuthStateChange(callback);
   }
@@ -967,16 +967,16 @@ export const authService = {
 
 /**
  * Upload Mappings Operations
- * 儲存和管理欄位映射模板
+ * Store and manage field mapping templates
  */
 export const uploadMappingsService = {
   /**
-   * 保存或更新欄位映射模板
-   * @param {string} userId - 使用者 ID
-   * @param {string} uploadType - 上傳類型
-   * @param {Array} originalColumns - 原始 Excel 欄位列表
-   * @param {Object} mappingJson - 欄位映射關係
-   * @returns {Promise<Object>} 保存的 mapping 記錄
+   * Save or update field mapping template
+   * @param {string} userId - User ID
+   * @param {string} uploadType - Upload type
+   * @param {Array} originalColumns - Original Excel column list
+   * @param {Object} mappingJson - Field mapping relationships
+   * @returns {Promise<Object>} Saved mapping record
    */
   async saveMapping(userId, uploadType, originalColumns, mappingJson) {
     const payload = {
@@ -986,7 +986,7 @@ export const uploadMappingsService = {
       mapping_json: mappingJson
     };
 
-    // 使用 upsert 策略：如果已存在則更新，不存在則插入
+    // Use upsert strategy: update if exists, insert if not
     const { data, error } = await supabase
       .from('upload_mappings')
       .upsert(payload, {
@@ -1001,10 +1001,10 @@ export const uploadMappingsService = {
   },
 
   /**
-   * 根據使用者和上傳類型獲取最新的映射模板
-   * @param {string} userId - 使用者 ID
-   * @param {string} uploadType - 上傳類型
-   * @returns {Promise<Object|null>} 映射記錄或 null
+   * Get latest mapping template by user and upload type
+   * @param {string} userId - User ID
+   * @param {string} uploadType - Upload type
+   * @returns {Promise<Object|null>} Mapping record or null
    */
   async getMapping(userId, uploadType) {
     const { data, error } = await supabase
@@ -1022,9 +1022,9 @@ export const uploadMappingsService = {
   },
 
   /**
-   * 獲取使用者的所有映射模板
-   * @param {string} userId - 使用者 ID
-   * @returns {Promise<Array>} 映射記錄列表
+   * Get all mapping templates for user
+   * @param {string} userId - User ID
+   * @returns {Promise<Array>} Mapping record list
    */
   async getAllMappings(userId) {
     const { data, error } = await supabase
@@ -1038,10 +1038,10 @@ export const uploadMappingsService = {
   },
 
   /**
-   * 刪除特定的映射模板
-   * @param {string} userId - 使用者 ID
-   * @param {string} uploadType - 上傳類型
-   * @returns {Promise<Object>} 成功訊息
+   * Delete specific mapping template
+   * @param {string} userId - User ID
+   * @param {string} uploadType - Upload type
+   * @returns {Promise<Object>} Success message
    */
   async deleteMapping(userId, uploadType) {
     const { error } = await supabase
@@ -1055,31 +1055,31 @@ export const uploadMappingsService = {
   },
 
   /**
-   * 智能映射：根據相似度自動套用之前的 mapping
-   * @param {string} userId - 使用者 ID
-   * @param {string} uploadType - 上傳類型
-   * @param {Array} currentColumns - 當前 Excel 欄位
-   * @returns {Promise<Object>} 建議的映射或空物件
+   * Smart mapping: auto-apply previous mapping based on similarity
+   * @param {string} userId - User ID
+   * @param {string} uploadType - Upload type
+   * @param {Array} currentColumns - Current Excel columns
+   * @returns {Promise<Object>} Suggested mapping or empty object
    */
   async smartMapping(userId, uploadType, currentColumns) {
     const savedMapping = await this.getMapping(userId, uploadType);
     
     if (!savedMapping) {
-      return {}; // 沒有保存的映射
+      return {}; // No saved mapping
     }
 
     const { original_columns: savedColumns, mapping_json: savedMappingJson } = savedMapping;
 
-    // 建立新的映射物件
+    // Build new mapping object
     const smartMappingResult = {};
 
-    // 遍歷當前欄位，嘗試匹配之前的映射
+    // Iterate current columns, try to match previous mapping
     currentColumns.forEach(currentCol => {
-      // 完全匹配
+      // Exact match
       if (savedColumns.includes(currentCol) && savedMappingJson[currentCol]) {
         smartMappingResult[currentCol] = savedMappingJson[currentCol];
       } else {
-        // 模糊匹配（大小寫不敏感）
+        // Fuzzy match (case-insensitive)
         const lowerCurrentCol = currentCol.toLowerCase();
         const matchedCol = savedColumns.find(
           savedCol => savedCol.toLowerCase() === lowerCurrentCol
@@ -1099,13 +1099,13 @@ export const uploadMappingsService = {
  * BOM Edges Operations
  */
 export const bomEdgesService = {
-  // 批量插入 BOM 關係
+  // Batch insert BOM edges
   async batchInsert(userId, bomEdges, batchId = null) {
     if (!bomEdges || bomEdges.length === 0) {
       return { success: true, count: 0 };
     }
 
-    // ✅ LOG 1: 印出 table / rows count / batchId type
+    // ✅ LOG 1: Print table / rows count / batchId type
     console.info("[ingest] table=bom_edges, rows=", bomEdges.length, ", batchId type=", typeof batchId, ", batchId value=", JSON.stringify(batchId).slice(0, 200));
     // #region agent log
     fetch('http://127.0.0.1:7242/ingest/35d967fa-aaea-4f36-8ecf-97e2f2e17afa',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'supabaseClient.js:bomEdgesService.batchInsert',message:'[ingest] LOG1 table/uploadType/rows/batchId',data:{tableName:'bom_edges',uploadType:'bom_edge',rows:bomEdges.length,batchIdType:typeof batchId,batchIdPreview:JSON.stringify(batchId).slice(0,200)},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A'})}).catch(()=>{});
@@ -1133,7 +1133,7 @@ export const bomEdgesService = {
       notes: edge.notes || null
     }));
 
-    // ✅ LOG 2: 印出第一筆 row 的 keys + uuid 欄位值型態
+    // ✅ LOG 2: Print first row keys + uuid field value types
     const sample = payload[0];
     const uuidFieldTypes = {};
     if (sample) {
@@ -1156,7 +1156,7 @@ export const bomEdgesService = {
     fetch('http://127.0.0.1:7242/ingest/35d967fa-aaea-4f36-8ecf-97e2f2e17afa',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'supabaseClient.js:bomEdgesService.batchInsert',message:'[ingest] LOG2 sample keys + uuid field types',data:{sampleKeys:sample?Object.keys(sample):null,uuidFieldTypes},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'B'})}).catch(()=>{});
     // #endregion
 
-    // ✅ LOG 3: 印出 request body top-level structure
+    // ✅ LOG 3: Print request body top-level structure
     console.info("[ingest] payload is array:", Array.isArray(payload), ", length=", payload.length);
     console.info("[ingest] payload preview (first 800 chars):", JSON.stringify(payload).slice(0, 800));
     // #region agent log
@@ -1172,7 +1172,7 @@ export const bomEdgesService = {
     return { success: true, count: data.length, data };
   },
 
-  // 獲取 BOM 關係
+  // Get BOM edges
   async getBomEdges(userId, options = {}) {
     const { parentMaterial, childMaterial, plantId, limit = 100, offset = 0 } = options;
 
@@ -1200,8 +1200,8 @@ export const bomEdgesService = {
     return data || [];
   },
 
-  // 獲取 BOM 關係（用於 BOM Explosion 計算）
-  // 支援根據 plantId 和 timeBuckets 過濾（考慮時效性）
+  // Get BOM edges (for BOM Explosion calculation)
+  // Supports filtering by plantId and timeBuckets (considering validity)
   async fetchBomEdges(userId, plantId = null, timeBuckets = []) {
     let query = supabase
       .from('bom_edges')
@@ -1209,14 +1209,14 @@ export const bomEdgesService = {
       .eq('user_id', userId)
       .order('parent_material', { ascending: true });
 
-    // 工廠過濾：plant_id 匹配或為 NULL（通用 BOM）
+    // Plant filter: match plant_id or NULL (universal BOM)
     if (plantId) {
       query = query.or(`plant_id.eq.${plantId},plant_id.is.null`);
     }
 
-    // 時效性過濾：如果提供 timeBuckets，需要檢查 valid_from/valid_to
-    // 注意：這裡只過濾基本條件，實際的時效性檢查在計算邏輯中進行
-    // 因為需要將 time_bucket 轉換為日期後再比較
+    // Validity filter: if timeBuckets provided, need to check valid_from/valid_to
+    // Note: only basic conditions filtered here, actual validity check done in calculation logic
+    // Because time_bucket needs to be converted to date before comparison
 
     const { data, error } = await query;
     if (error) throw error;
@@ -1228,7 +1228,7 @@ export const bomEdgesService = {
  * Demand FG Operations
  */
 export const demandFgService = {
-  // 批量插入 FG 需求
+  // Batch insert FG demands
   async batchInsert(userId, demands, batchId = null) {
     if (!demands || demands.length === 0) {
       return { success: true, count: 0 };
@@ -1262,7 +1262,7 @@ export const demandFgService = {
     return { success: true, count: data.length, data };
   },
 
-  // 獲取 FG 需求
+  // Get FG demands
   async getDemands(userId, options = {}) {
     const { materialCode, plantId, startTimeBucket, endTimeBucket, limit = 100, offset = 0 } = options;
 
@@ -1294,8 +1294,8 @@ export const demandFgService = {
     return data || [];
   },
 
-  // 獲取 FG 需求（用於 BOM Explosion 計算）
-  // 支援根據 plantId 和 timeBuckets 過濾
+  // Get FG demands (for BOM Explosion calculation)
+  // Supports filtering by plantId and timeBuckets
   async fetchDemandFg(userId, plantId = null, timeBuckets = []) {
     let query = supabase
       .from('demand_fg')
@@ -1303,12 +1303,12 @@ export const demandFgService = {
       .eq('user_id', userId)
       .order('time_bucket', { ascending: true });
 
-    // 工廠過濾
+    // Plant filter
     if (plantId) {
       query = query.eq('plant_id', plantId);
     }
 
-    // 時間桶過濾：如果提供 timeBuckets 陣列，只取得這些時間桶的需求
+    // Time bucket filter: if timeBuckets array provided, only get demands for these buckets
     if (timeBuckets && timeBuckets.length > 0) {
       query = query.in('time_bucket', timeBuckets);
     }
@@ -1435,7 +1435,7 @@ export const demandForecastService = {
 };
 
 /**
- * Forecast Runs - 每次 BOM Explosion 建立一筆，用於追溯
+ * Forecast Runs - One record per BOM Explosion run, for traceability
  */
 export const forecastRunsService = {
   async createRun(userId, options = {}) {
@@ -1498,7 +1498,7 @@ export const forecastRunsService = {
  * Component Demand Operations
  */
 export const componentDemandService = {
-  // 獲取 Component 需求
+  // Get Component demands
   async getComponentDemands(userId, options = {}) {
     const { materialCode, plantId, timeBucket, limit = 100, offset = 0 } = options;
 
@@ -1526,18 +1526,18 @@ export const componentDemandService = {
     return data || [];
   },
 
-  // 批量 Upsert Component 需求（用於 BOM Explosion 計算結果）
-  // 根據 material_code + plant_id + time_bucket + user_id 作為唯一鍵進行 upsert
-  // 注意：如果同一批次重新計算，應該先調用 deleteComponentOutputsByBatch 清除舊資料
+  // Batch Upsert Component demands (for BOM Explosion calculation results)
+  // Uses material_code + plant_id + time_bucket + user_id as unique key for upsert
+  // Note: if recalculating same batch, should call deleteComponentOutputsByBatch first to clear old data
   async upsertComponentDemand(rows) {
     if (!rows || rows.length === 0) {
       return { success: true, count: 0 };
     }
 
     try {
-      // 準備 upsert 資料 - 只包含 DB schema 中存在的欄位
+      // Prepare upsert data - only include fields that exist in DB schema
       const payload = rows.map((row, index) => {
-        // 驗證必要欄位
+        // Validate required fields
         if (!row.user_id || !row.material_code || !row.plant_id || !row.time_bucket) {
           throw new Error(`Row ${index}: Missing required fields (user_id, material_code, plant_id, or time_bucket)`);
         }
@@ -1545,7 +1545,7 @@ export const componentDemandService = {
           throw new Error(`Row ${index}: Missing demand_qty`);
         }
 
-        // 構造 payload - 含 forecast_run_id（版本化）
+        // Build payload - with forecast_run_id (versioned)
         const record = {
           user_id: row.user_id,
           batch_id: row.batch_id || null,
@@ -1568,7 +1568,7 @@ export const componentDemandService = {
         return record;
       });
 
-      // 唯一約束：(user_id, forecast_run_id, material_code, plant_id, time_bucket)
+      // Unique constraint: (user_id, forecast_run_id, material_code, plant_id, time_bucket)
       const { data, error } = await supabase
         .from('component_demand')
         .upsert(payload, {
@@ -1584,7 +1584,7 @@ export const componentDemandService = {
           hint: error.hint
         });
 
-        // Fallback：先刪除再插入（依 user_id + forecast_run_id + 維度）
+        // Fallback: delete then insert (by user_id + forecast_run_id + dimensions)
         const userId = rows[0].user_id;
         const forecastRunId = rows[0].forecast_run_id ?? null;
         const materialCodes = [...new Set(rows.map(r => r.material_code))];
@@ -1615,7 +1615,7 @@ export const componentDemandService = {
           throw new Error(`Query failed: ${queryError.message}`);
         }
 
-        // 如果有現有記錄，先刪除
+        // If existing records found, delete first
         if (existingData && existingData.length > 0) {
           const existingIds = existingData.map(r => r.id);
           const { error: deleteError } = await supabase
@@ -1635,7 +1635,7 @@ export const componentDemandService = {
           }
         }
 
-        // 插入新記錄
+        // Insert new records
         const { data: insertData, error: insertError } = await supabase
           .from('component_demand')
           .insert(payload)
@@ -1658,9 +1658,9 @@ export const componentDemandService = {
 
       return { success: true, count: data.length, data };
     } catch (error) {
-      // 捕捉並重新拋出更清楚的錯誤
+      // Catch and re-throw with clearer error
       if (error.message.includes('Missing required fields') || error.message.includes('Missing demand_qty')) {
-        throw error; // 直接拋出驗證錯誤
+        throw error; // Directly throw validation error
       }
       
       const enhancedError = new Error(
@@ -1672,7 +1672,7 @@ export const componentDemandService = {
     }
   },
 
-  // 根據 batch_id 刪除 Component 需求
+  // Delete Component demands by batch_id
   async deleteByBatch(batchId) {
     if (!batchId) {
       return { success: true, count: 0 };
@@ -1688,14 +1688,14 @@ export const componentDemandService = {
     return { success: true, count: data?.length || 0 };
   },
 
-  // 刪除 Component 輸出（包含 component_demand 和 component_demand_trace）
-  // 用於批次重新計算時清除舊資料
+  // Delete Component outputs (including component_demand and component_demand_trace)
+  // Used to clear old data when recalculating a batch
   async deleteComponentOutputsByBatch(batchId) {
     if (!batchId) {
       return { success: true, componentDemandCount: 0, traceCount: 0 };
     }
 
-    // 先刪除追溯記錄（因為有外鍵關聯）
+    // Delete trace records first (due to foreign key relationship)
     const { data: traceData, error: traceError } = await supabase
       .from('component_demand_trace')
       .delete()
@@ -1704,7 +1704,7 @@ export const componentDemandService = {
 
     if (traceError) throw traceError;
 
-    // 再刪除 Component 需求
+    // Then delete Component demands
     const { data: demandData, error: demandError } = await supabase
       .from('component_demand')
       .delete()
@@ -1721,7 +1721,7 @@ export const componentDemandService = {
   },
 
   /**
-   * 根據 forecast_run_id 取得該 run 的 component_demand（供 Risk / Inventory Projection 使用）
+   * Get component_demand for a specific forecast run (for Risk / Inventory Projection)
    * @param {string} userId
    * @param {string} forecastRunId
    * @param {{ timeBuckets?: string[], plantId?: string }} [options]
@@ -1744,7 +1744,7 @@ export const componentDemandService = {
     return data || [];
   },
 
-  // 根據 batch_id 獲取 Component 需求（支援篩選和分頁）
+  // Get Component demands by batch_id (with filtering and pagination)
   async getComponentDemandsByBatch(userId, batchId, options = {}) {
     const { filters = {}, limit = 100, offset = 0 } = options;
 
@@ -1782,7 +1782,7 @@ export const componentDemandService = {
  * Component Demand Trace Operations
  */
 export const componentDemandTraceService = {
-  // 獲取追溯資訊
+  // Get trace information
   async getTrace(userId, componentMaterial, timeBucket) {
     let query = supabase
       .from('component_demand_trace')
@@ -1795,12 +1795,12 @@ export const componentDemandTraceService = {
       .eq('user_id', userId);
 
     if (componentMaterial) {
-      // 需要通過 component_demand 表關聯查詢
+      // Need to query through component_demand table relationship
       query = query.eq('component_demand.material_code', componentMaterial);
     }
 
     if (timeBucket) {
-      // 需要通過 component_demand 表關聯查詢
+      // Need to query through component_demand table relationship
       query = query.eq('component_demand.time_bucket', timeBucket);
     }
 
@@ -1809,19 +1809,19 @@ export const componentDemandTraceService = {
     return data || [];
   },
 
-  // 批量插入 Component 需求追溯記錄
-  // 注意：根據用戶要求，trace 使用 fg_material_code/component_material_code/path_json
-  // 但 schema 中使用的是 fg_demand_id/component_demand_id/bom_edge_id
-  // 這裡按照 schema 實作，但可以添加額外欄位（如果 schema 支援）
+  // Batch insert Component demand trace records
+  // Note: per user requirements, trace uses fg_material_code/component_material_code/path_json
+  // But schema uses fg_demand_id/component_demand_id/bom_edge_id
+  // Implemented per schema here, but can add extra fields (if schema supports)
   async insertComponentDemandTrace(rows) {
     if (!rows || rows.length === 0) {
       return { success: true, count: 0 };
     }
 
     try {
-      // 準備插入資料 - 只包含 DB schema 中存在的欄位
+      // Prepare insert data - only include fields that exist in DB schema
       const payload = rows.map((row, index) => {
-        // 驗證必要欄位
+        // Validate required fields
         if (!row.user_id || !row.component_demand_id || !row.fg_demand_id) {
           throw new Error(`Row ${index}: Missing required fields (user_id, component_demand_id, or fg_demand_id)`);
         }
@@ -1845,13 +1845,13 @@ export const componentDemandTraceService = {
         .select();
 
       if (error) {
-        // 詳細的錯誤訊息
+        // Detailed error message
         const errorDetails = {
           message: error.message,
           code: error.code,
           details: error.details,
           hint: error.hint,
-          sample_payload: payload.slice(0, 2) // 顯示前 2 筆 payload 範例
+          sample_payload: payload.slice(0, 2) // Show first 2 payload samples
         };
         console.error('insertComponentDemandTrace failed:', errorDetails);
         throw new Error(`Database insert failed: ${error.message} (code: ${error.code})`);
@@ -1859,9 +1859,9 @@ export const componentDemandTraceService = {
 
       return { success: true, count: data.length, data };
     } catch (error) {
-      // 捕捉並重新拋出更清楚的錯誤
+      // Catch and re-throw with clearer error
       if (error.message.includes('Missing required fields')) {
-        throw error; // 直接拋出驗證錯誤
+        throw error; // Directly throw validation error
       }
       
       const enhancedError = new Error(
@@ -1873,7 +1873,7 @@ export const componentDemandTraceService = {
     }
   },
 
-  // 根據 batch_id 刪除追溯記錄
+  // Delete trace records by batch_id
   async deleteByBatch(batchId) {
     if (!batchId) {
       return { success: true, count: 0 };
@@ -1889,7 +1889,7 @@ export const componentDemandTraceService = {
     return { success: true, count: data?.length || 0 };
   },
 
-  // 根據 batch_id 獲取追溯記錄（支援篩選和分頁）
+  // Get trace records by batch_id (with filtering and pagination)
   async getTracesByBatch(userId, batchId, options = {}) {
     const { filters = {}, limit = 100, offset = 0 } = options;
 
@@ -1933,14 +1933,14 @@ export const componentDemandTraceService = {
 
 /**
  * PO Open Lines Operations
- * 管理採購訂單未交貨明細
+ * Manage purchase order open line items
  */
 export const poOpenLinesService = {
   /**
-   * 批量插入 PO Open Lines
-   * @param {string} userId - 使用者 ID
-   * @param {Array} rows - PO Open Lines 資料陣列
-   * @param {string} batchId - 批次 ID（可選）
+   * Batch insert PO Open Lines
+   * @param {string} userId - User ID
+   * @param {Array} rows - PO Open Lines data array
+   * @param {string} batchId - Batch ID (optional)
    * @returns {Promise<Object>} { success, count, data }
    */
   async batchInsert(userId, rows, batchId = null) {
@@ -1963,7 +1963,7 @@ export const poOpenLinesService = {
       notes: row.notes || null
     }));
 
-    // 使用 upsert 避免重複（根據 UNIQUE 約束）
+    // Use upsert to avoid duplicates (based on UNIQUE constraint)
     const { data, error } = await supabase
       .from('po_open_lines')
       .upsert(payload, {
@@ -1977,18 +1977,18 @@ export const poOpenLinesService = {
   },
 
   /**
-   * 根據條件查詢 PO Open Lines
-   * @param {string} userId - 使用者 ID
-   * @param {Object} options - 查詢選項
-   * @param {string} options.plantId - 工廠 ID（null = all plants）
-   * @param {Array<string>} options.timeBuckets - 時間桶陣列（null = all time）
-   * @param {string} options.materialCode - 物料代碼（可選）
-   * @param {string} options.poNumber - 採購訂單號碼（可選）
-   * @param {string} options.supplierId - 供應商 ID（可選）
-   * @param {string} options.status - 狀態（可選）
-   * @param {number} options.limit - 限制筆數（預設 1000）
-   * @param {number} options.offset - 偏移量（預設 0）
-   * @returns {Promise<Array>} PO Open Lines 資料陣列
+   * Query PO Open Lines by conditions
+   * @param {string} userId - User ID
+   * @param {Object} options - Query options
+   * @param {string} options.plantId - Plant ID (null = all plants)
+   * @param {Array<string>} options.timeBuckets - Time bucket array (null = all time)
+   * @param {string} options.materialCode - Material code (optional)
+   * @param {string} options.poNumber - PO number (optional)
+   * @param {string} options.supplierId - Supplier ID (optional)
+   * @param {string} options.status - Status (optional)
+   * @param {number} options.limit - Row limit (default 1000)
+   * @param {number} options.offset - Offset (default 0)
+   * @returns {Promise<Array>} PO Open Lines data array
    */
   async fetchByFilters(userId, options = {}) {
     const { 
@@ -2009,32 +2009,32 @@ export const poOpenLinesService = {
       .order('time_bucket', { ascending: true })
       .range(offset, offset + limit - 1);
 
-    // 工廠過濾（null = all plants）
+    // Plant filter (null = all plants)
     if (plantId) {
       query = query.eq('plant_id', plantId);
     }
 
-    // 時間桶過濾（null = all time）
+    // Time bucket filter (null = all time)
     if (timeBuckets && timeBuckets.length > 0) {
       query = query.in('time_bucket', timeBuckets);
     }
 
-    // 物料代碼過濾
+    // Material code filter
     if (materialCode) {
       query = query.eq('material_code', materialCode);
     }
 
-    // 採購訂單號碼過濾
+    // PO number filter
     if (poNumber) {
       query = query.eq('po_number', poNumber);
     }
 
-    // 供應商過濾
+    // Supplier filter
     if (supplierId) {
       query = query.eq('supplier_id', supplierId);
     }
 
-    // 狀態過濾
+    // Status filter
     if (status) {
       query = query.eq('status', status);
     }
@@ -2045,8 +2045,8 @@ export const poOpenLinesService = {
   },
 
   /**
-   * 根據批次 ID 刪除 PO Open Lines（支援 undo）
-   * @param {string} batchId - 批次 ID
+   * Delete PO Open Lines by batch ID (supports undo)
+   * @param {string} batchId - Batch ID
    * @returns {Promise<Object>} { success, count }
    */
   async deleteByBatch(batchId) {
@@ -2065,10 +2065,10 @@ export const poOpenLinesService = {
   },
 
   /**
-   * 獲取指定 time_buckets 的入庫資料（供 Inventory Projection 使用）
-   * @param {string} userId - 使用者 ID
-   * @param {string[]} timeBuckets - 時間桶陣列
-   * @param {string|null} plantId - 工廠 ID（null = all plants）
+   * Get inbound data for specified time_buckets (for Inventory Projection)
+   * @param {string} userId - User ID
+   * @param {string[]} timeBuckets - Time bucket array
+   * @param {string|null} plantId - Plant ID (null = all plants)
    * @returns {Promise<Array<{ material_code: string, plant_id: string, time_bucket: string, open_qty: number }>>}
    */
   async getInboundByBuckets(userId, timeBuckets, plantId = null) {
@@ -2111,10 +2111,10 @@ export const poOpenLinesService = {
   },
 
   /**
-   * 獲取 PO Open Lines（通用查詢方法）
-   * @param {string} userId - 使用者 ID
-   * @param {Object} options - 查詢選項
-   * @returns {Promise<Array>} PO Open Lines 資料陣列
+   * Get PO Open Lines (general query method)
+   * @param {string} userId - User ID
+   * @param {Object} options - Query options
+   * @returns {Promise<Array>} PO Open Lines data array
    */
   async getPoOpenLines(userId, options = {}) {
     const { 
@@ -2157,14 +2157,14 @@ export const poOpenLinesService = {
 
 /**
  * Inventory Snapshots Operations
- * 管理庫存快照資料
+ * Manage inventory snapshot data
  */
 export const inventorySnapshotsService = {
   /**
-   * 批量插入 Inventory Snapshots
-   * @param {string} userId - 使用者 ID
-   * @param {Array} rows - Inventory Snapshots 資料陣列
-   * @param {string} batchId - 批次 ID（可選）
+   * Batch insert Inventory Snapshots
+   * @param {string} userId - User ID
+   * @param {Array} rows - Inventory Snapshots data array
+   * @param {string} batchId - Batch ID (optional)
    * @returns {Promise<Object>} { success, count, data }
    */
   async batchInsert(userId, rows, batchId = null) {
@@ -2185,7 +2185,7 @@ export const inventorySnapshotsService = {
       notes: row.notes || null
     }));
 
-    // 使用 upsert 避免重複（根據 UNIQUE 約束）
+    // Use upsert to avoid duplicates (based on UNIQUE constraint)
     const { data, error } = await supabase
       .from('inventory_snapshots')
       .upsert(payload, {
@@ -2199,17 +2199,17 @@ export const inventorySnapshotsService = {
   },
 
   /**
-   * 根據條件查詢 Inventory Snapshots
-   * @param {string} userId - 使用者 ID
-   * @param {Object} options - 查詢選項
-   * @param {string} options.plantId - 工廠 ID（null = all plants）
-   * @param {string} options.materialCode - 物料代碼（可選）
-   * @param {string} options.snapshotDate - 快照日期（可選）
-   * @param {string} options.startDate - 起始日期（可選）
-   * @param {string} options.endDate - 結束日期（可選）
-   * @param {number} options.limit - 限制筆數（預設 1000）
-   * @param {number} options.offset - 偏移量（預設 0）
-   * @returns {Promise<Array>} Inventory Snapshots 資料陣列
+   * Query Inventory Snapshots by conditions
+   * @param {string} userId - User ID
+   * @param {Object} options - Query options
+   * @param {string} options.plantId - Plant ID (null = all plants)
+   * @param {string} options.materialCode - Material code (optional)
+   * @param {string} options.snapshotDate - Snapshot date (optional)
+   * @param {string} options.startDate - Start date (optional)
+   * @param {string} options.endDate - End date (optional)
+   * @param {number} options.limit - Row limit (default 1000)
+   * @param {number} options.offset - Offset (default 0)
+   * @returns {Promise<Array>} Inventory Snapshots data array
    */
   async fetchByFilters(userId, options = {}) {
     const { 
@@ -2229,22 +2229,22 @@ export const inventorySnapshotsService = {
       .order('snapshot_date', { ascending: false })
       .range(offset, offset + limit - 1);
 
-    // 工廠過濾（null = all plants）
+    // Plant filter (null = all plants)
     if (plantId) {
       query = query.eq('plant_id', plantId);
     }
 
-    // 物料代碼過濾
+    // Material code filter
     if (materialCode) {
       query = query.eq('material_code', materialCode);
     }
 
-    // 特定日期過濾
+    // Specific date filter
     if (snapshotDate) {
       query = query.eq('snapshot_date', snapshotDate);
     }
 
-    // 日期範圍過濾
+    // Date range filter
     if (startDate) {
       query = query.gte('snapshot_date', startDate);
     }
@@ -2259,7 +2259,7 @@ export const inventorySnapshotsService = {
   },
 
   /**
-   * 取得每個 material+plant 最新一筆庫存快照（供 Inventory Projection / Risk 使用）
+   * Get latest inventory snapshot per material+plant (for Inventory Projection / Risk)
    * @param {string} userId
    * @param {string|null} plantId
    * @param {{ limit?: number }} [opts]
@@ -2290,8 +2290,8 @@ export const inventorySnapshotsService = {
   },
 
   /**
-   * 根據批次 ID 刪除 Inventory Snapshots（支援 undo）
-   * @param {string} batchId - 批次 ID
+   * Delete Inventory Snapshots by batch ID (supports undo)
+   * @param {string} batchId - Batch ID
    * @returns {Promise<Object>} { success, count }
    */
   async deleteByBatch(batchId) {
@@ -2310,11 +2310,11 @@ export const inventorySnapshotsService = {
   },
 
   /**
-   * 獲取最新的庫存快照
-   * @param {string} userId - 使用者 ID
-   * @param {string} materialCode - 物料代碼
-   * @param {string} plantId - 工廠 ID
-   * @returns {Promise<Object|null>} 最新的庫存快照或 null
+   * Get latest inventory snapshot
+   * @param {string} userId - User ID
+   * @param {string} materialCode - Material code
+   * @param {string} plantId - Plant ID
+   * @returns {Promise<Object|null>} Latest inventory snapshot or null
    */
   async getLatestSnapshot(userId, materialCode, plantId) {
     const { data, error } = await supabase
@@ -2335,10 +2335,10 @@ export const inventorySnapshotsService = {
   },
 
   /**
-   * 獲取 Inventory Snapshots（通用查詢方法）
-   * @param {string} userId - 使用者 ID
-   * @param {Object} options - 查詢選項
-   * @returns {Promise<Array>} Inventory Snapshots 資料陣列
+   * Get Inventory Snapshots (general query method)
+   * @param {string} userId - User ID
+   * @param {Object} options - Query options
+   * @returns {Promise<Array>} Inventory Snapshots data array
    */
   async getInventorySnapshots(userId, options = {}) {
     const { 
@@ -2376,14 +2376,14 @@ export const inventorySnapshotsService = {
 
 /**
  * FG Financials Operations
- * 管理成品財務資料（定價與利潤）
+ * Manage finished goods financial data (pricing and profit)
  */
 export const fgFinancialsService = {
   /**
-   * 批量插入 FG Financials
-   * @param {string} userId - 使用者 ID
-   * @param {Array} rows - FG Financials 資料陣列
-   * @param {string} batchId - 批次 ID（可選）
+   * Batch insert FG Financials
+   * @param {string} userId - User ID
+   * @param {Array} rows - FG Financials data array
+   * @param {string} batchId - Batch ID (optional)
    * @returns {Promise<Object>} { success, count, data }
    */
   async batchInsert(userId, rows, batchId = null) {
@@ -2404,9 +2404,9 @@ export const fgFinancialsService = {
       notes: row.notes || null
     }));
 
-    // 注意：fg_financials 使用 UNIQUE INDEX with COALESCE
-    // 無法直接使用 onConflict with column names
-    // 改用先查詢再決定 insert/update 的策略
+    // Note: fg_financials uses UNIQUE INDEX with COALESCE
+    // Cannot directly use onConflict with column names
+    // Use query-then-decide insert/update strategy instead
     try {
       const { data, error } = await supabase
         .from('fg_financials')
@@ -2414,9 +2414,9 @@ export const fgFinancialsService = {
         .select();
 
       if (error) {
-        // 如果是唯一性衝突，嘗試使用 upsert（需要 DB 支援）
+        // If unique violation, try upsert (requires DB support)
         if (error.code === '23505') { // Unique violation
-          // Fallback: 逐筆處理 upsert
+          // Fallback: process upsert row by row
           const results = [];
           for (const row of payload) {
             const { data: upsertData, error: upsertError } = await supabase
@@ -2442,18 +2442,18 @@ export const fgFinancialsService = {
   },
 
   /**
-   * 根據條件查詢 FG Financials
-   * 特殊處理：優先查詢指定 plant_id 的資料，找不到則 fallback 到 global (plant_id is null)
-   * @param {string} userId - 使用者 ID
-   * @param {Object} options - 查詢選項
-   * @param {string} options.plantId - 工廠 ID（null = all plants，或用於 fallback 邏輯）
-   * @param {string} options.materialCode - 物料代碼（可選）
-   * @param {string} options.currency - 幣別（可選）
-   * @param {string} options.validDate - 有效日期（用於檢查 valid_from/valid_to，可選）
-   * @param {boolean} options.usePlantFallback - 是否使用 plant fallback 邏輯（預設 true）
-   * @param {number} options.limit - 限制筆數（預設 1000）
-   * @param {number} options.offset - 偏移量（預設 0）
-   * @returns {Promise<Array>} FG Financials 資料陣列
+   * Query FG Financials by conditions
+   * Special handling: prioritize querying specified plant_id data, fallback to global (plant_id is null) if not found
+   * @param {string} userId - User ID
+   * @param {Object} options - Query options
+   * @param {string} options.plantId - Plant ID (null = all plants, or used for fallback logic)
+   * @param {string} options.materialCode - Material code (optional)
+   * @param {string} options.currency - Currency (optional)
+   * @param {string} options.validDate - Valid date (for checking valid_from/valid_to, optional)
+   * @param {boolean} options.usePlantFallback - Whether to use plant fallback logic (default true)
+   * @param {number} options.limit - Row limit (default 1000)
+   * @param {number} options.offset - Offset (default 0)
+   * @returns {Promise<Array>} FG Financials data array
    */
   async fetchByFilters(userId, options = {}) {
     const { 
@@ -2466,9 +2466,9 @@ export const fgFinancialsService = {
       offset = 0 
     } = options;
 
-    // 如果指定 plantId 且啟用 fallback 邏輯
+    // If plantId specified and fallback logic enabled
     if (plantId && usePlantFallback) {
-      // 先查詢指定 plant_id 的資料
+      // First query data for specified plant_id
       let plantQuery = supabase
         .from('fg_financials')
         .select('*')
@@ -2485,7 +2485,7 @@ export const fgFinancialsService = {
         plantQuery = plantQuery.eq('currency', currency);
       }
 
-      // 有效日期檢查
+      // Valid date check
       if (validDate) {
         plantQuery = plantQuery
           .or(`valid_from.is.null,valid_from.lte.${validDate}`)
@@ -2495,12 +2495,12 @@ export const fgFinancialsService = {
       const { data: plantData, error: plantError } = await plantQuery;
       if (plantError) throw plantError;
 
-      // 如果找到資料，直接返回
+      // If data found, return directly
       if (plantData && plantData.length > 0) {
         return plantData;
       }
 
-      // 找不到，fallback 到 global (plant_id is null)
+      // Not found, fallback to global (plant_id is null)
       let globalQuery = supabase
         .from('fg_financials')
         .select('*')
@@ -2529,7 +2529,7 @@ export const fgFinancialsService = {
       return globalData || [];
     }
 
-    // 一般查詢（不使用 fallback）
+    // General query (without fallback)
     let query = supabase
       .from('fg_financials')
       .select('*')
@@ -2537,25 +2537,25 @@ export const fgFinancialsService = {
       .order('material_code', { ascending: true })
       .range(offset, offset + limit - 1);
 
-    // 工廠過濾（null = all plants）
+    // Plant filter (null = all plants)
     if (plantId) {
       query = query.eq('plant_id', plantId);
     } else if (plantId === null && !usePlantFallback) {
-      // 明確查詢 global pricing
+      // Explicitly query global pricing
       query = query.is('plant_id', null);
     }
 
-    // 物料代碼過濾
+    // Material code filter
     if (materialCode) {
       query = query.eq('material_code', materialCode);
     }
 
-    // 幣別過濾
+    // Currency filter
     if (currency) {
       query = query.eq('currency', currency);
     }
 
-    // 有效日期檢查
+    // Valid date check
     if (validDate) {
       query = query
         .or(`valid_from.is.null,valid_from.lte.${validDate}`)
@@ -2568,8 +2568,8 @@ export const fgFinancialsService = {
   },
 
   /**
-   * 根據批次 ID 刪除 FG Financials（支援 undo）
-   * @param {string} batchId - 批次 ID
+   * Delete FG Financials by batch ID (supports undo)
+   * @param {string} batchId - Batch ID
    * @returns {Promise<Object>} { success, count }
    */
   async deleteByBatch(batchId) {
@@ -2588,15 +2588,15 @@ export const fgFinancialsService = {
   },
 
   /**
-   * 獲取特定成品的財務資料（含 plant fallback）
-   * @param {string} userId - 使用者 ID
-   * @param {string} materialCode - 物料代碼
-   * @param {string} plantId - 工廠 ID（可選）
-   * @param {string} currency - 幣別（預設 USD）
-   * @returns {Promise<Object|null>} FG Financial 資料或 null
+   * Get financial data for a specific finished good (with plant fallback)
+   * @param {string} userId - User ID
+   * @param {string} materialCode - Material code
+   * @param {string} plantId - Plant ID (optional)
+   * @param {string} currency - Currency (default USD)
+   * @returns {Promise<Object|null>} FG Financial data or null
    */
   async getFgFinancial(userId, materialCode, plantId = null, currency = 'USD') {
-    // 先查詢指定 plant_id 的資料
+    // First query data for specified plant_id
     if (plantId) {
       const { data: plantData, error: plantError } = await supabase
         .from('fg_financials')
@@ -2614,7 +2614,7 @@ export const fgFinancialsService = {
       }
     }
 
-    // Fallback 到 global (plant_id is null)
+    // Fallback to global (plant_id is null)
     const { data, error } = await supabase
       .from('fg_financials')
       .select('*')
@@ -2634,10 +2634,10 @@ export const fgFinancialsService = {
   },
 
   /**
-   * 獲取 FG Financials（通用查詢方法）
-   * @param {string} userId - 使用者 ID
-   * @param {Object} options - 查詢選項
-   * @returns {Promise<Array>} FG Financials 資料陣列
+   * Get FG Financials (general query method)
+   * @param {string} userId - User ID
+   * @param {Object} options - Query options
+   * @returns {Promise<Array>} FG Financials data array
    */
   async getFgFinancials(userId, options = {}) {
     const { 
@@ -2679,6 +2679,6 @@ export const fgFinancialsService = {
 
 /**
  * Import Batches Operations
- * 管理匯入歷史和批次撤銷功能
+ * Manage import history and batch undo functionality
  */
 export { importBatchesService } from './importHistoryService';

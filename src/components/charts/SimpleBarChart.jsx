@@ -2,7 +2,7 @@ import React from 'react';
 
 /**
  * Simple Bar Chart Component
- * 簡單的長條圖組件
+ * Simple bar chart component
  */
 export const SimpleBarChart = ({
   data,
