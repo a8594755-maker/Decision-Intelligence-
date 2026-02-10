@@ -1,40 +1,40 @@
 /**
- * 資料驗證與清洗工具
- * 根據 schema 定義進行資料驗證、類型轉換和清洗
+ * Data Validation and Cleaning Utilities
+ * Performs data validation, type conversion, and cleaning based on schema definitions
  */
 
 import UPLOAD_SCHEMAS from './uploadSchemas';
 import { autoFillRows } from './dataAutoFill';
 
 /**
- * 嘗試解析日期的多種格式
- * 支援常見的日期格式：YYYY-MM-DD, YYYY/MM/DD, DD-MM-YYYY, MM/DD/YYYY, Excel 數字格式等
+ * Try parsing dates in multiple formats
+ * Supports common date formats: YYYY-MM-DD, YYYY/MM/DD, DD-MM-YYYY, MM/DD/YYYY, Excel numeric format, etc.
  */
 const parseDate = (dateValue) => {
   if (!dateValue) return null;
 
-  // 如果已經是 Date 物件
+  // If already a Date object
   if (dateValue instanceof Date) {
     if (isNaN(dateValue.getTime())) return null;
     const isoDate = dateValue.toISOString().split('T')[0];
-    // 驗證年份是否合理（1900-2100）
+    // Validate year is reasonable (1900-2100)
     const year = parseInt(isoDate.split('-')[0]);
     if (year < 1900 || year > 2100) return null;
     return isoDate;
   }
 
-  // 如果是數字，可能是 Excel 日期格式（從 1900-01-01 開始的天數）
+  // If numeric, may be Excel date format (days since 1900-01-01)
   if (typeof dateValue === 'number') {
-    // Excel 日期範圍：1 到 50000（約 1900-01-01 到 2036-xx-xx）
+    // Excel date range: 1 to 50000 (approx 1900-01-01 to 2036-xx-xx)
     if (dateValue < 1 || dateValue > 50000) {
       return null;
     }
     
     try {
-      // Excel 的日期基準是 1900-01-01，但有個 bug：把 1900 當成閏年
-      // 所以需要特殊處理
+      // Excel date epoch is 1900-01-01, but has a bug: treats 1900 as leap year
+      // So special handling is needed
       const excelEpoch = new Date(1900, 0, 1);
-      const daysOffset = dateValue - 1; // Excel 從 1 開始計數
+      const daysOffset = dateValue - 1; // Excel counts from 1
       const resultDate = new Date(excelEpoch.getTime() + daysOffset * 24 * 60 * 60 * 1000);
       
       if (isNaN(resultDate.getTime())) return null;
@@ -53,20 +53,20 @@ const parseDate = (dateValue) => {
   const str = String(dateValue).trim();
   if (!str) return null;
 
-  // 檢查是否包含無效字符（如非ISO格式的+號）
-  // 允許標準ISO日期格式，如：2022-03-02T13:55:13.263278+00:00 或 2022-03-02 13:55:13.263278+00:00
+  // Check for invalid characters (e.g. non-ISO format + sign)
+  // Allow standard ISO date formats like: 2022-03-02T13:55:13.263278+00:00 or 2022-03-02 13:55:13.263278+00:00
   if (str.includes('+') && !str.match(/^\d{4}-\d{2}-\d{2}[T\s]/)) {
     console.warn('Invalid date format detected:', str);
     return null;
   }
 
-  // 嘗試直接解析（適用於 ISO 格式）
+  // Try direct parsing (for ISO format)
   try {
     let date = new Date(str);
     if (!isNaN(date.getTime())) {
       const isoDate = date.toISOString().split('T')[0];
       const year = parseInt(isoDate.split('-')[0]);
-      // 驗證年份是否合理
+      // Validate year is reasonable
       if (year < 1900 || year > 2100) {
         console.warn('Year out of reasonable range:', year, 'from', str);
         return null;
@@ -74,10 +74,10 @@ const parseDate = (dateValue) => {
       return isoDate;
     }
   } catch (e) {
-    // 繼續嘗試其他格式
+    // Continue trying other formats
   }
 
-  // 常見日期格式的正則表達式
+  // Common date format regex patterns
   const patterns = [
     // YYYY-MM-DD or YYYY/MM/DD
     {
@@ -114,7 +114,7 @@ const parseDate = (dateValue) => {
     }
   ];
 
-  // 嘗試每個格式
+  // Try each format
   for (const pattern of patterns) {
     const match = str.match(pattern.regex);
     if (match) {
@@ -135,19 +135,19 @@ const parseDate = (dateValue) => {
 };
 
 /**
- * 嘗試轉換為數字
+ * Try converting to number
  */
 const parseNumber = (value) => {
   if (value === null || value === undefined || value === '') {
     return null;
   }
 
-  // 如果已經是數字
+  // If already a number
   if (typeof value === 'number') {
     return isNaN(value) ? null : value;
   }
 
-  // 移除常見的非數字字符（逗號、貨幣符號等）
+  // Remove common non-numeric characters (commas, currency symbols, etc.)
   const cleaned = String(value).replace(/[,\s$€£¥]/g, '');
   const num = Number(cleaned);
 
@@ -155,7 +155,7 @@ const parseNumber = (value) => {
 };
 
 /**
- * 嘗試轉換為布林值
+ * Try converting to boolean
  */
 const parseBoolean = (value) => {
   if (typeof value === 'boolean') return value;
@@ -169,21 +169,21 @@ const parseBoolean = (value) => {
 };
 
 /**
- * 檢查文字內容是否為異常資料
- * 檢測 "??", "???", 只有符號等情況
+ * Check if text content is abnormal data
+ * Detects "??", "???", symbol-only content, etc.
  */
 const isAbnormalText = (value) => {
   if (!value || value === '') return false;
   
   const str = String(value).trim();
   
-  // 檢查是否為問號序列
+  // Check if question mark sequence
   if (/^\?+$/.test(str)) return true;
   
-  // 檢查是否只包含符號（不含字母或數字）
+  // Check if contains only symbols (no letters or digits)
   if (/^[^\w\u4e00-\u9fa5]+$/.test(str)) return true;
   
-  // 檢查是否為常見的無效標記
+  // Check if common invalid marker
   const invalidMarkers = ['n/a', 'na', 'null', 'none', '--', '---', '____'];
   if (invalidMarkers.includes(str.toLowerCase())) return true;
   
@@ -191,8 +191,8 @@ const isAbnormalText = (value) => {
 };
 
 /**
- * 清洗和驗證電話號碼
- * @param {*} value - 原始電話號碼
+ * Clean and validate phone number
+ * @param {*} value - Raw phone number
  * @returns {Object} { value, errors }
  */
 const parsePhone = (value) => {
@@ -200,18 +200,18 @@ const parsePhone = (value) => {
     return { value: null, errors: [] };
   }
 
-  // 移除空白、括號、dash、加號等
+  // Remove whitespace, parentheses, dashes, plus signs, etc.
   let cleaned = String(value)
     .replace(/[\s\(\)\-\+]/g, '')
     .trim();
 
-  // 檢查是否至少有 6 位數字
+  // Check if at least 6 digits
   const digitCount = (cleaned.match(/\d/g) || []).length;
   
   if (digitCount < 6) {
     return {
       value: cleaned,
-      errors: [`電話號碼格式不正確：${value}（至少需要 6 位數字）`]
+      errors: [`Invalid phone number format: ${value} (at least 6 digits required)`]
     };
   }
 
@@ -219,49 +219,49 @@ const parsePhone = (value) => {
 };
 
 /**
- * 驗證並清洗單一欄位的值
- * @param {*} value - 原始值
- * @param {Object} fieldDef - 欄位定義（來自 schema）
- * @param {string} uploadType - 上傳類型（用於特殊驗證邏輯）
- * @param {Object} row - 完整資料列（用於跨欄位驗證）
+ * Validate and clean a single field value
+ * @param {*} value - Raw value
+ * @param {Object} fieldDef - Field definition (from schema)
+ * @param {string} uploadType - Upload type (for special validation logic)
+ * @param {Object} row - Complete data row (for cross-field validation)
  * @returns {Object} { value, errors: [] }
  */
 const validateAndCleanField = (value, fieldDef, uploadType, row = {}) => {
   const errors = [];
   let cleanedValue = value;
 
-  // 檢查必填欄位
+  // Check required fields
   if (fieldDef.required) {
     if (value === null || value === undefined || value === '' || 
         (typeof value === 'string' && value.trim().length === 0)) {
       
-      // 特殊处理：inventory_snapshots 的 onhand_qty 可以为空，自动设为 0
+      // Special handling: inventory_snapshots onhand_qty can be empty, auto-set to 0
       if (uploadType === 'inventory_snapshots' && fieldDef.key === 'onhand_qty') {
         cleanedValue = 0;
         return { value: cleanedValue, errors: [] };
       }
       
-      errors.push(`${fieldDef.label}為必填欄位，不可為空`);
+      errors.push(`${fieldDef.label} is required and cannot be empty`);
       return { value: null, errors };
     }
   }
 
-  // 如果是空值且非必填，直接返回預設值或 null
+  // If empty and not required, return default value or null
   if (value === null || value === undefined || value === '') {
     return { value: fieldDef.default !== undefined ? fieldDef.default : null, errors: [] };
   }
 
-  // 根據類型進行轉換和驗證
+  // Convert and validate based on type
   switch (fieldDef.type) {
     case 'string':
       cleanedValue = String(value).trim();
       
-      // 檢查異常文字內容（針對 supplier_master）
+      // Check abnormal text content (for supplier_master)
       if (uploadType === 'supplier_master' && isAbnormalText(cleanedValue)) {
-        errors.push(`${fieldDef.label}包含異常內容：${cleanedValue}（例如：'??', '---' 等無效標記）`);
+        errors.push(`${fieldDef.label} contains abnormal content: ${cleanedValue} (e.g. '??', '---' invalid markers)`);
       }
       
-      // 特殊處理：電話欄位
+      // Special handling: phone field
       if (fieldDef.key === 'phone' && cleanedValue) {
         const phoneResult = parsePhone(cleanedValue);
         cleanedValue = phoneResult.value;
@@ -274,39 +274,39 @@ const validateAndCleanField = (value, fieldDef, uploadType, row = {}) => {
     case 'number':
       cleanedValue = parseNumber(value);
       if (cleanedValue === null && value !== null && value !== '') {
-        errors.push(`${fieldDef.label}必須是數字，但得到：${value}`);
+        errors.push(`${fieldDef.label} must be a number, but got: ${value}`);
       }
-      // 檢查數值範圍
+      // Check numeric range
       if (cleanedValue !== null) {
         if (fieldDef.min !== undefined && cleanedValue < fieldDef.min) {
-          errors.push(`${fieldDef.label}不能小於 ${fieldDef.min}`);
+          errors.push(`${fieldDef.label} cannot be less than ${fieldDef.min}`);
         }
         if (fieldDef.max !== undefined && cleanedValue > fieldDef.max) {
-          errors.push(`${fieldDef.label}不能大於 ${fieldDef.max}`);
+          errors.push(`${fieldDef.label} cannot be greater than ${fieldDef.max}`);
         }
       }
       break;
     
     case 'string':
-      // Special handling for week_bucket format - 支援 Excel 日期數字自動轉換
+      // Special handling for week_bucket format - supports Excel date number auto-conversion
       if (fieldDef.key === 'week_bucket' && cleanedValue) {
         const strValue = String(cleanedValue).trim();
         const weekBucketPattern = /^\d{4}-W\d{1,2}$/;
         
-        // 首先檢查是否已經是標準格式
+        // First check if already in standard format
         if (weekBucketPattern.test(strValue)) {
-          // 已是正確格式，無需處理
+          // Already correct format, no processing needed
         }
-        // 檢查是否為 Excel 日期數字（如 45935.833333333336）
+        // Check if Excel date number (e.g. 45935.833333333336)
         else if (typeof cleanedValue === 'number' || /^\d{5,6}(\.\d+)?$/.test(strValue)) {
           const numericValue = typeof cleanedValue === 'number' ? cleanedValue : parseFloat(strValue);
-          // 嘗試解析為日期
+          // Try parsing as date
           const parsedDate = parseDate(numericValue);
           if (parsedDate) {
-            // 轉換為週桶格式 YYYY-W##
+            // Convert to week bucket format YYYY-W##
             const date = new Date(parsedDate + 'T00:00:00');
             const year = date.getFullYear();
-            // 計算週數（ISO 週）
+            // Calculate week number (ISO week)
             const d = new Date(Date.UTC(year, date.getMonth(), date.getDate()));
             const dayNum = d.getUTCDay() || 7;
             d.setUTCDate(d.getUTCDate() + 4 - dayNum);
@@ -314,16 +314,16 @@ const validateAndCleanField = (value, fieldDef, uploadType, row = {}) => {
             const weekNo = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
             cleanedValue = `${year}-W${weekNo.toString().padStart(2, '0')}`;
           } else {
-            errors.push(`${fieldDef.label}格式不正確，Excel 日期數字轉換失敗：${strValue}`);
+            errors.push(`${fieldDef.label} format incorrect, Excel date number conversion failed: ${strValue}`);
           }
         }
-        // 嘗試解析為普通日期後轉換為週桶
+        // Try parsing as regular date then convert to week bucket
         else {
           const parsedDate = parseDate(cleanedValue);
           if (parsedDate) {
             const date = new Date(parsedDate + 'T00:00:00');
             const year = date.getFullYear();
-            // 計算週數（ISO 週）
+            // Calculate week number (ISO week)
             const d = new Date(Date.UTC(year, date.getMonth(), date.getDate()));
             const dayNum = d.getUTCDay() || 7;
             d.setUTCDate(d.getUTCDate() + 4 - dayNum);
@@ -331,7 +331,7 @@ const validateAndCleanField = (value, fieldDef, uploadType, row = {}) => {
             const weekNo = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
             cleanedValue = `${year}-W${weekNo.toString().padStart(2, '0')}`;
           } else {
-            errors.push(`${fieldDef.label}格式不正確，應為 YYYY-W## 格式（例如：2026-W02）或有效日期`);
+            errors.push(`${fieldDef.label} format incorrect, should be YYYY-W## format (e.g. 2026-W02) or valid date`);
           }
         }
       }
@@ -340,14 +340,14 @@ const validateAndCleanField = (value, fieldDef, uploadType, row = {}) => {
     case 'date':
       cleanedValue = parseDate(value);
       if (cleanedValue === null && value !== null && value !== '') {
-        errors.push(`${fieldDef.label}的日期格式不正確：${value}（支援格式：YYYY-MM-DD, DD/MM/YYYY 等）`);
+        errors.push(`${fieldDef.label} date format incorrect: ${value} (supported formats: YYYY-MM-DD, DD/MM/YYYY, etc.)`);
       }
       break;
 
     case 'boolean':
       cleanedValue = parseBoolean(value);
       if (cleanedValue === null && value !== null && value !== '') {
-        errors.push(`${fieldDef.label}必須是布林值（true/false, yes/no, 是/否），但得到：${value}`);
+        errors.push(`${fieldDef.label} must be a boolean (true/false, yes/no), but got: ${value}`);
       }
       break;
 
@@ -359,16 +359,16 @@ const validateAndCleanField = (value, fieldDef, uploadType, row = {}) => {
 };
 
 /**
- * 將原始資料根據 columnMapping 轉換為系統欄位結構
- * @param {Array} rawRows - 原始資料
- * @param {Object} columnMapping - 欄位映射 { excelColumn: systemFieldKey }
- * @returns {Array} 轉換後的資料
+ * Transform raw data to system field structure based on columnMapping
+ * @param {Array} rawRows - Raw data
+ * @param {Object} columnMapping - Field mapping { excelColumn: systemFieldKey }
+ * @returns {Array} Transformed data
  */
 export const transformRows = (rawRows, columnMapping) => {
   return rawRows.map((rawRow, rowIndex) => {
     const transformed = { _originalRowIndex: rowIndex + 1 };
 
-    // 遍歷映射關係
+    // Iterate through mapping relationships
     Object.entries(columnMapping).forEach(([excelColumn, systemFieldKey]) => {
       if (systemFieldKey && systemFieldKey !== '') {
         transformed[systemFieldKey] = rawRow[excelColumn];
@@ -380,51 +380,51 @@ export const transformRows = (rawRows, columnMapping) => {
 };
 
 /**
- * 合併重複的 supplier 資料，保留最完整的資訊
- * @param {Array} rows - 要合併的資料列
- * @returns {Array} 合併後的資料
+ * Merge duplicate supplier data, keeping the most complete information
+ * @param {Array} rows - Data rows to merge
+ * @returns {Array} Merged data
  */
 const mergeSupplierDuplicates = (rows) => {
-  const codeMap = new Map(); // supplier_code -> row
-  const nameMap = new Map(); // supplier_name -> row
+  const codeMap = new Map();
+  const nameMap = new Map();
 
   rows.forEach((row, originalIndex) => {
     const code = row.supplier_code;
     const name = row.supplier_name;
     
-    // 優先使用 supplier_code 作為唯一鍵
+    // Prefer supplier_code as unique key
     const key = code || name;
-    if (!key) return; // 跳過無 code 也無 name 的行
+    if (!key) return; // Skip rows with no code and no name
 
-    // 尋找現有記錄
+    // Find existing record
     let existing = codeMap.get(code) || nameMap.get(name);
 
     if (existing) {
-      // 合併資料：保留最完整的欄位值
+      // Merge data: keep the most complete field values
       Object.keys(row).forEach(field => {
         const existingValue = existing.row[field];
         const newValue = row[field];
         
-        // 如果現有值為空，用新值替換
+        // If existing value is empty, replace with new value
         if (!existingValue || existingValue === '' || existingValue === '-' || existingValue === 'N/A') {
           if (newValue && newValue !== '' && newValue !== '-' && newValue !== 'N/A') {
             existing.row[field] = newValue;
           }
         }
-        // 如果兩者都有值且不同，可以考慮合併（如 email）
+        // If both have values and differ, consider merging (e.g. email)
         else if (newValue && newValue !== existingValue) {
-          // 對於某些欄位（如 email），可以用逗號合併
+          // For certain fields (e.g. email), merge with comma
           if (field === 'email' && !existingValue.includes(newValue)) {
             existing.row[field] = `${existingValue}, ${newValue}`;
           }
-          // 對於其他欄位，保留原有值（第一筆通常最完整）
+          // For other fields, keep original value (first entry is usually most complete)
         }
       });
       
-      // 記錄被合併的行號
+      // Record merged row numbers
       existing.mergedFromRows.push(originalIndex + 1);
     } else {
-      // 新記錄
+      // New record
       const newRecord = {
         row: { ...row },
         originalRow: originalIndex + 1,
@@ -436,7 +436,7 @@ const mergeSupplierDuplicates = (rows) => {
     }
   });
 
-  // 收集合併後的資料
+  // Collect merged data
   const mergedRows = [];
   const seen = new Set();
   
@@ -460,16 +460,16 @@ const mergeSupplierDuplicates = (rows) => {
 };
 
 /**
- * 檢查重複資料
- * @param {Array} rows - 要檢查的資料列
- * @param {string} uploadType - 上傳類型
+ * Check for duplicate data
+ * @param {Array} rows - Data rows to check
+ * @param {string} uploadType - Upload type
  * @returns {Object} { duplicateGroups, duplicateCount, mergedRows }
  */
 const checkDuplicates = (rows, uploadType) => {
   const duplicateGroups = [];
   let duplicateCount = 0;
 
-  // 根據不同類型定義檢查欄位
+  // Define check fields based on different types
   const duplicateKeys = {
     supplier_master: ['supplier_code', 'supplier_name'],
     goods_receipt: ['supplier_name', 'material_code', 'receipt_date'],
@@ -482,11 +482,11 @@ const checkDuplicates = (rows, uploadType) => {
     return { duplicateGroups: [], duplicateCount: 0 };
   }
 
-  // 針對 supplier_master，執行智能合併
+  // For supplier_master, perform smart merge
   if (uploadType === 'supplier_master') {
     const mergedResult = mergeSupplierDuplicates(rows);
     
-    // 找出有合併的記錄
+    // Find records that were merged
     mergedResult.forEach(record => {
       if (record.mergedFromRows.length > 0) {
         duplicateGroups.push({
@@ -504,10 +504,10 @@ const checkDuplicates = (rows, uploadType) => {
     return {
       duplicateGroups,
       duplicateCount,
-      mergedRows: mergedResult.map(r => r.row) // 返回合併後的資料
+      mergedRows: mergedResult.map(r => r.row) // Return merged data
     };
   } else {
-    // 其他類型：使用組合 key 檢查
+    // Other types: use combined key check
     const combinedKeyMap = new Map();
     rows.forEach((row, index) => {
       const keyParts = keysToCheck.map(key => row[key] || '').filter(v => v !== '');
@@ -541,16 +541,16 @@ const checkDuplicates = (rows, uploadType) => {
 };
 
 /**
- * 處理 demand_fg / po_open_lines 的時間欄位（time_bucket）
- * 從 week_bucket、date 或 time_bucket 自動填入 time_bucket
- * 支援 Excel 日期數字自動轉換為週桶格式
+ * Process time field (time_bucket) for demand_fg / po_open_lines
+ * Auto-fill time_bucket from week_bucket, date, or time_bucket
+ * Supports Excel date number auto-conversion to week bucket format
  * 
- * 欄位對應建議：
- * - 若內容是 2026-W05、2026-W06 等 → 對應到 week_bucket
- * - 若內容是 2026-02-10 等日期 → 對應到 date
- * - 若 CSV 欄位名為 time_bucket，對應到 week_bucket 或 date；或直接對應 time_bucket（本函數會嘗試解析）
+ * Field mapping suggestions:
+ * - If content is 2026-W05, 2026-W06, etc. → map to week_bucket
+ * - If content is 2026-02-10, etc. (date) → map to date
+ * - If CSV column name is time_bucket, map to week_bucket or date; or directly to time_bucket (this function will try to parse)
  * 
- * @param {Object} row - 資料列
+ * @param {Object} row - Data row
  * @returns {Object} { time_bucket, errors }
  */
 const processTimeBucket = (row) => {
@@ -561,13 +561,13 @@ const processTimeBucket = (row) => {
   const date = row.date;
   const timeBucketRaw = row.time_bucket;
 
-  // 優先使用 date，其次 week_bucket
+  // Prefer date, then week_bucket
   if (date) {
     const parsedDate = parseDate(date);
     if (parsedDate) {
       timeBucket = parsedDate;
     } else {
-      errors.push('日期格式不正確，應為 YYYY-MM-DD 格式');
+      errors.push('Date format incorrect, should be YYYY-MM-DD format');
     }
   } else if (weekBucket) {
     const trimmed = String(weekBucket).trim();
@@ -575,12 +575,12 @@ const processTimeBucket = (row) => {
     if (weekBucketPattern.test(trimmed)) {
       timeBucket = trimmed;
     } else {
-      // 檢查是否為 Excel 日期數字，嘗試轉換
+      // Check if Excel date number, try to convert
       const numericValue = parseFloat(trimmed);
       if (!isNaN(numericValue) && numericValue > 40000 && numericValue < 60000) {
         const parsedDate = parseDate(numericValue);
         if (parsedDate) {
-          // 轉換為週桶格式 YYYY-W##
+          // Convert to week bucket format YYYY-W##
           const dateObj = new Date(parsedDate + 'T00:00:00');
           const year = dateObj.getFullYear();
           const d = new Date(Date.UTC(year, dateObj.getMonth(), dateObj.getDate()));
@@ -590,14 +590,14 @@ const processTimeBucket = (row) => {
           const weekNo = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
           timeBucket = `${year}-W${weekNo.toString().padStart(2, '0')}`;
         } else {
-          errors.push('週桶格式不正確，Excel 日期數字轉換失敗');
+          errors.push('Week bucket format incorrect, Excel date number conversion failed');
         }
       } else {
-        errors.push('週桶格式不正確，應為 YYYY-W## 格式（例如：2026-W02）');
+        errors.push('Week bucket format incorrect, should be YYYY-W## format (e.g. 2026-W02)');
       }
     }
   } else if (timeBucketRaw) {
-    // 支援 CSV 欄位對應到 time_bucket：嘗試解析為 week 或 date 格式
+    // Support CSV field mapped to time_bucket: try parsing as week or date format
     const trimmed = String(timeBucketRaw).trim();
     const weekBucketPattern = /^\d{4}-W\d{1,2}$/;
     const parsedDate = parseDate(timeBucketRaw);
@@ -607,12 +607,12 @@ const processTimeBucket = (row) => {
     } else if (parsedDate) {
       timeBucket = parsedDate;
     } else {
-      // 檢查是否為 Excel 日期數字（如 45935.833333333336）
+      // Check if Excel date number (e.g. 45935.833333333336)
       const numericValue = parseFloat(trimmed);
       if (!isNaN(numericValue) && numericValue > 40000 && numericValue < 60000) {
         const excelParsedDate = parseDate(numericValue);
         if (excelParsedDate) {
-          // 轉換為週桶格式 YYYY-W##
+          // Convert to week bucket format YYYY-W##
           const dateObj = new Date(excelParsedDate + 'T00:00:00');
           const year = dateObj.getFullYear();
           const d = new Date(Date.UTC(year, dateObj.getMonth(), dateObj.getDate()));
@@ -622,59 +622,59 @@ const processTimeBucket = (row) => {
           const weekNo = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
           timeBucket = `${year}-W${weekNo.toString().padStart(2, '0')}`;
         } else {
-          errors.push('time_bucket 格式不正確，Excel 日期數字轉換失敗');
+          errors.push('time_bucket format incorrect, Excel date number conversion failed');
         }
       } else {
-        errors.push('time_bucket 格式不正確，應為 YYYY-W##（如 2026-W05）或 YYYY-MM-DD（如 2026-02-10）');
+        errors.push('time_bucket format incorrect, should be YYYY-W## (e.g. 2026-W05) or YYYY-MM-DD (e.g. 2026-02-10)');
       }
     }
   } else {
-    errors.push('必須填寫 week_bucket、date 或 time_bucket 其中一個欄位');
+    errors.push('Must fill in one of week_bucket, date, or time_bucket');
   }
 
   return { time_bucket: timeBucket, errors };
 };
 
 /**
- * 驗證 bom_edge 的特殊規則
- * @param {Object} row - 資料列
- * @returns {Array} 錯誤列表
+ * Validate bom_edge special rules
+ * @param {Object} row - Data row
+ * @returns {Array} Error list
  */
 const validateBomEdgeRules = (row) => {
   const errors = [];
 
-  // 驗證 qty_per > 0
+  // Validate qty_per > 0
   if (row.qty_per !== null && row.qty_per !== undefined) {
     if (row.qty_per <= 0) {
-      errors.push({ field: 'qty_per', fieldLabel: 'Quantity Per Unit', error: 'qty_per 必須大於 0', originalValue: row.qty_per });
+      errors.push({ field: 'qty_per', fieldLabel: 'Quantity Per Unit', error: 'qty_per must be greater than 0', originalValue: row.qty_per });
     }
   }
 
-  // 驗證 valid_from <= valid_to
+  // Validate valid_from <= valid_to
   if (row.valid_from && row.valid_to) {
     const fromDate = new Date(row.valid_from);
     const toDate = new Date(row.valid_to);
     if (fromDate > toDate) {
-      errors.push({ field: 'valid_from', fieldLabel: 'Valid From', error: 'valid_from 不能晚於 valid_to', originalValue: row.valid_from });
+      errors.push({ field: 'valid_from', fieldLabel: 'Valid From', error: 'valid_from cannot be later than valid_to', originalValue: row.valid_from });
     }
   }
 
-  // 驗證 scrap_rate 範圍（如果填寫）
+  // Validate scrap_rate range (if provided)
   if (row.scrap_rate !== null && row.scrap_rate !== undefined && row.scrap_rate !== '') {
     const scrapRate = parseNumber(row.scrap_rate);
     if (scrapRate !== null) {
       if (scrapRate < 0 || scrapRate >= 1) {
-        errors.push({ field: 'scrap_rate', fieldLabel: 'Scrap Rate', error: 'scrap_rate 必須在 0 <= scrap_rate < 1 範圍內', originalValue: row.scrap_rate });
+        errors.push({ field: 'scrap_rate', fieldLabel: 'Scrap Rate', error: 'scrap_rate must be in range 0 <= scrap_rate < 1', originalValue: row.scrap_rate });
       }
     }
   }
 
-  // 驗證 yield_rate 範圍（如果填寫）
+  // Validate yield_rate range (if provided)
   if (row.yield_rate !== null && row.yield_rate !== undefined && row.yield_rate !== '') {
     const yieldRate = parseNumber(row.yield_rate);
     if (yieldRate !== null) {
       if (yieldRate <= 0 || yieldRate > 1) {
-        errors.push({ field: 'yield_rate', fieldLabel: 'Yield Rate', error: 'yield_rate 必須在 0 < yield_rate <= 1 範圍內', originalValue: row.yield_rate });
+        errors.push({ field: 'yield_rate', fieldLabel: 'Yield Rate', error: 'yield_rate must be in range 0 < yield_rate <= 1', originalValue: row.yield_rate });
       }
     }
   }
@@ -683,53 +683,53 @@ const validateBomEdgeRules = (row) => {
 };
 
 /**
- * 驗證 po_open_lines 的特殊規則
- * @param {Object} row - 資料列
- * @returns {Array} 錯誤與警告列表
+ * Validate po_open_lines special rules
+ * @param {Object} row - Data row
+ * @returns {Array} Error and warning list
  */
 const validatePoOpenLinesRules = (row) => {
   const errors = [];
   const warnings = [];
 
-  // 驗證 open_qty >= 0（額外檢查，雖然 schema 已經有 min 設定）
+  // Validate open_qty >= 0 (extra check, although schema already has min setting)
   if (row.open_qty !== null && row.open_qty !== undefined) {
     if (row.open_qty < 0) {
       errors.push({ 
         field: 'open_qty', 
         fieldLabel: 'Open Quantity', 
-        error: 'open_qty 不能小於 0', 
+        error: 'open_qty cannot be less than 0', 
         originalValue: row.open_qty 
       });
     }
   }
 
-  // 驗證 status 欄位
+  // Validate status field
   if (row.status !== null && row.status !== undefined && row.status !== '') {
     const validStatuses = ['open', 'closed', 'cancelled'];
     const normalizedStatus = String(row.status).toLowerCase().trim();
     
     if (!validStatuses.includes(normalizedStatus)) {
-      // 自動修正為 'open' 並記錄警告
+      // Auto-correct to 'open' and log warning
       row.status = 'open';
       warnings.push({ 
         field: 'status', 
         fieldLabel: 'Status', 
-        error: `status 值「${row.status}」不在允許範圍內（open/closed/cancelled），已自動設為 'open'`, 
+        error: `status value "${row.status}" not in allowed range (open/closed/cancelled), auto-set to 'open'`, 
         originalValue: row.status,
         type: 'warning' 
       });
     } else {
-      // 標準化為小寫
+      // Normalize to lowercase
       row.status = normalizedStatus;
     }
   }
 
-  // 驗證 time_bucket 必須存在（在 processTimeBucket 之後檢查）
+  // Validate time_bucket must exist (checked after processTimeBucket)
   if (!row.time_bucket || row.time_bucket === '') {
     errors.push({ 
       field: 'time_bucket', 
       fieldLabel: 'Time Bucket', 
-      error: 'time_bucket 欄位必須存在（需要 week_bucket 或 date）', 
+      error: 'time_bucket field must exist (requires week_bucket or date)', 
       originalValue: null 
     });
   }
@@ -738,19 +738,19 @@ const validatePoOpenLinesRules = (row) => {
 };
 
 /**
- * 驗證 inventory_snapshots 的特殊規則
- * @param {Object} row - 資料列
- * @returns {Array} 錯誤列表
+ * Validate inventory_snapshots special rules
+ * @param {Object} row - Data row
+ * @returns {Array} Error list
  */
 const validateInventorySnapshotsRules = (row) => {
   const errors = [];
 
-  // 驗證 snapshot_date 必須是有效日期
+  // Validate snapshot_date must be a valid date
   if (!row.snapshot_date || row.snapshot_date === '') {
     errors.push({ 
       field: 'snapshot_date', 
       fieldLabel: 'Snapshot Date', 
-      error: 'snapshot_date 為必填欄位', 
+      error: 'snapshot_date is required', 
       originalValue: row.snapshot_date 
     });
   }
@@ -764,31 +764,31 @@ const validateInventorySnapshotsRules = (row) => {
     }
   }
 
-  // 驗證 allocated_qty >= 0
+  // Validate allocated_qty >= 0
   if (row.allocated_qty !== null && row.allocated_qty !== undefined) {
     if (row.allocated_qty < 0) {
       errors.push({ 
         field: 'allocated_qty', 
         fieldLabel: 'Allocated Quantity', 
-        error: 'allocated_qty 不能小於 0', 
+        error: 'allocated_qty cannot be less than 0', 
         originalValue: row.allocated_qty 
       });
     }
   }
 
-  // 驗證 safety_stock >= 0
+  // Validate safety_stock >= 0
   if (row.safety_stock !== null && row.safety_stock !== undefined) {
     if (row.safety_stock < 0) {
       errors.push({ 
         field: 'safety_stock', 
         fieldLabel: 'Safety Stock', 
-        error: 'safety_stock 不能小於 0', 
+        error: 'safety_stock cannot be less than 0', 
         originalValue: row.safety_stock 
       });
     }
   }
 
-  // 確保預設值設定正確
+  // Ensure default values are set correctly
   if (row.allocated_qty === null || row.allocated_qty === undefined || row.allocated_qty === '') {
     row.allocated_qty = 0;
   }
@@ -806,75 +806,75 @@ const validateInventorySnapshotsRules = (row) => {
 };
 
 /**
- * 驗證 fg_financials 的特殊規則
- * @param {Object} row - 資料列
- * @returns {Array} 錯誤列表
+ * Validate fg_financials special rules
+ * @param {Object} row - Data row
+ * @returns {Array} Error list
  */
 const validateFgFinancialsRules = (row) => {
   const errors = [];
 
-  // 驗證 unit_margin >= 0（額外檢查）
+  // Validate unit_margin >= 0 (extra check)
   if (row.unit_margin !== null && row.unit_margin !== undefined) {
     if (row.unit_margin < 0) {
       errors.push({ 
         field: 'unit_margin', 
         fieldLabel: 'Unit Margin', 
-        error: 'unit_margin 不能小於 0', 
+        error: 'unit_margin cannot be less than 0', 
         originalValue: row.unit_margin 
       });
     }
   }
 
-  // 驗證 unit_price >= 0（如果有填寫）
+  // Validate unit_price >= 0 (if provided)
   if (row.unit_price !== null && row.unit_price !== undefined && row.unit_price !== '') {
     if (row.unit_price < 0) {
       errors.push({ 
         field: 'unit_price', 
         fieldLabel: 'Unit Price', 
-        error: 'unit_price 不能小於 0', 
+        error: 'unit_price cannot be less than 0', 
         originalValue: row.unit_price 
       });
     }
   }
 
-  // 驗證 valid_from <= valid_to（如果兩者都有填寫）
+  // Validate valid_from <= valid_to (if both are provided)
   if (row.valid_from && row.valid_to) {
     const fromDate = new Date(row.valid_from);
     const toDate = new Date(row.valid_to);
     
-    // 檢查日期是否有效
+    // Check if dates are valid
     if (!isNaN(fromDate.getTime()) && !isNaN(toDate.getTime())) {
       if (fromDate > toDate) {
         errors.push({ 
           field: 'valid_from', 
           fieldLabel: 'Valid From', 
-          error: 'valid_from 不能晚於 valid_to', 
+          error: 'valid_from cannot be later than valid_to', 
           originalValue: row.valid_from 
         });
       }
     }
   }
 
-  // 確保 currency 預設值
+  // Ensure currency default value
   if (!row.currency || row.currency === '') {
     row.currency = 'USD';
   }
 
-  // plant_id 可以為空（代表全球通用定價），不需要額外驗證
+  // plant_id can be empty (represents global pricing), no extra validation needed
 
   return errors;
 };
 
 /**
- * 驗證並清洗資料列
- * @param {Array} cleanRows - 已經過欄位映射轉換的資料
- * @param {string} uploadType - 上傳類型
+ * Validate and clean data rows
+ * @param {Array} cleanRows - Data already transformed through field mapping
+ * @param {string} uploadType - Upload type
  * @returns {Object} { validRows, errorRows, duplicateGroups, stats }
  */
 export const validateAndCleanRows = (cleanRows, uploadType) => {
   const schema = UPLOAD_SCHEMAS[uploadType];
   if (!schema) {
-    throw new Error(`未知的上傳類型：${uploadType}`);
+    throw new Error(`Unknown upload type: ${uploadType}`);
   }
 
   const validRows = [];
@@ -884,12 +884,12 @@ export const validateAndCleanRows = (cleanRows, uploadType) => {
     const cleanedRow = {};
     const rowErrors = [];
 
-    // 只處理 schema 中定義的欄位（自動忽略多餘欄位）
+    // Only process fields defined in schema (auto-ignore extra fields)
     schema.fields.forEach(fieldDef => {
       const fieldKey = fieldDef.key;
       const originalValue = row[fieldKey];
 
-      // 將 uploadType 和完整 row 傳遞給驗證函數
+      // Pass uploadType and complete row to validation function
       const { value, errors } = validateAndCleanField(originalValue, fieldDef, uploadType, row);
 
       cleanedRow[fieldKey] = value;
@@ -906,7 +906,7 @@ export const validateAndCleanRows = (cleanRows, uploadType) => {
       }
     });
 
-    // 特殊處理：demand_fg 和 po_open_lines 的時間欄位
+    // Special handling: time field for demand_fg and po_open_lines
     if (uploadType === 'demand_fg' || uploadType === 'po_open_lines') {
       const { time_bucket, errors: timeErrors } = processTimeBucket(cleanedRow);
       cleanedRow.time_bucket = time_bucket;
@@ -922,31 +922,31 @@ export const validateAndCleanRows = (cleanRows, uploadType) => {
       }
     }
 
-    // 特殊處理：bom_edge 的業務規則驗證
+    // Special handling: bom_edge business rule validation
     if (uploadType === 'bom_edge') {
       const bomErrors = validateBomEdgeRules(cleanedRow);
       rowErrors.push(...bomErrors);
     }
 
-    // 特殊處理：po_open_lines 的業務規則驗證
+    // Special handling: po_open_lines business rule validation
     if (uploadType === 'po_open_lines') {
       const poErrors = validatePoOpenLinesRules(cleanedRow);
       rowErrors.push(...poErrors);
     }
 
-    // 特殊處理：inventory_snapshots 的業務規則驗證
+    // Special handling: inventory_snapshots business rule validation
     if (uploadType === 'inventory_snapshots') {
       const inventoryErrors = validateInventorySnapshotsRules(cleanedRow);
       rowErrors.push(...inventoryErrors);
     }
 
-    // 特殊處理：fg_financials 的業務規則驗證
+    // Special handling: fg_financials business rule validation
     if (uploadType === 'fg_financials') {
       const fgErrors = validateFgFinancialsRules(cleanedRow);
       rowErrors.push(...fgErrors);
     }
 
-    // 判斷這一行是否有效
+    // Determine if this row is valid
     if (rowErrors.length === 0) {
       validRows.push(cleanedRow);
     } else {
@@ -959,28 +959,28 @@ export const validateAndCleanRows = (cleanRows, uploadType) => {
     }
   });
 
-  // 重複檢查與智能合併（針對特定上傳類型）
+  // Duplicate check and smart merge (for specific upload types)
   const duplicateInfo = checkDuplicates(validRows, uploadType);
   
-  // 對於 supplier_master，使用合併後的資料
+  // For supplier_master, use merged data
   const finalValidRows = (uploadType === 'supplier_master' && duplicateInfo.mergedRows) 
     ? duplicateInfo.mergedRows 
     : validRows;
   
-  // 統計資訊
+  // Statistics
   const stats = {
     total: cleanRows.length,
-    valid: finalValidRows.length, // 使用合併後的數量
+    valid: finalValidRows.length, // Use merged count
     invalid: errorRows.length,
     duplicates: duplicateInfo.duplicateCount,
-    merged: duplicateInfo.duplicateCount, // 合併的數量
+    merged: duplicateInfo.duplicateCount, // Merged count
     successRate: cleanRows.length > 0 
       ? Math.round((finalValidRows.length / cleanRows.length) * 100) 
       : 0
   };
 
   return {
-    validRows: finalValidRows, // 返回合併後的資料
+    validRows: finalValidRows, // Return merged data
     errorRows,
     duplicateGroups: duplicateInfo.duplicateGroups,
     stats
@@ -988,20 +988,20 @@ export const validateAndCleanRows = (cleanRows, uploadType) => {
 };
 
 /**
- * 完整的驗證流程：轉換 + 驗證 + 清洗
- * @param {Array} rawRows - 原始資料
- * @param {string} uploadType - 上傳類型
- * @param {Object} columnMapping - 欄位映射
+ * Complete validation flow: transform + validate + clean
+ * @param {Array} rawRows - Raw data
+ * @param {string} uploadType - Upload type
+ * @param {Object} columnMapping - Field mapping
  * @returns {Object} { validRows, errorRows, stats }
  */
 export const validateAndCleanData = (rawRows, uploadType, columnMapping) => {
-  // Step 1: 根據 mapping 轉換資料結構
+  // Step 1: Transform data structure based on mapping
   const transformedRows = transformRows(rawRows, columnMapping);
 
-  // Step 2: 先自動補齊可填欄位，避免因缺值導致必填驗證直接失敗
+  // Step 2: Auto-fill fillable fields first, to avoid required validation failing due to missing values
   const { rows: preValidatedRows } = autoFillRows(transformedRows, uploadType);
 
-  // Step 3: 驗證並清洗
+  // Step 3: Validate and clean
   return validateAndCleanRows(preValidatedRows, uploadType);
 };
 
