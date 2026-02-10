@@ -1,6 +1,6 @@
 /**
  * Import History Service
- * 管理匯入歷史和批次撤銷功能
+ * Manage import history and batch undo functionality
  */
 
 import { supabase } from './supabaseClient';
@@ -10,15 +10,15 @@ import { supabase } from './supabaseClient';
  */
 export const importBatchesService = {
   /**
-   * 建立新的匯入批次記錄
-   * @param {string} userId - 使用者 ID
-   * @param {Object} batchData - 批次資料
-   * @param {string} batchData.uploadType - 上傳類型
-   * @param {string} batchData.filename - 檔案名稱
-   * @param {string} batchData.targetTable - 目標表格
-   * @param {number} batchData.totalRows - 總行數
-   * @param {Object} batchData.metadata - 額外元數據
-   * @returns {Promise<Object>} 建立的批次記錄
+   * Create new import batch record
+   * @param {string} userId - User ID
+   * @param {Object} batchData - Batch data
+   * @param {string} batchData.uploadType - Upload type
+   * @param {string} batchData.filename - Filename
+   * @param {string} batchData.targetTable - Target table
+   * @param {number} batchData.totalRows - Total rows
+   * @param {Object} batchData.metadata - Additional metadata
+   * @returns {Promise<Object>} Created batch record
    */
   async createBatch(userId, batchData) {
     const payload = {
@@ -44,13 +44,13 @@ export const importBatchesService = {
   },
 
   /**
-   * 更新批次狀態和統計
-   * @param {string} batchId - 批次 ID
-   * @param {Object} updates - 更新內容
-   * @param {number} updates.successRows - 成功行數
-   * @param {number} updates.errorRows - 錯誤行數
-   * @param {string} updates.status - 狀態
-   * @returns {Promise<Object>} 更新後的批次記錄
+   * Update batch status and statistics
+   * @param {string} batchId - Batch ID
+   * @param {Object} updates - Update content
+   * @param {number} updates.successRows - Success row count
+   * @param {number} updates.errorRows - Error row count
+   * @param {string} updates.status - Status
+   * @returns {Promise<Object>} Updated batch record
    */
   async updateBatch(batchId, updates) {
     const payload = {};
@@ -91,15 +91,15 @@ export const importBatchesService = {
   },
 
   /**
-   * 獲取所有匯入歷史
-   * @param {string} userId - 使用者 ID
-   * @param {Object} options - 查詢選項
-   * @param {number} options.limit - 限制筆數
-   * @param {number} options.offset - 起始位置
-   * @param {string} options.uploadType - 篩選上傳類型
-   * @param {string} options.status - 篩選狀態
-   * @param {Array<string>} options.includeStatuses - 預設顯示的狀態列表
-   * @returns {Promise<Array>} 批次記錄列表
+   * Get all import history
+   * @param {string} userId - User ID
+   * @param {Object} options - Query options
+   * @param {number} options.limit - Row limit
+   * @param {number} options.offset - Start position
+   * @param {string} options.uploadType - Filter by upload type
+   * @param {string} options.status - Filter by status
+   * @param {Array<string>} options.includeStatuses - Default status list to display
+   * @returns {Promise<Array>} Batch record list
    */
   async getAllBatches(userId, options = {}) {
     const { 
@@ -107,7 +107,7 @@ export const importBatchesService = {
       offset = 0, 
       uploadType = null, 
       status = null,
-      includeStatuses = ['completed', 'failed', 'undone']  // 預設過濾掉 pending 狀態
+      includeStatuses = ['completed', 'failed', 'undone']  // Default: filter out pending status
     } = options;
 
     let query = supabase
@@ -121,7 +121,7 @@ export const importBatchesService = {
       query = query.eq('upload_type', uploadType);
     }
 
-    // 修改狀態篩選邏輯：如果指定了 status 則使用指定的，否則使用 includeStatuses
+    // Status filter logic: use specified status if provided, otherwise use includeStatuses
     if (status) {
       query = query.eq('status', status);
     } else {
@@ -134,9 +134,9 @@ export const importBatchesService = {
   },
 
   /**
-   * 獲取單一批次詳情
-   * @param {string} batchId - 批次 ID
-   * @returns {Promise<Object>} 批次記錄
+   * Get single batch details
+   * @param {string} batchId - Batch ID
+   * @returns {Promise<Object>} Batch record
    */
   async getBatch(batchId) {
     const { data, error } = await supabase
@@ -150,14 +150,14 @@ export const importBatchesService = {
   },
 
   /**
-   * 根據批次 ID 獲取相關的資料列（預覽）
-   * @param {string} batchId - 批次 ID
-   * @param {string} targetTable - 目標表格名稱
-   * @param {number} limit - 限制筆數（預設 50）
-   * @returns {Promise<Array>} 資料列表
+   * Get related data rows by batch ID (preview)
+   * @param {string} batchId - Batch ID
+   * @param {string} targetTable - Target table name
+   * @param {number} limit - Row limit (default 50)
+   * @returns {Promise<Array>} Data list
    */
   async getBatchData(batchId, targetTable, limit = 50) {
-    // 根據不同的目標表格查詢
+    // Query based on different target tables
     let query;
     
     switch(targetTable) {
@@ -194,7 +194,7 @@ export const importBatchesService = {
         break;
         
       case 'bom_explosion':
-        // 查詢 component_demand（BOM explosion 的結果）
+        // Query component_demand (BOM explosion results)
         query = supabase
           .from('component_demand')
           .select('*')
@@ -258,13 +258,13 @@ export const importBatchesService = {
   },
 
   /**
-   * 查詢 component_demand_trace 資料（支援篩選和分頁）
-   * @param {string} userId - 使用者 ID
-   * @param {string} batchId - 批次 ID
-   * @param {Object} options - 查詢選項
-   * @param {Object} options.filters - 篩選條件
-   * @param {number} options.limit - 限制筆數（預設 100）
-   * @param {number} options.offset - 偏移量（預設 0）
+   * Query component_demand_trace data (with filtering and pagination)
+   * @param {string} userId - User ID
+   * @param {string} batchId - Batch ID
+   * @param {Object} options - Query options
+   * @param {Object} options.filters - Filter conditions
+   * @param {number} options.limit - Row limit (default 100)
+   * @param {number} options.offset - Offset (default 0)
    * @returns {Promise<Object>} { data, count, error }
    */
   async getComponentDemandTrace(userId, batchId, options = {}) {
@@ -350,15 +350,15 @@ export const importBatchesService = {
   },
 
   /**
-   * 查詢批次資料（支援篩選和分頁）
-   * @param {string} userId - 使用者 ID
-   * @param {string} batchId - 批次 ID
-   * @param {string} targetTable - 目標表格
-   * @param {Object} options - 查詢選項
-   * @param {Object} options.filters - 篩選條件
-   * @param {number} options.limit - 限制筆數（預設 100）
-   * @param {number} options.offset - 偏移量（預設 0）
-   * @param {string} options.view - 視圖類型 ('results' | 'trace')，僅用於 bom_explosion
+   * Query batch data (with filtering and pagination)
+   * @param {string} userId - User ID
+   * @param {string} batchId - Batch ID
+   * @param {string} targetTable - Target table
+   * @param {Object} options - Query options
+   * @param {Object} options.filters - Filter conditions
+   * @param {number} options.limit - Row limit (default 100)
+   * @param {number} options.offset - Offset (default 0)
+   * @param {string} options.view - View type ('results' | 'trace'), only for bom_explosion
    * @returns {Promise<Object>} { data, count, error }
    */
   async getBatchDataWithFilters(userId, batchId, targetTable, options = {}) {
@@ -627,10 +627,10 @@ export const importBatchesService = {
   },
 
   /**
-   * 撤銷單一匯入批次
-   * @param {string} batchId - 批次 ID
-   * @param {string} userId - 使用者 ID
-   * @returns {Promise<Object>} 撤銷結果
+   * Undo single import batch
+   * @param {string} batchId - Batch ID
+   * @param {string} userId - User ID
+   * @returns {Promise<Object>} Undo result
    */
   async undoBatch(batchId, userId) {
     const { data, error } = await supabase
@@ -644,10 +644,10 @@ export const importBatchesService = {
   },
 
   /**
-   * 批量撤銷多個匯入批次
-   * @param {Array<string>} batchIds - 批次 ID 陣列
-   * @param {string} userId - 使用者 ID
-   * @returns {Promise<Object>} 批量撤銷結果
+   * Batch undo multiple import batches
+   * @param {Array<string>} batchIds - Batch ID array
+   * @param {string} userId - User ID
+   * @returns {Promise<Object>} Batch undo result
    */
   async undoMultipleBatches(batchIds, userId) {
     const { data, error } = await supabase
@@ -661,9 +661,9 @@ export const importBatchesService = {
   },
 
   /**
-   * 刪除批次記錄（僅刪除記錄，不刪除實際資料）
-   * @param {string} batchId - 批次 ID
-   * @returns {Promise<Object>} 成功訊息
+   * Delete batch record (only deletes record, not actual data)
+   * @param {string} batchId - Batch ID
+   * @returns {Promise<Object>} Success message
    */
   async deleteBatch(batchId) {
     const { error } = await supabase
@@ -676,9 +676,9 @@ export const importBatchesService = {
   },
 
   /**
-   * 批量刪除失敗的批次記錄
-   * @param {string} userId - 使用者 ID
-   * @returns {Promise<Object>} 刪除結果
+   * Batch delete failed batch records
+   * @param {string} userId - User ID
+   * @returns {Promise<Object>} Delete result
    */
   async deleteFailedBatches(userId) {
     const { data, error } = await supabase
@@ -693,10 +693,10 @@ export const importBatchesService = {
   },
 
   /**
-   * 獲取匯入統計摘要
-   * @param {string} userId - 使用者 ID
-   * @param {number} days - 統計天數（預設 30 天）
-   * @returns {Promise<Object>} 統計數據
+   * Get import statistics summary
+   * @param {string} userId - User ID
+   * @param {number} days - Statistics period in days (default 30)
+   * @returns {Promise<Object>} Statistics data
    */
   async getStats(userId, days = 30) {
     const startDate = new Date();
@@ -720,7 +720,7 @@ export const importBatchesService = {
       byUploadType: {}
     };
 
-    // 按上傳類型分組統計
+    // Group statistics by upload type
     data.forEach(batch => {
       if (!stats.byUploadType[batch.upload_type]) {
         stats.byUploadType[batch.upload_type] = {
