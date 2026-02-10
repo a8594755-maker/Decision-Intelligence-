@@ -123,6 +123,7 @@ export interface ImportBatch {
   user_id: string;
   status: 'pending' | 'running' | 'completed' | 'failed' | 'undone' | 'canceled';
   upload_type: string;
+  target_table?: string;
   filename: string;
   metadata?: Record<string, any>;
   error_message?: string | null;

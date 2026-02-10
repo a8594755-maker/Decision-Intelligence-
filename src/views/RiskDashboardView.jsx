@@ -12,7 +12,7 @@
  */
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { Loader2, RefreshCw, AlertCircle, Calculator } from 'lucide-react';
+import { Loader2, RefreshCw, AlertCircle, Calculator, Database, Cloud } from 'lucide-react';
 import { Button } from '../components/ui';
 import { supabase } from '../services/supabaseClient';
 import { forecastRunsService, componentDemandService } from '../services/supabaseClient';
@@ -51,7 +51,7 @@ import { aggregateComponentDemandToDaily, normalizeKey } from '../utils/componen
 const HORIZON_BUCKETS = 3; // 未來 N 個 time_bucket
 const DEFAULT_LEAD_TIME_DAYS = 7; // Inventory domain 用於 P(stockout)
 
-const RiskDashboardView = ({ user, addNotification }) => {
+const RiskDashboardView = ({ addNotification, user, setView, globalDataSource, setGlobalDataSource }) => {
   // ========== State 管理 ==========
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -185,13 +185,20 @@ const RiskDashboardView = ({ user, addNotification }) => {
         }
       }
 
-      // Step 1: 載入 Open PO（必需）
-      const { data: rawPoData, error: poError } = await supabase
+      // Step 1: 載入 Open PO（必需）— 根據 dataSource 過濾
+      let poQuery = supabase
         .from('po_open_lines')
         .select('*')
-        .eq('user_id', user.id)
-        .eq('source', 'sap_sync')
-        .order('time_bucket', { ascending: true });
+        .eq('user_id', user.id);
+      if (globalDataSource === 'sap') {
+        poQuery = poQuery.eq('source', 'sap_sync');
+      } else {
+        // Local: 排除 SAP 同步資料（source 為 null 或非 sap_sync）
+        poQuery = poQuery.or('source.is.null,source.neq.sap_sync');
+      }
+      poQuery = poQuery.order('time_bucket', { ascending: true });
+      console.log(`[loadRiskData] dataSource=${globalDataSource}, querying po_open_lines...`);
+      const { data: rawPoData, error: poError } = await poQuery;
 
       if (poError) {
         console.error('PO 查詢錯誤:', poError);
@@ -205,20 +212,49 @@ const RiskDashboardView = ({ user, addNotification }) => {
         throw new Error('EMPTY_PO_DATA');
       }
 
-      // Step 2: 載入庫存快照（可選）
+      // Step 2: 載入庫存快照（可選）— 根據 dataSource 過濾
       let inventoryData = [];
-      const { data: invData, error: invError } = await supabase
+      let invQuery = supabase
         .from('material_stock_snapshots')
         .select('*')
-        .eq('user_id', user.id)
-        .eq('source', 'sap_sync')
-        .order('snapshot_at', { ascending: false });
+        .eq('user_id', user.id);
+      if (globalDataSource === 'sap') {
+        invQuery = invQuery.eq('source', 'sap_sync');
+      } else {
+        invQuery = invQuery.or('source.is.null,source.neq.sap_sync');
+      }
+      invQuery = invQuery.order('snapshot_at', { ascending: false });
+      console.log(`[loadRiskData] dataSource=${globalDataSource}, querying material_stock_snapshots...`);
+      const { data: invData, error: invError } = await invQuery;
 
       if (invError) {
         console.warn('載入庫存資料失敗（將使用 0 庫存）:', invError);
       } else {
         inventoryData = invData || [];
         setDataSnapshotTime(invData?.[0]?.created_at || new Date());
+      }
+
+      // Step 2.3: 載入 inventory_snapshots（safety_stock 來源）— material_stock_snapshots 無 safety_stock 欄位
+      const safetyStockMap = {}; // key: "MATERIAL|PLANT" -> safety_stock
+      try {
+        const { data: isData, error: isError } = await supabase
+          .from('inventory_snapshots')
+          .select('material_code, plant_id, safety_stock, onhand_qty')
+          .eq('user_id', user.id);
+        if (!isError && isData?.length) {
+          isData.forEach(row => {
+            const key = normalizeKey(row.material_code, row.plant_id);
+            if (key && key !== '|') {
+              safetyStockMap[key] = {
+                safety_stock: parseFloat(row.safety_stock || 0),
+                onhand_qty: parseFloat(row.onhand_qty || 0)
+              };
+            }
+          });
+          console.log(`🛡️ 載入 ${Object.keys(safetyStockMap).length} 筆 safety_stock（from inventory_snapshots）`);
+        }
+      } catch (e) {
+        console.warn('載入 inventory_snapshots（safety_stock）失敗，將使用 0:', e);
       }
 
       // Step 2.5: 載入 FG Financials（M2 - Profit at Risk）
@@ -296,12 +332,17 @@ const RiskDashboardView = ({ user, addNotification }) => {
       // Step 3: Domain 計算（Supply Coverage Risk - Bucket-Based）
       const domainResults = calculateSupplyCoverageRiskBatch({
         openPOs: normalizedPOData,
-        inventorySnapshots: inventoryData.map(inv => ({
-          material_code: inv.material_code,
-          plant_id: inv.plant_id,
-          onhand_qty: inv.qty,
-          snapshot_date: inv.snapshot_at
-        })),
+        inventorySnapshots: inventoryData.map(inv => {
+          const key = normalizeKey(inv.material_code, inv.plant_id);
+          const ssInfo = safetyStockMap[key];
+          return {
+            material_code: inv.material_code,
+            plant_id: inv.plant_id,
+            on_hand_qty: inv.qty,
+            safety_stock: ssInfo?.safety_stock || 0,
+            snapshot_date: inv.snapshot_at
+          };
+        }),
         horizonBuckets: HORIZON_BUCKETS
       });
 
@@ -439,7 +480,7 @@ const RiskDashboardView = ({ user, addNotification }) => {
 
   useEffect(() => {
     loadRiskData();
-  }, [user, selectedForecastRunId]);
+  }, [user, selectedForecastRunId, globalDataSource]);
 
   // ========== 派生資料（從 uiRows 單一來源）==========
 
@@ -471,14 +512,14 @@ const RiskDashboardView = ({ user, addNotification }) => {
       
       return {
         ...row,
-        revMarginAtRisk: revData?.marginAtRisk || null,
-        revPenaltyAtRisk: revData?.penaltyAtRisk || null,
-        revTotalAtRisk: revData?.totalAtRisk || null,
+        revMarginAtRisk: revData?.marginAtRisk ?? null,
+        revPenaltyAtRisk: revData?.penaltyAtRisk ?? null,
+        revTotalAtRisk: revData?.totalAtRisk ?? null,
         hasRevenueData: !!revData,
-        riskScore: scoreData?.score || null,
-        riskScorePStockout: scoreData?.pStockout || null,
-        riskScoreImpact: scoreData?.impactUsd || null,
-        riskScoreUrgency: scoreData?.urgencyWeight || null,
+        riskScore: scoreData?.score ?? null,
+        riskScorePStockout: scoreData?.pStockout ?? null,
+        riskScoreImpact: scoreData?.impactUsd ?? null,
+        riskScoreUrgency: scoreData?.urgencyWeight ?? null,
         hasRiskScore: !!scoreData
       };
     });
@@ -986,6 +1027,25 @@ const RiskDashboardView = ({ user, addNotification }) => {
               {calculatingRiskScores ? '計算中...' : 'Calculate Risk Scores'}
             </Button>
           </div>
+        </div>
+
+        {/* Global Data Source Indicator */}
+        <div className="flex items-center gap-3 bg-slate-50 dark:bg-slate-800/50 rounded-lg p-3 border border-slate-200 dark:border-slate-700">
+          <span className="text-sm font-medium text-slate-700 dark:text-slate-300">全域資料來源:</span>
+          <div className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md ${
+            globalDataSource === 'sap' 
+              ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' 
+              : 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+          }`}>
+            {globalDataSource === 'sap' ? <Cloud className="w-4 h-4" /> : <Database className="w-4 h-4" />}
+            {globalDataSource === 'sap' ? 'SAP資料' : '本地上傳'}
+          </div>
+          <span className="text-xs text-slate-500">
+            {globalDataSource === 'sap' ? '顯示 SAP 同步的資料' : '顯示手動上傳的資料'}
+          </span>
+          <span className="text-xs text-blue-600 dark:text-blue-400">
+            在主頁 Dashboard 切換
+          </span>
         </div>
 
         {/* Scope & Limitation Notice */}

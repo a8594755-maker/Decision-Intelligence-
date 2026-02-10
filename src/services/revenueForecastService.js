@@ -90,7 +90,7 @@ export async function runRevenueForecast(userId, sourceBomRunId, options = {}) {
     const { data: revenueRun, error: createError } = await supabase
       .from('forecast_runs')
       .insert({
-        created_by: userId,
+        user_id: userId,
         kind: 'revenue_forecast',
         status: 'running',
         parameters: {
@@ -687,7 +687,7 @@ export async function getLatestRevenueRunForBomRun(userId, bomRunId) {
     const { data, error } = await supabase
       .from('forecast_runs')
       .select('id, created_at, parameters, result_summary, status')
-      .eq('created_by', userId)
+      .eq('user_id', userId)
       .eq('kind', 'revenue_forecast')
       .order('created_at', { ascending: false })
       .limit(50);

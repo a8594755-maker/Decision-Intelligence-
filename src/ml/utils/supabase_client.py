@@ -8,8 +8,8 @@ class SupabaseMLClient:
     Supabase 客户端 - ML 数据存储
     """
     def __init__(self):
-        self.supabase_url = os.getenv("SUPABASE_URL")
-        self.supabase_key = os.getenv("SUPABASE_SERVICE_KEY")
+        self.supabase_url = os.getenv("SUPABASE_URL") or os.getenv("VITE_SUPABASE_URL")
+        self.supabase_key = os.getenv("SUPABASE_SERVICE_KEY") or os.getenv("VITE_SUPABASE_ANON_KEY")
         self.client: Client = create_client(self.supabase_url, self.supabase_key)
     
     async def save_model_history(self, model_type: str, sku: str, version: str, 

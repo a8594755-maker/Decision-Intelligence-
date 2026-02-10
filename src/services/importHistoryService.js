@@ -362,25 +362,32 @@ export const importBatchesService = {
    * @returns {Promise<Object>} { data, count, error }
    */
   async getBatchDataWithFilters(userId, batchId, targetTable, options = {}) {
-    const { filters = {}, limit = 100, offset = 0, view = 'results' } = options;
+    const { filters = {}, limit = 100, offset = 0, view = 'results', dataSource = 'local' } = options;
     
     let query;
     let countQuery;
     
+    // Helper function to apply base filters based on data source
+    const applyBaseFilters = (baseQuery) => {
+      baseQuery = baseQuery.eq('user_id', userId);
+      if (dataSource === 'local') {
+        // Local data: filter by batch_id
+        baseQuery = baseQuery.eq('batch_id', batchId);
+      } else if (dataSource === 'sap') {
+        // SAP data: filter by source = 'sap_sync'
+        baseQuery = baseQuery.eq('source', 'sap_sync');
+      }
+      return baseQuery;
+    };
+    
+    // Debug log
+    console.log(`[getBatchDataWithFilters] targetTable=${targetTable}, dataSource=${dataSource}, batchId=${batchId?.slice(0, 8)}`);
+    
     try {
       switch (targetTable) {
         case 'goods_receipts':
-          query = supabase
-            .from('goods_receipts')
-            .select('*')
-            .eq('user_id', userId)
-            .eq('batch_id', batchId);
-          
-          countQuery = supabase
-            .from('goods_receipts')
-            .select('*', { count: 'exact', head: true })
-            .eq('user_id', userId)
-            .eq('batch_id', batchId);
+          query = applyBaseFilters(supabase.from('goods_receipts').select('*'));
+          countQuery = applyBaseFilters(supabase.from('goods_receipts').select('*', { count: 'exact', head: true }));
           
           // Apply filters
           if (filters.material_code) {
@@ -400,17 +407,8 @@ export const importBatchesService = {
           break;
           
         case 'price_history':
-          query = supabase
-            .from('price_history')
-            .select('*')
-            .eq('user_id', userId)
-            .eq('batch_id', batchId);
-          
-          countQuery = supabase
-            .from('price_history')
-            .select('*', { count: 'exact', head: true })
-            .eq('user_id', userId)
-            .eq('batch_id', batchId);
+          query = applyBaseFilters(supabase.from('price_history').select('*'));
+          countQuery = applyBaseFilters(supabase.from('price_history').select('*', { count: 'exact', head: true }));
           
           // Apply filters
           if (filters.material_code) {
@@ -430,17 +428,8 @@ export const importBatchesService = {
           break;
           
         case 'suppliers':
-          query = supabase
-            .from('suppliers')
-            .select('*')
-            .eq('user_id', userId)
-            .eq('batch_id', batchId);
-          
-          countQuery = supabase
-            .from('suppliers')
-            .select('*', { count: 'exact', head: true })
-            .eq('user_id', userId)
-            .eq('batch_id', batchId);
+          query = applyBaseFilters(supabase.from('suppliers').select('*'));
+          countQuery = applyBaseFilters(supabase.from('suppliers').select('*', { count: 'exact', head: true }));
           
           // Apply filters
           if (filters.supplier_code) {
@@ -456,17 +445,8 @@ export const importBatchesService = {
           break;
           
         case 'bom_edges':
-          query = supabase
-            .from('bom_edges')
-            .select('*')
-            .eq('user_id', userId)
-            .eq('batch_id', batchId);
-          
-          countQuery = supabase
-            .from('bom_edges')
-            .select('*', { count: 'exact', head: true })
-            .eq('user_id', userId)
-            .eq('batch_id', batchId);
+          query = applyBaseFilters(supabase.from('bom_edges').select('*'));
+          countQuery = applyBaseFilters(supabase.from('bom_edges').select('*', { count: 'exact', head: true }));
           
           // Apply filters
           if (filters.parent_material) {
@@ -486,17 +466,8 @@ export const importBatchesService = {
           break;
           
         case 'demand_fg':
-          query = supabase
-            .from('demand_fg')
-            .select('*')
-            .eq('user_id', userId)
-            .eq('batch_id', batchId);
-          
-          countQuery = supabase
-            .from('demand_fg')
-            .select('*', { count: 'exact', head: true })
-            .eq('user_id', userId)
-            .eq('batch_id', batchId);
+          query = applyBaseFilters(supabase.from('demand_fg').select('*'));
+          countQuery = applyBaseFilters(supabase.from('demand_fg').select('*', { count: 'exact', head: true }));
           
           // Apply filters
           if (filters.material_code) {
@@ -519,81 +490,12 @@ export const importBatchesService = {
           // Support view parameter: 'results' (component_demand) or 'trace' (component_demand_trace)
           if (view === 'trace') {
             // Delegate to getComponentDemandTrace method
-            return await this.getComponentDemandTrace(userId, batchId, { filters, limit, offset });
+            return await this.getComponentDemandTrace(userId, batchId, { filters, limit, offset, dataSource });
           }
           
           // Default: view='results' - query component_demand
-          query = supabase
-            .from('component_demand')
-            .select('*')
-            .eq('user_id', userId)
-            .eq('batch_id', batchId);
-          
-          countQuery = supabase
-            .from('component_demand')
-            .select('*', { count: 'exact', head: true })
-            .eq('user_id', userId)
-            .eq('batch_id', batchId);
-          
-          // Apply filters
-          if (filters.material_code) {
-            query = query.ilike('material_code', `%${filters.material_code}%`);
-            countQuery = countQuery.ilike('material_code', `%${filters.material_code}%`);
-          }
-          if (filters.plant_id) {
-            query = query.ilike('plant_id', `%${filters.plant_id}%`);
-            countQuery = countQuery.ilike('plant_id', `%${filters.plant_id}%`);
-          }
-          if (filters.time_bucket) {
-            query = query.ilike('time_bucket', `%${filters.time_bucket}%`);
-            countQuery = countQuery.ilike('time_bucket', `%${filters.time_bucket}%`);
-          }
-          
-          query = query.order('material_code', { ascending: true });
-          break;
-          
-        case 'bom_edges':
-          query = supabase
-            .from('bom_edges')
-            .select('*')
-            .eq('user_id', userId)
-            .eq('batch_id', batchId);
-          
-          countQuery = supabase
-            .from('bom_edges')
-            .select('*', { count: 'exact', head: true })
-            .eq('user_id', userId)
-            .eq('batch_id', batchId);
-          
-          // Apply filters
-          if (filters.parent_material) {
-            query = query.ilike('parent_material', `%${filters.parent_material}%`);
-            countQuery = countQuery.ilike('parent_material', `%${filters.parent_material}%`);
-          }
-          if (filters.child_material) {
-            query = query.ilike('child_material', `%${filters.child_material}%`);
-            countQuery = countQuery.ilike('child_material', `%${filters.child_material}%`);
-          }
-          if (filters.plant_id) {
-            query = query.ilike('plant_id', `%${filters.plant_id}%`);
-            countQuery = countQuery.ilike('plant_id', `%${filters.plant_id}%`);
-          }
-          
-          query = query.order('parent_material', { ascending: true });
-          break;
-          
-        case 'demand_fg':
-          query = supabase
-            .from('demand_fg')
-            .select('*')
-            .eq('user_id', userId)
-            .eq('batch_id', batchId);
-          
-          countQuery = supabase
-            .from('demand_fg')
-            .select('*', { count: 'exact', head: true })
-            .eq('user_id', userId)
-            .eq('batch_id', batchId);
+          query = applyBaseFilters(supabase.from('component_demand').select('*'));
+          countQuery = applyBaseFilters(supabase.from('component_demand').select('*', { count: 'exact', head: true }));
           
           // Apply filters
           if (filters.material_code) {
@@ -613,17 +515,8 @@ export const importBatchesService = {
           break;
           
         case 'po_open_lines':
-          query = supabase
-            .from('po_open_lines')
-            .select('*')
-            .eq('user_id', userId)
-            .eq('batch_id', batchId);
-          
-          countQuery = supabase
-            .from('po_open_lines')
-            .select('*', { count: 'exact', head: true })
-            .eq('user_id', userId)
-            .eq('batch_id', batchId);
+          query = applyBaseFilters(supabase.from('po_open_lines').select('*'));
+          countQuery = applyBaseFilters(supabase.from('po_open_lines').select('*', { count: 'exact', head: true }));
           
           // Apply filters
           if (filters.po_number) {
@@ -647,17 +540,8 @@ export const importBatchesService = {
           break;
           
         case 'inventory_snapshots':
-          query = supabase
-            .from('inventory_snapshots')
-            .select('*')
-            .eq('user_id', userId)
-            .eq('batch_id', batchId);
-          
-          countQuery = supabase
-            .from('inventory_snapshots')
-            .select('*', { count: 'exact', head: true })
-            .eq('user_id', userId)
-            .eq('batch_id', batchId);
+          query = applyBaseFilters(supabase.from('inventory_snapshots').select('*'));
+          countQuery = applyBaseFilters(supabase.from('inventory_snapshots').select('*', { count: 'exact', head: true }));
           
           // Apply filters
           if (filters.material_code) {
@@ -677,17 +561,8 @@ export const importBatchesService = {
           break;
           
         case 'fg_financials':
-          query = supabase
-            .from('fg_financials')
-            .select('*')
-            .eq('user_id', userId)
-            .eq('batch_id', batchId);
-          
-          countQuery = supabase
-            .from('fg_financials')
-            .select('*', { count: 'exact', head: true })
-            .eq('user_id', userId)
-            .eq('batch_id', batchId);
+          query = applyBaseFilters(supabase.from('fg_financials').select('*'));
+          countQuery = applyBaseFilters(supabase.from('fg_financials').select('*', { count: 'exact', head: true }));
           
           // Apply filters
           if (filters.material_code) {

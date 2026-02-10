@@ -288,11 +288,51 @@ const validateAndCleanField = (value, fieldDef, uploadType, row = {}) => {
       break;
     
     case 'string':
-      // Special handling for week_bucket format
+      // Special handling for week_bucket format - 支援 Excel 日期數字自動轉換
       if (fieldDef.key === 'week_bucket' && cleanedValue) {
+        const strValue = String(cleanedValue).trim();
         const weekBucketPattern = /^\d{4}-W\d{1,2}$/;
-        if (!weekBucketPattern.test(String(cleanedValue).trim())) {
-          errors.push(`${fieldDef.label}格式不正確，應為 YYYY-W## 格式（例如：2026-W02）`);
+        
+        // 首先檢查是否已經是標準格式
+        if (weekBucketPattern.test(strValue)) {
+          // 已是正確格式，無需處理
+        }
+        // 檢查是否為 Excel 日期數字（如 45935.833333333336）
+        else if (typeof cleanedValue === 'number' || /^\d{5,6}(\.\d+)?$/.test(strValue)) {
+          const numericValue = typeof cleanedValue === 'number' ? cleanedValue : parseFloat(strValue);
+          // 嘗試解析為日期
+          const parsedDate = parseDate(numericValue);
+          if (parsedDate) {
+            // 轉換為週桶格式 YYYY-W##
+            const date = new Date(parsedDate + 'T00:00:00');
+            const year = date.getFullYear();
+            // 計算週數（ISO 週）
+            const d = new Date(Date.UTC(year, date.getMonth(), date.getDate()));
+            const dayNum = d.getUTCDay() || 7;
+            d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+            const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+            const weekNo = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
+            cleanedValue = `${year}-W${weekNo.toString().padStart(2, '0')}`;
+          } else {
+            errors.push(`${fieldDef.label}格式不正確，Excel 日期數字轉換失敗：${strValue}`);
+          }
+        }
+        // 嘗試解析為普通日期後轉換為週桶
+        else {
+          const parsedDate = parseDate(cleanedValue);
+          if (parsedDate) {
+            const date = new Date(parsedDate + 'T00:00:00');
+            const year = date.getFullYear();
+            // 計算週數（ISO 週）
+            const d = new Date(Date.UTC(year, date.getMonth(), date.getDate()));
+            const dayNum = d.getUTCDay() || 7;
+            d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+            const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+            const weekNo = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
+            cleanedValue = `${year}-W${weekNo.toString().padStart(2, '0')}`;
+          } else {
+            errors.push(`${fieldDef.label}格式不正確，應為 YYYY-W## 格式（例如：2026-W02）或有效日期`);
+          }
         }
       }
       break;
@@ -503,6 +543,7 @@ const checkDuplicates = (rows, uploadType) => {
 /**
  * 處理 demand_fg / po_open_lines 的時間欄位（time_bucket）
  * 從 week_bucket、date 或 time_bucket 自動填入 time_bucket
+ * 支援 Excel 日期數字自動轉換為週桶格式
  * 
  * 欄位對應建議：
  * - 若內容是 2026-W05、2026-W06 等 → 對應到 week_bucket
@@ -534,19 +575,58 @@ const processTimeBucket = (row) => {
     if (weekBucketPattern.test(trimmed)) {
       timeBucket = trimmed;
     } else {
-      errors.push('週桶格式不正確，應為 YYYY-W## 格式（例如：2026-W02）');
+      // 檢查是否為 Excel 日期數字，嘗試轉換
+      const numericValue = parseFloat(trimmed);
+      if (!isNaN(numericValue) && numericValue > 40000 && numericValue < 60000) {
+        const parsedDate = parseDate(numericValue);
+        if (parsedDate) {
+          // 轉換為週桶格式 YYYY-W##
+          const dateObj = new Date(parsedDate + 'T00:00:00');
+          const year = dateObj.getFullYear();
+          const d = new Date(Date.UTC(year, dateObj.getMonth(), dateObj.getDate()));
+          const dayNum = d.getUTCDay() || 7;
+          d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+          const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+          const weekNo = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
+          timeBucket = `${year}-W${weekNo.toString().padStart(2, '0')}`;
+        } else {
+          errors.push('週桶格式不正確，Excel 日期數字轉換失敗');
+        }
+      } else {
+        errors.push('週桶格式不正確，應為 YYYY-W## 格式（例如：2026-W02）');
+      }
     }
   } else if (timeBucketRaw) {
     // 支援 CSV 欄位對應到 time_bucket：嘗試解析為 week 或 date 格式
     const trimmed = String(timeBucketRaw).trim();
     const weekBucketPattern = /^\d{4}-W\d{1,2}$/;
     const parsedDate = parseDate(timeBucketRaw);
+    
     if (weekBucketPattern.test(trimmed)) {
       timeBucket = trimmed;
     } else if (parsedDate) {
       timeBucket = parsedDate;
     } else {
-      errors.push('time_bucket 格式不正確，應為 YYYY-W##（如 2026-W05）或 YYYY-MM-DD（如 2026-02-10）');
+      // 檢查是否為 Excel 日期數字（如 45935.833333333336）
+      const numericValue = parseFloat(trimmed);
+      if (!isNaN(numericValue) && numericValue > 40000 && numericValue < 60000) {
+        const excelParsedDate = parseDate(numericValue);
+        if (excelParsedDate) {
+          // 轉換為週桶格式 YYYY-W##
+          const dateObj = new Date(excelParsedDate + 'T00:00:00');
+          const year = dateObj.getFullYear();
+          const d = new Date(Date.UTC(year, dateObj.getMonth(), dateObj.getDate()));
+          const dayNum = d.getUTCDay() || 7;
+          d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+          const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+          const weekNo = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
+          timeBucket = `${year}-W${weekNo.toString().padStart(2, '0')}`;
+        } else {
+          errors.push('time_bucket 格式不正確，Excel 日期數字轉換失敗');
+        }
+      } else {
+        errors.push('time_bucket 格式不正確，應為 YYYY-W##（如 2026-W05）或 YYYY-MM-DD（如 2026-02-10）');
+      }
     }
   } else {
     errors.push('必須填寫 week_bucket、date 或 time_bucket 其中一個欄位');

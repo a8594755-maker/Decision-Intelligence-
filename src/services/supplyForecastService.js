@@ -44,7 +44,7 @@ export async function runSupplyForecast(params, services) {
         time_buckets: timeBuckets,
         plant_id: plantId
       },
-      inputBatchIds: []
+      kind: 'supply_forecast'
     });
     const forecastRunId = runRecord.id;
     stepTimings.createRunMs = Date.now() - runStart;
@@ -409,11 +409,11 @@ export const supplyForecastService = {
   async listRuns(userId, options = {}) {
     const { limit = 50 } = options;
     
-    // Note: forecast_runs uses 'created_by' not 'user_id'
+    // Note: forecast_runs uses 'user_id' (table was recreated)
     let query = supabase
       .from('forecast_runs')
-      .select('id, scenario_name, parameters, created_at, input_batch_ids')
-      .eq('created_by', userId)
+      .select('id, scenario_name, parameters, created_at, kind')
+      .eq('user_id', userId)
       .eq('parameters->>kind', 'supply_forecast')
       .order('created_at', { ascending: false })
       .limit(limit);

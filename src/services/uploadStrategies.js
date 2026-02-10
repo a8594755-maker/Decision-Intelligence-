@@ -26,6 +26,25 @@ import {
 import { batchUpsertOperationalCosts } from './costAnalysisService';
 
 /**
+ * Generate a UUID v4 using crypto API or fallback
+ * @returns {string} UUID string
+ */
+function generateUUID() {
+  // 优先使用 crypto.randomUUID() 如果可用
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+  
+  // Fallback: 手动生成
+  const template = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx';
+  return template.replace(/[xy]/g, function(c) {
+    const r = Math.floor(Math.random() * 16);
+    const v = c === 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
+}
+
+/**
  * Chunk an array into smaller arrays of specified size
  * @param {Array} array - The array to chunk
  * @param {number} chunkSize - Size of each chunk
@@ -91,7 +110,7 @@ class GoodsReceiptStrategy {
       if (rpcError instanceof BatchSizeError) {
         console.warn('[GoodsReceiptStrategy] Batch too large, auto-chunking:', rpcError.message);
         
-        // 自動分批處理
+        // 自動分批處理 - 每個 chunk 使用唯一的 batch_id 避免 idempotency 刪除問題
         const chunks = chunkArray(rows, MAX_ROWS_PER_BATCH);
         let totalInserted = 0;
         let totalSuppliersCreated = 0;
@@ -105,6 +124,8 @@ class GoodsReceiptStrategy {
 
         for (let i = 0; i < chunks.length; i++) {
           const chunk = chunks[i];
+          // 為每個 chunk 生成唯一的 UUID 作為 batch_id
+          const chunkBatchId = generateUUID();
           
           try {
             setSaveProgress({
@@ -115,7 +136,7 @@ class GoodsReceiptStrategy {
             });
 
             const result = await ingestGoodsReceiptsRpc({
-              batchId,
+              batchId: chunkBatchId,
               uploadFileId,
               rows: chunk
             });
@@ -335,7 +356,7 @@ class PriceHistoryStrategy {
       if (rpcError instanceof BatchSizeError) {
         console.warn('[PriceHistoryStrategy] Batch too large, auto-chunking:', rpcError.message);
         
-        // 自動分批處理
+        // 自動分批處理 - 每個 chunk 使用唯一的 batch_id 避免 idempotency 刪除問題
         const chunks = chunkArray(rows, MAX_ROWS_PER_BATCH);
         let totalInserted = 0;
         let totalSuppliersCreated = 0;
@@ -349,6 +370,8 @@ class PriceHistoryStrategy {
 
         for (let i = 0; i < chunks.length; i++) {
           const chunk = chunks[i];
+          // 為每個 chunk 生成唯一的 UUID 作為 batch_id
+          const chunkBatchId = generateUUID();
           
           try {
             setSaveProgress({
@@ -359,7 +382,7 @@ class PriceHistoryStrategy {
             });
 
             const result = await ingestPriceHistoryRpc({
-              batchId,
+              batchId: chunkBatchId,
               uploadFileId,
               rows: chunk
             });

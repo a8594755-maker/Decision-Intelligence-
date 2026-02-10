@@ -339,8 +339,8 @@ const RiskTable = ({
                 </td>
                 
                 <td className="px-2 py-1.5 text-right">
-                  {risk.revMarginAtRisk ? (
-                    <span className="font-semibold text-rose-600 dark:text-rose-400">
+                  {risk.revMarginAtRisk != null ? (
+                    <span className={`font-semibold ${risk.revMarginAtRisk > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-400'}`}>
                       ${risk.revMarginAtRisk.toLocaleString()}
                     </span>
                   ) : (
@@ -349,8 +349,8 @@ const RiskTable = ({
                 </td>
                 
                 <td className="px-2 py-1.5 text-right">
-                  {risk.revPenaltyAtRisk ? (
-                    <span className="text-orange-600 dark:text-orange-400">
+                  {risk.revPenaltyAtRisk != null ? (
+                    <span className={risk.revPenaltyAtRisk > 0 ? 'text-orange-600 dark:text-orange-400' : 'text-slate-400'}>
                       ${risk.revPenaltyAtRisk.toLocaleString()}
                     </span>
                   ) : (
@@ -359,8 +359,8 @@ const RiskTable = ({
                 </td>
                 
                 <td className="px-2 py-1.5 text-right">
-                  {risk.revTotalAtRisk ? (
-                    <span className="font-bold text-red-600 dark:text-red-400">
+                  {risk.revTotalAtRisk != null ? (
+                    <span className={`font-bold ${risk.revTotalAtRisk > 0 ? 'text-red-600 dark:text-red-400' : 'text-slate-400'}`}>
                       ${risk.revTotalAtRisk.toLocaleString()}
                     </span>
                   ) : (
@@ -369,16 +369,17 @@ const RiskTable = ({
                 </td>
                 
                 <td className="px-2 py-1.5 text-right">
-                  {risk.riskScore ? (
+                  {risk.riskScore != null ? (
                     <span className={`font-bold ${
                       risk.riskScore > 10000 ? 'text-red-600 dark:text-red-400' :
                       risk.riskScore > 1000 ? 'text-orange-600 dark:text-orange-400' :
-                      'text-purple-600 dark:text-purple-400'
+                      risk.riskScore > 0 ? 'text-purple-600 dark:text-purple-400' :
+                      'text-slate-400'
                     }`}>
-                      {risk.riskScore.toLocaleString()}
+                      {risk.riskScore > 0 ? risk.riskScore.toLocaleString() : '0'}
                     </span>
                   ) : (
-                    <span className="text-slate-300" title="No risk score calculated">—</span>
+                    <span className="text-slate-300" title="Click 'Calculate Risk Scores' to compute">—</span>
                   )}
                 </td>
                 

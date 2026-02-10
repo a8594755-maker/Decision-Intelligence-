@@ -328,7 +328,7 @@ export async function runDemandForecast(params, services) {
         time_buckets: targetTimeBuckets,
         plant_id: plantId
       },
-      inputBatchIds: [] // Will be populated if we know the batch IDs
+      kind: 'demand_forecast'
     });
 
     const forecastRunId = runRecord.id;

@@ -4,7 +4,7 @@ import {
   Target, Search, Calculator, Zap, BarChart3, Bot, Settings, LogOut,
   Search as SearchIcon, User, Upload, RefreshCw, CheckCircle, AlertCircle, FileText, TrendingUp,
   Menu, X, ChevronRight, ChevronLeft, Download, Moon, Sun, Send, Sparkles, Loader2, Building2, ChevronDown,
-  DollarSign, History, LayoutDashboard, Activity, AlertTriangle, Database
+  DollarSign, History, LayoutDashboard, Activity, AlertTriangle, Database, Cloud
 } from 'lucide-react';
 
 // --- Import UI Components ---
@@ -96,6 +96,9 @@ export default function SmartOpsApp() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false); // Mobile Menu State
   const [openDropdowns, setOpenDropdowns] = useState({}); // Track which dropdowns are open
   const dropdownRefs = useRef({}); // Multiple dropdown refs
+  
+  // Global data source state for all views
+  const [globalDataSource, setGlobalDataSource] = useState('local'); // 'local' | 'sap'
 
   const addNotification = (msg, type = 'info') => {
     const id = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
@@ -244,17 +247,17 @@ export default function SmartOpsApp() {
 
   const renderView = () => {
     switch (view) {
-      case 'home': return <HomeView setView={setView} />;
+      case 'home': return <HomeView setView={setView} globalDataSource={globalDataSource} setGlobalDataSource={setGlobalDataSource} />;
       case 'forecasts': return <ForecastsView addNotification={addNotification} user={session?.user} />;
-      case 'risk-dashboard': return <RiskDashboardView addNotification={addNotification} user={session?.user} setView={setView} />;
+      case 'risk-dashboard': return <RiskDashboardView addNotification={addNotification} user={session?.user} setView={setView} globalDataSource={globalDataSource} setGlobalDataSource={setGlobalDataSource} />;
       case 'external': return <EnhancedExternalSystemsView addNotification={addNotification} user={session?.user} setView={setView} />;
       case 'import-history': return <ImportHistoryView addNotification={addNotification} user={session?.user} setView={setView} />;
-      case 'bom-data': return <BOMDataView addNotification={addNotification} user={session?.user} />;
+      case 'bom-data': return <BOMDataView addNotification={addNotification} user={session?.user} globalDataSource={globalDataSource} />;
       case 'suppliers': return <SupplierManagementView addNotification={addNotification} />;
       case 'cost-analysis': return <CostAnalysisView addNotification={addNotification} user={session?.user} setView={setView} />;
       case 'integration': return <DataIntegrationView addNotification={addNotification} />;
       case 'alerts': return <SmartAlertsView addNotification={addNotification} excelData={excelData} user={session?.user} />;
-      case 'dashboard': return <OperationsDashboardView excelData={excelData} user={session?.user} />;
+      case 'dashboard': return <OperationsDashboardView excelData={excelData} user={session?.user} globalDataSource={globalDataSource} setGlobalDataSource={setGlobalDataSource} />;
       case 'analytics': return <AnalyticsCenterView excelData={excelData} />;
       case 'decision': return <DecisionSupportView excelData={excelData} user={session?.user} addNotification={addNotification} />;
       case 'settings': return <SettingsView darkMode={darkMode} setDarkMode={setDarkMode} user={session?.user} addNotification={addNotification} />;
@@ -564,7 +567,7 @@ const ModuleCard = ({ id, title, description, icon: Icon, color, onClick }) => {
 };
 
 // Refactored Home View Component
-const HomeView = ({ setView }) => {
+const HomeView = ({ setView, globalDataSource, setGlobalDataSource }) => {
   // Core and Data Management Modules
   const coreModules = [
     { 
@@ -671,6 +674,44 @@ const HomeView = ({ setView }) => {
           <p className="text-slate-600 dark:text-slate-400 text-sm md:text-base">
             Today is {new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' })}. Here's your supply chain overview
           </p>
+        </div>
+
+        {/* Global Data Source Toggle */}
+        <div className="flex items-center gap-4 bg-white dark:bg-slate-800 rounded-xl p-4 border border-slate-200 dark:border-slate-700 shadow-sm">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-semibold text-slate-700 dark:text-slate-300">🔄 資料來源:</span>
+          </div>
+          <div className="flex bg-slate-100 dark:bg-slate-700 rounded-lg p-1">
+            <button
+              onClick={() => setGlobalDataSource('local')}
+              className={`flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg transition-all ${
+                globalDataSource === 'local'
+                  ? 'bg-green-500 text-white shadow-sm'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
+              }`}
+            >
+              <Database className="w-4 h-4" />
+              本地上傳資料
+            </button>
+            <button
+              onClick={() => setGlobalDataSource('sap')}
+              className={`flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg transition-all ${
+                globalDataSource === 'sap'
+                  ? 'bg-blue-500 text-white shadow-sm'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
+              }`}
+            >
+              <Cloud className="w-4 h-4" />
+              SAP 資料
+            </button>
+          </div>
+          <span className={`text-xs font-medium px-2 py-1 rounded-full ${
+            globalDataSource === 'sap'
+              ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'
+              : 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+          }`}>
+            {globalDataSource === 'sap' ? '全系統使用 SAP 同步資料' : '全系統使用本地上傳資料'}
+          </span>
         </div>
 
         {/* KPI Cards Row */}
@@ -1663,7 +1704,7 @@ const SmartAlertsView = ({ addNotification, excelData, user }) => {
   );
 };
 
-const OperationsDashboardView = ({ excelData, user }) => {
+const OperationsDashboardView = ({ excelData, user, globalDataSource, setGlobalDataSource }) => {
   const [range, setRange] = useState('7d');
   const [supplierKpis, setSupplierKpis] = useState([]);
   const [loadingKpis, setLoadingKpis] = useState(false);
@@ -1765,16 +1806,46 @@ const OperationsDashboardView = ({ excelData, user }) => {
           </h2>
           <p className="text-slate-500 text-sm">Supply chain health and short-term trends</p>
         </div>
-        <div className="flex items-center gap-2">
-          {ranges.map(r => (
-            <button
-              key={r.id}
-              onClick={() => setRange(r.id)}
-              className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition ${range === r.id ? 'bg-blue-600 text-white border-blue-600' : 'border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300'}`}
-            >
-              {r.label}
-            </button>
-          ))}
+        <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
+          {/* Global Data Source Toggle */}
+          <div className="flex items-center gap-2 bg-slate-50 dark:bg-slate-800/50 rounded-lg p-2 border border-slate-200 dark:border-slate-700">
+            <span className="text-xs font-medium text-slate-600 dark:text-slate-400">全域資料來源:</span>
+            <div className="flex bg-white dark:bg-slate-700 rounded-md p-0.5 border border-slate-200 dark:border-slate-600">
+              <button
+                onClick={() => setGlobalDataSource('local')}
+                className={`flex items-center gap-1 px-2 py-1 text-xs font-medium rounded transition-all ${
+                  globalDataSource === 'local'
+                    ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
+                }`}
+              >
+                <Database className="w-3 h-3" />
+                本地
+              </button>
+              <button
+                onClick={() => setGlobalDataSource('sap')}
+                className={`flex items-center gap-1 px-2 py-1 text-xs font-medium rounded transition-all ${
+                  globalDataSource === 'sap'
+                    ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
+                }`}
+              >
+                <Cloud className="w-3 h-3" />
+                SAP
+              </button>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            {ranges.map(r => (
+              <button
+                key={r.id}
+                onClick={() => setRange(r.id)}
+                className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition ${range === r.id ? 'bg-blue-600 text-white border-blue-600' : 'border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300'}`}
+              >
+                {r.label}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 

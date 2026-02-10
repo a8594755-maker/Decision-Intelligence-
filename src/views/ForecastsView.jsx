@@ -212,9 +212,9 @@ const ForecastsView = ({ user, addNotification }) => {
         limit: 50
       });
       
-      // 篩選 target_table='bom_explosion' 且 status='completed'
+      // 篩選 bom_explosion 批次（target_table 或 upload_type）且 status='completed'
       const bomBatches = allBatches
-        .filter(b => b.target_table === 'bom_explosion' && b.status === 'completed')
+        .filter(b => (b.target_table === 'bom_explosion' || b.upload_type === 'bom_explosion') && b.status === 'completed')
         .slice(0, 10); // 最近 10 筆
       
       setBatches(bomBatches);
@@ -234,16 +234,23 @@ const ForecastsView = ({ user, addNotification }) => {
   /**
    * 載入 Forecast Runs 清單（供 Inventory Tab 使用）
    */
-  const loadForecastRuns = async () => {
+  const loadForecastRuns = async (forceReselect = false) => {
     if (!user?.id) return;
     
     try {
       const runs = await forecastRunsService.listRuns(user.id, { limit: 20 });
       setForecastRuns(runs || []);
       
-      // 預設選擇最新的 run
-      if (runs && runs.length > 0 && !selectedRunId) {
-        setSelectedRunId(runs[0].id);
+      // 預設選擇最新的有 time_buckets 的 run（Inventory tab 需要 time_buckets）
+      if (runs && runs.length > 0 && (!selectedRunId || forceReselect)) {
+        const runWithBuckets = runs.find(r => 
+          Array.isArray(r.parameters?.time_buckets) && r.parameters.time_buckets.length > 0
+        );
+        if (runWithBuckets) {
+          setSelectedRunId(runWithBuckets.id);
+        } else if (!selectedRunId) {
+          setSelectedRunId(runs[0].id);
+        }
       }
     } catch (error) {
       console.error('Error loading forecast runs:', error);
@@ -642,7 +649,7 @@ const ForecastsView = ({ user, addNotification }) => {
         demandForecastRunId: demandSource === 'demand_forecast' ? selectedBomDemandRunId : null
       });
 
-      const startResult = await executeBomExplosion({
+      let startResult = await executeBomExplosion({
         filename: `BOM Explosion - ${plantIdFilter || 'All Plants'} - ${new Date().toISOString()}`,
         metadata: {
           plant_id: plantIdFilter,
@@ -661,6 +668,38 @@ const ForecastsView = ({ user, addNotification }) => {
       });
 
       console.log('Edge Function job started:', startResult);
+
+      // Step 1.5: If reused, verify data actually exists — stale cache detection
+      if (startResult.status === 'reused' && startResult.batchId) {
+        const verifyResult = await componentDemandService.getComponentDemandsByBatch(
+          user.id, startResult.batchId, { limit: 1, offset: 0 }
+        );
+        console.log('[BOM] Reuse verification:', { batchId: startResult.batchId, actualCount: verifyResult.count });
+
+        if (!verifyResult.count || verifyResult.count === 0) {
+          console.warn('[BOM] Reused batch has 0 component_demand rows — forcing new run');
+          addNotification('快取資料已過期，重新計算中...', 'info');
+          startResult = await executeBomExplosion({
+            filename: `BOM Explosion - ${plantIdFilter || 'All Plants'} - ${new Date().toISOString()}`,
+            metadata: {
+              plant_id: plantIdFilter,
+              time_buckets: timeBucketsFilter,
+              source: 'forecasts_page',
+              demand_source: demandSource,
+              input_demand_forecast_run_id: demandSource === 'demand_forecast' ? selectedBomDemandRunId : null,
+              input_inbound_source: bomInboundSource,
+              input_supply_forecast_run_id: bomInboundSource === 'supply_forecast' ? selectedBomSupplyRunId : null
+            },
+            scenarioName: 'baseline',
+            demandSource: demandSource,
+            inputDemandForecastRunId: demandSource === 'demand_forecast' ? selectedBomDemandRunId : null,
+            inboundSource: bomInboundSource,
+            inputSupplyForecastRunId: bomInboundSource === 'supply_forecast' ? selectedBomSupplyRunId : null,
+            forceNewRun: true
+          });
+          console.log('Edge Function forced new run:', startResult);
+        }
+      }
 
       // Step 2: 開始輪詢狀態
       addNotification(
@@ -708,9 +747,36 @@ const ForecastsView = ({ user, addNotification }) => {
           );
         }
 
+        // Backfill time_buckets into the new forecast_run (deployed Edge Function may not set them)
+        if (finalResult.forecastRunId) {
+          try {
+            const demandResult = await componentDemandService.getComponentDemandsByBatch(
+              user.id, startResult.batchId, { limit: 500, offset: 0 }
+            );
+            if (demandResult.data?.length > 0) {
+              const actualBuckets = [...new Set(demandResult.data.map(r => r.time_bucket))].sort();
+              if (actualBuckets.length > 0) {
+                const runData = await forecastRunsService.getRun(finalResult.forecastRunId);
+                const currentParams = runData?.parameters || {};
+                if (!Array.isArray(currentParams.time_buckets) || currentParams.time_buckets.length === 0) {
+                  await forecastRunsService.updateRun(finalResult.forecastRunId, {
+                    parameters: { ...currentParams, time_buckets: actualBuckets, horizon_buckets: actualBuckets.length }
+                  });
+                  console.log('[BOM] Backfilled time_buckets into forecast_run:', actualBuckets);
+                }
+              }
+            }
+          } catch (e) {
+            console.warn('[BOM] Failed to backfill time_buckets:', e);
+          }
+        }
+
         // Reload batches and select the new one
         await loadBatches();
         setSelectedBatchId(startResult.batchId);
+
+        // Reload forecast runs so Inventory tab can use the updated run (force re-select best run)
+        await loadForecastRuns(true);
       } else {
         addNotification(
           `BOM Explosion 失敗: ${finalResult.error}`,
@@ -736,6 +802,7 @@ const ForecastsView = ({ user, addNotification }) => {
     if (!selectedBatchId || !user?.id) return;
     
     setLoading(true);
+    console.log('[loadData] START', { userId: user.id, batchId: selectedBatchId, activeTab, currentPage, filters });
     
     try {
       const offset = (currentPage - 1) * itemsPerPage;
@@ -752,6 +819,7 @@ const ForecastsView = ({ user, addNotification }) => {
           }
         );
         
+        console.log('[loadData] component_demand result:', { count: result.count, dataLength: result.data?.length, firstRow: result.data?.[0] });
         setData(result.data || []);
         setTotalCount(result.count || 0);
       } else {
@@ -766,11 +834,12 @@ const ForecastsView = ({ user, addNotification }) => {
           }
         );
         
+        console.log('[loadData] trace result:', { count: result.count, dataLength: result.data?.length, firstRow: result.data?.[0] });
         setData(result.data || []);
         setTotalCount(result.count || 0);
       }
     } catch (err) {
-      console.error('Error loading data:', err);
+      console.error('[loadData] Error:', err);
       addNotification(`載入失敗: ${err.message}`, 'error');
       setData([]);
       setTotalCount(0);
@@ -2107,13 +2176,8 @@ const ForecastsView = ({ user, addNotification }) => {
                       <div className="text-xs text-slate-500 mt-1">
                         {formatDate(batch.created_at)} · 
                         <span className="ml-2 text-green-600 font-medium">
-                          {batch.success_rows} rows
+                          {batch.success_rows || batch.result_summary?.component_demand_count || batch.metadata?.component_demand_count || 0} rows
                         </span>
-                        {batch.metadata?.component_demand_count !== undefined && (
-                          <span className="ml-2">
-                            · {batch.metadata.component_demand_count} components
-                          </span>
-                        )}
                       </div>
                     </div>
                     {selectedBatchId === batch.id && (
@@ -2416,7 +2480,7 @@ const ForecastsView = ({ user, addNotification }) => {
                       選擇 Forecast Run
                     </h3>
                     <Button
-                      onClick={loadForecastRuns}
+                      onClick={() => loadForecastRuns(true)}
                       variant="secondary"
                       size="sm"
                       icon={RefreshCw}

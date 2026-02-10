@@ -191,8 +191,8 @@ class ChronosTrainer:
         """获取模型信息"""
         return {
             "model_name": self.model_name,
-            "device": str(self.device),
-            "parameters": sum(p.numel() for p in self.model.parameters()),
+            "device": str(self.device) if self.device else "cpu",
+            "parameters": sum(p.numel() for p in self.model.parameters()) if self.model is not None else 0,
             "model_loaded": self.model is not None
         }
     

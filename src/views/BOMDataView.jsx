@@ -5,13 +5,13 @@
 
 import React, { useState, useEffect } from 'react';
 import {
-  Database, Search, ChevronLeft, ChevronRight, Loader2, Filter, X, RefreshCw
+  Database, Search, ChevronLeft, ChevronRight, Loader2, Filter, X, RefreshCw, Cloud
 } from 'lucide-react';
 import { Card, Button, Badge } from '../components/ui';
 import { supabase } from '../services/supabaseClient';
 import { useUrlTabState } from '../hooks/useUrlTabState';
 
-const BOMDataView = ({ user, addNotification }) => {
+const BOMDataView = ({ user, addNotification, globalDataSource }) => {
   const [activeTab, setActiveTab] = useUrlTabState('bom_edges', 'tab', ['bom_edges', 'demand_fg']);
   const [data, setData] = useState([]);
   const [totalCount, setTotalCount] = useState(0);
@@ -22,12 +22,12 @@ const BOMDataView = ({ user, addNotification }) => {
   
   const itemsPerPage = 100;
 
-  // Load data when tab, page, or filters change
+  // Load data when tab, page, filters, or globalDataSource change
   useEffect(() => {
     if (user?.id) {
       loadData();
     }
-  }, [user, activeTab, currentPage, filters]);
+  }, [user, activeTab, currentPage, filters, globalDataSource]);
 
   /**
    * Load data with filters and pagination
@@ -45,13 +45,23 @@ const BOMDataView = ({ user, addNotification }) => {
       let query = supabase
         .from(tableName)
         .select('*', { count: 'exact' })
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: false })
+        .eq('user_id', user.id);
+      
+      // Apply global data source filter (both bom_edges and demand_fg have source column)
+      if (globalDataSource === 'sap') {
+        query = query.eq('source', 'sap_sync');
+      } else {
+        query = query.or('source.is.null,source.neq.sap_sync');
+      }
+      
+      query = query.order('created_at', { ascending: false })
         .range(offset, offset + itemsPerPage - 1);
       
-      // For BOM edges, prioritize SAP sync data by default
+      // For BOM edges, allow filtering by source
       if (activeTab === 'bom_edges') {
-        query = query.eq('source', 'sap_sync');
+        if (filters.source) {
+          query = query.eq('source', filters.source);
+        }
         
         if (filters.batch_id) {
           query = query.ilike('batch_id', `%${filters.batch_id}%`);
@@ -131,6 +141,7 @@ const BOMDataView = ({ user, addNotification }) => {
   const getFilterFields = () => {
     if (activeTab === 'bom_edges') {
       return [
+        { key: 'source', label: 'Source', placeholder: '篩選來源 (erp_sync, csv, manual)...' },
         { key: 'batch_id', label: 'Batch ID', placeholder: '搜尋批次 ID...' },
         { key: 'plant_id', label: 'Plant ID', placeholder: '搜尋工廠代碼...' },
         { key: 'parent_material', label: 'Parent Material', placeholder: '搜尋父件料號...' },
@@ -191,9 +202,19 @@ const BOMDataView = ({ user, addNotification }) => {
             查看和搜尋 BOM 關係與成品需求資料
           </p>
         </div>
-        <Button onClick={loadData} disabled={loading} icon={RefreshCw}>
-          重新整理
-        </Button>
+        <div className="flex items-center gap-3">
+          <div className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md ${
+            globalDataSource === 'sap' 
+              ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' 
+              : 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+          }`}>
+            {globalDataSource === 'sap' ? <Cloud className="w-4 h-4" /> : <Database className="w-4 h-4" />}
+            {globalDataSource === 'sap' ? 'SAP資料' : '本地上傳'}
+          </div>
+          <Button onClick={loadData} disabled={loading} icon={RefreshCw}>
+            重新整理
+          </Button>
+        </div>
       </div>
 
       {/* Tabs */}

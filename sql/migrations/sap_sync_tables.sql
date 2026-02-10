@@ -1,8 +1,8 @@
 -- ============================================
--- Inventory Sync Table for SAP Material Stock
+-- Inventory Sync Table for ERP Material Stock
 -- ============================================
--- This table stores inventory snapshots from SAP
--- Used by sync-inventory-from-sap Edge Function
+-- This table stores inventory snapshots from ERP
+-- Used by sync-inventory-from-erp Edge Function
 -- ============================================
 
 -- Create material_stock_snapshots table if not exists

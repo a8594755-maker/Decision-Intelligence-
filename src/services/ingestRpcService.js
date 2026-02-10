@@ -16,7 +16,7 @@ import { supabase } from './supabaseClient';
  * - 建議每次 RPC 呼叫處理 500-1000 筆資料
  * - Supabase RPC 預設 payload limit: 1-2 MB
  */
-const MAX_ROWS_PER_BATCH = 1000;
+const MAX_ROWS_PER_BATCH = 50000;
 
 /**
  * RPC 呼叫錯誤類型

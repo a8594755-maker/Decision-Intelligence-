@@ -54,13 +54,24 @@ export async function executeBomExplosion(options = {}) {
         inboundSource: options.inboundSource,
         supplyForecastRunId: options.inputSupplyForecastRunId,
         scenarioName: options.scenarioName || 'baseline',
-        metadata: options.metadata || {}
+        metadata: options.metadata || {},
+        forceNewRun: options.forceNewRun || false
       }
     });
 
     if (error) {
       console.error('Edge Function invocation failed:', error);
-      throw new Error(`Edge Function 呼叫失敗: ${error.message}`);
+      // 尝试提取详细的错误信息
+      let errorDetails = error.message;
+      if (error.context && error.context.response) {
+        try {
+          const responseData = await error.context.response.json();
+          errorDetails = JSON.stringify(responseData, null, 2);
+        } catch (e) {
+          // 如果不是 JSON，使用原始消息
+        }
+      }
+      throw new Error(`Edge Function 呼叫失敗: ${errorDetails}`);
     }
 
     // 立即回傳 job 資訊，前端需要開始輪詢
@@ -266,7 +277,7 @@ export async function executeBomExplosionLegacy(userId, batchId, demandFgRows, b
         input_demand_forecast_run_id: options.inputDemandForecastRunId || null,
         ...(options.parameters || {})
       },
-      inputBatchIds
+      kind: 'bom_explosion'
     });
     forecastRunId = runRow.id;
     console.log('Created forecast_run:', forecastRunId);

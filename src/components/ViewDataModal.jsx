@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect } from 'react';
 import {
-  X, Search, ChevronLeft, ChevronRight, Loader2, AlertCircle, Filter
+  X, Search, ChevronLeft, ChevronRight, Loader2, AlertCircle, Filter, Database, Cloud
 } from 'lucide-react';
 import { importBatchesService } from '../services/importHistoryService';
 import { Badge } from './ui';
@@ -20,18 +20,20 @@ const ViewDataModal = ({ isOpen, onClose, batch, user, addNotification }) => {
   const [filters, setFilters] = useState({});
   const [showFilters, setShowFilters] = useState(false);
   const [activeTab, setActiveTab] = useState('results'); // 'results' | 'trace'
+  const [dataSource, setDataSource] = useState('local'); // 'local' | 'sap'
   
   const itemsPerPage = 100;
   
   // Check if current batch supports tabs (only bom_explosion)
   const showTabs = batch?.target_table === 'bom_explosion';
 
-  // Load data when modal opens or filters/page/tab change
+  // Load data when modal opens or filters/page/tab/dataSource change
   useEffect(() => {
     if (isOpen && batch && user) {
+      console.log(`[ViewDataModal] Loading data with dataSource=${dataSource}, table=${batch?.target_table}`);
       loadData();
     }
-  }, [isOpen, batch, user, currentPage, filters, activeTab]);
+  }, [isOpen, batch, user, currentPage, filters, activeTab, dataSource]);
 
   /**
    * Load batch data with filters and pagination
@@ -53,7 +55,8 @@ const ViewDataModal = ({ isOpen, onClose, batch, user, addNotification }) => {
           filters,
           limit: itemsPerPage,
           offset,
-          view: activeTab // Pass activeTab as view parameter
+          view: activeTab, // Pass activeTab as view parameter
+          dataSource // Pass dataSource to switch between local and SAP data
         }
       );
       
@@ -291,6 +294,14 @@ const ViewDataModal = ({ isOpen, onClose, batch, user, addNotification }) => {
                 <span className="text-sm text-slate-500">
                   Total: {totalCount} rows
                 </span>
+                {/* Data Source Badge */}
+                <span className={`text-xs px-2 py-1 rounded-full font-medium ${
+                  dataSource === 'sap' 
+                    ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' 
+                    : 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+                }`}>
+                  {dataSource === 'sap' ? 'SAP資料' : '本地上傳'}
+                </span>
               </div>
             </div>
             <button
@@ -301,7 +312,6 @@ const ViewDataModal = ({ isOpen, onClose, batch, user, addNotification }) => {
             </button>
           </div>
 
-          {/* Tabs (only for bom_explosion) */}
           {showTabs && (
             <div className="border-b dark:border-slate-700 bg-white dark:bg-slate-900">
               <div className="flex px-6">
@@ -328,6 +338,49 @@ const ViewDataModal = ({ isOpen, onClose, batch, user, addNotification }) => {
               </div>
             </div>
           )}
+
+          {/* Data Source Toggle */}
+          <div className="border-b dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 p-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <span className="text-sm font-medium text-slate-700 dark:text-slate-300">資料來源:</span>
+                <div className="flex bg-white dark:bg-slate-700 rounded-lg p-1 border border-slate-200 dark:border-slate-600">
+                  <button
+                    onClick={() => setDataSource('local')}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md transition-all ${
+                      dataSource === 'local'
+                        ? 'bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400'
+                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
+                    }`}
+                  >
+                    <Database className="w-4 h-4" />
+                    本地上傳
+                  </button>
+                  <button
+                    onClick={() => setDataSource('sap')}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md transition-all ${
+                      dataSource === 'sap'
+                        ? 'bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400'
+                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
+                    }`}
+                  >
+                    <Cloud className="w-4 h-4" />
+                    SAP資料
+                  </button>
+                </div>
+              </div>
+              {dataSource === 'local' && (
+                <span className="text-xs text-slate-500">
+                  Batch: {batch?.id?.slice(0, 8)}...
+                </span>
+              )}
+              {dataSource === 'sap' && (
+                <span className="text-xs text-slate-500">
+                  顯示所有SAP同步資料
+                </span>
+              )}
+            </div>
+          </div>
 
           {/* Filters */}
           <div className="border-b dark:border-slate-700 p-4 bg-slate-50 dark:bg-slate-800/50">

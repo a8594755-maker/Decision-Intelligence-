@@ -42,7 +42,7 @@ export async function runRiskScoreCalculation(userId, forecastRunId, options = {
       .from('forecast_runs')
       .select('id, kind, parameters, created_at')
       .eq('id', forecastRunId)
-      .eq('created_by', userId)
+      .eq('user_id', userId)
       .single();
     
     if (runError || !runData) {
@@ -240,7 +240,7 @@ async function loadRevenueDataForRun(userId, runId) {
     const { data: revenueRunData, error: runError } = await supabase
       .from('forecast_runs')
       .select('id')
-      .eq('created_by', userId)
+      .eq('user_id', userId)
       .eq('kind', 'revenue_forecast')
       .or(`id.eq.${runId},parameters->>source_bom_run_id.eq.${runId}`)
       .order('created_at', { ascending: false })

@@ -1442,15 +1442,16 @@ export const forecastRunsService = {
     const {
       scenarioName = 'baseline',
       parameters = {},
-      inputBatchIds = []
+      kind = 'bom_explosion'
     } = options;
     const { data, error } = await supabase
       .from('forecast_runs')
       .insert({
-        created_by: userId,
+        user_id: userId,
         scenario_name: scenarioName,
         parameters: parameters,
-        input_batch_ids: Array.isArray(inputBatchIds) ? inputBatchIds : [inputBatchIds]
+        kind: kind,
+        status: 'pending'
       })
       .select('id, created_at, scenario_name')
       .single();
@@ -1468,12 +1469,23 @@ export const forecastRunsService = {
     return data;
   },
 
+  async updateRun(runId, updates) {
+    const { data, error } = await supabase
+      .from('forecast_runs')
+      .update(updates)
+      .eq('id', runId)
+      .select()
+      .single();
+    if (error) throw error;
+    return data;
+  },
+
   async listRuns(userId, options = {}) {
     const { limit = 50 } = options;
     let query = supabase
       .from('forecast_runs')
       .select('*')
-      .eq('created_by', userId)
+      .eq('user_id', userId)
       .order('created_at', { ascending: false })
       .limit(limit);
     const { data, error } = await query;
@@ -2169,7 +2181,6 @@ export const inventorySnapshotsService = {
       onhand_qty: row.onhand_qty,
       allocated_qty: row.allocated_qty !== null && row.allocated_qty !== undefined ? row.allocated_qty : 0,
       safety_stock: row.safety_stock !== null && row.safety_stock !== undefined ? row.safety_stock : 0,
-      shortage_qty: row.shortage_qty !== null && row.shortage_qty !== undefined ? row.shortage_qty : 0,
       uom: row.uom || 'pcs',
       notes: row.notes || null
     }));

@@ -1,10 +1,10 @@
 -- ============================================
 -- Create Sample Demand FG Data for BOM Explosion Demo
 -- ============================================
--- This creates sample demand data based on existing SAP PO and BOM data
--- Used for demonstrating end-to-end BOM Explosion with SAP data
+-- This creates sample demand data based on existing ERP PO and BOM data
+-- Used for demonstrating end-to-end BOM Explosion with ERP data
 
--- Create sample demand for FG materials based on SAP PO data
+-- Create sample demand for FG materials based on ERP PO data
 INSERT INTO demand_fg (user_id, material_code, plant_id, time_bucket, demand_qty, uom, source, created_at, updated_at)
 SELECT 
   INTEGRATION_USER_ID,
@@ -13,15 +13,15 @@ SELECT
   po.time_bucket,
   po.open_qty,
   po.uom,
-  'sap_sync',
+  'erp_sync',
   NOW(),
   NOW()
 FROM po_open_lines po
-WHERE po.source = 'sap_sync'
+WHERE po.source = 'erp_sync'
   AND po.material_code IN (
     SELECT DISTINCT parent_material 
     FROM bom_edges 
-    WHERE source = 'sap_sync'
+    WHERE source = 'erp_sync'
     AND parent_material IS NOT NULL
   )
 ON CONFLICT (user_id, material_code, plant_id, time_bucket) 

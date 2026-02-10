@@ -64,9 +64,9 @@ export async function runInventoryProbForecast(userId, bomRunId, options = {}) {
     // 1. Fetch BOM run and its parameters (bloodline)
     const { data: bomRun, error: runError } = await supabase
       .from('forecast_runs')
-      .select('id, scenario_name, parameters, created_by, input_batch_ids')
+      .select('id, scenario_name, parameters, user_id')
       .eq('id', bomRunId)
-      .eq('created_by', userId)
+      .eq('user_id', userId)
       .single();
     
     if (runError || !bomRun) {

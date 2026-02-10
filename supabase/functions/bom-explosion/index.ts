@@ -326,6 +326,7 @@ Deno.serve(async (req) => {
       job_key: jobKey,
       job_type: 'bom_explosion',
       upload_type: 'bom_explosion',
+      target_table: 'bom_explosion',
       filename: `BOM Explosion - ${body.plantId || 'All Plants'} - ${now}`,
       progress: PROGRESS_STAGES.VALIDATED,
       heartbeat_at: now,
@@ -366,9 +367,16 @@ Deno.serve(async (req) => {
 
   } catch (error) {
     console.error('Edge function error:', error);
+    const errorDetails = error instanceof Error ? {
+      message: error.message,
+      stack: error.stack,
+      name: error.name
+    } : { message: String(error) };
+    
     return new Response(JSON.stringify({
       error: 'Internal server error',
-      details: error instanceof Error ? error.message : String(error),
+      details: errorDetails,
+      timestamp: new Date().toISOString()
     }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -676,6 +684,9 @@ async function processBomExplosion(
         status: 'completed',
         completed_at: now,
         progress: PROGRESS_STAGES.COMPLETED,
+        total_rows: componentDemandRows.length,
+        success_rows: componentDemandRows.length,
+        error_rows: result.errors.length + errors.length,
         result_summary: resultSummary,
         metadata: {
           ...request.metadata,
@@ -691,11 +702,27 @@ async function processBomExplosion(
       throw new Error(`Failed to update batch status: ${updateBatchError.message}`);
     }
 
-    // 9. Update forecast_run status
+    // 9. Derive actual time_buckets from component_demand rows
+    const actualTimeBuckets = [...new Set(componentDemandRows.map(r => r.time_bucket))].sort();
+
+    // 10. Update forecast_run status + backfill time_buckets into parameters
+    const { data: existingRun } = await supabase
+      .from('forecast_runs')
+      .select('parameters')
+      .eq('id', forecastRunId)
+      .single();
+
+    const updatedParameters = {
+      ...(existingRun?.parameters || {}),
+      time_buckets: actualTimeBuckets,
+      horizon_buckets: actualTimeBuckets.length,
+    };
+
     const { error: updateRunError } = await supabase
       .from('forecast_runs')
       .update({
         status: 'completed',
+        parameters: updatedParameters,
         metadata: {
           component_demand_count: componentDemandRows.length,
           component_demand_trace_count: validTraceRows.length,

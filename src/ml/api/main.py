@@ -6,8 +6,9 @@ root_dir = str(Path(__file__).resolve().parents[3])
 if root_dir not in sys.path:
     sys.path.append(root_dir)
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from ml.demand_forecasting.prophet_trainer import ProphetTrainer
 from ml.demand_forecasting.lightgbm_trainer import LightGBMTrainer
@@ -21,6 +22,22 @@ import numpy as np
 from datetime import datetime
 from typing import Optional, List
 
+def sanitize_numpy(obj):
+    """Recursively convert numpy types to native Python types for JSON serialization."""
+    if isinstance(obj, dict):
+        return {k: sanitize_numpy(v) for k, v in obj.items()}
+    elif isinstance(obj, (list, tuple)):
+        return [sanitize_numpy(v) for v in obj]
+    elif isinstance(obj, (np.integer,)):
+        return int(obj)
+    elif isinstance(obj, (np.floating,)):
+        return float(obj)
+    elif isinstance(obj, (np.bool_,)):
+        return bool(obj)
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+    return obj
+
 app = FastAPI(
     title="Demand Forecast API",
     description="AI-driven demand forecasting service for Risk Dashboard",
@@ -30,18 +47,34 @@ app = FastAPI(
 # CORS configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000"],
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    return JSONResponse(
+        status_code=500,
+        content={"error": str(exc)},
+        headers={"Access-Control-Allow-Origin": "*"},
+    )
+
 # Configuration
 ERP_API_ENDPOINT = os.getenv("ERP_ENDPOINT", "https://erp-api.example.com")
 ERP_API_KEY = os.getenv("ERP_API_KEY", "default-key")
+USE_MOCK_ERP = os.getenv("USE_MOCK_ERP", "true").lower() == "true"
 
-# Initialize services
-erp_connector = ERPConnector(ERP_API_ENDPOINT, ERP_API_KEY)
+# Initialize services - 根据环境变量选择真实或Mock ERP连接器
+if USE_MOCK_ERP:
+    from ml.demand_forecasting.mock_erp_connector import MockERPConnector
+    erp_connector = MockERPConnector(ERP_API_ENDPOINT, ERP_API_KEY)
+    print("🧪 使用Mock ERP连接器 (测试模式)")
+else:
+    from ml.demand_forecasting.erp_connector import ERPConnector
+    erp_connector = ERPConnector(ERP_API_ENDPOINT, ERP_API_KEY)
+    print("🔗 使用真实ERP连接器")
 prophet_trainer = ProphetTrainer()
 lightgbm_trainer = LightGBMTrainer()
 chronos_trainer = ChronosTrainer()
@@ -166,7 +199,7 @@ async def demand_forecast(request: ForecastRequest):
                 f"models/{result['model_type']}/{request.materialCode}/v{forecast['model_version']}.pkl"
             )
         
-        return response
+        return sanitize_numpy(response)
         
     except Exception as e:
         return {"error": str(e)}

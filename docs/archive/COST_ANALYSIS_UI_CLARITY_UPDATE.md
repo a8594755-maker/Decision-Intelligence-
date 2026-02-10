@@ -25,7 +25,7 @@
 **之前**:
 ```
 標題: "No Material Cost Data Yet"
-說明: "Upload material price history from SAP or Excel to start tracking cost trends"
+說明: "Upload material price history from ERP or Excel to start tracking cost trends"
 按鈕: [+ Upload Data]
 ```
 
@@ -167,7 +167,7 @@ recommendations: [
 | 位置 | 舊文案 | 新文案 | 改進 |
 |-----|-------|-------|-----|
 | 空狀態按鈕 | Upload Data | Go to Data Upload | ✅ 更清楚是導航動作 |
-| 空狀態說明 | Upload material price history from SAP or Excel | Please go to Data Upload page to upload material price history | ✅ 明確指出去哪裡上傳 |
+| 空狀態說明 | Upload material price history from ERP or Excel | Please go to Data Upload page to upload material price history | ✅ 明確指出去哪裡上傳 |
 | 按鈕圖標 | Plus (+) | ChevronRight (→) | ✅ 視覺上表示導航 |
 | 數據建議 | Please upload a price history file | Go to Data Upload page (External Systems) to upload | ✅ 具體的行動指引 |
 | 數據建議 | Consider re-uploading data | Go to Data Upload page to re-upload data | ✅ 明確的位置指引 |

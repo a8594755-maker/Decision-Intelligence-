@@ -90,7 +90,7 @@ export async function runCostForecast(userId, sourceRunId, options = {}) {
     const { data: costRun, error: createError } = await supabase
       .from('forecast_runs')
       .insert({
-        created_by: userId,
+        user_id: userId,
         kind: 'cost_forecast',
         status: 'running',
         parameters: {
