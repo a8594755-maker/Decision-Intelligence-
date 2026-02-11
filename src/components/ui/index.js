@@ -1,6 +1,6 @@
 /**
  * UI Components Index
- * 統一導出所有 UI 組件
+ * Unified export of all UI components
  */
 
 export { Card } from './Card';

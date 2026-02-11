@@ -1,6 +1,6 @@
 /**
  * BOM Data View - Dashboard for viewing BOM Edges and Demand FG data
- * 提供 Tab 切換、搜尋篩選和分頁功能
+ * Provides tab switching, search filtering, and pagination
  */
 
 import React, { useState, useEffect } from 'react';
@@ -99,7 +99,7 @@ const BOMDataView = ({ user, addNotification, globalDataSource }) => {
     } catch (err) {
       console.error('Error loading data:', err);
       const errorMsg = err?.message || err?.details || JSON.stringify(err);
-      addNotification(`載入失敗: ${errorMsg}`, 'error');
+      addNotification(`Loading failed: ${errorMsg}`, 'error');
       setData([]);
       setTotalCount(0);
     } finally {
@@ -141,18 +141,18 @@ const BOMDataView = ({ user, addNotification, globalDataSource }) => {
   const getFilterFields = () => {
     if (activeTab === 'bom_edges') {
       return [
-        { key: 'source', label: 'Source', placeholder: '篩選來源 (erp_sync, csv, manual)...' },
-        { key: 'batch_id', label: 'Batch ID', placeholder: '搜尋批次 ID...' },
-        { key: 'plant_id', label: 'Plant ID', placeholder: '搜尋工廠代碼...' },
-        { key: 'parent_material', label: 'Parent Material', placeholder: '搜尋父件料號...' },
-        { key: 'child_material', label: 'Child Material', placeholder: '搜尋子件料號...' }
+        { key: 'source', label: 'Source', placeholder: 'Filter source (erp_sync, csv, manual)...' },
+        { key: 'batch_id', label: 'Batch ID', placeholder: 'Search batch ID...' },
+        { key: 'plant_id', label: 'Plant ID', placeholder: 'Search plant code...' },
+        { key: 'parent_material', label: 'Parent Material', placeholder: 'Search parent material...' },
+        { key: 'child_material', label: 'Child Material', placeholder: 'Search child material...' }
       ];
     } else {
       return [
-        { key: 'batch_id', label: 'Batch ID', placeholder: '搜尋批次 ID...' },
-        { key: 'plant_id', label: 'Plant ID', placeholder: '搜尋工廠代碼...' },
-        { key: 'material_code', label: 'Material Code', placeholder: '搜尋料號...' },
-        { key: 'time_bucket', label: 'Time Bucket', placeholder: '搜尋時間桶...' }
+        { key: 'batch_id', label: 'Batch ID', placeholder: 'Search batch ID...' },
+        { key: 'plant_id', label: 'Plant ID', placeholder: 'Search plant code...' },
+        { key: 'material_code', label: 'Material Code', placeholder: 'Search material code...' },
+        { key: 'time_bucket', label: 'Time Bucket', placeholder: 'Search time bucket...' }
       ];
     }
   };
@@ -199,7 +199,7 @@ const BOMDataView = ({ user, addNotification, globalDataSource }) => {
             BOM Data Dashboard
           </h2>
           <p className="text-sm text-slate-500 mt-1">
-            查看和搜尋 BOM 關係與成品需求資料
+            View and search BOM relationships and finished goods demand data
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -209,10 +209,10 @@ const BOMDataView = ({ user, addNotification, globalDataSource }) => {
               : 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
           }`}>
             {globalDataSource === 'sap' ? <Cloud className="w-4 h-4" /> : <Database className="w-4 h-4" />}
-            {globalDataSource === 'sap' ? 'SAP資料' : '本地上傳'}
+            {globalDataSource === 'sap' ? 'SAP Data' : 'Local Upload'}
           </div>
           <Button onClick={loadData} disabled={loading} icon={RefreshCw}>
-            重新整理
+            Refresh
           </Button>
         </div>
       </div>
@@ -261,14 +261,14 @@ const BOMDataView = ({ user, addNotification, globalDataSource }) => {
             className="flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-300 hover:text-blue-600 dark:hover:text-blue-400"
           >
             <Filter className="w-4 h-4" />
-            {showFilters ? '隱藏篩選' : '顯示篩選'}
+            {showFilters ? 'Hide Filters' : 'Show Filters'}
           </button>
           {Object.keys(filters).some(key => filters[key]) && (
             <button
               onClick={clearFilters}
               className="text-sm text-blue-600 dark:text-blue-400 hover:underline"
             >
-              清除篩選
+              Clear Filters
             </button>
           )}
         </div>
@@ -301,10 +301,10 @@ const BOMDataView = ({ user, addNotification, globalDataSource }) => {
         <div className="flex items-center justify-between mb-4">
           <div>
             <h3 className="font-semibold text-lg">
-              {activeTab === 'bom_edges' ? 'BOM 關係資料' : 'FG 需求資料'}
+              {activeTab === 'bom_edges' ? 'BOM Edge Data' : 'FG Demand Data'}
             </h3>
             <p className="text-sm text-slate-500">
-              共 {totalCount} 筆記錄
+              {totalCount} records
             </p>
           </div>
         </div>
@@ -312,18 +312,18 @@ const BOMDataView = ({ user, addNotification, globalDataSource }) => {
         {loading ? (
           <div className="flex items-center justify-center py-12">
             <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
-            <span className="ml-3 text-slate-600 dark:text-slate-400">載入中...</span>
+            <span className="ml-3 text-slate-600 dark:text-slate-400">Loading...</span>
           </div>
         ) : data.length === 0 ? (
           <div className="py-12 text-center">
             <Database className="w-16 h-16 mx-auto text-slate-300 dark:text-slate-600 mb-4" />
             <h3 className="text-lg font-semibold text-slate-600 dark:text-slate-400 mb-2">
-              無資料
+              No Data
             </h3>
             <p className="text-sm text-slate-500">
               {Object.keys(filters).some(key => filters[key])
-                ? '請調整篩選條件'
-                : '尚無資料，請先上傳資料'}
+                ? 'Please adjust filter criteria'
+                : 'No data yet, please upload data first'}
             </p>
           </div>
         ) : (
@@ -368,7 +368,7 @@ const BOMDataView = ({ user, addNotification, globalDataSource }) => {
               <div className="mt-4 pt-4 border-t dark:border-slate-700">
                 <div className="flex items-center justify-between">
                   <div className="text-sm text-slate-600 dark:text-slate-400">
-                    顯示 {startItem} - {endItem} / 共 {totalCount} 筆
+                    Showing {startItem} - {endItem} of {totalCount}
                   </div>
                   
                   <div className="flex items-center gap-2">

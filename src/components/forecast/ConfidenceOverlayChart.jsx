@@ -226,7 +226,7 @@ const ConfidenceOverlayChart = ({
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center space-x-3">
-          <h3 className="text-lg font-semibold text-gray-900">預測對比圖</h3>
+          <h3 className="text-lg font-semibold text-gray-900">Forecast Comparison Chart</h3>
           
           {/* Model badges */}
           <div className="flex items-center space-x-2">
@@ -249,9 +249,9 @@ const ConfidenceOverlayChart = ({
         </div>
         
         <div className="flex items-center space-x-2 text-xs text-gray-500">
-          <span>置信區間: 90%</span>
+          <span>Confidence Interval: 90%</span>
           <span>&bull;</span>
-          <span>預測天數: {forecastData?.predictions?.length || 0}</span>
+          <span>Forecast Days: {forecastData?.predictions?.length || 0}</span>
         </div>
       </div>
 
@@ -264,12 +264,12 @@ const ConfidenceOverlayChart = ({
               dataKey="day" 
               tick={{ fontSize: 12 }}
               stroke="#6B7280"
-              label={{ value: "預測天數", position: "insideBottom", offset: -5 }}
+              label={{ value: "Forecast Days", position: "insideBottom", offset: -5 }}
             />
             <YAxis 
               tick={{ fontSize: 12 }}
               stroke="#6B7280"
-              label={{ value: "預測需求", angle: -90, position: "insideLeft" }}
+              label={{ value: "Forecast Demand", angle: -90, position: "insideLeft" }}
             />
             <Tooltip content={<CustomTooltip />} />
             <Legend />
@@ -282,7 +282,7 @@ const ConfidenceOverlayChart = ({
                 stroke="#9CA3AF"
                 strokeWidth={2}
                 dot={false}
-                name="歷史數據"
+                name="Historical Data"
                 connectNulls={false}
               />
             )}
@@ -295,7 +295,7 @@ const ConfidenceOverlayChart = ({
                 stroke="none"
                 fill={primaryModelColor}
                 fillOpacity={0.1}
-                name="置信區間上限"
+                name="CI Upper Bound"
               />
             )}
             
@@ -305,7 +305,7 @@ const ConfidenceOverlayChart = ({
                 dataKey="confidence_lower"
                 stroke="none"
                 fill="white"
-                name="置信區間下限"
+                name="CI Lower Bound"
               />
             )}
             
@@ -317,7 +317,7 @@ const ConfidenceOverlayChart = ({
               strokeWidth={3}
               dot={{ r: 4, fill: primaryModelColor }}
               activeDot={{ r: 6 }}
-              name={`${forecastData?.model?.toUpperCase()} 預測`}
+              name={`${forecastData?.model?.toUpperCase()} Forecast`}
             />
             
             {/* Comparison forecast line */}
@@ -330,7 +330,7 @@ const ConfidenceOverlayChart = ({
                 strokeDasharray="8 4"
                 dot={{ r: 3, fill: comparisonModelColor }}
                 activeDot={{ r: 5 }}
-                name={`${comparisonData.secondary_model?.toUpperCase()} 預測`}
+                name={`${comparisonData.secondary_model?.toUpperCase()} Forecast`}
               />
             )}
             
@@ -341,7 +341,7 @@ const ConfidenceOverlayChart = ({
                 stroke="#EF4444" 
                 strokeWidth={2}
                 strokeDasharray="4 4"
-                label="今天"
+                label="Today"
               />
             )}
           </ComposedChart>
@@ -354,28 +354,28 @@ const ConfidenceOverlayChart = ({
           <div className="text-2xl font-bold text-gray-900">
             {forecastData?.median?.toFixed(0) || 'N/A'}
           </div>
-          <div className="text-xs text-gray-500">主要預測均值</div>
+          <div className="text-xs text-gray-500">Primary Forecast Mean</div>
         </div>
         
         <div className="text-center">
           <div className="text-2xl font-bold text-gray-900">
             {comparisonData?.secondary_prediction?.toFixed(0) || 'N/A'}
           </div>
-          <div className="text-xs text-gray-500">比較預測均值</div>
+          <div className="text-xs text-gray-500">Comparison Forecast Mean</div>
         </div>
         
         <div className="text-center">
           <div className="text-2xl font-bold text-blue-600">
             {comparisonData?.deviation_pct?.toFixed(1) || '0'}%
           </div>
-          <div className="text-xs text-gray-500">預測偏差</div>
+          <div className="text-xs text-gray-500">Forecast Deviation</div>
         </div>
         
         <div className="text-center">
           <div className="text-2xl font-bold text-green-600">
             {forecastData?.risk_score?.toFixed(0) || '50'}
           </div>
-          <div className="text-xs text-gray-500">風險分數</div>
+          <div className="text-xs text-gray-500">Risk Score</div>
         </div>
       </div>
 
@@ -384,21 +384,21 @@ const ConfidenceOverlayChart = ({
         <div className="flex items-center space-x-4 text-xs text-gray-600">
           <div className="flex items-center space-x-1">
             <div className="w-3 h-0.5 bg-gray-400"></div>
-            <span>歷史數據</span>
+            <span>Historical Data</span>
           </div>
           <div className="flex items-center space-x-1">
             <div className="w-3 h-0.5" style={{ backgroundColor: primaryModelColor }}></div>
-            <span>主要預測</span>
+            <span>Primary Forecast</span>
           </div>
           {showComparison && comparisonData && (
             <div className="flex items-center space-x-1">
               <div className="w-3 h-0.5 border-t-2 border-dashed" style={{ borderColor: comparisonModelColor }}></div>
-              <span>比較預測</span>
+              <span>Comparison Forecast</span>
             </div>
           )}
           <div className="flex items-center space-x-1">
             <div className="w-3 h-3 bg-blue-200 opacity-30 rounded"></div>
-            <span>90% 置信區間</span>
+            <span>90% Confidence Interval</span>
           </div>
         </div>
       </div>

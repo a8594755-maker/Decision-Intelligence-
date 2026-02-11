@@ -120,10 +120,10 @@ export default function RiskCardGrid({
           </svg>
         </div>
         <h3 className="text-lg font-medium text-slate-900 dark:text-slate-100 mb-2">
-          暫無風險項目
+          No Risk Items
         </h3>
         <p className="text-sm text-slate-500 dark:text-slate-400 text-center max-w-md">
-          當前篩選條件下沒有符合的風險項目，或所有項目狀態良好。
+          No matching risk items under current filters, or all items are in good status.
         </p>
       </div>
     );

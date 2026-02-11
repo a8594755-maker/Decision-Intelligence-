@@ -22,7 +22,7 @@ export default function ViewToggle({ viewMode, onViewChange }) {
         aria-pressed={viewMode === 'grid'}
       >
         <LayoutGrid className="w-4 h-4" />
-        <span className="hidden sm:inline">網格視圖</span>
+        <span className="hidden sm:inline">Grid View</span>
       </button>
       
       <button
@@ -36,7 +36,7 @@ export default function ViewToggle({ viewMode, onViewChange }) {
         aria-pressed={viewMode === 'list'}
       >
         <List className="w-4 h-4" />
-        <span className="hidden sm:inline">列表視圖</span>
+        <span className="hidden sm:inline">List View</span>
       </button>
     </div>
   );

@@ -17,28 +17,28 @@ const ModelToggle = ({
   const models = [
     {
       id: 'lightgbm',
-      name: '穩定模式',
+      name: 'Stable Mode',
       icon: TrendingUp,
-      description: '基於梯度提升決策樹，適合數據充足且有明確業務邏輯的產品',
-      features: ['結構化特徵', '價格敏感', '歷史數據 > 3個月'],
+      description: 'Gradient boosted decision tree, suitable for products with sufficient data and clear business logic',
+      features: ['Structured Features', 'Price Sensitive', 'History > 3 months'],
       color: 'blue',
       status: modelStatus?.lightgbm?.available
     },
     {
       id: 'chronos',
-      name: 'AI 模式',
+      name: 'AI Mode',
       icon: Brain,
-      description: 'Amazon Chronos 零樣本學習，適合新產品或異常數據模式',
-      features: ['零樣本推論', '異常檢測', '原始序列'],
+      description: 'Amazon Chronos zero-shot learning, suitable for new products or anomalous data patterns',
+      features: ['Zero-shot Inference', 'Anomaly Detection', 'Raw Series'],
       color: 'purple',
       status: modelStatus?.chronos?.available
     },
     {
       id: 'prophet',
-      name: '季節模式',
+      name: 'Seasonal Mode',
       icon: Calendar,
-      description: '時間序列專家模型，適合有明顯季節性模式的產品',
-      features: ['季節性檢測', '節假日效應', '趨勢分析'],
+      description: 'Time series expert model, suitable for products with clear seasonal patterns',
+      features: ['Seasonality Detection', 'Holiday Effects', 'Trend Analysis'],
       color: 'green',
       status: modelStatus?.prophet?.available
     }
@@ -62,7 +62,7 @@ const ModelToggle = ({
   if (compact) {
     return (
       <div className="flex items-center space-x-2">
-        <span className="text-sm font-medium text-gray-700">模型:</span>
+        <span className="text-sm font-medium text-gray-700">Model:</span>
         <div className="flex space-x-1">
           {models.map((model) => {
             const Icon = model.icon;
@@ -88,7 +88,7 @@ const ModelToggle = ({
         </div>
         {recommendedModel && recommendedModel !== selectedModel && (
           <Badge variant="outline" className="text-xs">
-            推薦: {recommendedModelData?.name}
+            Recommended: {recommendedModelData?.name}
           </Badge>
         )}
       </div>
@@ -100,7 +100,7 @@ const ModelToggle = ({
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center space-x-2">
-          <h3 className="text-lg font-semibold text-gray-900">預測模型選擇</h3>
+          <h3 className="text-lg font-semibold text-gray-900">Forecast Model Selection</h3>
           {isLoading && (
             <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
           )}
@@ -138,7 +138,7 @@ const ModelToggle = ({
               {isRecommended && showRecommendation && (
                 <div className="absolute -top-2 -right-2">
                   <Badge variant="default" className="text-xs">
-                    推薦
+                    Recommended
                   </Badge>
                 </div>
               )}
@@ -184,13 +184,13 @@ const ModelToggle = ({
           <div className="flex items-start space-x-2">
             <Info className="w-4 h-4 text-blue-600 mt-0.5" />
             <div className="text-sm text-blue-800">
-              <p className="font-medium mb-1">雙模型架構說明：</p>
+              <p className="font-medium mb-1">Dual-Model Architecture:</p>
               <ul className="space-y-1 text-xs">
-                  <li>&bull; <strong>穩定模式 (LightGBM)</strong>：適合有充足歷史數據和明確業務邏輯的產品</li>
-                  <li>&bull; <strong>AI 模式 (Chronos)</strong>：適合新產品、冷啟動或異常數據模式</li>
-                  <li>&bull; <strong>季節模式 (Prophet)</strong>：適合有明顯季節性模式的產品</li>
-                  <li>&bull; 系統會根據數據特徵自動推薦最適合的模型</li>
-                  <li>&bull; 當模型預測差異 &gt; 15% 時會顯示共識警告</li>
+                  <li>&bull; <strong>Stable Mode (LightGBM)</strong>: Best for products with sufficient historical data and clear business logic</li>
+                  <li>&bull; <strong>AI Mode (Chronos)</strong>: Best for new products, cold starts, or anomalous data patterns</li>
+                  <li>&bull; <strong>Seasonal Mode (Prophet)</strong>: Best for products with clear seasonal patterns</li>
+                  <li>&bull; The system automatically recommends the most suitable model based on data characteristics</li>
+                  <li>&bull; A consensus warning is shown when model prediction deviation &gt; 15%</li>
                 </ul>
             </div>
           </div>
@@ -204,12 +204,12 @@ const ModelToggle = ({
             <div className="flex items-center space-x-2">
               <selectedModelData.icon className={`w-4 h-4 text-${getModelColor(selectedModel)}-600`} />
               <span className="text-sm font-medium text-gray-700">
-                當前選擇: {selectedModelData.name}
+                Current Selection: {selectedModelData.name}
               </span>
             </div>
             {recommendedModel && recommendedModel !== selectedModel && (
               <div className="text-xs text-gray-500">
-                系統推薦: {recommendedModelData?.name}
+                System Recommended: {recommendedModelData?.name}
               </div>
             )}
           </div>

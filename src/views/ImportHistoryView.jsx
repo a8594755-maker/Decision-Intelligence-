@@ -1,6 +1,6 @@
 /**
  * Import History View
- * 匯入歷史查詢與批次撤銷管理
+ * Import history query and batch undo management
  */
 
 import React, { useState, useEffect } from 'react';
@@ -64,7 +64,7 @@ const ImportHistoryView = ({ addNotification, user }) => {
       setBatches(data);
     } catch (error) {
       console.error('Error loading import history:', error);
-      addNotification(`載入失敗: ${error.message}`, 'error');
+      addNotification(`Loading failed: ${error.message}`, 'error');
     } finally {
       setLoading(false);
     }
@@ -119,7 +119,7 @@ const ImportHistoryView = ({ addNotification, user }) => {
       }));
     } catch (error) {
       console.error('Error loading batch data:', error);
-      addNotification(`載入預覽失敗: ${error.message}`, 'error');
+      addNotification(`Failed to load preview: ${error.message}`, 'error');
       setPreviewModal(prev => ({
         ...prev,
         loading: false
@@ -196,15 +196,15 @@ const ImportHistoryView = ({ addNotification, user }) => {
         // Single undo
         const result = await importBatchesService.undoBatch(batchIds[0], user.id);
         if (result.success) {
-          addNotification(`已成功撤銷批次，刪除了 ${result.deleted_count} 筆資料`, 'success');
+          addNotification(`Batch successfully undone, ${result.deleted_count} records deleted`, 'success');
         } else {
-          addNotification(`撤銷失敗: ${result.error}`, 'error');
+          addNotification(`Undo failed: ${result.error}`, 'error');
         }
       } else {
         // Multiple undo
         const result = await importBatchesService.undoMultipleBatches(batchIds, user.id);
         addNotification(
-          `批量撤銷完成: ${result.success_count} 成功, ${result.error_count} 失敗`,
+          `Batch undo complete: ${result.success_count} succeeded, ${result.error_count} failed`,
           result.error_count > 0 ? 'warning' : 'success'
         );
       }
@@ -216,7 +216,7 @@ const ImportHistoryView = ({ addNotification, user }) => {
       await loadBatches();
     } catch (error) {
       console.error('Error undoing batch:', error);
-      addNotification(`撤銷失敗: ${error.message}`, 'error');
+      addNotification(`Undo failed: ${error.message}`, 'error');
     } finally {
       setLoading(false);
     }
@@ -226,18 +226,18 @@ const ImportHistoryView = ({ addNotification, user }) => {
    * Delete batch record (does not delete actual data)
    */
   const handleDeleteRecord = async (batchId) => {
-    if (!window.confirm('確定要刪除這筆匯入記錄嗎？（不會刪除實際資料）')) {
+    if (!window.confirm('Are you sure you want to delete this import record? (Actual data will not be deleted)')) {
       return;
     }
 
     setLoading(true);
     try {
       await importBatchesService.deleteBatch(batchId);
-      addNotification('記錄已刪除', 'success');
+      addNotification('Record deleted', 'success');
       await loadBatches();
     } catch (error) {
       console.error('Error deleting batch record:', error);
-      addNotification(`刪除失敗: ${error.message}`, 'error');
+      addNotification(`Delete failed: ${error.message}`, 'error');
     } finally {
       setLoading(false);
     }
@@ -281,11 +281,11 @@ const ImportHistoryView = ({ addNotification, user }) => {
    */
   const getStatusBadge = (status) => {
     const statusConfig = {
-      pending: { label: '待處理', color: 'blue' },
-      processing: { label: '寫入中', color: 'blue' },
-      completed: { label: '已完成', color: 'green' },
-      failed: { label: '失敗', color: 'red' },
-      undone: { label: '已撤銷', color: 'red' }
+      pending: { label: 'Pending', color: 'blue' },
+      processing: { label: 'Processing', color: 'blue' },
+      completed: { label: 'Completed', color: 'green' },
+      failed: { label: 'Failed', color: 'red' },
+      undone: { label: 'Undone', color: 'red' }
     };
 
     const config = statusConfig[status] || { label: status, color: 'gray' };
@@ -305,7 +305,7 @@ const ImportHistoryView = ({ addNotification, user }) => {
   const formatDate = (dateString) => {
     if (!dateString) return '-';
     const date = new Date(dateString);
-    return date.toLocaleString('zh-TW', {
+    return date.toLocaleString('en-US', {
       year: 'numeric',
       month: '2-digit',
       day: '2-digit',
@@ -322,7 +322,7 @@ const ImportHistoryView = ({ addNotification, user }) => {
       return (
         <div className="flex items-center justify-center py-12">
           <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
-          <span className="ml-3 text-slate-600 dark:text-slate-400">載入中...</span>
+          <span className="ml-3 text-slate-600 dark:text-slate-400">Loading...</span>
         </div>
       );
     }
@@ -330,7 +330,7 @@ const ImportHistoryView = ({ addNotification, user }) => {
     if (!previewModal.data || previewModal.data.length === 0) {
       return (
         <div className="py-12 text-center text-slate-500">
-          無資料
+          No data
         </div>
       );
     }
@@ -369,7 +369,7 @@ const ImportHistoryView = ({ addNotification, user }) => {
         </table>
         {previewModal.data.length >= 50 && (
           <div className="mt-3 text-center text-sm text-slate-500">
-            僅顯示前 50 筆資料
+            Showing first 50 records only
           </div>
         )}
       </div>
@@ -385,14 +385,14 @@ const ImportHistoryView = ({ addNotification, user }) => {
         <div>
           <h2 className="text-xl md:text-2xl font-bold flex items-center gap-2">
             <History className="w-6 h-6 text-blue-500" />
-            匯入歷史
+            Import History
           </h2>
           <p className="text-sm text-slate-500 mt-1">
-            查看所有資料匯入記錄，可預覽或撤銷批次
+            View all data import records, preview or undo batches
           </p>
         </div>
         <Button onClick={loadBatches} disabled={loading} icon={RefreshCw}>
-          重新整理
+          Refresh
         </Button>
       </div>
 
@@ -405,7 +405,7 @@ const ImportHistoryView = ({ addNotification, user }) => {
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
               <input
                 type="text"
-                placeholder="搜尋檔案名稱、類型..."
+                placeholder="Search filename, type..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="w-full pl-10 pr-4 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 focus:ring-2 focus:ring-blue-500 outline-none"
@@ -420,12 +420,12 @@ const ImportHistoryView = ({ addNotification, user }) => {
               onChange={(e) => setFilterStatus(e.target.value)}
               className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 focus:ring-2 focus:ring-blue-500 outline-none"
             >
-              <option value="all">所有狀態</option>
-              <option value="completed">已完成</option>
-              <option value="failed">失敗</option>
-              <option value="undone">已撤銷</option>
-              <option value="pending">待處理</option>
-              <option value="processing">寫入中</option>
+              <option value="all">All Statuses</option>
+              <option value="completed">Completed</option>
+              <option value="failed">Failed</option>
+              <option value="undone">Undone</option>
+              <option value="pending">Pending</option>
+              <option value="processing">Processing</option>
             </select>
           </div>
 
@@ -436,7 +436,7 @@ const ImportHistoryView = ({ addNotification, user }) => {
               onChange={(e) => setFilterType(e.target.value)}
               className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 focus:ring-2 focus:ring-blue-500 outline-none"
             >
-              <option value="all">所有類型</option>
+              <option value="all">All Types</option>
               {Object.entries(UPLOAD_SCHEMAS).map(([key, config]) => (
                 <option key={key} value={key}>{config.label}</option>
               ))}
@@ -452,7 +452,7 @@ const ImportHistoryView = ({ addNotification, user }) => {
             <div className="flex items-center gap-3">
               <CheckCircle className="w-5 h-5 text-blue-600" />
               <span className="font-medium text-blue-900 dark:text-blue-100">
-                已選擇 {selectedBatches.length} 個批次
+                {selectedBatches.length} batches selected
               </span>
             </div>
             <div className="flex items-center gap-2">
@@ -462,14 +462,14 @@ const ImportHistoryView = ({ addNotification, user }) => {
                 icon={Undo2}
                 size="sm"
               >
-                批量撤銷
+                Batch Undo
               </Button>
               <Button
                 onClick={() => setSelectedBatches([])}
                 variant="secondary"
                 size="sm"
               >
-                取消選擇
+                Deselect All
               </Button>
             </div>
           </div>
@@ -481,20 +481,20 @@ const ImportHistoryView = ({ addNotification, user }) => {
         {loading && batches.length === 0 ? (
           <div className="flex items-center justify-center py-12">
             <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
-            <span className="ml-3 text-slate-600 dark:text-slate-400">載入中...</span>
+            <span className="ml-3 text-slate-600 dark:text-slate-400">Loading...</span>
           </div>
         ) : filteredBatches.length === 0 ? (
           <div className="py-12 text-center">
             <History className="w-16 h-16 mx-auto text-slate-300 dark:text-slate-600 mb-4" />
             <h3 className="text-lg font-semibold text-slate-600 dark:text-slate-400 mb-2">
               {searchTerm || filterStatus !== 'all' || filterType !== 'all'
-                ? '無符合的匯入記錄'
-                : '尚無匯入記錄'}
+                ? 'No matching import records'
+                : 'No import records yet'}
             </h3>
             <p className="text-sm text-slate-500">
               {searchTerm || filterStatus !== 'all' || filterType !== 'all'
-                ? '請調整篩選條件'
-                : '開始上傳資料後，歷史記錄會顯示在這裡'}
+                ? 'Please adjust filter criteria'
+                : 'Import history will appear here after uploading data'}
             </p>
           </div>
         ) : (
@@ -512,7 +512,7 @@ const ImportHistoryView = ({ addNotification, user }) => {
                       />
                     </th>
                     <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-slate-600 dark:text-slate-400">
-                      日期時間
+                      Date/Time
                       <button
                         onClick={() => setSortOrder(sortOrder === 'desc' ? 'asc' : 'desc')}
                         className="ml-2 inline-flex items-center"
@@ -521,22 +521,22 @@ const ImportHistoryView = ({ addNotification, user }) => {
                       </button>
                     </th>
                     <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-slate-600 dark:text-slate-400">
-                      類型
+                      Type
                     </th>
                     <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-slate-600 dark:text-slate-400">
-                      檔案名稱
+                      Filename
                     </th>
                     <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-slate-600 dark:text-slate-400">
-                      目標表格
+                      Target Table
                     </th>
                     <th className="px-4 py-3 text-center text-xs font-semibold uppercase text-slate-600 dark:text-slate-400">
-                      成功/失敗
+                      Success/Error
                     </th>
                     <th className="px-4 py-3 text-center text-xs font-semibold uppercase text-slate-600 dark:text-slate-400">
-                      狀態
+                      Status
                     </th>
                     <th className="px-4 py-3 text-center text-xs font-semibold uppercase text-slate-600 dark:text-slate-400">
-                      操作
+                      Actions
                     </th>
                   </tr>
                 </thead>
@@ -559,7 +559,7 @@ const ImportHistoryView = ({ addNotification, user }) => {
                         </div>
                         {batch.undone_at && (
                           <div className="text-xs text-red-600 dark:text-red-400 mt-1">
-                            撤銷於: {formatDate(batch.undone_at)}
+                            Undone at: {formatDate(batch.undone_at)}
                           </div>
                         )}
                       </td>
@@ -586,7 +586,7 @@ const ImportHistoryView = ({ addNotification, user }) => {
                         </div>
                         {batch.metadata?.error && (
                           <div className="text-xs text-red-600 dark:text-red-400 mt-1 max-w-xs truncate" title={batch.metadata.error}>
-                            錯誤: {batch.metadata.error}
+                            Error: {batch.metadata.error}
                           </div>
                         )}
                       </td>
@@ -617,7 +617,7 @@ const ImportHistoryView = ({ addNotification, user }) => {
                           <button
                             onClick={() => handlePreview(batch)}
                             className="p-1.5 hover:bg-blue-100 dark:hover:bg-blue-900/30 rounded text-blue-600 dark:text-blue-400"
-                            title="預覽資料"
+                            title="Preview Data"
                           >
                             <Eye className="w-4 h-4" />
                           </button>
@@ -625,7 +625,7 @@ const ImportHistoryView = ({ addNotification, user }) => {
                             <button
                               onClick={() => handleUndoClick([batch.id])}
                               className="p-1.5 hover:bg-red-100 dark:hover:bg-red-900/30 rounded text-red-600 dark:text-red-400"
-                              title="撤銷批次"
+                              title="Undo Batch"
                             >
                               <Undo2 className="w-4 h-4" />
                             </button>
@@ -634,7 +634,7 @@ const ImportHistoryView = ({ addNotification, user }) => {
                             <button
                               onClick={() => handleDeleteRecord(batch.id)}
                               className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-700 rounded text-slate-600 dark:text-slate-400"
-                              title="刪除記錄"
+                              title="Delete Record"
                             >
                               <Trash2 className="w-4 h-4" />
                             </button>
@@ -650,17 +650,17 @@ const ImportHistoryView = ({ addNotification, user }) => {
             {/* Summary */}
             <div className="mt-4 pt-4 border-t dark:border-slate-700 flex items-center justify-between text-sm text-slate-600 dark:text-slate-400">
               <div>
-                顯示 {filteredBatches.length} / {batches.length} 筆記錄
+                Showing {filteredBatches.length} / {batches.length} records
               </div>
               <div className="flex items-center gap-4">
                 <span>
-                  已完成: {batches.filter(b => b.status === 'completed').length}
+                  Completed: {batches.filter(b => b.status === 'completed').length}
                 </span>
                 <span>
-                  失敗: {batches.filter(b => b.status === 'failed').length}
+                  Failed: {batches.filter(b => b.status === 'failed').length}
                 </span>
                 <span>
-                  已撤銷: {batches.filter(b => b.status === 'undone').length}
+                  Undone: {batches.filter(b => b.status === 'undone').length}
                 </span>
               </div>
             </div>
@@ -673,32 +673,32 @@ const ImportHistoryView = ({ addNotification, user }) => {
         <Modal
           isOpen={previewModal.open}
           onClose={closePreviewModal}
-          title={`資料預覽 - ${previewModal.batch?.filename}`}
+          title={`Data Preview - ${previewModal.batch?.filename}`}
           size="xl"
         >
           <div className="space-y-4">
             {/* Batch Info */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 p-4 bg-slate-50 dark:bg-slate-800 rounded-lg">
               <div>
-                <div className="text-xs text-slate-500 mb-1">類型</div>
+                <div className="text-xs text-slate-500 mb-1">Type</div>
                 <div className="text-sm font-medium">
                   {getUploadTypeLabel(previewModal.batch?.upload_type)}
                 </div>
               </div>
               <div>
-                <div className="text-xs text-slate-500 mb-1">目標表格</div>
+                <div className="text-xs text-slate-500 mb-1">Target Table</div>
                 <div className="text-sm font-medium">
                   {previewModal.batch?.target_table}
                 </div>
               </div>
               <div>
-                <div className="text-xs text-slate-500 mb-1">成功筆數</div>
+                <div className="text-xs text-slate-500 mb-1">Success Count</div>
                 <div className="text-sm font-medium text-green-600">
                   {previewModal.batch?.success_rows}
                 </div>
               </div>
               <div>
-                <div className="text-xs text-slate-500 mb-1">狀態</div>
+                <div className="text-xs text-slate-500 mb-1">Status</div>
                 <div className="text-sm">
                   {getStatusBadge(previewModal.batch?.status)}
                 </div>
@@ -718,7 +718,7 @@ const ImportHistoryView = ({ addNotification, user }) => {
         <Modal
           isOpen={undoModal.open}
           onClose={closeUndoModal}
-          title="確認撤銷批次"
+          title="Confirm Batch Undo"
         >
           <div className="space-y-4">
             <div className="p-4 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg">
@@ -726,15 +726,15 @@ const ImportHistoryView = ({ addNotification, user }) => {
                 <AlertTriangle className="w-6 h-6 text-amber-600 flex-shrink-0 mt-1" />
                 <div>
                   <h4 className="font-semibold text-amber-900 dark:text-amber-100 mb-2">
-                    警告：此操作無法復原
+                    Warning: This action cannot be undone
                   </h4>
                   <p className="text-sm text-amber-800 dark:text-amber-200 mb-2">
-                    您即將撤銷以下 {undoModal.batches.length} 個批次的匯入，這將會：
+                    You are about to undo the import of the following {undoModal.batches.length} batch(es). This will:
                   </p>
                   <ul className="text-sm text-amber-800 dark:text-amber-200 list-disc list-inside space-y-1">
-                    <li>從資料庫中永久刪除這些批次的所有資料</li>
-                    <li>將批次狀態標記為「已撤銷」</li>
-                    <li>此操作無法復原</li>
+                    <li>Permanently delete all data from these batches in the database</li>
+                    <li>Mark batch status as "Undone"</li>
+                    <li>This action cannot be reversed</li>
                   </ul>
                 </div>
               </div>
@@ -745,9 +745,9 @@ const ImportHistoryView = ({ addNotification, user }) => {
               <table className="w-full text-sm">
                 <thead className="bg-slate-50 dark:bg-slate-800 sticky top-0">
                   <tr>
-                    <th className="px-3 py-2 text-left">檔案名稱</th>
-                    <th className="px-3 py-2 text-left">類型</th>
-                    <th className="px-3 py-2 text-center">成功筆數</th>
+                    <th className="px-3 py-2 text-left">Filename</th>
+                    <th className="px-3 py-2 text-left">Type</th>
+                    <th className="px-3 py-2 text-center">Success Count</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
@@ -765,10 +765,10 @@ const ImportHistoryView = ({ addNotification, user }) => {
             {/* Actions */}
             <div className="flex items-center justify-end gap-3 pt-4 border-t dark:border-slate-700">
               <Button onClick={closeUndoModal} variant="secondary">
-                取消
+                Cancel
               </Button>
               <Button onClick={executeUndo} variant="danger" icon={Undo2}>
-                確認撤銷
+                Confirm Undo
               </Button>
             </div>
           </div>

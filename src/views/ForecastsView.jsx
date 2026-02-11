@@ -1,6 +1,6 @@
 /**
  * Forecasts View - Component Forecast (BOM-Derived)
- * 產品化的 BOM Explosion 主頁：Run 計算 → 選擇批次 → 查看結果（Results + Trace + Inventory）
+ * BOM Explosion main page: Run calculation → Select batch → View results (Results + Trace + Inventory)
  */
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
@@ -44,7 +44,7 @@ import ConsensusWarning from '../components/forecast/ConsensusWarning';
 import ConfidenceOverlayChart from '../components/forecast/ConfidenceOverlayChart';
 
 const ForecastsView = ({ user, addNotification }) => {
-  // ========== Run 區塊 States ==========
+  // ========== Run Section States ==========
   const [plantId, setPlantId] = useState('');
   const [timeBuckets, setTimeBuckets] = useState('');
   const [runLoading, setRunLoading] = useState(false);
@@ -201,7 +201,7 @@ const ForecastsView = ({ user, addNotification }) => {
   }, [activeTab, selectedRunId, user]);
 
   /**
-   * 載入 BOM Explosion 批次清單
+   * Load BOM Explosion batch list
    */
   const loadBatches = async () => {
     if (!user?.id) return;
@@ -212,27 +212,27 @@ const ForecastsView = ({ user, addNotification }) => {
         limit: 50
       });
       
-      // 篩選 bom_explosion 批次（target_table 或 upload_type）且 status='completed'
+      // Filter bom_explosion batches (target_table or upload_type) with status='completed'
       const bomBatches = allBatches
         .filter(b => (b.target_table === 'bom_explosion' || b.upload_type === 'bom_explosion') && b.status === 'completed')
-        .slice(0, 10); // 最近 10 筆
+        .slice(0, 10); // Latest 10 records
       
       setBatches(bomBatches);
       
-      // 預設選擇最新的批次
+      // Default to latest batch
       if (bomBatches.length > 0 && !selectedBatchId) {
         setSelectedBatchId(bomBatches[0].id);
       }
     } catch (error) {
       console.error('Error loading batches:', error);
-      addNotification(`載入批次清單失敗: ${error.message}`, 'error');
+      addNotification(`Failed to load batch list: ${error.message}`, 'error');
     } finally {
       setLoadingBatches(false);
     }
   };
 
   /**
-   * 載入 Forecast Runs 清單（供 Inventory Tab 使用）
+   * Load Forecast Runs list (for Inventory Tab)
    */
   const loadForecastRuns = async (forceReselect = false) => {
     if (!user?.id) return;
@@ -241,7 +241,7 @@ const ForecastsView = ({ user, addNotification }) => {
       const runs = await forecastRunsService.listRuns(user.id, { limit: 20 });
       setForecastRuns(runs || []);
       
-      // 預設選擇最新的有 time_buckets 的 run（Inventory tab 需要 time_buckets）
+      // Default to latest run with time_buckets (Inventory tab requires time_buckets)
       if (runs && runs.length > 0 && (!selectedRunId || forceReselect)) {
         const runWithBuckets = runs.find(r => 
           Array.isArray(r.parameters?.time_buckets) && r.parameters.time_buckets.length > 0
@@ -282,7 +282,7 @@ const ForecastsView = ({ user, addNotification }) => {
    */
   const executeDualModelForecast = useCallback(async (materialCode) => {
     if (!materialCode) {
-      addNotification('請選擇一個產品料號', 'error');
+      addNotification('Please select a material code', 'error');
       return;
     }
 
@@ -305,7 +305,7 @@ const ForecastsView = ({ user, addNotification }) => {
         if (cachedResult.consensus_warning) {
           setConsensusWarning(cachedResult.consensus_warning);
         }
-        addNotification('使用快取的預測結果', 'info');
+        addNotification('Using cached forecast results', 'info');
         return;
       }
 
@@ -329,7 +329,7 @@ const ForecastsView = ({ user, addNotification }) => {
         setConsensusWarning(result.consensus_warning);
         
         if (result.consensus_warning.level === 'high') {
-          addNotification('檢測到模型預測差異較大，請查看共識警告', 'warning');
+          addNotification('Large model prediction deviation detected, please check consensus warning', 'warning');
         }
       }
 
@@ -337,14 +337,14 @@ const ForecastsView = ({ user, addNotification }) => {
       dualModelForecastService.cacheForecast(cacheKey, result, 60); // Cache for 60 minutes
       
       addNotification(
-        `預測完成！使用 ${result.forecast.model} 模型`,
+        `Forecast complete! Using ${result.forecast.model} model`,
         'success'
       );
 
     } catch (error) {
       console.error('Dual model forecast failed:', error);
       setDualModelError(error.message);
-      addNotification(`預測失敗: ${error.message}`, 'error');
+      addNotification(`Forecast failed: ${error.message}`, 'error');
     } finally {
       setDualModelLoading(false);
     }
@@ -373,7 +373,7 @@ const ForecastsView = ({ user, addNotification }) => {
 
     } catch (error) {
       console.error('SKU analysis failed:', error);
-      addNotification(`SKU 分析失敗: ${error.message}`, 'error');
+      addNotification(`SKU analysis failed: ${error.message}`, 'error');
     }
   }, [selectedModel, addNotification]);
 
@@ -426,7 +426,7 @@ const ForecastsView = ({ user, addNotification }) => {
   }, [analyzeSKU]);
 
   /**
-   * 載入 Inventory Projection 資料
+   * Load Inventory Projection data
    */
   const loadInventoryData = useCallback(async () => {
     if (!user?.id || !selectedRunId) return;
@@ -437,20 +437,20 @@ const ForecastsView = ({ user, addNotification }) => {
     setExpandedSeries([]);
 
     try {
-      // 取得選中的 run 資訊
+      // Get selected run info
       const selectedRun = forecastRuns.find(r => r.id === selectedRunId);
       const runTimeBuckets = selectedRun?.parameters?.time_buckets || [];
       const runPlantId = selectedRun?.parameters?.plant_id || null;
 
       if (runTimeBuckets.length === 0) {
-        setInventoryError('此 Forecast Run 無有效的 time_buckets 設定');
+        setInventoryError('This Forecast Run has no valid time_buckets setting');
         setInventoryMode('STOP');
         setInventorySummaryRows([]);
         setInventoryKpis({ itemsProjected: 0, atRiskItems: 0, earliestStockoutBucket: null, totalShortageQty: 0 });
         return;
       }
 
-      // 根據 inbound source 決定參數
+      // Determine parameters based on inbound source
       const projectionOptions = {
         inboundSource: inventoryInboundSource,
         supplyForecastRunId: inventoryInboundSource === 'supply_forecast' ? inventorySupplyRunId : null
@@ -472,7 +472,7 @@ const ForecastsView = ({ user, addNotification }) => {
       }
     } catch (error) {
       console.error('Error loading inventory projection:', error);
-      setInventoryError(`載入庫存投影失敗: ${error.message}`);
+      setInventoryError(`Failed to load inventory projection: ${error.message}`);
       setInventoryMode('STOP');
     } finally {
       setInventoryLoading(false);
@@ -480,7 +480,7 @@ const ForecastsView = ({ user, addNotification }) => {
   }, [user?.id, selectedRunId, forecastRuns, inventoryInboundSource, inventorySupplyRunId]);
 
   /**
-   * 展開/收起單一 key 的 bucket series
+   * Toggle expand/collapse for a single key's bucket series
    */
   const handleToggleExpand = useCallback((key) => {
     if (expandedKey === key) {
@@ -498,7 +498,7 @@ const ForecastsView = ({ user, addNotification }) => {
   }, [expandedKey]);
 
   /**
-   * 載入 Supply Forecast Runs（供 Inventory Tab 使用）
+   * Load Supply Forecast Runs (for Inventory Tab)
    */
   const loadSupplyForecastRunsForInventory = async () => {
     if (!user?.id) return;
@@ -507,7 +507,7 @@ const ForecastsView = ({ user, addNotification }) => {
       const runs = await supplyForecastService.listRuns(user.id, { limit: 20 });
       setSupplyForecastRunsForInventory(runs || []);
       
-      // 如果有 runs 且目前沒有選擇，自動選擇第一個
+      // Auto-select first run if available and none selected
       if (runs && runs.length > 0 && !inventorySupplyRunId) {
         setInventorySupplyRunId(runs[0].id);
       }
@@ -517,11 +517,11 @@ const ForecastsView = ({ user, addNotification }) => {
   };
 
   /**
-   * 處理 inbound source 切換
+   * Handle inbound source switch
    */
   const handleInboundSourceChange = (source) => {
     setInventoryInboundSource(source);
-    // 切換到 supply_forecast 時，自動載入 runs
+    // Auto-load runs when switching to supply_forecast
     if (source === 'supply_forecast') {
       loadSupplyForecastRunsForInventory();
     }
@@ -532,7 +532,7 @@ const ForecastsView = ({ user, addNotification }) => {
    */
   const handleRunProbForecast = async () => {
     if (!user?.id || !selectedRunId) {
-      addNotification('請先選擇一個 Forecast Run', 'error');
+      addNotification('Please select a Forecast Run first', 'error');
       return;
     }
 
@@ -616,16 +616,16 @@ const ForecastsView = ({ user, addNotification }) => {
   };
 
   /**
-   * 執行 BOM Explosion
+   * Execute BOM Explosion
    */
   /**
-   * 執行 BOM Explosion - Edge Function 兩段式流程
-   * 1. 啟動 Edge Function job (立即回傳 batchId)
-   * 2. 輪詢 import_batches 狀態直到 completed/failed
+   * Execute BOM Explosion - Edge Function two-phase flow
+   * 1. Start Edge Function job (immediately returns batchId)
+   * 2. Poll import_batches status until completed/failed
    */
   const handleRunBomExplosion = async () => {
     if (!user?.id) {
-      addNotification('請先登入', 'error');
+      addNotification('Please log in first', 'error');
       return;
     }
 
@@ -641,7 +641,7 @@ const ForecastsView = ({ user, addNotification }) => {
 
       const plantIdFilter = plantId.trim() || null;
 
-      // Step 1: 啟動 Edge Function job
+      // Step 1: Start Edge Function job
       console.log('Starting BOM Explosion via Edge Function:', {
         plantId: plantIdFilter,
         timeBuckets: timeBucketsFilter,
@@ -678,7 +678,7 @@ const ForecastsView = ({ user, addNotification }) => {
 
         if (!verifyResult.count || verifyResult.count === 0) {
           console.warn('[BOM] Reused batch has 0 component_demand rows — forcing new run');
-          addNotification('快取資料已過期，重新計算中...', 'info');
+          addNotification('Cached data expired, recalculating...', 'info');
           startResult = await executeBomExplosion({
             filename: `BOM Explosion - ${plantIdFilter || 'All Plants'} - ${new Date().toISOString()}`,
             metadata: {
@@ -701,18 +701,18 @@ const ForecastsView = ({ user, addNotification }) => {
         }
       }
 
-      // Step 2: 開始輪詢狀態
+      // Step 2: Start polling status
       addNotification(
-        `BOM Explosion 計算中... (Batch: ${startResult.batchId.slice(0, 8)})`,
+        `BOM Explosion calculating... (Batch: ${startResult.batchId.slice(0, 8)})`,
         'info'
       );
 
       const callbacks = {
         onProgress: (status, metadata) => {
           console.log(`BOM Explosion progress: ${status}`, metadata);
-          // 可選：更新 UI 顯示進度
+          // Optional: update UI to show progress
           if (status === 'running') {
-            // 顯示計算中的狀態
+            // Show calculating status
           }
         },
         onComplete: (result) => {
@@ -730,19 +730,19 @@ const ForecastsView = ({ user, addNotification }) => {
         2000 // intervalMs: 2 seconds
       );
 
-      // Step 3: 處理結果
+      // Step 3: Handle result
       setRunResult(finalResult);
 
       if (finalResult.success) {
         const errorCount = finalResult.errors?.length || 0;
         if (errorCount > 0) {
           addNotification(
-            `BOM Explosion 完成！產生 ${finalResult.componentDemandCount} 筆 Component 需求，但有 ${errorCount} 個警告`,
+            `BOM Explosion complete! Generated ${finalResult.componentDemandCount} component demands, but with ${errorCount} warnings`,
             'warning'
           );
         } else {
           addNotification(
-            `BOM Explosion 完成！產生 ${finalResult.componentDemandCount} 筆 Component 需求，${finalResult.traceCount} 筆追溯記錄`,
+            `BOM Explosion complete! Generated ${finalResult.componentDemandCount} component demands, ${finalResult.traceCount} trace records`,
             'success'
           );
         }
@@ -779,24 +779,24 @@ const ForecastsView = ({ user, addNotification }) => {
         await loadForecastRuns(true);
       } else {
         addNotification(
-          `BOM Explosion 失敗: ${finalResult.error}`,
+          `BOM Explosion failed: ${finalResult.error}`,
           'error'
         );
-        setRunError(finalResult.error || 'BOM Explosion 執行失敗');
+        setRunError(finalResult.error || 'BOM Explosion execution failed');
       }
 
     } catch (error) {
       console.error('BOM Explosion failed:', error);
-      const errorMsg = error.message || 'BOM Explosion 執行失敗';
+      const errorMsg = error.message || 'BOM Explosion execution failed';
       setRunError(errorMsg);
-      addNotification(`BOM Explosion 執行失敗: ${errorMsg}`, 'error');
+      addNotification(`BOM Explosion execution failed: ${errorMsg}`, 'error');
     } finally {
       setRunLoading(false);
     }
   };
 
   /**
-   * 載入資料（Results 或 Trace）
+   * Load data (Results or Trace)
    */
   const loadData = async () => {
     if (!selectedBatchId || !user?.id) return;
@@ -840,7 +840,7 @@ const ForecastsView = ({ user, addNotification }) => {
       }
     } catch (err) {
       console.error('[loadData] Error:', err);
-      addNotification(`載入失敗: ${err.message}`, 'error');
+      addNotification(`Failed to load: ${err.message}`, 'error');
       setData([]);
       setTotalCount(0);
     } finally {
@@ -889,7 +889,7 @@ const ForecastsView = ({ user, addNotification }) => {
   };
 
   /**
-   * 過濾後的 inventory summary rows
+   * Filtered inventory summary rows
    */
   const filteredInventoryRows = inventorySummaryRows.filter(row => {
     if (!inventorySearchTerm) return true;
@@ -912,7 +912,7 @@ const ForecastsView = ({ user, addNotification }) => {
    */
   const handleDownloadCSV = () => {
     if (data.length === 0) {
-      addNotification('無資料可匯出', 'warning');
+      addNotification('No data to export', 'warning');
       return;
     }
 
@@ -945,10 +945,10 @@ const ForecastsView = ({ user, addNotification }) => {
       link.click();
       URL.revokeObjectURL(url);
 
-      addNotification(`已匯出 ${data.length} 筆資料`, 'success');
+      addNotification(`Exported ${data.length} records`, 'success');
     } catch (error) {
       console.error('Error downloading CSV:', error);
-      addNotification(`匯出失敗: ${error.message}`, 'error');
+      addNotification(`Export failed: ${error.message}`, 'error');
     }
   };
 
@@ -958,16 +958,16 @@ const ForecastsView = ({ user, addNotification }) => {
   const getFilterFields = () => {
     if (activeTab === 'trace') {
       return [
-        { key: 'bom_level', label: 'BOM Level', placeholder: '例如 1, 2, 3...' },
-        { key: 'fg_material_code', label: 'FG Material', placeholder: '搜尋 FG 料號...' },
-        { key: 'component_material_code', label: 'Component Material', placeholder: '搜尋 Component 料號...' }
+        { key: 'bom_level', label: 'BOM Level', placeholder: 'e.g. 1, 2, 3...' },
+        { key: 'fg_material_code', label: 'FG Material', placeholder: 'Search FG material...' },
+        { key: 'component_material_code', label: 'Component Material', placeholder: 'Search component material...' }
       ];
     }
     // Results tab
     return [
-      { key: 'material_code', label: 'Material Code', placeholder: '搜尋料號...' },
-      { key: 'plant_id', label: 'Plant ID', placeholder: '搜尋工廠代碼...' },
-      { key: 'time_bucket', label: 'Time Bucket', placeholder: '例如 2026-W02' }
+      { key: 'material_code', label: 'Material Code', placeholder: 'Search material code...' },
+      { key: 'plant_id', label: 'Plant ID', placeholder: 'Search plant ID...' },
+      { key: 'time_bucket', label: 'Time Bucket', placeholder: 'e.g. 2026-W02' }
     ];
   };
 
@@ -1076,7 +1076,7 @@ const ForecastsView = ({ user, addNotification }) => {
       
       if (result.success) {
         addNotification(
-          `Cost Forecast 完成: ${result.kpis?.overall?.totalKeys || 0} keys, Total $${result.kpis?.overall?.totalCost?.toLocaleString() || 0}`,
+          `Cost Forecast complete: ${result.kpis?.overall?.totalKeys || 0} keys, Total $${result.kpis?.overall?.totalCost?.toLocaleString() || 0}`,
           result.mode === 'degraded' ? 'warning' : 'success'
         );
         // Reload runs list
@@ -1085,11 +1085,11 @@ const ForecastsView = ({ user, addNotification }) => {
           setSelectedCostRunId(result.costRunId);
         }
       } else {
-        addNotification(`Cost Forecast 失敗: ${result.error}`, 'error');
+        addNotification(`Cost Forecast failed: ${result.error}`, 'error');
       }
     } catch (error) {
       console.error('Cost forecast failed:', error);
-      addNotification(`Cost Forecast 失敗: ${error.message}`, 'error');
+      addNotification(`Cost Forecast failed: ${error.message}`, 'error');
       setCostRunResult({ success: false, error: error.message });
     } finally {
       setCostRunLoading(false);
@@ -1267,7 +1267,7 @@ const ForecastsView = ({ user, addNotification }) => {
       
       if (result.success) {
         addNotification(
-          `Revenue Forecast 完成: ${result.kpis?.overall?.totalKeys || 0} FG keys, Margin at Risk $${result.kpis?.overall?.totalMarginAtRisk?.toLocaleString() || 0}`,
+          `Revenue Forecast complete: ${result.kpis?.overall?.totalKeys || 0} FG keys, Margin at Risk $${result.kpis?.overall?.totalMarginAtRisk?.toLocaleString() || 0}`,
           result.mode === 'degraded' ? 'warning' : 'success'
         );
         // Reload runs list
@@ -1276,11 +1276,11 @@ const ForecastsView = ({ user, addNotification }) => {
           setSelectedRevenueRunId(result.revenueRunId);
         }
       } else {
-        addNotification(`Revenue Forecast 失敗: ${result.error}`, 'error');
+        addNotification(`Revenue Forecast failed: ${result.error}`, 'error');
       }
     } catch (error) {
       console.error('Revenue forecast failed:', error);
-      addNotification(`Revenue Forecast 失敗: ${error.message}`, 'error');
+      addNotification(`Revenue Forecast failed: ${error.message}`, 'error');
       setRevenueRunResult({ success: false, error: error.message });
     } finally {
       setRevenueRunLoading(false);
@@ -1403,7 +1403,7 @@ const ForecastsView = ({ user, addNotification }) => {
   const formatDate = (dateString) => {
     if (!dateString) return '-';
     const date = new Date(dateString);
-    return date.toLocaleString('zh-TW', {
+    return date.toLocaleString('en-US', {
       year: 'numeric',
       month: '2-digit',
       day: '2-digit',
@@ -1522,7 +1522,7 @@ const ForecastsView = ({ user, addNotification }) => {
    */
   const handleRunDemandForecast = async () => {
     if (!user?.id) {
-      addNotification('請先登入', 'error');
+      addNotification('Please log in first', 'error');
       return;
     }
 
@@ -1537,7 +1537,7 @@ const ForecastsView = ({ user, addNotification }) => {
         : [];
 
       if (targetTimeBuckets.length === 0) {
-        throw new Error('請提供至少一個 Time Bucket');
+        throw new Error('Please provide at least one Time Bucket');
       }
 
       console.log('Running demand forecast:', { plantIdFilter, targetTimeBuckets, trainWindow: dfTrainWindow });
@@ -1562,7 +1562,7 @@ const ForecastsView = ({ user, addNotification }) => {
 
       if (result.success) {
         addNotification(
-          `Demand Forecast 完成！產生 ${result.statistics.totalForecasts} 筆預測（${result.statistics.totalMaterials} 個 FG）`,
+          `Demand Forecast complete! Generated ${result.statistics.totalForecasts} forecasts (${result.statistics.totalMaterials} FGs)`,
           'success'
         );
         // Reload runs list
@@ -1571,11 +1571,11 @@ const ForecastsView = ({ user, addNotification }) => {
           setSelectedDemandRunId(result.forecastRunId);
         }
       } else {
-        addNotification(`Demand Forecast 失敗: ${result.error}`, 'error');
+        addNotification(`Demand Forecast failed: ${result.error}`, 'error');
       }
     } catch (error) {
       console.error('Demand forecast failed:', error);
-      addNotification(`Demand Forecast 失敗: ${error.message}`, 'error');
+      addNotification(`Demand Forecast failed: ${error.message}`, 'error');
       setDfRunResult({ success: false, error: error.message });
     } finally {
       setDfRunLoading(false);
@@ -1587,7 +1587,7 @@ const ForecastsView = ({ user, addNotification }) => {
    */
   const handleDownloadDemandForecastCSV = () => {
     if (demandForecastData.length === 0) {
-      addNotification('無資料可匯出', 'warning');
+      addNotification('No data to export', 'warning');
       return;
     }
 
@@ -1614,10 +1614,10 @@ const ForecastsView = ({ user, addNotification }) => {
       link.click();
       URL.revokeObjectURL(url);
 
-      addNotification(`已匯出 ${demandForecastData.length} 筆預測資料`, 'success');
+      addNotification(`Exported ${demandForecastData.length} forecast records`, 'success');
     } catch (error) {
       console.error('Error downloading CSV:', error);
-      addNotification(`匯出失敗: ${error.message}`, 'error');
+      addNotification(`Export failed: ${error.message}`, 'error');
     }
   };
 
@@ -1733,7 +1733,7 @@ const ForecastsView = ({ user, addNotification }) => {
    */
   const handleRunSupplyForecast = async () => {
     if (!user?.id) {
-      addNotification('請先登入', 'error');
+      addNotification('Please log in first', 'error');
       return;
     }
 
@@ -1748,7 +1748,7 @@ const ForecastsView = ({ user, addNotification }) => {
         : [];
 
       if (targetTimeBuckets.length === 0) {
-        throw new Error('請提供至少一個 Time Bucket');
+        throw new Error('Please provide at least one Time Bucket');
       }
 
       console.log('Running supply forecast:', { plantIdFilter, targetTimeBuckets, historyWindow: sfHistoryWindow });
@@ -1774,7 +1774,7 @@ const ForecastsView = ({ user, addNotification }) => {
 
       if (result.success) {
         addNotification(
-          `Supply Forecast 完成！產生 ${result.statistics.supplierStatsCount} 個 Supplier Stats, ${result.statistics.inboundBucketsCount} 個 Inbound Buckets`,
+          `Supply Forecast complete! Generated ${result.statistics.supplierStatsCount} Supplier Stats, ${result.statistics.inboundBucketsCount} Inbound Buckets`,
           'success'
         );
         // Reload runs list
@@ -1783,11 +1783,11 @@ const ForecastsView = ({ user, addNotification }) => {
           setSelectedSupplyRunId(result.forecastRunId);
         }
       } else {
-        addNotification(`Supply Forecast 失敗: ${result.error}`, 'error');
+        addNotification(`Supply Forecast failed: ${result.error}`, 'error');
       }
     } catch (error) {
       console.error('Supply forecast failed:', error);
-      addNotification(`Supply Forecast 失敗: ${error.message}`, 'error');
+      addNotification(`Supply Forecast failed: ${error.message}`, 'error');
       setSfRunResult({ success: false, error: error.message });
     } finally {
       setSfRunLoading(false);
@@ -1817,20 +1817,20 @@ const ForecastsView = ({ user, addNotification }) => {
             Component Forecast (BOM-Derived)
           </h2>
           <p className="text-sm text-slate-500 mt-1">
-            執行 BOM Explosion 計算，查看和管理 Component 需求預測
+            Run BOM Explosion calculations, view and manage component demand forecasts
           </p>
         </div>
       </div>
 
-      {/* Run 區塊 */}
+      {/* Run Section */}
       <Card>
         <div className="space-y-4">
           <div className="flex items-center gap-3">
             <PlayCircle className="w-6 h-6 text-purple-500" />
             <div>
-              <h3 className="font-semibold text-lg">執行 BOM Explosion</h3>
+              <h3 className="font-semibold text-lg">Run BOM Explosion</h3>
               <p className="text-sm text-slate-500">
-                將 FG 需求展開為 Component 需求（需先上傳 demand_fg 和 bom_edge 資料）
+                Expand FG demand into component demand (requires demand_fg and bom_edge data uploaded first)
               </p>
             </div>
           </div>
@@ -1959,13 +1959,13 @@ const ForecastsView = ({ user, addNotification }) => {
 
             <div className="space-y-2">
               <label className="block text-sm font-medium">
-                Plant ID（留空 = 全部工廠）
+                Plant ID (leave empty = all plants)
               </label>
               <input
                 type="text"
                 value={plantId}
                 onChange={(e) => setPlantId(e.target.value)}
-                placeholder="例如: P001（留空表示全部）"
+                placeholder="e.g. P001 (leave empty for all)"
                 className="w-full px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 focus:ring-2 focus:ring-purple-500 outline-none"
                 disabled={runLoading}
               />
@@ -1973,13 +1973,13 @@ const ForecastsView = ({ user, addNotification }) => {
 
             <div className="space-y-2">
               <label className="block text-sm font-medium">
-                Time Buckets（留空 = 全部時間）
+                Time Buckets (leave empty = all time)
               </label>
               <input
                 type="text"
                 value={timeBuckets}
                 onChange={(e) => setTimeBuckets(e.target.value)}
-                placeholder="例如: 2026-W01, 2026-W02（逗號分隔）"
+                placeholder="e.g. 2026-W01, 2026-W02 (comma separated)"
                 className="w-full px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 focus:ring-2 focus:ring-purple-500 outline-none"
                 disabled={runLoading}
               />
@@ -1995,7 +1995,7 @@ const ForecastsView = ({ user, addNotification }) => {
               icon={runLoading ? Loader2 : PlayCircle}
               className="px-8"
             >
-              {runLoading ? '計算中...' : 'Run BOM Explosion'}
+              {runLoading ? 'Calculating...' : 'Run BOM Explosion'}
             </Button>
           </div>
 
@@ -2006,7 +2006,7 @@ const ForecastsView = ({ user, addNotification }) => {
                 <AlertTriangle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
                 <div className="flex-1">
                   <h4 className="font-semibold text-red-900 dark:text-red-100 mb-1">
-                    執行失敗
+                    Execution Failed
                   </h4>
                   <p className="text-sm text-red-800 dark:text-red-200">
                     {runError}
@@ -2026,7 +2026,7 @@ const ForecastsView = ({ user, addNotification }) => {
                     {runResult.componentDemandCount || 0}
                   </div>
                   <div className="text-sm text-slate-600 dark:text-slate-400 mt-1">
-                    Component 需求
+                    Component Demands
                   </div>
                 </div>
 
@@ -2035,7 +2035,7 @@ const ForecastsView = ({ user, addNotification }) => {
                     {runResult.traceCount || 0}
                   </div>
                   <div className="text-sm text-slate-600 dark:text-slate-400 mt-1">
-                    追溯記錄
+                    Trace Records
                   </div>
                 </div>
 
@@ -2044,7 +2044,7 @@ const ForecastsView = ({ user, addNotification }) => {
                     {runResult.errors?.length || 0}
                   </div>
                   <div className="text-sm text-slate-600 dark:text-slate-400 mt-1">
-                    錯誤/警告
+                    Errors/Warnings
                   </div>
                 </div>
 
@@ -2053,7 +2053,7 @@ const ForecastsView = ({ user, addNotification }) => {
                     {runResult.success ? '✓' : '⚠'}
                   </div>
                   <div className="text-sm text-slate-600 dark:text-slate-400 mt-1">
-                    {runResult.success ? '成功' : '有警告'}
+                    {runResult.success ? 'Success' : 'Has Warnings'}
                   </div>
                 </div>
               </div>
@@ -2065,13 +2065,13 @@ const ForecastsView = ({ user, addNotification }) => {
                     <Check className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" />
                     <div>
                       <h4 className="font-semibold text-green-900 dark:text-green-100 mb-1">
-                        BOM Explosion 執行成功
+                        BOM Explosion Completed Successfully
                       </h4>
                       <p className="text-sm text-green-800 dark:text-green-200">
-                        已產生 {runResult.componentDemandCount} 筆 Component 需求和 {runResult.traceCount} 筆追溯記錄。
+                        Generated {runResult.componentDemandCount} component demands and {runResult.traceCount} trace records.
                         {runResult.batchId && (
                           <span className="block mt-1">
-                            批次 ID: <code className="px-2 py-0.5 bg-green-100 dark:bg-green-800 rounded text-xs font-mono">
+                            Batch ID: <code className="px-2 py-0.5 bg-green-100 dark:bg-green-800 rounded text-xs font-mono">
                               {runResult.batchId}
                             </code>
                           </span>
@@ -2092,7 +2092,7 @@ const ForecastsView = ({ user, addNotification }) => {
                     <div className="flex items-center justify-between">
                       <h4 className="font-semibold text-amber-900 dark:text-amber-100 flex items-center gap-2">
                         <AlertTriangle className="w-5 h-5" />
-                        錯誤/警告詳情 ({runResult.errors.length} 項)
+                        Errors/Warnings Details ({runResult.errors.length} items)
                       </h4>
                       {showRunErrors ? (
                         <ChevronUp className="w-5 h-5 text-amber-600" />
@@ -2135,7 +2135,7 @@ const ForecastsView = ({ user, addNotification }) => {
       <Card>
         <div className="space-y-4">
           <div className="flex items-center justify-between">
-            <h3 className="font-semibold text-lg">選擇批次</h3>
+            <h3 className="font-semibold text-lg">Select Batch</h3>
             <Button
               onClick={loadBatches}
               variant="secondary"
@@ -2143,7 +2143,7 @@ const ForecastsView = ({ user, addNotification }) => {
               icon={RefreshCw}
               disabled={loadingBatches}
             >
-              重新整理
+              Refresh
             </Button>
           </div>
 
@@ -2153,8 +2153,8 @@ const ForecastsView = ({ user, addNotification }) => {
             </div>
           ) : batches.length === 0 ? (
             <div className="py-8 text-center text-slate-500">
-              <p>尚無批次記錄</p>
-              <p className="text-sm mt-2">請先執行 BOM Explosion 計算</p>
+              <p>No batch records yet</p>
+              <p className="text-sm mt-2">Please run BOM Explosion first</p>
             </div>
           ) : (
             <div className="max-h-96 overflow-y-auto space-y-2 pr-2">
@@ -2321,7 +2321,7 @@ const ForecastsView = ({ user, addNotification }) => {
                     className="flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-300 hover:text-purple-600 dark:hover:text-purple-400"
                   >
                     <Filter className="w-4 h-4" />
-                    {showFilters ? '隱藏篩選' : '顯示篩選'}
+                    {showFilters ? 'Hide Filters' : 'Show Filters'}
                   </button>
                   <div className="flex items-center gap-2">
                     {Object.keys(filters).some(key => filters[key]) && (
@@ -2329,7 +2329,7 @@ const ForecastsView = ({ user, addNotification }) => {
                         onClick={clearFilters}
                         className="text-sm text-purple-600 dark:text-purple-400 hover:underline"
                       >
-                        清除篩選
+                        Clear Filters
                       </button>
                     )}
                     <Button
@@ -2375,7 +2375,7 @@ const ForecastsView = ({ user, addNotification }) => {
                       {activeTab === 'results' ? 'Component Demand' : 'Trace Records'}
                     </h3>
                     <p className="text-sm text-slate-500">
-                      共 {totalCount} 筆記錄
+                      Total {totalCount} records
                     </p>
                   </div>
                 </div>
@@ -2383,18 +2383,18 @@ const ForecastsView = ({ user, addNotification }) => {
                 {loading ? (
                   <div className="flex items-center justify-center py-12">
                     <Loader2 className="w-8 h-8 animate-spin text-purple-500" />
-                    <span className="ml-3 text-slate-600 dark:text-slate-400">載入中...</span>
+                    <span className="ml-3 text-slate-600 dark:text-slate-400">Loading...</span>
                   </div>
                 ) : data.length === 0 ? (
                   <div className="py-12 text-center">
                     <Database className="w-16 h-16 mx-auto text-slate-300 dark:text-slate-600 mb-4" />
                     <h3 className="text-lg font-semibold text-slate-600 dark:text-slate-400 mb-2">
-                      無資料
+                      No Data
                     </h3>
                     <p className="text-sm text-slate-500">
                       {Object.keys(filters).some(key => filters[key])
-                        ? '請調整篩選條件'
-                        : '此批次無資料'}
+                        ? 'Please adjust filter criteria'
+                        : 'No data in this batch'}
                     </p>
                   </div>
                 ) : (
@@ -2435,7 +2435,7 @@ const ForecastsView = ({ user, addNotification }) => {
                       <div className="mt-4 pt-4 border-t dark:border-slate-700">
                         <div className="flex items-center justify-between">
                           <div className="text-sm text-slate-600 dark:text-slate-400">
-                            顯示 {startItem} - {endItem} / 共 {totalCount} 筆
+                            Showing {startItem} - {endItem} of {totalCount} records
                           </div>
                           
                           <div className="flex items-center gap-2">
@@ -2477,7 +2477,7 @@ const ForecastsView = ({ user, addNotification }) => {
                   <div className="flex items-center justify-between">
                     <h3 className="font-semibold text-lg flex items-center gap-2">
                       <Calendar className="w-5 h-5 text-purple-500" />
-                      選擇 Forecast Run
+                      Select Forecast Run
                     </h3>
                     <Button
                       onClick={() => loadForecastRuns(true)}
@@ -2485,14 +2485,14 @@ const ForecastsView = ({ user, addNotification }) => {
                       size="sm"
                       icon={RefreshCw}
                     >
-                      重新整理
+                      Refresh
                     </Button>
                   </div>
 
                   {forecastRuns.length === 0 ? (
                     <div className="py-6 text-center text-slate-500">
-                      <p>尚無 Forecast Run</p>
-                      <p className="text-sm mt-1">請先執行 BOM Explosion 計算</p>
+                      <p>No Forecast Runs yet</p>
+                      <p className="text-sm mt-1">Please run BOM Explosion first</p>
                     </div>
                   ) : (
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -2519,7 +2519,7 @@ const ForecastsView = ({ user, addNotification }) => {
                               <span className="font-medium">Plant:</span> {run.parameters?.plant_id || 'All'}
                             </div>
                             <div>
-                              <span className="font-medium">Buckets:</span> {run.parameters?.time_buckets?.length || 0} 個
+                              <span className="font-medium">Buckets:</span> {run.parameters?.time_buckets?.length || 0}
                             </div>
                             <div className="text-slate-400">
                               {formatDate(run.created_at)}
@@ -2700,11 +2700,11 @@ const ForecastsView = ({ user, addNotification }) => {
                     <AlertTriangle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
                     <div>
                       <h4 className="font-semibold text-amber-900 dark:text-amber-100">
-                        資料量較大，可能影響效能
+                        Large data volume, may affect performance
                       </h4>
                       <p className="text-sm text-amber-800 dark:text-amber-200 mt-1">
-                        目前載入 {inventoryPerf.totalRows.toLocaleString()} 筆資料（超過 {FORECAST_WARN_ROWS.toLocaleString()} 筆警告閾值）。
-                        僅顯示前 {FORECAST_TOP_N} 個風險項目。
+                        Currently loaded {inventoryPerf.totalRows.toLocaleString()} rows (exceeds {FORECAST_WARN_ROWS.toLocaleString()} warning threshold).
+                        Only showing top {FORECAST_TOP_N} risk items.
                       </p>
                     </div>
                   </div>
@@ -2718,7 +2718,7 @@ const ForecastsView = ({ user, addNotification }) => {
                     <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
                     <div>
                       <h4 className="font-semibold text-red-900 dark:text-red-100">
-                        載入失敗
+                        Load Failed
                       </h4>
                       <p className="text-sm text-red-800 dark:text-red-200 mt-1">
                         {inventoryError}
@@ -2780,14 +2780,14 @@ const ForecastsView = ({ user, addNotification }) => {
                     <div>
                       <h3 className="font-semibold text-lg">Inventory Projection Summary</h3>
                       <p className="text-sm text-slate-500">
-                        {inventoryLoading ? '載入中...' : `共 ${inventorySummaryRows.length} 個 keys（顯示前 ${Math.min(filteredInventoryRows.length, FORECAST_TOP_N)} 個）`}
+                        {inventoryLoading ? 'Loading...' : `${inventorySummaryRows.length} keys total (showing top ${Math.min(filteredInventoryRows.length, FORECAST_TOP_N)})`}
                       </p>
                     </div>
                     <div className="relative">
                       <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                       <input
                         type="text"
-                        placeholder="搜尋 Key (MATERIAL|PLANT)..."
+                        placeholder="Search Key (MATERIAL|PLANT)..."
                         value={inventorySearchTerm}
                         onChange={(e) => setInventorySearchTerm(e.target.value)}
                         className="pl-9 pr-3 py-2 text-sm rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 focus:ring-2 focus:ring-purple-500 outline-none w-64"
@@ -2798,16 +2798,16 @@ const ForecastsView = ({ user, addNotification }) => {
                   {inventoryLoading ? (
                     <div className="flex items-center justify-center py-12">
                       <Loader2 className="w-8 h-8 animate-spin text-purple-500" />
-                      <span className="ml-3 text-slate-600 dark:text-slate-400">載入投影資料中...</span>
+                      <span className="ml-3 text-slate-600 dark:text-slate-400">Loading projection data...</span>
                     </div>
                   ) : filteredInventoryRows.length === 0 ? (
                     <div className="py-12 text-center">
                       <Package className="w-16 h-16 mx-auto text-slate-300 dark:text-slate-600 mb-4" />
                       <h3 className="text-lg font-semibold text-slate-600 dark:text-slate-400 mb-2">
-                        無投影資料
+                        No Projection Data
                       </h3>
                       <p className="text-sm text-slate-500">
-                        {inventorySearchTerm ? '請調整搜尋條件' : '選擇的 Run 無 component_demand 資料'}
+                        {inventorySearchTerm ? 'Please adjust search criteria' : 'Selected run has no component_demand data'}
                       </p>
                     </div>
                   ) : (
@@ -2874,7 +2874,7 @@ const ForecastsView = ({ user, addNotification }) => {
                                   <td colSpan={8} className="px-3 py-2 bg-slate-50 dark:bg-slate-800/50">
                                     <div className="ml-6 p-3 border border-slate-200 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-900">
                                       <h4 className="text-sm font-semibold mb-2 text-slate-700 dark:text-slate-300">
-                                        Bucket Series（可手算驗證：end = begin + inbound - demand）
+                                        Bucket Series (verify: end = begin + inbound - demand)
                                       </h4>
                                       <div className="overflow-x-auto">
                                         <table className="w-full text-xs">
@@ -3094,9 +3094,9 @@ const ForecastsView = ({ user, addNotification }) => {
               <div className="flex items-center gap-3">
                 <PlayCircle className="w-6 h-6 text-purple-500" />
                 <div>
-                  <h3 className="font-semibold text-lg">執行 Demand Forecast</h3>
+                  <h3 className="font-semibold text-lg">Run Demand Forecast</h3>
                   <p className="text-sm text-slate-500">
-                    使用 Moving Average (MA) 演算法預測 FG 需求（需先上傳 demand_fg 資料）
+                    Forecast FG demand using Moving Average (MA) algorithm (requires demand_fg data uploaded first)
                   </p>
                 </div>
               </div>
@@ -3105,13 +3105,13 @@ const ForecastsView = ({ user, addNotification }) => {
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-4 border-t dark:border-slate-700">
                 <div className="space-y-2">
                   <label className="block text-sm font-medium">
-                    Plant ID（留空 = 全部工廠）
+                    Plant ID (leave empty = all plants)
                   </label>
                   <input
                     type="text"
                     value={dfPlantId}
                     onChange={(e) => setDfPlantId(e.target.value)}
-                    placeholder="例如: P001"
+                    placeholder="e.g. P001"
                     className="w-full px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 focus:ring-2 focus:ring-purple-500 outline-none"
                     disabled={dfRunLoading}
                   />
@@ -3125,7 +3125,7 @@ const ForecastsView = ({ user, addNotification }) => {
                     type="text"
                     value={dfTimeBuckets}
                     onChange={(e) => setDfTimeBuckets(e.target.value)}
-                    placeholder="例如: 2026-W10, 2026-W11, 2026-W12"
+                    placeholder="e.g. 2026-W10, 2026-W11, 2026-W12"
                     className="w-full px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 focus:ring-2 focus:ring-purple-500 outline-none"
                     disabled={dfRunLoading}
                   />
@@ -3156,7 +3156,7 @@ const ForecastsView = ({ user, addNotification }) => {
                   icon={dfRunLoading ? Loader2 : PlayCircle}
                   className="px-8"
                 >
-                  {dfRunLoading ? '計算中...' : 'Run Demand Forecast'}
+                  {dfRunLoading ? 'Calculating...' : 'Run Demand Forecast'}
                 </Button>
               </div>
 
@@ -3171,11 +3171,11 @@ const ForecastsView = ({ user, addNotification }) => {
                     )}
                     <div className="flex-1">
                       <h4 className={`font-semibold mb-1 ${dfRunResult.success ? 'text-green-900 dark:text-green-100' : 'text-red-900 dark:text-red-100'}`}>
-                        {dfRunResult.success ? 'Demand Forecast 完成' : '執行失敗'}
+                        {dfRunResult.success ? 'Demand Forecast Complete' : 'Execution Failed'}
                       </h4>
                       {dfRunResult.success ? (
                         <div className="text-sm text-green-800 dark:text-green-200 space-y-1">
-                          <p>產生 {dfRunResult.statistics.totalForecasts} 筆預測（{dfRunResult.statistics.totalMaterials} 個 FG）</p>
+                          <p>Generated {dfRunResult.statistics.totalForecasts} forecasts ({dfRunResult.statistics.totalMaterials} FGs)</p>
                           <p>Run ID: <code className="px-2 py-0.5 bg-green-100 dark:bg-green-800 rounded text-xs font-mono">{dfRunResult.forecastRunId}</code></p>
                           <p>Model: {dfRunResult.statistics.modelVersion} | Train Window: {dfRunResult.statistics.trainWindowBuckets}</p>
                         </div>
@@ -3195,7 +3195,7 @@ const ForecastsView = ({ user, addNotification }) => {
               <div className="flex items-center justify-between">
                 <h3 className="font-semibold text-lg flex items-center gap-2">
                   <Calendar className="w-5 h-5 text-purple-500" />
-                  選擇 Demand Forecast Run
+                  Select Demand Forecast Run
                 </h3>
                 <Button
                   onClick={loadDemandForecastRuns}
@@ -3203,14 +3203,14 @@ const ForecastsView = ({ user, addNotification }) => {
                   size="sm"
                   icon={RefreshCw}
                 >
-                  重新整理
+                  Refresh
                 </Button>
               </div>
 
               {demandForecastRuns.length === 0 ? (
                 <div className="py-6 text-center text-slate-500">
-                  <p>尚無 Demand Forecast Run</p>
-                  <p className="text-sm mt-1">請先執行 Demand Forecast 計算</p>
+                  <p>No Demand Forecast Runs yet</p>
+                  <p className="text-sm mt-1">Please run Demand Forecast first</p>
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -3259,7 +3259,7 @@ const ForecastsView = ({ user, addNotification }) => {
               <div className="space-y-4">
                 <h3 className="font-semibold text-lg flex items-center gap-2">
                   <Package className="w-5 h-5 text-purple-500" />
-                  選擇 FG Material
+                  Select FG Material
                 </h3>
                 <div className="flex flex-wrap gap-2">
                   <button
@@ -3270,7 +3270,7 @@ const ForecastsView = ({ user, addNotification }) => {
                         : 'border-slate-300 dark:border-slate-600 hover:border-purple-300'
                     }`}
                   >
-                    全部 ({demandForecastData.length} 筆)
+                    All ({demandForecastData.length} records)
                   </button>
                   {demandForecastMaterials.map(material => (
                     <button
@@ -3299,9 +3299,9 @@ const ForecastsView = ({ user, addNotification }) => {
                   <div className="flex items-center gap-3">
                     <Brain className="w-6 h-6 text-purple-500" />
                     <div>
-                      <h3 className="font-semibold text-lg">AI 雙模型預測</h3>
+                      <h3 className="font-semibold text-lg">AI Dual-Model Forecast</h3>
                       <p className="text-sm text-slate-500">
-                        使用 LightGBM 穩定性與 Amazon Chronos AI 泛化能力的組合預測
+                        Combined forecast using LightGBM stability and Amazon Chronos AI generalization
                       </p>
                     </div>
                   </div>
@@ -3320,7 +3320,7 @@ const ForecastsView = ({ user, addNotification }) => {
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     <div className="space-y-2">
                       <label className="block text-sm font-medium">
-                        預測天數
+                        Forecast Horizon
                       </label>
                       <select
                         value={forecastHorizon}
@@ -3328,17 +3328,17 @@ const ForecastsView = ({ user, addNotification }) => {
                         className="w-full px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 focus:ring-2 focus:ring-purple-500 outline-none"
                         disabled={dualModelLoading}
                       >
-                        <option value={7}>7 天</option>
-                        <option value={14}>14 天</option>
-                        <option value={30}>30 天</option>
-                        <option value={60}>60 天</option>
-                        <option value={90}>90 天</option>
+                        <option value={7}>7 days</option>
+                        <option value={14}>14 days</option>
+                        <option value={30}>30 days</option>
+                        <option value={60}>60 days</option>
+                        <option value={90}>90 days</option>
                       </select>
                     </div>
 
                     <div className="space-y-2">
                       <label className="block text-sm font-medium">
-                        顯示模型比較
+                        Model Comparison
                       </label>
                       <div className="flex items-center space-x-2 mt-3">
                         <input
@@ -3350,14 +3350,14 @@ const ForecastsView = ({ user, addNotification }) => {
                           disabled={dualModelLoading}
                         />
                         <label htmlFor="showComparison" className="text-sm text-slate-700">
-                          啟用模型對比分析
+                          Enable model comparison analysis
                         </label>
                       </div>
                     </div>
 
                     <div className="space-y-2">
                       <label className="block text-sm font-medium invisible">
-                        執行預測
+                        Run Forecast
                       </label>
                       <Button
                         onClick={() => executeDualModelForecast(selectedDemandMaterial)}
@@ -3366,7 +3366,7 @@ const ForecastsView = ({ user, addNotification }) => {
                         icon={dualModelLoading ? Loader2 : Brain}
                         className="w-full"
                       >
-                        {dualModelLoading ? '預測中...' : '執行 AI 預測'}
+                        {dualModelLoading ? 'Forecasting...' : 'Run AI Forecast'}
                       </Button>
                     </div>
                   </div>
@@ -3375,25 +3375,25 @@ const ForecastsView = ({ user, addNotification }) => {
                   {skuAnalysis && (
                     <div className="bg-slate-50 dark:bg-slate-800 rounded-lg p-4">
                       <h4 className="font-medium text-slate-900 dark:text-slate-100 mb-2">
-                        SKU 分析結果
+                        SKU Analysis Results
                       </h4>
                       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
                         <div>
-                          <span className="text-slate-500">數據點數:</span>
+                          <span className="text-slate-500">Data Points:</span>
                           <div className="font-medium">{skuAnalysis.analysis?.data_points || 'N/A'}</div>
                         </div>
                         <div>
-                          <span className="text-slate-500">推薦模型:</span>
+                          <span className="text-slate-500">Recommended Model:</span>
                           <div className="font-medium">{skuAnalysis.recommended_model?.toUpperCase() || 'N/A'}</div>
                         </div>
                         <div>
-                          <span className="text-slate-500">數據充足性:</span>
+                          <span className="text-slate-500">Data Sufficiency:</span>
                           <div className="font-medium">{skuAnalysis.analysis?.data_sufficiency || 'N/A'}</div>
                         </div>
                         <div>
-                          <span className="text-slate-500">Chronos 適合性:</span>
+                          <span className="text-slate-500">Chronos Suitability:</span>
                           <div className="font-medium">
-                            {skuAnalysis.chronos_suitability?.suitable ? '適合' : '不適合'}
+                            {skuAnalysis.chronos_suitability?.suitable ? 'Suitable' : 'Not Suitable'}
                           </div>
                         </div>
                       </div>
@@ -3436,7 +3436,7 @@ const ForecastsView = ({ user, addNotification }) => {
                     <div className="space-y-4">
                       <h3 className="font-semibold text-lg flex items-center gap-2">
                         <TrendingUp className="w-5 h-5 text-purple-500" />
-                        預測統計分析
+                        Forecast Statistics
                       </h3>
                       
                       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -3444,7 +3444,7 @@ const ForecastsView = ({ user, addNotification }) => {
                           <div className="text-2xl font-bold text-blue-600">
                             {dualModelForecast.forecast.median?.toFixed(0) || 'N/A'}
                           </div>
-                          <div className="text-sm text-blue-600">主要預測均值</div>
+                          <div className="text-sm text-blue-600">Primary Forecast Mean</div>
                           <div className="text-xs text-blue-500 mt-1">
                             {dualModelForecast.forecast.model?.toUpperCase()}
                           </div>
@@ -3454,10 +3454,10 @@ const ForecastsView = ({ user, addNotification }) => {
                           <div className="text-2xl font-bold text-green-600">
                             {dualModelForecast.forecast.risk_score?.toFixed(0) || 'N/A'}
                           </div>
-                          <div className="text-sm text-green-600">風險分數</div>
+                          <div className="text-sm text-green-600">Risk Score</div>
                           <div className="text-xs text-green-500 mt-1">
-                            {dualModelForecast.forecast.risk_score < 30 ? '低風險' : 
-                             dualModelForecast.forecast.risk_score < 70 ? '中風險' : '高風險'}
+                            {dualModelForecast.forecast.risk_score < 30 ? 'Low Risk' : 
+                             dualModelForecast.forecast.risk_score < 70 ? 'Medium Risk' : 'High Risk'}
                           </div>
                         </div>
                         
@@ -3466,7 +3466,7 @@ const ForecastsView = ({ user, addNotification }) => {
                             <div className="text-2xl font-bold text-purple-600">
                               {dualModelForecast.comparison.deviation_pct?.toFixed(1) || '0'}%
                             </div>
-                            <div className="text-sm text-purple-600">模型偏差</div>
+                            <div className="text-sm text-purple-600">Model Deviation</div>
                             <div className="text-xs text-purple-500 mt-1">
                               {dualModelForecast.comparison.agreement_level}
                             </div>
@@ -3477,9 +3477,9 @@ const ForecastsView = ({ user, addNotification }) => {
                           <div className="text-2xl font-bold text-orange-600">
                             {forecastHorizon}
                           </div>
-                          <div className="text-sm text-orange-600">預測天數</div>
+                          <div className="text-sm text-orange-600">Forecast Horizon</div>
                           <div className="text-xs text-orange-500 mt-1">
-                            {dualModelForecast.cached ? '快取結果' : '即時計算'}
+                            {dualModelForecast.cached ? 'Cached Result' : 'Real-time Calculation'}
                           </div>
                         </div>
                       </div>
@@ -3496,7 +3496,7 @@ const ForecastsView = ({ user, addNotification }) => {
                       <AlertTriangle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
                       <div>
                         <h4 className="font-semibold text-red-900 dark:text-red-100 mb-1">
-                          AI 預測失敗
+                          AI Forecast Failed
                         </h4>
                         <p className="text-sm text-red-800 dark:text-red-200">{dualModelError}</p>
                       </div>
@@ -3511,9 +3511,9 @@ const ForecastsView = ({ user, addNotification }) => {
           <Card>
             <div className="flex items-center justify-between mb-4">
               <div>
-                <h3 className="font-semibold text-lg">Demand Forecast 結果</h3>
+                <h3 className="font-semibold text-lg">Demand Forecast Results</h3>
                 <p className="text-sm text-slate-500">
-                  {demandForecastLoading ? '載入中...' : `共 ${demandForecastData.length} 筆預測`}
+                  {demandForecastLoading ? 'Loading...' : `${demandForecastData.length} forecasts total`}
                 </p>
               </div>
               <Button
@@ -3530,7 +3530,7 @@ const ForecastsView = ({ user, addNotification }) => {
             {demandForecastLoading ? (
               <div className="flex items-center justify-center py-12">
                 <Loader2 className="w-8 h-8 animate-spin text-purple-500" />
-                <span className="ml-3 text-slate-600 dark:text-slate-400">載入中...</span>
+                <span className="ml-3 text-slate-600 dark:text-slate-400">Loading...</span>
               </div>
             ) : demandForecastError ? (
               <div className="p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
@@ -3540,10 +3540,10 @@ const ForecastsView = ({ user, addNotification }) => {
               <div className="py-12 text-center">
                 <TrendingUp className="w-16 h-16 mx-auto text-slate-300 dark:text-slate-600 mb-4" />
                 <h3 className="text-lg font-semibold text-slate-600 dark:text-slate-400 mb-2">
-                  無預測資料
+                  No Forecast Data
                 </h3>
                 <p className="text-sm text-slate-500">
-                  請選擇一個 Demand Forecast Run
+                  Please select a Demand Forecast Run
                 </p>
               </div>
             ) : (
@@ -3586,7 +3586,7 @@ const ForecastsView = ({ user, addNotification }) => {
                 {demandHistoricalData.length > 0 && (
                   <div className="mt-6 pt-6 border-t dark:border-slate-700">
                     <h4 className="text-sm font-semibold mb-3 text-slate-600 dark:text-slate-400">
-                      歷史 Demand FG 資料（最近 {demandHistoricalData.length} 筆）
+                      Historical Demand FG Data (latest {demandHistoricalData.length} records)
                     </h4>
                     <div className="overflow-x-auto">
                       <table className="w-full text-sm">
@@ -3623,9 +3623,9 @@ const ForecastsView = ({ user, addNotification }) => {
               <div className="flex items-center gap-3">
                 <PlayCircle className="w-6 h-6 text-purple-500" />
                 <div>
-                  <h3 className="font-semibold text-lg">執行 Supply Forecast</h3>
+                  <h3 className="font-semibold text-lg">Run Supply Forecast</h3>
                   <p className="text-sm text-slate-500">
-                    預測供應到貨時間/可靠度（Lead time distribution、On-time rate、Delay risk）
+                    Forecast supply delivery time/reliability (Lead time distribution, On-time rate, Delay risk)
                   </p>
                 </div>
               </div>
@@ -3634,13 +3634,13 @@ const ForecastsView = ({ user, addNotification }) => {
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-4 border-t dark:border-slate-700">
                 <div className="space-y-2">
                   <label className="block text-sm font-medium">
-                    Plant ID（留空 = 全部工廠）
+                    Plant ID (leave empty = all plants)
                   </label>
                   <input
                     type="text"
                     value={sfPlantId}
                     onChange={(e) => setSfPlantId(e.target.value)}
-                    placeholder="例如: P001"
+                    placeholder="e.g. P001"
                     className="w-full px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 focus:ring-2 focus:ring-purple-500 outline-none"
                     disabled={sfRunLoading}
                   />
@@ -3654,7 +3654,7 @@ const ForecastsView = ({ user, addNotification }) => {
                     type="text"
                     value={sfTimeBuckets}
                     onChange={(e) => setSfTimeBuckets(e.target.value)}
-                    placeholder="例如: 2026-W10, 2026-W11, 2026-W12"
+                    placeholder="e.g. 2026-W10, 2026-W11, 2026-W12"
                     className="w-full px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 focus:ring-2 focus:ring-purple-500 outline-none"
                     disabled={sfRunLoading}
                   />
@@ -3685,7 +3685,7 @@ const ForecastsView = ({ user, addNotification }) => {
                   icon={sfRunLoading ? Loader2 : PlayCircle}
                   className="px-8"
                 >
-                  {sfRunLoading ? '計算中...' : 'Run Supply Forecast'}
+                  {sfRunLoading ? 'Calculating...' : 'Run Supply Forecast'}
                 </Button>
               </div>
 
@@ -3700,7 +3700,7 @@ const ForecastsView = ({ user, addNotification }) => {
                     )}
                     <div className="flex-1">
                       <h4 className={`font-semibold mb-1 ${sfRunResult.success ? 'text-green-900 dark:text-green-100' : 'text-red-900 dark:text-red-100'}`}>
-                        {sfRunResult.success ? 'Supply Forecast 完成' : '執行失敗'}
+                        {sfRunResult.success ? 'Supply Forecast Complete' : 'Execution Failed'}
                       </h4>
                       {sfRunResult.success ? (
                         <div className="text-sm text-green-800 dark:text-green-200 space-y-1">
@@ -3724,7 +3724,7 @@ const ForecastsView = ({ user, addNotification }) => {
               <div className="flex items-center justify-between">
                 <h3 className="font-semibold text-lg flex items-center gap-2">
                   <Calendar className="w-5 h-5 text-purple-500" />
-                  選擇 Supply Forecast Run
+                  Select Supply Forecast Run
                 </h3>
                 <Button
                   onClick={loadSupplyForecastRuns}
@@ -3732,14 +3732,14 @@ const ForecastsView = ({ user, addNotification }) => {
                   size="sm"
                   icon={RefreshCw}
                 >
-                  重新整理
+                  Refresh
                 </Button>
               </div>
 
               {supplyForecastRuns.length === 0 ? (
                 <div className="py-6 text-center text-slate-500">
-                  <p>尚無 Supply Forecast Run</p>
-                  <p className="text-sm mt-1">請先執行 Supply Forecast 計算</p>
+                  <p>No Supply Forecast Runs yet</p>
+                  <p className="text-sm mt-1">Please run Supply Forecast first</p>
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -3829,7 +3829,7 @@ const ForecastsView = ({ user, addNotification }) => {
               <div>
                 <h3 className="font-semibold text-lg">Inbound Forecast Summary</h3>
                 <p className="text-sm text-slate-500">
-                  {supplyForecastLoading ? '載入中...' : `共 ${supplyForecastData.length} 個 Inbound Buckets`}
+                  {supplyForecastLoading ? 'Loading...' : `${supplyForecastData.length} Inbound Buckets total`}
                 </p>
               </div>
             </div>
@@ -3837,7 +3837,7 @@ const ForecastsView = ({ user, addNotification }) => {
             {supplyForecastLoading ? (
               <div className="flex items-center justify-center py-12">
                 <Loader2 className="w-8 h-8 animate-spin text-purple-500" />
-                <span className="ml-3 text-slate-600 dark:text-slate-400">載入中...</span>
+                <span className="ml-3 text-slate-600 dark:text-slate-400">Loading...</span>
               </div>
             ) : supplyForecastError ? (
               <div className="p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
@@ -3847,10 +3847,10 @@ const ForecastsView = ({ user, addNotification }) => {
               <div className="py-12 text-center">
                 <Package className="w-16 h-16 mx-auto text-slate-300 dark:text-slate-600 mb-4" />
                 <h3 className="text-lg font-semibold text-slate-600 dark:text-slate-400 mb-2">
-                  無供應預測資料
+                  No Supply Forecast Data
                 </h3>
                 <p className="text-sm text-slate-500">
-                  請選擇一個 Supply Forecast Run
+                  Please select a Supply Forecast Run
                 </p>
               </div>
             ) : (
@@ -3909,7 +3909,7 @@ const ForecastsView = ({ user, addNotification }) => {
                     onClick={() => setSfSelectedInbound(null)}
                     className="text-sm text-slate-500 hover:text-purple-600"
                   >
-                    關閉
+                    Close
                   </button>
                 </div>
                 <div className="max-h-96 overflow-y-auto">
@@ -4011,7 +4011,7 @@ const ForecastsView = ({ user, addNotification }) => {
                   icon={costRunLoading ? Loader2 : PlayCircle}
                   className="px-8"
                 >
-                  {costRunLoading ? '計算中...' : 'Run Cost Forecast'}
+                  {costRunLoading ? 'Calculating...' : 'Run Cost Forecast'}
                 </Button>
               </div>
 
@@ -4026,7 +4026,7 @@ const ForecastsView = ({ user, addNotification }) => {
                     )}
                     <div className="flex-1">
                       <h4 className={`font-semibold mb-1 ${costRunResult.success ? 'text-green-900 dark:text-green-100' : 'text-red-900 dark:text-red-100'}`}>
-                        {costRunResult.success ? 'Cost Forecast 完成' : '執行失敗'}
+                        {costRunResult.success ? 'Cost Forecast Complete' : 'Execution Failed'}
                       </h4>
                       {costRunResult.success ? (
                         <div className="text-sm text-green-800 dark:text-green-200 space-y-1">
@@ -4055,7 +4055,7 @@ const ForecastsView = ({ user, addNotification }) => {
               <div className="flex items-center justify-between">
                 <h3 className="font-semibold text-lg flex items-center gap-2">
                   <Calendar className="w-5 h-5 text-green-500" />
-                  選擇 Cost Forecast Run
+                  Select Cost Forecast Run
                 </h3>
                 <Button
                   onClick={loadCostForecastRuns}
@@ -4063,14 +4063,14 @@ const ForecastsView = ({ user, addNotification }) => {
                   size="sm"
                   icon={RefreshCw}
                 >
-                  重新整理
+                  Refresh
                 </Button>
               </div>
 
               {costForecastRuns.length === 0 ? (
                 <div className="py-6 text-center text-slate-500">
-                  <p>尚無 Cost Forecast Run</p>
-                  <p className="text-sm mt-1">請先執行 Cost Forecast 計算</p>
+                  <p>No Cost Forecast Runs yet</p>
+                  <p className="text-sm mt-1">Please run Cost Forecast first</p>
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -4157,7 +4157,7 @@ const ForecastsView = ({ user, addNotification }) => {
               <div>
                 <h3 className="font-semibold text-lg">Cost Forecast Summary</h3>
                 <p className="text-sm text-slate-500">
-                  {costForecastLoading ? '載入中...' : `共 ${costForecastData.length} 個 Keys`}
+                  {costForecastLoading ? 'Loading...' : `${costForecastData.length} Keys total`}
                 </p>
               </div>
               {costForecastData.length > 0 && (
@@ -4175,7 +4175,7 @@ const ForecastsView = ({ user, addNotification }) => {
             {costForecastLoading ? (
               <div className="flex items-center justify-center py-12">
                 <Loader2 className="w-8 h-8 animate-spin text-green-500" />
-                <span className="ml-3 text-slate-600 dark:text-slate-400">載入中...</span>
+                <span className="ml-3 text-slate-600 dark:text-slate-400">Loading...</span>
               </div>
             ) : costForecastError ? (
               <div className="p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
@@ -4185,10 +4185,10 @@ const ForecastsView = ({ user, addNotification }) => {
               <div className="py-12 text-center">
                 <DollarSign className="w-16 h-16 mx-auto text-slate-300 dark:text-slate-600 mb-4" />
                 <h3 className="text-lg font-semibold text-slate-600 dark:text-slate-400 mb-2">
-                  無成本預測資料
+                  No Cost Forecast Data
                 </h3>
                 <p className="text-sm text-slate-500">
-                  請選擇一個 Cost Forecast Run
+                  Please select a Cost Forecast Run
                 </p>
               </div>
             ) : (
@@ -4254,7 +4254,7 @@ const ForecastsView = ({ user, addNotification }) => {
                     onClick={() => setSelectedCostKey(null)}
                     className="text-sm text-slate-500 hover:text-green-600"
                   >
-                    關閉
+                    Close
                   </button>
                 </div>
                 {costForecastData.find(r => r.key === selectedCostKey) && (
@@ -4384,7 +4384,7 @@ const ForecastsView = ({ user, addNotification }) => {
                   icon={revenueRunLoading ? Loader2 : PlayCircle}
                   className="px-8"
                 >
-                  {revenueRunLoading ? '計算中...' : 'Run Revenue Forecast'}
+                  {revenueRunLoading ? 'Calculating...' : 'Run Revenue Forecast'}
                 </Button>
               </div>
 
@@ -4403,7 +4403,7 @@ const ForecastsView = ({ user, addNotification }) => {
                     )}
                     <div className="flex-1">
                       <h4 className={`font-semibold mb-1 ${revenueRunResult.success ? 'text-pink-900 dark:text-pink-100' : 'text-red-900 dark:text-red-100'}`}>
-                        {revenueRunResult.success ? 'Revenue Forecast 完成' : '執行失敗'}
+                        {revenueRunResult.success ? 'Revenue Forecast Complete' : 'Execution Failed'}
                       </h4>
                       {revenueRunResult.success ? (
                         <div className="text-sm text-pink-800 dark:text-pink-200 space-y-1">
@@ -4437,7 +4437,7 @@ const ForecastsView = ({ user, addNotification }) => {
             <div className="flex items-center justify-between">
               <h3 className="font-semibold text-lg flex items-center gap-2">
                 <Calendar className="w-5 h-5 text-pink-500" />
-                選擇 Revenue Forecast Run
+                Select Revenue Forecast Run
               </h3>
               <Button
                 onClick={loadRevenueForecastRuns}
@@ -4445,14 +4445,14 @@ const ForecastsView = ({ user, addNotification }) => {
                 size="sm"
                 icon={RefreshCw}
               >
-                重新整理
+                Refresh
               </Button>
             </div>
 
             {revenueForecastRuns.length === 0 ? (
               <div className="py-6 text-center text-slate-500">
-                <p>尚無 Revenue Forecast Run</p>
-                <p className="text-sm mt-1">請先執行 Revenue Forecast 計算</p>
+                <p>No Revenue Forecast Runs yet</p>
+                <p className="text-sm mt-1">Please run Revenue Forecast first</p>
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -4533,7 +4533,7 @@ const ForecastsView = ({ user, addNotification }) => {
               <div>
                 <h3 className="font-semibold text-lg">Revenue Forecast Summary</h3>
                 <p className="text-sm text-slate-500">
-                  {revenueForecastLoading ? '載入中...' : `共 ${revenueForecastData.length} rows`}
+                  {revenueForecastLoading ? 'Loading...' : `${revenueForecastData.length} rows total`}
                 </p>
               </div>
               {revenueForecastData.length > 0 && (
@@ -4551,16 +4551,16 @@ const ForecastsView = ({ user, addNotification }) => {
             {revenueForecastLoading ? (
               <div className="py-12 text-center">
                 <Loader2 className="w-8 h-8 mx-auto animate-spin text-pink-500 mb-2" />
-                <p className="text-slate-500">載入中...</p>
+                <p className="text-slate-500">Loading...</p>
               </div>
             ) : revenueForecastData.length === 0 ? (
               <div className="py-12 text-center text-slate-500">
                 <TrendingUp className="w-16 h-16 mx-auto text-slate-300 dark:text-slate-600 mb-4" />
                 <h3 className="text-lg font-semibold text-slate-600 dark:text-slate-400 mb-2">
-                  無營收預測資料
+                  No Revenue Forecast Data
                 </h3>
                 <p className="text-sm text-slate-500">
-                  請選擇一個 Revenue Forecast Run
+                  Please select a Revenue Forecast Run
                 </p>
               </div>
             ) : (

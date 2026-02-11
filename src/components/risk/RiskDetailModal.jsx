@@ -187,7 +187,7 @@ export default function RiskDetailModal({
         {/* Tabs */}
         <div className="flex border-b border-slate-200 dark:border-slate-700">
           {[
-            { id: 'inventory', label: '庫存狀況', icon: Package },
+            { id: 'inventory', label: 'Inventory Status', icon: Package },
             { id: 'bom', label: 'BOM Trace', icon: Box },
             { id: 'audit', label: 'Audit', icon: History }
           ].map((tab) => (
@@ -246,8 +246,8 @@ export default function RiskDetailModal({
                     'text-green-600 dark:text-green-400'
                   }`}>
                     {riskData.daysToStockout === null ? '—' :
-                     riskData.daysToStockout <= 0 ? '已斷料' :
-                     `${riskData.daysToStockout} 天`}
+                     riskData.daysToStockout <= 0 ? 'Stockout' :
+                     `${riskData.daysToStockout} days`}
                   </p>
                 </div>
                 
@@ -337,10 +337,10 @@ export default function RiskDetailModal({
             <div className="text-center py-12">
               <Box className="w-12 h-12 text-slate-300 dark:text-slate-600 mx-auto mb-4" />
               <p className="text-slate-500 dark:text-slate-400">
-                BOM Trace 功能開發中
+                BOM Trace feature in development
               </p>
               <p className="text-sm text-slate-400 dark:text-slate-500 mt-1">
-                將顯示 {riskData.item} 的上層物料結構
+                Will show parent material structure for {riskData.item}
               </p>
             </div>
           )}
@@ -350,10 +350,10 @@ export default function RiskDetailModal({
             <div className="text-center py-12">
               <History className="w-12 h-12 text-slate-300 dark:text-slate-600 mx-auto mb-4" />
               <p className="text-slate-500 dark:text-slate-400">
-                Audit Timeline 功能開發中
+                Audit Timeline feature in development
               </p>
               <p className="text-sm text-slate-400 dark:text-slate-500 mt-1">
-                將顯示 What-if 模擬歷史記錄
+                Will show What-if simulation history
               </p>
             </div>
           )}
@@ -368,7 +368,7 @@ export default function RiskDetailModal({
               icon={Zap}
               className="flex-1"
             >
-              模擬加急
+              Simulate Expedite
             </Button>
             <Button
               onClick={handleSubstitute}
@@ -376,7 +376,7 @@ export default function RiskDetailModal({
               icon={GitBranch}
               className="flex-1"
             >
-              查看替代料
+              View Substitutes
             </Button>
           </div>
         </div>

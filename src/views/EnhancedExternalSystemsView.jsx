@@ -36,7 +36,7 @@ import { getSearchParams, updateUrlSearch } from '../utils/router';
 // Kept here for compatibility, but UPLOAD_SCHEMAS should be used
 
 const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
-  // 使用 useUploadWorkflow hook 管理核心 workflow 狀態
+  // Use useUploadWorkflow hook to manage core workflow state
   const { state: workflowState, actions: workflowActions } = useUploadWorkflow();
   const {
     currentStep,
@@ -53,7 +53,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
     saving
   } = workflowState;
 
-  // 其餘 state 保留為 useState（未搬入 reducer，避免風險）
+  // Remaining state kept as useState (not moved into reducer to avoid risk)
   const [workbook, setWorkbook] = useState(null); // Store workbook for sheet switching
   const [sheetNames, setSheetNames] = useState([]); // Available sheet names
   const [selectedSheet, setSelectedSheet] = useState(''); // Currently selected sheet
@@ -64,7 +64,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
 
   const [uploadProgress, setUploadProgress] = useState(0);
   
-  // 批次上傳進度狀態
+  // Batch upload progress state
   const [saveProgress, setSaveProgress] = useState({
     stage: '', // 'suppliers' | 'materials' | 'receipts' | 'rpc'
     current: 0,
@@ -72,14 +72,14 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
     message: ''
   });
 
-  // ===== One-shot Import 相關狀態 (tab=upload|oneshot in URL for persistence) =====
+  // ===== One-shot Import related state (tab=upload|oneshot in URL for persistence) =====
   const [oneShotEnabled, setOneShotEnabled] = useState(() => getSearchParams().tab === 'oneshot');
   useEffect(() => {
     updateUrlSearch({ tab: oneShotEnabled ? 'oneshot' : 'upload' });
   }, [oneShotEnabled]);
   const [oneShotStep, setOneShotStep] = useState('IDLE'); // ✅ 'IDLE' | 'CLASSIFY' | 'REVIEW' | 'IMPORTING' | 'RESULT'
-  const [currentEditingSheetIndex, setCurrentEditingSheetIndex] = useState(0); // ✅ 在 Step 2 中當前編輯的 sheet index
-  const [activeReviewSheetId, setActiveReviewSheetId] = useState(null); // ✅ Step 2 當前編輯的 sheetId
+  const [currentEditingSheetIndex, setCurrentEditingSheetIndex] = useState(0); // ✅ Current editing sheet index in Step 2
+  const [activeReviewSheetId, setActiveReviewSheetId] = useState(null); // ✅ Currently editing sheetId in Step 2
   const [sheetPlans, setSheetPlans] = useState([]); // ✅ [{sheetName, uploadType, enabled, mappingDraft, mappingFinal, mappingConfirmed}]
   const [oneShotProgress, setOneShotProgress] = useState({ 
     stage: '', 
@@ -90,20 +90,20 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
     totalChunks: 0,
     savedSoFar: 0
   });
-  const [importReport, setImportReport] = useState(null); // ✅ 完整 import report（與 Download Report 對應）
-  const [oneShotResult, setOneShotResult] = useState(null); // 匯入結果摘要（向後兼容）
+  const [importReport, setImportReport] = useState(null); // ✅ Complete import report (corresponds to Download Report)
+  const [oneShotResult, setOneShotResult] = useState(null); // Import result summary (backward compatible)
   const [oneShotError, setOneShotError] = useState('');
-  const [isImporting, setIsImporting] = useState(false); // ✅ 控制 loading/按鈕
-  const [chunkSize, setChunkSize] = useState(500); // Chunk size 選擇
+  const [isImporting, setIsImporting] = useState(false); // ✅ Controls loading/buttons
+  const [chunkSize, setChunkSize] = useState(500); // Chunk size selection
   const [abortController, setAbortController] = useState(null); // Abort controller
   const [aiSuggestLoading, setAiSuggestLoading] = useState({}); // { sheetId: boolean }
   const [oneShotMode, setOneShotMode] = useState('best-effort'); // 'best-effort' | 'all-or-nothing'
   
-  // AI Suggest All 相關狀態
+  // AI Suggest All related state
   const [aiSuggestAllRunning, setAiSuggestAllRunning] = useState(false);
   const [aiSuggestAllProgress, setAiSuggestAllProgress] = useState({ completed: 0, total: 0 });
   const [aiSuggestAllAbortController, setAiSuggestAllAbortController] = useState(null);
-  const [includeAlreadyReady, setIncludeAlreadyReady] = useState(false); // checkbox: 是否包含已 ready 的 sheets
+  const [includeAlreadyReady, setIncludeAlreadyReady] = useState(false); // checkbox: whether to include already-ready sheets
 
   const fileInputRef = useRef(null);
 
@@ -166,8 +166,8 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
     const selectedFile = e.target.files[0];
     if (!selectedFile) return;
 
-    // One-shot 模式：不需要選 uploadType
-    // 正常模式：需要選 uploadType
+    // One-shot mode: no need to select uploadType
+    // Normal mode: need to select uploadType
     if (!oneShotEnabled && !uploadType) {
       addNotification("Please select upload type before choosing file", "error");
       // Clear file selection
@@ -184,7 +184,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
       return;
     }
 
-    // One-shot 只支援 Excel
+    // One-shot only supports Excel
     if (oneShotEnabled && !isExcel) {
       addNotification("One-shot import only supports Excel files (.xlsx, .xls)", "error");
       return;
@@ -242,13 +242,13 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
       workflowActions.setFile(selectedFile, selectedFile.name, rows, cols);
       setUploadProgress(100);
 
-      // ===== One-shot 模式：自動分類所有 sheets =====
+      // ===== One-shot mode: auto-classify all sheets =====
       if (oneShotEnabled && isExcel) {
         try {
           console.log('[One-shot] Generating sheet plans for', sheets.length, 'sheets');
           console.log('[One-shot] File metadata:', { name: selectedFile.name, size: selectedFile.size, lastModified: selectedFile.lastModified });
           
-          // 使用泛用的 generateSheetPlans（傳入 file metadata）
+          // Use generic generateSheetPlans (pass in file metadata)
           const plans = generateSheetPlans(workbookData, selectedFile.name, selectedFile.size, selectedFile.lastModified);
           
           setSheetPlans(plans);
@@ -262,7 +262,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
             rows: p.rowCount
           })));
           
-          // ✅ A) State Machine: 生成 plans 後進入 CLASSIFY
+          // ✅ A) State Machine: enter CLASSIFY after generating plans
           console.log('[OneShotStep] IDLE -> CLASSIFY (sheet plans generated)');
           setOneShotStep('CLASSIFY');
           
@@ -272,7 +272,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
             "success"
           );
           
-          // 進入 One-shot 準備畫面（使用 step 3，但由條件控制顯示不同內容）
+          // Enter One-shot preparation screen (uses step 3, but conditionally shows different content)
           workflowActions.setStep(3);
           
         } catch (classifyError) {
@@ -287,7 +287,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
         return;
       }
 
-      // ===== 正常模式：單 sheet 上傳 =====
+      // ===== Normal mode: single sheet upload =====
       const sheetInfo = sheets.length > 1 ? ` (Sheet: ${defaultSheet}, ${sheets.length} sheets available)` : '';
       addNotification(`Loaded ${rows.length} rows${sheetInfo}`, "success");
 
@@ -344,7 +344,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
       addNotification(`Upload failed: ${error.message}`, "error");
       workflowActions.setError(error.message);
       
-      // One-shot 失敗處理
+      // One-shot failure handling
       if (oneShotEnabled) {
         setOneShotError('One-shot failed. Please use single-sheet import.');
         setOneShotEnabled(false);
@@ -427,7 +427,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
     setMappingAiStatus('analyzing');
     setMappingAiError('');
 
-    // Get schema (定義在 try 外面，這樣 catch 也能用)
+    // Get schema (defined outside try so catch can also use it)
     const schema = UPLOAD_SCHEMAS[uploadType];
     if (!schema) {
       addNotification(`Unknown upload type: ${uploadType}`, "error");
@@ -511,16 +511,16 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
       console.error('AI field suggestion failed:', error);
       console.log('Falling back to rule-based mapping...');
       
-      // 嘗試使用規則式映射作為備選方案
+      // Try rule-based mapping as fallback
       try {
         const ruleMappings = ruleBasedMapping(columns, uploadType, schema.fields);
         console.log('Rule-based mappings:', ruleMappings);
         
-        // 過濾出有效的映射（target 不為 null 且信心度 >= 0.7）
+        // Filter valid mappings (target is not null and confidence >= 0.7)
         const validMappings = ruleMappings.filter(m => m.target && m.confidence >= 0.7);
         
         if (validMappings.length > 0) {
-          // 使用規則式映射結果
+          // Use rule-based mapping results
           const { mapping: newMapping, appliedCount } = mergeMappings(
             columnMapping,
             validMappings,
@@ -536,7 +536,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
             "info"
           );
         } else {
-          // 規則式映射也沒有找到足夠的匹配
+          // Rule-based mapping also found no sufficient matches
           setMappingAiStatus('error');
           setMappingAiError(error.message || 'AI analysis failed');
           addNotification(
@@ -647,7 +647,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
 
   // Step 4: Validate and clean data
   const validateData = () => {
-    // 使用新的 helper 檢查 mapping 完整度
+    // Use new helper to check mapping completeness
     const mappingStatus = getRequiredMappingStatus({
       uploadType,
       columns,
@@ -684,10 +684,10 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
   };
 
   /**
-   * Step 5: Save to database（使用策略模式）
+   * Step 5: Save to database (using strategy pattern)
    */
   const handleSave = async () => {
-    // 硬性禁止：單檔模式下必須完成 required mapping
+    // Hard block: single-file mode must complete required mapping
     if (!oneShotEnabled) {
       const mappingStatus = getRequiredMappingStatus({
         uploadType,
@@ -699,17 +699,17 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
         const message = formatMissingRequiredMessage(mappingStatus.missingRequired);
         addNotification(`Cannot save: ${message}`, "error");
         console.error('[handleSave] Blocked: mapping incomplete', mappingStatus);
-        return; // 硬 return，不允許進入 save
+        return; // Hard return, do not allow entering save
       }
     }
     
-    // Guard: 檢查有效資料
+    // Guard: check for valid data
     if (!validationResult || validationResult.validRows.length === 0) {
       addNotification("No valid data to save", "error");
       return;
     }
 
-    // Strict mode 檢查：有錯誤就不允許儲存
+    // Strict mode check: do not allow saving if there are errors
     if (strictMode && validationResult.errorRows && validationResult.errorRows.length > 0) {
       addNotification(
         `Strict mode enabled: Cannot save with ${validationResult.errorRows.length} error rows. Please fix errors or switch to Best-effort mode.`,
@@ -732,7 +732,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
     let batchId = null;
 
     try {
-      // 1. 建立 import batch
+      // 1. Create import batch
       const targetTableMap = {
         'goods_receipt': 'goods_receipts', 'price_history': 'price_history',
         'supplier_master': 'suppliers', 'bom_edge': 'bom_edges', 'demand_fg': 'demand_fg',
@@ -747,47 +747,47 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
       });
       batchId = batchRecord.id;
 
-      // 2. 儲存原始檔案
+      // 2. Save raw file
       const fileRecord = await userFilesService.saveFile(userId, fileName, rawRows);
       const uploadFileId = fileRecord?.id;
-      if (!uploadFileId) throw new Error('saveFile 未回傳 id，資料一致性異常');
+      if (!uploadFileId) throw new Error('saveFile did not return id, data consistency error');
 
-      // 3. 使用策略模式執行資料寫入
+      // 3. Execute data write using strategy pattern
       const strategy = getUploadStrategy(uploadType);
       const { savedCount } = await strategy.ingest({
         userId, rows: rowsToSave, batchId, uploadFileId, fileName,
         addNotification, setSaveProgress
       });
 
-      // 4. 更新 batch 狀態為 completed
+      // 4. Update batch status to completed
       await importBatchesService.updateBatch(batchId, {
         successRows: rowsToSave.length, errorRows: validationResult.errorRows.length, status: 'completed'
       });
 
-      // 5. 儲存欄位映射模板
+      // 5. Save field mapping template
       try {
         await uploadMappingsService.saveMapping(userId, uploadType, columns, columnMapping);
       } catch (mappingError) {
         console.error('Failed to save mapping template:', mappingError);
       }
 
-      // 6. 顯示成功訊息
+      // 6. Show success message
       const details = [];
       if (mergedCount > 0) details.push(`${mergedCount} duplicates merged`);
       if (validationResult.errorRows.length > 0) details.push(`${validationResult.errorRows.length} errors skipped`);
       addNotification(`Successfully saved ${savedCount} rows${details.length > 0 ? ` (${details.join(', ')})` : ''}`, "success");
 
-      // 7. 特殊提示（demand_fg / bom_edge）
+      // 7. Special prompt (demand_fg / bom_edge)
       if (['demand_fg', 'bom_edge'].includes(uploadType)) {
         setTimeout(() => {
           addNotification(
-            `✅ ${uploadType === 'demand_fg' ? 'FG 需求' : 'BOM 關係'}資料已上傳！前往 Forecasts 頁面執行 BOM Explosion 計算 →`,
+            `✅ ${uploadType === 'demand_fg' ? 'FG Demand' : 'BOM Edge'} data uploaded! Go to Forecasts page to run BOM Explosion →`,
             "success"
           );
         }, 1000);
       }
 
-      // 8. 重置流程
+      // 8. Reset workflow
       setTimeout(() => workflowActions.reset(), 2000);
 
     } catch (error) {
@@ -796,7 +796,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
       addNotification(`Save failed: ${errorMsg}`, "error");
       workflowActions.saveError(errorMsg);
       
-      // 更新 batch 狀態為 failed
+      // Update batch status to failed
       if (batchId) {
         try {
           await importBatchesService.updateBatch(batchId, {
@@ -810,10 +810,10 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
     }
   };
 
-  // ===== 所有 save 函數已被策略模式取代（見 uploadStrategies.js） =====
+  // ===== All save functions replaced by strategy pattern (see uploadStrategies.js) =====
 
   /**
-   * One-shot Import: 執行所有啟用的 sheets 匯入
+   * One-shot Import: execute import for all enabled sheets
    */
   const handleOneShotImport = async () => {
     if (!workbook || !user?.id) {
@@ -822,7 +822,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
       return;
     }
     
-    // 驗證 sheet plans
+    // Validate sheet plans
     // #region agent log
     fetch('http://127.0.0.1:7242/ingest/35d967fa-aaea-4f36-8ecf-97e2f2e17afa',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'EnhancedExternalSystemsView.jsx:handleOneShotImport',message:'[Before validateSheetPlans] sheetPlans snapshot',data:{total:sheetPlans.length,enabled:sheetPlans.filter(p=>p.enabled).length,perSheet:sheetPlans.filter(p=>p.enabled).map(p=>({sheetName:p.sheetName,confidence:p.confidence,uploadType:p.uploadType}))},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'V3'})}).catch(()=>{});
     // #endregion
@@ -841,7 +841,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
     setOneShotStep('IMPORTING');
     setIsImporting(true);
     
-    // ✅ C) 清空舊 report
+    // ✅ C) Clear old report
     setImportReport(null);
     setOneShotResult(null);
     setOneShotError('');
@@ -878,7 +878,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
         }
       });
       
-      // ✅ C) 回寫 report
+      // ✅ C) Write back report
       console.log('[OneShotStep] Import completed, writing report:', {
         totalSheets: result.totalSheets,
         succeeded: result.succeededSheets,
@@ -886,8 +886,8 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
         failed: result.failedSheets
       });
       
-      setImportReport(result);  // ✅ 完整 report
-      setOneShotResult(result);  // 向後兼容
+      setImportReport(result);  // ✅ Complete report
+      setOneShotResult(result);  // Backward compatible
       setAbortController(null);
       
       // ✅ A) State Machine: IMPORTING → RESULT
@@ -902,10 +902,10 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
         addNotification(msg, 'warning');
       }
       
-      // 警告：若 DB 未部署 idempotency support
+      // Warning: if DB has not deployed idempotency support
       if (!result.hasIngestKeySupport) {
         addNotification(
-          '⚠ DB 未部署 chunk-idempotency，已降級（建議執行 one_shot_chunk_idempotency.sql）',
+          '⚠ DB has not deployed chunk-idempotency, degraded mode (recommend running one_shot_chunk_idempotency.sql)',
           'warning'
         );
       }
@@ -913,7 +913,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
     } catch (error) {
       console.error('[OneShotStep] Import error:', error);
       
-      // ✅ C) catch 也要寫 report
+      // ✅ C) catch also needs to write report
       const errorReport = {
         startedAt: new Date().toISOString(),
         finishedAt: new Date().toISOString(),
@@ -929,7 +929,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
       
       setImportReport(errorReport);
       
-      // ✅ A) State Machine: IMPORTING → RESULT（即使失敗也要進結果頁）
+      // ✅ A) State Machine: IMPORTING → RESULT (enter result page even on failure)
       console.log('[OneShotStep] IMPORTING -> RESULT (import failed)');
       setOneShotStep('RESULT');
       
@@ -968,7 +968,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
   };
 
   /**
-   * 更新 Sheet Plan
+   * Update Sheet Plan
    */
   const updateSheetPlan = (sheetId, updates) => {
     console.log('[DEBUG] updateSheetPlan:', { sheetId, updates });
@@ -1012,24 +1012,24 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
     
     if (enabledSheets.length === 0) {
       console.log('[OneShotStep] CLASSIFY -> REVIEW blocked: no enabled sheets');
-      addNotification('請至少啟用一個 sheet', 'error');
+      addNotification('Please enable at least one sheet', 'error');
       return;
     }
     
-    // 檢查所有 enabled sheets 都有 uploadType
+    // Check all enabled sheets have uploadType
     const missingType = enabledSheets.filter(p => !p.uploadType);
     if (missingType.length > 0) {
       console.log('[OneShotStep] CLASSIFY -> REVIEW blocked: missing uploadType for', missingType.length, 'sheets');
-      addNotification(`${missingType.length} 個 sheets 尚未選擇 Upload Type`, 'error');
+      addNotification(`${missingType.length} sheets have not selected an Upload Type`, 'error');
       return;
     }
     
     // ✅ A) State Machine: CLASSIFY → REVIEW
     console.log('[OneShotStep] CLASSIFY -> REVIEW (moving to mapping review)');
     setOneShotStep('REVIEW');
-    setCurrentEditingSheetIndex(0); // 預設編輯第一個 enabled sheet
+    setCurrentEditingSheetIndex(0); // Default to editing first enabled sheet
     
-    // 設置第一個 enabled sheet 為 active
+    // Set first enabled sheet as active
     if (enabledSheets.length > 0) {
       setActiveReviewSheetId(enabledSheets[0].sheetId);
       console.log('[OneShotStep] Active review sheet:', enabledSheets[0].sheetName);
@@ -1044,7 +1044,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
     setActiveReviewSheetId(null);
   };
 
-  // ✅ Two-step Gate: 手動修改 mapping (Step 2)
+  // ✅ Two-step Gate: manual mapping change (Step 2)
   const handleMappingChange = (sheetId, sourceHeader, targetField) => {
     // #region agent log
     fetch('http://127.0.0.1:7242/ingest/35d967fa-aaea-4f36-8ecf-97e2f2e17afa',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'EnhancedExternalSystemsView.jsx:1040',message:'[handleMappingChange] Entry',data:{sheetId:sheetId,sourceHeader:sourceHeader,targetField:targetField,sheetPlansCount:sheetPlans.length},timestamp:Date.now(),sessionId:'debug-session',runId:'manual-mapping',hypothesisId:'A'})}).catch(()=>{});
@@ -1065,7 +1065,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
         delete newMapping[sourceHeader];
       }
       
-      // 重新計算 coverage
+      // Recalculate coverage
       const schema = UPLOAD_SCHEMAS[plan.uploadType];
       if (!schema) return plan;
       
@@ -1099,7 +1099,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
     const status = plan.uploadType && plan.headers ? getRequiredMappingStatus({ uploadType: plan.uploadType, columns: plan.headers, columnMapping: mappingDraft }) : null;
     const canConfirm = status ? status.isComplete : plan.isComplete;
     if (!canConfirm) {
-      addNotification('無法確認：required fields mapping 不完整', 'error');
+      addNotification('Cannot confirm: required fields mapping is incomplete', 'error');
       return;
     }
     
@@ -1109,7 +1109,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
       p.sheetId === sheetId 
         ? {
             ...p,
-            mappingFinal: { ...(p.mappingDraft || {}) },  // ✅ 鎖定 mapping
+            mappingFinal: { ...(p.mappingDraft || {}) },  // ✅ Lock mapping
             mappingConfirmed: true,
             isComplete: true,
             missingRequired: [],
@@ -1121,7 +1121,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
     addNotification(`Mapping confirmed for "${plan.sheetName}"`, 'success');
   };
 
-  // ✅ Two-step Gate: Unlock Mapping (允許重新編輯)
+  // ✅ Two-step Gate: Unlock Mapping (allow re-editing)
   const handleUnlockMapping = (sheetId) => {
     console.log('[Two-step Gate] Unlocking mapping for:', sheetId);
     
@@ -1149,13 +1149,13 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
       p.sheetId === sheetId 
         ? {
             ...p,
-            enabled: false,           // ✅ 設為 disabled
-            mappingConfirmed: false   // ✅ 清除 confirmed 狀態
+            enabled: false,           // ✅ Set to disabled
+            mappingConfirmed: false   // ✅ Clear confirmed status
           }
         : p
     ));
     
-    // 若當前編輯的就是這張 sheet，切換到下一張 enabled sheet
+    // If currently editing this sheet, switch to next enabled sheet
     const enabledSheets = sheetPlans.filter(p => p.enabled && p.sheetId !== sheetId);
     if (enabledSheets.length > 0) {
       setCurrentEditingSheetIndex(0);
@@ -1170,19 +1170,19 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
     addNotification(`"${plan.sheetName}" disabled from import`, 'info');
   };
 
-  // ✅ Two-step Gate: AI Field Suggestion (只填 mappingDraft)
+  // ✅ Two-step Gate: AI Field Suggestion (only fills mappingDraft)
   const handleAiFieldSuggestion = async (sheetId) => {
     const plan = sheetPlans.find(p => p.sheetId === sheetId);
     if (!plan || !plan.uploadType) {
-      addNotification('請先選擇 Upload Type', 'error');
+      addNotification('Please select an Upload Type first', 'error');
       return;
     }
     
     try {
       setAiSuggestLoading(prev => ({ ...prev, [sheetId]: true }));
-      addNotification(`正在為 "${plan.sheetName}" 生成 field mapping 建議...`, 'info');
+      addNotification(`Generating field mapping suggestions for "${plan.sheetName}"...`, 'info');
 
-      // 從 workbook 讀取資料
+      // Read data from workbook
       const sheet = workbook.Sheets[plan.sheetName];
       const sheetData = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', raw: false });
       const headers = sheetData[0] || [];
@@ -1194,7 +1194,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
         return obj;
       });
 
-      // ✅ B) Header Normalize: 建立 header index
+      // ✅ B) Header Normalize: build header index
       const { buildHeaderIndex, logHeaderStats, alignAiMappings, logMappingAlignStats } = await import('../utils/headerNormalize');
       const headerIndexResult = buildHeaderIndex(headers);
       logHeaderStats(headers, headerIndexResult);
@@ -1228,7 +1228,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
         optionalFields: schema.fields.filter(f => !f.required).map(f => f.key)
       });
       
-      // ✅ B) Header Normalize: 對齊 AI mappings
+      // ✅ B) Header Normalize: align AI mappings
       const alignResult = alignAiMappings(llmResult.mappings, headerIndexResult.index);
       logMappingAlignStats(alignResult);
       
@@ -1239,7 +1239,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
         // Only skip if already mapped to the same target
         const existingTarget = columnMapping[m.source];
         if (!existingTarget || existingTarget !== m.target) {
-          columnMapping[m.source] = m.target;  // ✅ 使用對齊後的 source (originalHeader)
+          columnMapping[m.source] = m.target;  // ✅ Use aligned source (originalHeader)
         }
       });
       
@@ -1250,7 +1250,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
         columnMapping
       });
       
-      // ✅ C) Update mappingDraft only for the correct sheetId (使用 sheetId 而非 index)
+      // ✅ C) Update mappingDraft only for the correct sheetId (use sheetId not index)
       console.log('[AI Field Suggestion] Updating mappingDraft for sheetId:', sheetId);
       setSheetPlans(prev => prev.map(p => 
         p.sheetId === sheetId 
@@ -1285,16 +1285,16 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
     
     try {
       setAiSuggestLoading(prev => ({ ...prev, [sheetId]: true }));
-      addNotification(`正在為 "${sheetName}" 生成 AI 建議...`, 'info');
+      addNotification(`Generating AI suggestions for "${sheetName}"...`, 'info');
 
-      // 從 workbook 中讀取該 sheet 的資料
+      // Read data from workbook for this sheet
       const sheet = workbook.Sheets[sheetName];
       const sheetData = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', raw: false });
       
-      // 取得 headers（第一列）
+      // Get headers (first row)
       const headers = sheetData[0] || [];
       
-      // 取得樣本資料（最多50筆，跳過 header）- 大 sheet 不送全部 rows
+      // Get sample data (max 50 rows, skip header) - don't send all rows for large sheets
       const sampleRows = sheetData.slice(1, 51).map(row => {
         const obj = {};
         headers.forEach((h, i) => {
@@ -1305,11 +1305,11 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
 
       console.log(`[AI Suggest] Sheet: ${sheetName}, Headers:`, headers, 'Sample rows:', sampleRows.length);
 
-      // 檢查是否支援 chunk idempotency（影響 >1000 rows 的 auto-enable）
+      // Check if chunk idempotency is supported (affects auto-enable for >1000 rows)
       const { checkIngestKeySupport } = await import('../services/sheetRunsService');
       const hasIngestKeySupport = await checkIngestKeySupport();
 
-      // 呼叫 AI Suggest Service（新版已內建錯誤處理，不會 throw）
+      // Call AI Suggest Service (new version has built-in error handling, won't throw)
       const result = await suggestSheetMapping({
         sheetName,
         headers,
@@ -1328,12 +1328,12 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
         error: result.error
       });
 
-      // 若有錯誤，顯示錯誤訊息但不中斷
+      // If there's an error, show error message but don't interrupt
       if (result.error) {
         console.warn('[AI Suggest] AI returned error result:', result.error);
-        addNotification(`AI 建議失敗：${result.error}`, 'warning');
+        addNotification(`AI suggestion failed: ${result.error}`, 'warning');
         
-        // 仍然更新 sheetPlan，顯示錯誤原因
+        // Still update sheetPlan to show error reason
         updateSheetPlan(sheetId, {
           reasons: result.reasons,
           aiSuggested: true,
@@ -1347,19 +1347,19 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
       fetch('http://127.0.0.1:7242/ingest/35d967fa-aaea-4f36-8ecf-97e2f2e17afa',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'EnhancedExternalSystemsView.jsx:1301',message:'[BEFORE updateSheetPlan] AI Suggest result received',data:{sheetId,sheetName,resultMapping:result.mapping,resultMappingKeys:Object.keys(result.mapping||{}),planHeaders:plan.headers,planHeadersPreview:plan.headers.slice(0,5)},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'C'})}).catch(()=>{});
       // #endregion
       
-      // ✅ 修正：將 AI mapping 同時寫入 mapping 和 mappingDraft
-      // UI 使用 mappingDraft，所以必須更新這個欄位
+      // ✅ Fix: write AI mapping to both mapping and mappingDraft
+      // UI uses mappingDraft, so this field must be updated
       const updates = {
         uploadType: result.suggestedUploadType,
         confidence: result.confidence,
         reasons: result.reasons,
-        mapping: result.mapping,           // ✅ 保留向後兼容
-        mappingDraft: result.mapping,      // ✅ UI 使用此欄位
+        mapping: result.mapping,           // ✅ Keep for backward compatibility
+        mappingDraft: result.mapping,      // ✅ UI uses this field
         enabled: result.autoEnable,
         aiSuggested: true,
         requiredCoverage: result.requiredCoverage
       };
-      // ✅ 同步 isComplete / missingRequired，避免只更新 mappingDraft 導致 Confirm 仍 disabled
+      // ✅ Sync isComplete / missingRequired to avoid Confirm staying disabled after mappingDraft update
       if (result.suggestedUploadType && plan.headers && result.mapping) {
         const status = getRequiredMappingStatus({
           uploadType: result.suggestedUploadType,
@@ -1374,7 +1374,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
       fetch('http://127.0.0.1:7242/ingest/35d967fa-aaea-4f36-8ecf-97e2f2e17afa',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'EnhancedExternalSystemsView.jsx:1314',message:'[updateSheetPlan] updates object created with mappingDraft',data:{sheetId,updatesMapping:updates.mapping,updatesMappingDraft:updates.mappingDraft,mappingKeys:Object.keys(updates.mapping||{}),mappingDraftKeys:Object.keys(updates.mappingDraft||{}),hasIsComplete:updates.hasOwnProperty('isComplete'),hasMissingRequired:updates.hasOwnProperty('missingRequired')},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'C'})}).catch(()=>{});
       // #endregion
 
-      // 大檔 >1000 rows：僅顯示警告，不預設 disabled（由使用者決定是否啟用）
+      // Large file >1000 rows: show warning only, don't default to disabled (let user decide)
       if (plan.rowCount > 1000 && !hasIngestKeySupport) {
         updates.reasons = [
           ...(updates.reasons || []),
@@ -1382,7 +1382,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
         ];
       }
 
-      // 若 requiredCoverage < 1.0，不要 auto-enable（避免錯誤匯入）
+      // If requiredCoverage < 1.0, don't auto-enable (avoid incorrect import)
       if (result.requiredCoverage < 1.0) {
         updates.enabled = false;
         if (!updates.reasons.includes('Required fields coverage < 100%')) {
@@ -1401,17 +1401,17 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
       })));
 
       addNotification(
-        `AI 建議完成：${result.suggestedUploadType || 'N/A'} (信心度: ${Math.round(result.confidence * 100)}%)`,
+        `AI suggestion complete: ${result.suggestedUploadType || 'N/A'} (confidence: ${Math.round(result.confidence * 100)}%)`,
         result.suggestedUploadType ? 'success' : 'warning'
       );
 
     } catch (error) {
       console.error('[AI Suggest] Unexpected error:', error);
-      addNotification(`AI 建議失敗：${error.message}`, 'error');
+      addNotification(`AI suggestion failed: ${error.message}`, 'error');
       
-      // 更新 sheetPlan 顯示錯誤
+      // Update sheetPlan to show error
       updateSheetPlan(sheetId, {
-        reasons: [`執行錯誤: ${error.message}`],
+        reasons: [`Execution error: ${error.message}`],
         aiSuggested: true,
         confidence: 0
       });
@@ -1420,66 +1420,66 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
     }
   };
 
-  // Handle AI Suggest All (批量執行)
+  // Handle AI Suggest All (batch execution)
   const handleAiSuggestAll = async () => {
     console.log('[AI Suggest All] Starting...');
     
-    // 篩選需要 AI 的 sheets
+    // Filter sheets that need AI
     const needsAiSheets = sheetPlans.filter(plan => {
-      // 已經 Ready 且高信心度的 sheet
+      // Already Ready with high confidence
       const isAlreadyReady = plan.enabled && 
                              plan.confidence >= 0.85 && 
                              plan.requiredCoverage >= 1.0 &&
                              plan.uploadType;
       
-      // 若勾選「Include already-ready」，則全部都執行
+      // If "Include already-ready" is checked, execute all
       if (includeAlreadyReady) {
         return true;
       }
       
-      // 否則只對需要 AI 的 sheets 執行
+      // Otherwise only execute for sheets that need AI
       return !isAlreadyReady;
     });
 
     if (needsAiSheets.length === 0) {
-      addNotification('沒有需要 AI 建議的 sheets', 'info');
+      addNotification('No sheets need AI suggestions', 'info');
       return;
     }
 
     console.log(`[AI Suggest All] Found ${needsAiSheets.length} sheets needing AI suggestion`);
     
-    // 建立 AbortController
+    // Create AbortController
     const controller = new AbortController();
     setAiSuggestAllAbortController(controller);
     setAiSuggestAllRunning(true);
     setAiSuggestAllProgress({ completed: 0, total: needsAiSheets.length });
 
     try {
-      // 設定所有目標 sheets 為 loading
+      // Set all target sheets to loading
       const loadingState = {};
       needsAiSheets.forEach(plan => {
         loadingState[plan.sheetId] = true;
       });
       setAiSuggestLoading(prev => ({ ...prev, ...loadingState }));
 
-      addNotification(`開始批量 AI 建議：${needsAiSheets.length} 個 sheets`, 'info');
+      addNotification(`Starting batch AI suggestions: ${needsAiSheets.length} sheets`, 'info');
 
-      // 建立 tasks（每個 task 回傳 Promise）
+      // Create tasks (each task returns a Promise)
       const tasks = needsAiSheets.map(plan => async () => {
         console.log(`[AI Suggest All] Processing: ${plan.sheetName}`);
         
-        // 檢查 abort signal
+        // Check abort signal
         if (controller.signal.aborted) {
           throw new Error('Aborted');
         }
 
-        // 從 workbook 中讀取該 sheet 的資料
+        // Read data from workbook for this sheet
         const sheet = workbook.Sheets[plan.sheetName];
         const sheetData = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', raw: false });
         
         const headers = sheetData[0] || [];
         
-        // 大 sheet 只送 sample（前 50 rows）
+        // Large sheet: only send sample (first 50 rows)
         const sampleRows = sheetData.slice(1, 51).map(row => {
           const obj = {};
           headers.forEach((h, i) => {
@@ -1488,11 +1488,11 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
           return obj;
         });
 
-        // 檢查 ingest key support
+        // Check ingest key support
         const { checkIngestKeySupport } = await import('../services/sheetRunsService');
         const hasIngestKeySupport = await checkIngestKeySupport();
 
-        // 呼叫 AI Suggest Service
+        // Call AI Suggest Service
         const result = await suggestSheetMapping({
           sheetName: plan.sheetName,
           headers,
@@ -1504,7 +1504,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
         return { sheetId: plan.sheetId, sheetName: plan.sheetName, result, plan };
       });
 
-      // 使用併發控制執行（concurrency = 2）
+      // Execute with concurrency control (concurrency = 2)
       const results = await runWithConcurrencyAbortable(
         tasks,
         controller.signal,
@@ -1517,7 +1517,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
 
       console.log('[AI Suggest All] All tasks completed:', results.length);
 
-      // 處理結果：逐一更新 sheetPlan
+      // Process results: update sheetPlan one by one
       let successCount = 0;
       let failCount = 0;
 
@@ -1529,7 +1529,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
 
           if (result.error) {
             failCount++;
-            // 有錯誤但不 throw，顯示錯誤
+            // Has error but don't throw, show error
             updateSheetPlan(sheetId, {
               reasons: result.reasons,
               aiSuggested: true,
@@ -1538,19 +1538,19 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
           } else {
             successCount++;
             
-            // 成功：更新 sheetPlan
-            // ✅ 修正：將 AI mapping 同時寫入 mapping 和 mappingDraft
+            // Success: update sheetPlan
+            // ✅ Fix: write AI mapping to both mapping and mappingDraft
             const updates = {
               uploadType: result.suggestedUploadType,
               confidence: result.confidence,
               reasons: result.reasons,
-              mapping: result.mapping,           // ✅ 保留向後兼容
-              mappingDraft: result.mapping,      // ✅ UI 使用此欄位
+              mapping: result.mapping,           // ✅ Keep for backward compatibility
+              mappingDraft: result.mapping,      // ✅ UI uses this field
               enabled: result.autoEnable,
               aiSuggested: true,
               requiredCoverage: result.requiredCoverage
             };
-            // ✅ 同步 isComplete / missingRequired（與單次 AI Suggest 一致）
+            // ✅ Sync isComplete / missingRequired (consistent with single AI Suggest)
             if (result.suggestedUploadType && plan.headers && result.mapping) {
               const status = getRequiredMappingStatus({
                 uploadType: result.suggestedUploadType,
@@ -1561,7 +1561,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
               updates.missingRequired = status.missingRequired;
             }
 
-            // 大檔 >1000 rows：僅警告，不預設 disabled
+            // Large file >1000 rows: warning only, don't default to disabled
             if (plan.rowCount > 1000 && !result.hasIngestKeySupport) {
               updates.reasons = [
                 ...(updates.reasons || result.reasons || []),
@@ -1569,7 +1569,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
               ];
             }
 
-            // 若 requiredCoverage < 1.0，不要 auto-enable
+            // If requiredCoverage < 1.0, don't auto-enable
             if (result.requiredCoverage < 1.0) {
               updates.enabled = false;
               if (!updates.reasons.some(r => r.includes('coverage'))) {
@@ -1585,7 +1585,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
         }
       });
 
-      // 清除所有 loading 狀態
+      // Clear all loading states
       const clearedLoading = {};
       needsAiSheets.forEach(plan => {
         clearedLoading[plan.sheetId] = false;
@@ -1593,25 +1593,25 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
       setAiSuggestLoading(prev => ({ ...prev, ...clearedLoading }));
 
       addNotification(
-        `批量 AI 建議完成：${successCount} 成功, ${failCount} 失敗`,
+        `Batch AI suggestions complete: ${successCount} succeeded, ${failCount} failed`,
         successCount > 0 ? 'success' : 'warning'
       );
 
     } catch (error) {
       if (error.message === 'Aborted') {
         console.log('[AI Suggest All] Aborted by user');
-        addNotification('批量 AI 建議已取消', 'info');
+        addNotification('Batch AI suggestions cancelled', 'info');
       } else {
         console.error('[AI Suggest All] Unexpected error:', error);
-        addNotification(`批量 AI 建議失敗：${error.message}`, 'error');
+        addNotification(`Batch AI suggestions failed: ${error.message}`, 'error');
       }
       
-      // 清除所有 loading 狀態
-      const clearedLoading = {};
+      // Clear all loading states
+      const clearedLoading2 = {};
       needsAiSheets.forEach(plan => {
-        clearedLoading[plan.sheetId] = false;
+        clearedLoading2[plan.sheetId] = false;
       });
-      setAiSuggestLoading(prev => ({ ...prev, ...clearedLoading }));
+      setAiSuggestLoading(prev => ({ ...prev, ...clearedLoading2 }));
     } finally {
       setAiSuggestAllRunning(false);
       setAiSuggestAllAbortController(null);
@@ -1635,7 +1635,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
     setSheetNames([]);
     setSelectedSheet('');
     setOneShotEnabled(false);
-    setOneShotStep('IDLE');  // ✅ 重置為 IDLE
+    setOneShotStep('IDLE');  // ✅ Reset to IDLE
     setCurrentEditingSheetIndex(0);
     setActiveReviewSheetId(null);
     setSheetPlans([]);
@@ -1680,11 +1680,11 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
             <TrendingUp className="w-6 h-6 text-purple-600 flex-shrink-0 mt-1" />
             <div className="flex-1">
               <h3 className="font-semibold text-purple-900 dark:text-purple-100 mb-2">
-                📊 準備執行 BOM Explosion 計算？
+                📊 Ready to run BOM Explosion?
               </h3>
               <p className="text-sm text-purple-800 dark:text-purple-200 mb-3">
-                上傳 demand_fg 和 bom_edge 資料後，前往 <strong>Forecasts</strong> 頁面執行 BOM Explosion 計算，
-                產生 Component 需求預測。
+                After uploading demand_fg and bom_edge data, go to the <strong>Forecasts</strong> page to run BOM Explosion
+                and generate component demand forecasts.
               </p>
               <Button
                 onClick={() => setView && setView('forecasts')}
@@ -1692,7 +1692,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
                 size="sm"
                 icon={TrendingUp}
               >
-                前往 Forecasts →
+                Go to Forecasts →
               </Button>
             </div>
           </div>
@@ -1721,7 +1721,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
         </div>
       )}
 
-      {/* Step 1 & 2: 選擇上傳類型 + 上傳檔案 (合併為單一畫面) */}
+      {/* Step 1 & 2: Select upload type + Upload file (combined into single screen) */}
       {(currentStep === 1 || currentStep === 2) && (
         <Card>
           <div className="space-y-6">
@@ -1734,7 +1734,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
                   onChange={(e) => {
                     setOneShotEnabled(e.target.checked);
                     if (e.target.checked) {
-                      workflowActions.setUploadType(null); // One-shot 不需要預選 type
+                      workflowActions.setUploadType(null); // One-shot doesn't need pre-selected type
                       addNotification('One-shot mode enabled: Upload Excel with multiple sheets for auto-classification', 'info');
                     }
                   }}
@@ -1745,11 +1745,11 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
                   <div className="flex items-center gap-2">
                     <Layers className="w-5 h-5 text-purple-600" />
                     <span className="font-semibold text-purple-900 dark:text-purple-100">
-                      One-shot Import (多 sheets 自動匯入)
+                      One-shot Import (Auto-import multiple sheets)
                     </span>
                   </div>
                   <p className="text-xs text-purple-700 dark:text-purple-300 mt-1">
-                    上傳 Excel 檔案（多 sheets），系統自動判斷每個 sheet 的資料類型，一鍵匯入所有 sheets
+                    Upload Excel file (multiple sheets), system auto-detects each sheet's data type, one-click import all sheets
                   </p>
                 </div>
               </label>
@@ -1774,7 +1774,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
                           className="w-4 h-4 text-purple-600 focus:ring-2 focus:ring-purple-500"
                         />
                         <span className="text-sm text-purple-900 dark:text-purple-100">
-                          <strong>Best-effort（推薦）</strong> - Sheet-level isolation, successful sheets will be saved
+                          <strong>Best-effort (Recommended)</strong> - Sheet-level isolation, successful sheets will be saved
                         </span>
                       </label>
                       <label className="flex items-center gap-2 cursor-pointer">
@@ -1794,8 +1794,8 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
                     </div>
                     <p className="text-xs text-purple-600 dark:text-purple-400 mt-1.5">
                       {oneShotMode === 'all-or-nothing' 
-                        ? '⚠ 若任一 sheet 失敗，所有已成功的 sheets 將被回滾（需 DB 已部署 chunk-idempotency）'
-                        : '✓ 每個 sheet 獨立匯入，失敗的 sheet 不影響其他成功的 sheets'}
+                        ? '⚠ If any sheet fails, all succeeded sheets will be rolled back (requires DB chunk-idempotency deployed)'
+                        : '✓ Each sheet is imported independently, failed sheets do not affect other succeeded sheets'}
                     </p>
                   </div>
                   
@@ -1825,7 +1825,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
               )}
             </div>
 
-            {/* Upload Type Selection (僅在非 One-shot 模式顯示) */}
+            {/* Upload Type Selection (only shown in non-One-shot mode) */}
             {!oneShotEnabled && (
               <div className="space-y-3">
                 <label className="block text-sm font-semibold">
@@ -1962,7 +1962,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
                   Step 1: Sheet Classification
                 </h3>
                 <p className="text-sm text-slate-600 dark:text-slate-400 mt-1">
-                  選擇每個 sheet 的資料類型。Mapping 將在下一步驟確認。
+                  Select each sheet's data type. Mapping will be confirmed in the next step.
                 </p>
               </div>
               <div className="flex items-center gap-3">
@@ -1983,7 +1983,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
                     icon={Sparkles}
                     size="sm"
                   >
-                    {aiSuggestAllRunning ? 'AI 分析中...' : 'AI 一鍵建議'}
+                    {aiSuggestAllRunning ? 'AI Analyzing...' : 'AI Suggest All'}
                   </Button>
                   
                   {aiSuggestAllRunning && (
@@ -1993,7 +1993,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
                       icon={X}
                       size="sm"
                     >
-                      取消
+                      Cancel
                     </Button>
                   )}
 
@@ -2005,13 +2005,13 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
                       disabled={aiSuggestAllRunning}
                       className="w-4 h-4 rounded"
                     />
-                    <span>包含已準備好的 sheets</span>
+                    <span>Include already-ready sheets</span>
                   </label>
                 </div>
 
                 {aiSuggestAllRunning && (
                   <div className="text-sm text-purple-700 dark:text-purple-300 font-medium">
-                    進度: {aiSuggestAllProgress.completed} / {aiSuggestAllProgress.total}
+                    Progress: {aiSuggestAllProgress.completed} / {aiSuggestAllProgress.total}
                   </div>
                 )}
               </div>
@@ -2031,8 +2031,8 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
 
               <p className="text-xs text-purple-800 dark:text-purple-200">
                 <Sparkles className="w-3 h-3 inline mr-1" />
-                批量 AI 建議會自動為低信心度或未分類的 sheets 建議 Upload Type 與欄位映射。
-                {includeAlreadyReady && ' (目前包含所有 sheets)'}
+                Batch AI suggestions will automatically suggest Upload Type and field mapping for low-confidence or unclassified sheets.
+                {includeAlreadyReady && ' (currently includes all sheets)'}
               </p>
             </div>
 
@@ -2095,7 +2095,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex flex-col gap-1">
-                          {/* ✅ C) Type Confidence (分類信心) */}
+                          {/* ✅ C) Type Confidence */}
                           <div className="text-xs text-slate-600 dark:text-slate-400">
                             Type: {plan.confidence > 0 ? (
                               <span className={`px-1.5 py-0.5 rounded font-semibold ${
@@ -2108,7 +2108,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
                               <span className="text-slate-400">-</span>
                             )}
                           </div>
-                          {/* ✅ C) Required Coverage (mapping 覆蓋率) */}
+                          {/* ✅ C) Required Coverage */}
                           <div className="text-xs text-slate-600 dark:text-slate-400">
                             Coverage: {plan.requiredCoverage !== undefined ? (
                               <span className={`px-1.5 py-0.5 rounded font-semibold ${
@@ -2189,7 +2189,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
                           {aiSuggestLoading[plan.sheetId] ? (
                             <>
                               <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                              <span>AI 分析中...</span>
+                              <span>AI Analyzing...</span>
                             </>
                           ) : (
                             <>
@@ -2238,7 +2238,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
               </Button>
             </div>
 
-            {/* Progress Bar - 全局進度 + Chunk 進度 */}
+            {/* Progress Bar - Global progress + Chunk progress */}
             {saving && oneShotProgress.stage && (
               <div className="p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg space-y-4">
                 <div className="flex items-start gap-3">
@@ -2249,7 +2249,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
                       {oneShotProgress.stage === 'ingesting' && `Ingesting chunks...`}
                     </h4>
                     
-                    {/* 當前 sheet 名稱 */}
+                    {/* Current sheet name */}
                     {oneShotProgress.sheetName && (
                       <p className="text-sm text-blue-700 dark:text-blue-300 mb-2">
                         Currently: <strong>{oneShotProgress.sheetName}</strong>
@@ -2257,7 +2257,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
                       </p>
                     )}
                     
-                    {/* 全局進度：第幾張 sheet */}
+                    {/* Global progress: which sheet */}
                     {oneShotProgress.total > 0 && (
                       <div>
                         <div className="flex justify-between text-xs text-blue-700 dark:text-blue-300 mb-1">
@@ -2273,7 +2273,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
                       </div>
                     )}
                     
-                    {/* Chunk 進度 */}
+                    {/* Chunk progress */}
                     {oneShotProgress.stage === 'ingesting' && oneShotProgress.totalChunks > 0 && (
                       <div className="mt-3">
                         <div className="flex justify-between text-xs text-blue-700 dark:text-blue-300 mb-1">
@@ -2289,7 +2289,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
                       </div>
                     )}
                     
-                    {/* Abort 按鈕 */}
+                    {/* Abort button */}
                     <div className="mt-3">
                       <button
                         onClick={handleAbortImport}
@@ -2379,7 +2379,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
                       All-or-nothing Mode: Rollback Triggered
                     </div>
                     <p className="text-xs">
-                      由於某些 sheet 失敗，所有已成功的 sheets 已被回滾。資料庫中不會保留任何資料。
+                      Due to some sheet failures, all succeeded sheets have been rolled back. No data will be retained in the database.
                     </p>
                   </div>
                 )}
@@ -2387,7 +2387,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
                 {/* Idempotency support warning */}
                 {!oneShotResult.hasIngestKeySupport && (
                   <div className="mb-3 p-2 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded text-xs text-amber-700 dark:text-amber-300">
-                    ⚠ DB 未部署 chunk-idempotency（請執行 <code className="font-mono bg-amber-100 dark:bg-amber-900/40 px-1 py-0.5 rounded">database/one_shot_chunk_idempotency.sql</code>）
+                    ⚠ DB has not deployed chunk-idempotency (please run <code className="font-mono bg-amber-100 dark:bg-amber-900/40 px-1 py-0.5 rounded">database/one_shot_chunk_idempotency.sql</code>)
                   </div>
                 )}
                 
@@ -2485,7 +2485,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
                   Step 2: Mapping Review
                 </h3>
                 <p className="text-sm text-slate-600 dark:text-slate-400 mt-1">
-                  確認每個 sheet 的欄位映射。所有 enabled sheets 都必須 Confirm 才能匯入。
+                  Confirm field mapping for each sheet. All enabled sheets must be confirmed before import.
                 </p>
               </div>
               <div className="flex items-center gap-3">
@@ -2592,12 +2592,12 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
                             icon={Sparkles}
                             size="sm"
                           >
-                            {aiSuggestLoading[currentPlan.sheetId] ? 'AI 分析中...' : 'AI Field Suggestion'}
+                            {aiSuggestLoading[currentPlan.sheetId] ? 'AI Analyzing...' : 'AI Field Suggestion'}
                           </Button>
                         </div>
                       </div>
 
-                      {/* Missing Required Fields Warning - 使用 effectiveMissingRequired（以 mappingDraft 重算為準） */}
+                      {/* Missing Required Fields Warning - uses effectiveMissingRequired (recalculated from mappingDraft) */}
                       {effectiveMissingRequired.length > 0 && (
                         <div className="p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded text-sm">
                           <div className="flex items-center gap-2 text-amber-800 dark:text-amber-200 font-semibold mb-1">
@@ -2760,7 +2760,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
                   Importing Sheets...
                 </h3>
                 <p className="text-sm text-slate-600 dark:text-slate-400 mt-1">
-                  請稍候，正在匯入資料...
+                  Please wait, importing data...
                 </p>
               </div>
             </div>
@@ -2816,7 +2816,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
                   Import Result
                 </h3>
                 <p className="text-sm text-slate-600 dark:text-slate-400 mt-1">
-                  匯入完成，請檢視結果
+                  Import complete, please review results
                 </p>
               </div>
               <div className="flex items-center gap-3">
@@ -2826,7 +2826,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
               </div>
             </div>
 
-            {/* D) Result Summary (必然顯示) */}
+            {/* D) Result Summary (always shown) */}
             <div className={`p-4 border rounded-lg ${
               importReport.needsReviewSheets > 0
                 ? 'bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800'
@@ -2859,7 +2859,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
                     </>
                   )}
                 </h4>
-                {/* D) Download Report(JSON) - 直接下載 importReport */}
+                {/* D) Download Report (JSON) - directly download importReport */}
                 <button
                   onClick={() => {
                     const json = JSON.stringify(importReport, null, 2);
@@ -3168,13 +3168,13 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
               </div>
             </div>
 
-            {/* Mapped Data Preview - 顯示映射轉換後的資料預覽 */}
+            {/* Mapped Data Preview - show data preview after mapping transformation */}
             {Object.values(columnMapping).some(v => v !== '') && (
               <div className="p-4 bg-emerald-50 dark:bg-emerald-900/20 rounded-lg border border-emerald-200 dark:border-emerald-800">
                 <div className="flex items-center justify-between mb-3">
                   <h4 className="text-sm font-semibold text-emerald-900 dark:text-emerald-100 flex items-center gap-2">
                     <Check className="w-4 h-4" />
-                    Mapped Data Preview (轉換後資料預覽)
+                    Mapped Data Preview
                   </h4>
                   <span className="text-xs text-emerald-700 dark:text-emerald-300">
                     Showing first 5 rows after field mapping
@@ -3225,7 +3225,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
                     </tbody>
                   </table>
                   
-                  {/* 欄位統計資訊 */}
+                  {/* Field statistics */}
                   <div className="p-3 bg-slate-50 dark:bg-slate-800 border-t dark:border-slate-700">
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
                       <div>
@@ -3256,7 +3256,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
                   </div>
                 </div>
                 
-                {/* 提示訊息 */}
+                {/* Hint message */}
                 <div className="mt-3 flex items-start gap-2 text-xs text-emerald-800 dark:text-emerald-200">
                   <Sparkles className="w-4 h-4 flex-shrink-0 mt-0.5" />
                   <p>
@@ -3336,7 +3336,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
                 <div className="flex-1">
                   <h4 className="text-sm font-semibold mb-2">Import Mode</h4>
                   <div className="flex items-center gap-4">
-                    {/* Best-effort mode (預設) */}
+                    {/* Best-effort mode (default) */}
                     <label className="flex items-center gap-2 cursor-pointer">
                       <input
                         type="radio"
@@ -3371,7 +3371,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
                     </label>
                   </div>
                   
-                  {/* Strict mode 說明 */}
+                  {/* Strict mode description */}
                   {strictMode && validationResult.errorRows && validationResult.errorRows.length > 0 && (
                     <div className="mt-2 text-xs text-orange-700 dark:text-orange-300 flex items-start gap-1">
                       <AlertTriangle className="w-3 h-3 flex-shrink-0 mt-0.5" />
@@ -3607,15 +3607,15 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
                       {saveProgress.message}
                     </h4>
                     
-                    {/* 進度條 */}
+                    {/* Progress bar */}
                     {saveProgress.total > 0 && (
                       <div className="space-y-2">
                         <div className="flex justify-between text-sm text-blue-800 dark:text-blue-200">
                           <span>
-                            {saveProgress.stage === 'collecting' && '📊 分析資料中'}
-                            {saveProgress.stage === 'suppliers' && '🏢 處理供應商'}
-                            {saveProgress.stage === 'materials' && '📦 處理物料'}
-                            {saveProgress.stage === 'receipts' && '✍️ 寫入收貨記錄'}
+                            {saveProgress.stage === 'collecting' && '📊 Analyzing data'}
+                            {saveProgress.stage === 'suppliers' && '🏢 Processing suppliers'}
+                            {saveProgress.stage === 'materials' && '📦 Processing materials'}
+                            {saveProgress.stage === 'receipts' && '✍️ Writing receipt records'}
                           </span>
                           <span className="font-mono">
                             {saveProgress.current} / {saveProgress.total}
@@ -3633,7 +3633,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
                     )}
                     
                     <p className="text-xs text-blue-700 dark:text-blue-300 mt-2">
-                      請稍候，系統正在使用批次處理優化效能...
+                      Please wait, system is using batch processing for optimized performance...
                     </p>
                   </div>
                 </div>
@@ -3645,7 +3645,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
               {/* Instruction Text */}
               {validationResult.validRows.length > 0 && validationResult.errorRows.length > 0 && !saving && (
                 <>
-                  {/* Best-effort mode 說明 */}
+                  {/* Best-effort mode description */}
                   {!strictMode && (
                     <div className="p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
                       <div className="flex items-start gap-2">
@@ -3664,7 +3664,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
                     </div>
                   )}
 
-                  {/* Strict mode 說明 */}
+                  {/* Strict mode description */}
                   {strictMode && (
                     <div className="p-3 bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 rounded-lg">
                       <div className="flex items-start gap-2">
@@ -3705,14 +3705,14 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
                     </div>
                   )}
                   
-                  {/* 全部資料有效 */}
+                  {/* All data valid */}
                   {validationResult.validRows.length > 0 && validationResult.errorRows.length === 0 && !saving && (
                     <span className="text-sm text-green-600 dark:text-green-400 font-medium">
                       ✓ All data valid, ready to save {validationResult.validRows.length} rows
                     </span>
                   )}
 
-                  {/* Strict mode 且有錯誤 */}
+                  {/* Strict mode with errors */}
                   {strictMode && validationResult.errorRows.length > 0 && !saving && (
                     <span className="text-sm text-orange-600 dark:text-orange-400 font-medium flex items-center gap-1">
                       <AlertTriangle className="w-4 h-4" />

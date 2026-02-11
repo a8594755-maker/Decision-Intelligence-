@@ -30,6 +30,7 @@ import RiskDashboardView from './views/RiskDashboardView';
 import AdminLogicControlCenter from './views/AdminLogicControlCenter';
 import AdminJobControlCenter from './views/AdminJobControlCenter';
 import DecisionSupportView from './views/DecisionSupportView';
+import DashboardView from './views/DashboardView';
 
 
 /** Sync view state with URL (pushState) and handle Back/Forward (popstate). Only active when session exists. */
@@ -90,7 +91,7 @@ export default function SmartOpsApp() {
   const [notifications, setNotifications] = useState([]);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [role, setRole] = useState('viewer'); // 角色选择：viewer/editor/approver/publisher/admin
+  const [role, setRole] = useState('viewer'); // Role selection: viewer/editor/approver/publisher/admin
   const [loading, setLoading] = useState(false);
   const [excelData, setExcelData] = useState(null);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false); // Mobile Menu State
@@ -193,7 +194,7 @@ export default function SmartOpsApp() {
     if (error) {
       addNotification(error.message, "error");
     } else {
-      // 登录成功后设置/更新用户角色
+      // Set/update user role after successful login
       try {
         const { error: upsertError } = await supabase
           .from('user_profiles')
@@ -247,7 +248,7 @@ export default function SmartOpsApp() {
 
   const renderView = () => {
     switch (view) {
-      case 'home': return <HomeView setView={setView} globalDataSource={globalDataSource} setGlobalDataSource={setGlobalDataSource} />;
+      case 'home': return <DashboardView setView={setView} user={session?.user} globalDataSource={globalDataSource} setGlobalDataSource={setGlobalDataSource} />;
       case 'forecasts': return <ForecastsView addNotification={addNotification} user={session?.user} />;
       case 'risk-dashboard': return <RiskDashboardView addNotification={addNotification} user={session?.user} setView={setView} globalDataSource={globalDataSource} setGlobalDataSource={setGlobalDataSource} />;
       case 'external': return <EnhancedExternalSystemsView addNotification={addNotification} user={session?.user} setView={setView} />;
@@ -255,10 +256,6 @@ export default function SmartOpsApp() {
       case 'bom-data': return <BOMDataView addNotification={addNotification} user={session?.user} globalDataSource={globalDataSource} />;
       case 'suppliers': return <SupplierManagementView addNotification={addNotification} />;
       case 'cost-analysis': return <CostAnalysisView addNotification={addNotification} user={session?.user} setView={setView} />;
-      case 'integration': return <DataIntegrationView addNotification={addNotification} />;
-      case 'alerts': return <SmartAlertsView addNotification={addNotification} excelData={excelData} user={session?.user} />;
-      case 'dashboard': return <OperationsDashboardView excelData={excelData} user={session?.user} globalDataSource={globalDataSource} setGlobalDataSource={setGlobalDataSource} />;
-      case 'analytics': return <AnalyticsCenterView excelData={excelData} />;
       case 'decision': return <DecisionSupportView excelData={excelData} user={session?.user} addNotification={addNotification} />;
       case 'settings': return <SettingsView darkMode={darkMode} setDarkMode={setDarkMode} user={session?.user} addNotification={addNotification} />;
       case 'admin-logic': return <AdminLogicControlCenter setView={setView} />;
@@ -287,11 +284,11 @@ export default function SmartOpsApp() {
                 onChange={(e) => setRole(e.target.value)}
                 className="w-full px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-transparent focus:ring-2 focus:ring-blue-500 outline-none"
               >
-                <option value="viewer">Viewer (只读)</option>
-                <option value="logic_editor">Logic Editor (编辑)</option>
-                <option value="logic_approver">Logic Approver (审批)</option>
-                <option value="logic_publisher">Logic Publisher (发布)</option>
-                <option value="admin">Admin (管理员)</option>
+                <option value="viewer">Viewer (Read-only)</option>
+                <option value="logic_editor">Logic Editor (Edit)</option>
+                <option value="logic_approver">Logic Approver (Approve)</option>
+                <option value="logic_publisher">Logic Publisher (Publish)</option>
+                <option value="admin">Admin (Full Access)</option>
               </select>
             </div>
             <button type="submit" disabled={loading} className="w-full bg-blue-600 hover:bg-blue-700 text-white py-2.5 rounded-lg font-medium transition-colors">{loading ? "Processing..." : "Log In"}</button>
@@ -312,9 +309,7 @@ export default function SmartOpsApp() {
       color: 'text-red-500',
       taskQuestion: 'What should I manage today?',
       children: [
-        { key: 'home', label: 'Dashboard', labelZh: 'Overview', icon: LayoutDashboard, view: 'home' },
-        { key: 'dashboard', label: 'Operations', labelZh: 'Ops', icon: Activity, view: 'dashboard' },
-        { key: 'alerts', label: 'Action Items', labelZh: 'Tasks', icon: AlertCircle, view: 'alerts' }
+        { key: 'home', label: 'Dashboard', labelZh: 'Overview', icon: LayoutDashboard, view: 'home' }
       ]
     },
     {
@@ -339,8 +334,7 @@ export default function SmartOpsApp() {
       taskQuestion: 'What is the best approach?',
       children: [
         { key: 'cost-analysis', label: 'Cost Optimizer', labelZh: 'Cost Opt', icon: DollarSign, view: 'cost-analysis' },
-        { key: 'decision', label: 'What-if AI', labelZh: 'Scenario AI', icon: Bot, view: 'decision' },
-        { key: 'analytics', label: 'Scenario Compare', labelZh: 'Compare', icon: BarChart3, view: 'analytics' }
+        { key: 'decision', label: 'What-if AI', labelZh: 'Scenario AI', icon: Bot, view: 'decision' }
       ]
     },
     {
@@ -364,7 +358,6 @@ export default function SmartOpsApp() {
       taskQuestion: 'Are our decisions correct?',
       children: [
         { key: 'import-history', label: 'Audit Trail', labelZh: 'Audit', icon: History, view: 'import-history' },
-        { key: 'integration', label: 'Data Hub', labelZh: 'Data Hub', icon: RefreshCw, view: 'integration' },
         { key: 'admin-logic', label: 'Logic Control', labelZh: 'Logic Control', icon: Settings, view: 'admin-logic' },
         { key: 'admin-jobs', label: 'Job Control', labelZh: 'Job Control', icon: Activity, view: 'admin-jobs' }
       ]
@@ -571,32 +564,11 @@ const HomeView = ({ setView, globalDataSource, setGlobalDataSource }) => {
   // Core and Data Management Modules
   const coreModules = [
     { 
-      id: 'dashboard', 
-      title: "Operations Dashboard", 
-      description: "View supply chain health, KPI trends, and key metrics", 
-      icon: LayoutDashboard, 
-      color: "text-emerald-500" 
-    },
-    { 
       id: 'cost-analysis', 
       title: "Cost Analysis", 
       description: "Track procurement costs and analyze supplier price trends", 
       icon: DollarSign, 
       color: "text-blue-500" 
-    },
-    { 
-      id: 'alerts', 
-      title: "Alert Center", 
-      description: "Real-time monitoring of supply chain issues, risk warnings, and recommendations", 
-      icon: AlertTriangle, 
-      color: "text-red-500" 
-    },
-    { 
-      id: 'analytics', 
-      title: "Analytics Center", 
-      description: "Deep data insights and AI-driven analysis reports", 
-      icon: TrendingUp, 
-      color: "text-indigo-500" 
     },
   ];
 
@@ -638,29 +610,6 @@ const HomeView = ({ setView, globalDataSource, setGlobalDataSource }) => {
     },
   ];
 
-  // Real-time KPI data - loaded from database
-  const [kpiData, setKpiData] = useState([
-    { label: "System Health", value: "--", trend: "Loading...", color: "text-emerald-600", bgColor: "bg-emerald-50 dark:bg-emerald-900/20", icon: Activity },
-    { label: "On-Time Delivery", value: "--", trend: "Loading...", color: "text-blue-600", bgColor: "bg-blue-50 dark:bg-blue-900/20", icon: CheckCircle },
-    { label: "Pending Alerts", value: "--", trend: "Loading...", color: "text-red-600", bgColor: "bg-red-50 dark:bg-red-900/20", icon: AlertTriangle },
-  ]);
-
-  // TODO: Load real KPI data from API
-  useEffect(() => {
-    // Placeholder for real KPI data loading
-    // const loadKpiData = async () => { ... };
-    // loadKpiData();
-  }, []);
-
-  // Quick action items - dynamically loaded from real alerts
-  const [quickActions, setQuickActions] = useState([]);
-
-  // TODO: Load real action items from API
-  useEffect(() => {
-    // Placeholder for real action items loading
-    // const loadActionItems = async () => { ... };
-    // loadActionItems();
-  }, []);
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -679,7 +628,7 @@ const HomeView = ({ setView, globalDataSource, setGlobalDataSource }) => {
         {/* Global Data Source Toggle */}
         <div className="flex items-center gap-4 bg-white dark:bg-slate-800 rounded-xl p-4 border border-slate-200 dark:border-slate-700 shadow-sm">
           <div className="flex items-center gap-2">
-            <span className="text-sm font-semibold text-slate-700 dark:text-slate-300">🔄 資料來源:</span>
+            <span className="text-sm font-semibold text-slate-700 dark:text-slate-300">🔄 Data Source:</span>
           </div>
           <div className="flex bg-slate-100 dark:bg-slate-700 rounded-lg p-1">
             <button
@@ -691,7 +640,7 @@ const HomeView = ({ setView, globalDataSource, setGlobalDataSource }) => {
               }`}
             >
               <Database className="w-4 h-4" />
-              本地上傳資料
+              Local Upload
             </button>
             <button
               onClick={() => setGlobalDataSource('sap')}
@@ -702,7 +651,7 @@ const HomeView = ({ setView, globalDataSource, setGlobalDataSource }) => {
               }`}
             >
               <Cloud className="w-4 h-4" />
-              SAP 資料
+              SAP Data
             </button>
           </div>
           <span className={`text-xs font-medium px-2 py-1 rounded-full ${
@@ -710,59 +659,11 @@ const HomeView = ({ setView, globalDataSource, setGlobalDataSource }) => {
               ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'
               : 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
           }`}>
-            {globalDataSource === 'sap' ? '全系統使用 SAP 同步資料' : '全系統使用本地上傳資料'}
+            {globalDataSource === 'sap' ? 'Using SAP synced data system-wide' : 'Using locally uploaded data system-wide'}
           </span>
         </div>
 
-        {/* KPI Cards Row */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          {kpiData.map((kpi, index) => (
-            <Card key={index} className={`${kpi.bgColor} border-none`}>
-              <div className="flex items-start justify-between">
-                <div>
-                  <div className="text-xs uppercase font-semibold text-slate-600 dark:text-slate-400 mb-1">
-                    {kpi.label}
-                  </div>
-                  <div className={`text-3xl font-bold ${kpi.color} mb-1`}>
-                    {kpi.value}
-                  </div>
-                  <div className={`text-xs font-medium ${kpi.color.replace('600', '500')}`}>
-                    {kpi.trend}
-                  </div>
-                </div>
-                <div className={`p-2 rounded-lg ${kpi.bgColor}`}>
-                  <kpi.icon className={`w-6 h-6 ${kpi.color}`} />
-                </div>
-              </div>
-            </Card>
-          ))}
-        </div>
       </div>
-
-      {/* Quick Actions - Action Items Area */}
-      <Card className="border-l-4 border-l-amber-500 bg-amber-50/50 dark:bg-amber-900/10">
-        <h3 className="font-semibold text-slate-900 dark:text-slate-100 mb-3 flex items-center gap-2">
-          <AlertCircle className="w-5 h-5 text-amber-600" />
-          Items Requiring Your Attention
-        </h3>
-        <div className="space-y-2">
-          {quickActions.map((action, index) => (
-            <button
-              key={index}
-              onClick={() => setView(action.action)}
-              className="w-full flex items-center justify-between p-3 rounded-lg bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors group"
-            >
-              <div className="flex items-center gap-3">
-                <action.icon className={`w-4 h-4 ${action.color}`} />
-                <span className="text-sm font-medium text-slate-700 dark:text-slate-300">
-                  {action.label}
-                </span>
-              </div>
-              <ChevronRight className="w-4 h-4 text-slate-400 group-hover:text-blue-600 group-hover:translate-x-1 transition-all" />
-            </button>
-          ))}
-        </div>
-      </Card>
 
       {/* Core Modules - Core Function Modules */}
       <div className="space-y-4">
@@ -806,32 +707,6 @@ const HomeView = ({ setView, globalDataSource, setGlobalDataSource }) => {
         </div>
       </div>
 
-      {/* System Status - External System Connection Status */}
-      <Card className="bg-slate-50/50 dark:bg-slate-800/50">
-        <h3 className="font-semibold text-slate-900 dark:text-slate-100 mb-4 flex items-center gap-2">
-          <Database className="w-5 h-5 text-slate-600" />
-          External System Connection Status
-        </h3>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          {[ ].map((sys, i) => (
-            <div key={i} className="flex items-center gap-3 p-3 bg-white dark:bg-slate-700 rounded-lg">
-              <div className="w-10 h-10 rounded-full bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center font-bold text-emerald-600">
-                {sys.icon}
-              </div>
-              <div className="flex-1">
-                <h4 className="font-medium text-sm text-slate-900 dark:text-slate-100">{sys.name}</h4>
-                <p className="text-xs text-emerald-600 flex items-center gap-1">
-                  <CheckCircle className="w-3 h-3" />
-                  {sys.status}
-                </p>
-              </div>
-              <div className="text-right">
-                <p className="text-xs text-slate-400">{sys.lastSync}</p>
-              </div>
-            </div>
-          ))}
-        </div>
-      </Card>
     </div>
     </div>
   );
@@ -1546,486 +1421,8 @@ const ExternalSystemsView = ({ addNotification, excelData, setExcelData, user })
   );
 };
 
-const DataIntegrationView = ({ addNotification }) => {
-  const [etlProgress, setEtlProgress] = useState(0);
-  const [etlStats, setEtlStats] = useState({ raw: 0, cleaned: 0, errors: 0 });
-  
-  const runEtl = () => { 
-    setEtlProgress(10); 
-    const interval = setInterval(() => { 
-      setEtlProgress(prev => { 
-        if (prev >= 100) { 
-          clearInterval(interval); 
-          addNotification("ETL Completed", "success"); 
-          return 100; 
-        } 
-        return prev + 10; 
-      }); 
-    }, 200); 
-  };
-  
-  return (
-    <div className="space-y-6 animate-fade-in">
-      <div className="flex justify-between items-center"><h2 className="text-xl md:text-2xl font-bold flex items-center gap-2"><RefreshCw className="w-6 h-6 text-purple-500" />Data Integration</h2><Button onClick={runEtl} disabled={etlProgress > 0 && etlProgress < 100}>Run ETL</Button></div>
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-6"><Card><div className="text-slate-500 text-sm mb-1">Raw</div><div className="text-3xl font-bold">{etlStats.raw || '--'}</div></Card><Card><div className="text-slate-500 text-sm mb-1">Cleaned</div><div className="text-3xl font-bold text-blue-600">{etlStats.cleaned || '--'}</div></Card><Card><div className="text-slate-500 text-sm mb-1">Errors</div><div className="text-3xl font-bold text-red-500">{etlStats.errors || '--'}</div></Card></div>
-      {etlProgress > 0 && (<Card className="bg-slate-50 dark:bg-slate-800/50"><div className="flex justify-between text-sm font-medium mb-2"><span>Progress</span><span>{etlProgress}%</span></div><div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-2.5"><div className="bg-purple-600 h-2.5 rounded-full transition-all duration-300" style={{ width: `${etlProgress}%` }}></div></div></Card>)}
-    </div>
-  );
-};
 
-const SmartAlertsView = ({ addNotification, excelData, user }) => {
-  const [selectedAlert, setSelectedAlert] = useState(null);
-  const [aiAnalysis, setAiAnalysis] = useState(null);
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [kpiAlerts, setKpiAlerts] = useState([]);
-  const [loadingKpiAlerts, setLoadingKpiAlerts] = useState(false);
 
-  // Load KPI-based alerts
-  useEffect(() => {
-    const loadKpiAlerts = async () => {
-      if (!user?.id) return;
-
-      setLoadingKpiAlerts(true);
-      try {
-        const { getAnomalousSuppliers } = await import('./services/supplierKpiService');
-        const anomalies = await getAnomalousSuppliers(user.id, {
-          maxDefectRate: 5,
-          minOnTimeRate: 90,
-          maxPriceVolatility: 15
-        });
-
-        // Convert to alert format
-        const alerts = anomalies.flatMap(supplier =>
-          supplier.issues.map(issue => ({
-            id: `kpi-${supplier.supplier_id}-${issue.type}`,
-            category: issue.type === 'high_defect_rate' ? 'High Defect Rate' :
-                     issue.type === 'low_on_time_rate' ? 'Low On-Time Delivery' :
-                     'High Price Volatility',
-            item: supplier.supplier_name,
-            supplier: supplier.supplier_name,
-            risk: issue.severity === 'high' ? 'High' : 'Medium',
-            impact: issue.message,
-            rootCause: `Score: ${supplier.overall_score?.toFixed(0)} | Risk: ${supplier.risk_level}`,
-            recommendation: `Current value: ${issue.value?.toFixed(2)} | Threshold: ${issue.threshold}`,
-            isKpiAlert: true,
-            supplierData: supplier
-          }))
-        );
-
-        setKpiAlerts(alerts);
-      } catch (error) {
-        console.error('Failed to load KPI alerts:', error);
-      } finally {
-        setLoadingKpiAlerts(false);
-      }
-    };
-
-    loadKpiAlerts();
-  }, [user]);
-
-  const allAlerts = kpiAlerts;
-
-  const generateDeepDive = async () => {
-    if (!selectedAlert) return;
-    setIsAnalyzing(true); setAiAnalysis(null);
-    const context = excelData ? `USER DATA: ${JSON.stringify(excelData.slice(0, 5))}...` : "No data.";
-    const kpiContext = selectedAlert.isKpiAlert ? `SUPPLIER KPI DATA: ${JSON.stringify(selectedAlert.supplierData)}` : '';
-    const prompt = `Analyze alert: ${selectedAlert.category} for ${selectedAlert.item}. Context: ${context} ${kpiContext}. Suggest mitigation.`;
-    const result = await callGeminiAPI(prompt);
-    setAiAnalysis(result); setIsAnalyzing(false);
-  };
-
-  return (
-    <div className="flex flex-col lg:flex-row gap-6 animate-fade-in h-[calc(100vh-140px)]">
-      <div className={`${selectedAlert ? 'hidden lg:block lg:w-1/3' : 'w-full'} space-y-4 overflow-y-auto`}>
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-xl md:text-2xl font-bold flex items-center gap-2">
-            <AlertTriangle className="w-6 h-6 text-red-500" />
-            Alerts
-          </h2>
-          <Badge type="info">{allAlerts.length} Total</Badge>
-        </div>
-
-        {kpiAlerts.length > 0 && (
-          <div className="mb-4">
-            <h3 className="text-sm font-semibold text-purple-600 mb-2 flex items-center gap-2">
-              <Building2 className="w-4 h-4" />
-              Supplier KPI Alerts ({kpiAlerts.length})
-            </h3>
-          </div>
-        )}
-
-        {loadingKpiAlerts && (
-          <Card className="text-center py-4">
-            <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-purple-600 mx-auto mb-2"></div>
-            <p className="text-xs text-slate-500">Loading KPI alerts...</p>
-          </Card>
-        )}
-
-        {allAlerts.map(alert => (
-          <Card key={alert.id} onClick={() => setSelectedAlert(alert)} className={`cursor-pointer border-l-4 ${selectedAlert?.id === alert.id ? 'ring-2 ring-blue-500' : ''} ${alert.risk === 'High' ? 'border-l-red-500' : 'border-l-amber-500'}`}>
-            <div className="flex justify-between items-start mb-2">
-              <div className="flex items-center gap-2">
-                <span className="font-semibold">{alert.category}</span>
-                {alert.isKpiAlert && <Badge type="info" className="text-xs">KPI</Badge>}
-              </div>
-              <Badge type={alert.risk === 'High' ? 'danger' : 'warning'}>{alert.risk}</Badge>
-            </div>
-            <p className="text-sm text-slate-500 mb-1">{alert.item}</p>
-            <p className="text-xs text-slate-400">{alert.supplier}</p>
-          </Card>
-        ))}
-
-        {!loadingKpiAlerts && allAlerts.length === 0 && (
-          <Card className="text-center py-8 text-slate-500">
-            <AlertTriangle className="w-12 h-12 mx-auto mb-2 opacity-20" />
-            <p>No alerts at this time</p>
-            <p className="text-xs mt-1">System is operating normally</p>
-          </Card>
-        )}
-      </div>
-      {selectedAlert ? (
-        <div className="flex-1 animate-slide-in overflow-y-auto pb-20 lg:pb-0">
-          <Card className="h-full">
-            <button onClick={() => setSelectedAlert(null)} className="lg:hidden absolute top-4 right-4 text-slate-400"><X className="w-6 h-6" /></button>
-            <div className="mb-6"><div className="flex items-center gap-2 mb-1"><Badge type="danger">{selectedAlert.risk}</Badge></div><h2 className="text-2xl font-bold">{selectedAlert.category}</h2><p className="text-lg text-slate-600 mt-2">{selectedAlert.item}</p></div>
-            <div className="space-y-6">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4"><div className="bg-slate-50 dark:bg-slate-700/50 p-4 rounded-lg"><span className="text-xs uppercase font-semibold">Impact</span><p className="font-medium mt-1">{selectedAlert.impact}</p></div><div className="bg-slate-50 dark:bg-slate-700/50 p-4 rounded-lg"><span className="text-xs uppercase font-semibold">Supplier</span><p className="font-medium mt-1">{selectedAlert.supplier}</p></div></div>
-              <div className="bg-purple-50 dark:bg-purple-900/10 p-5 rounded-xl border border-purple-100 dark:border-purple-900">
-                <div className="flex items-center justify-between mb-3"><div className="flex items-center gap-2 text-purple-700 font-semibold"><Sparkles className="w-5 h-5" /> AI Analysis</div>{!aiAnalysis && !isAnalyzing && (<Button variant="magic" onClick={generateDeepDive} className="text-xs py-1 px-3">Analyze</Button>)}</div>
-                {isAnalyzing && <div className="flex items-center gap-2 text-slate-500"><Loader2 className="w-4 h-4 animate-spin" /> Thinking...</div>}
-                {aiAnalysis && <div className="text-slate-700 dark:text-slate-300 text-sm leading-relaxed whitespace-pre-line">{aiAnalysis}</div>}
-              </div>
-            </div>
-          </Card>
-        </div>
-      ) : (<div className="hidden lg:flex flex-1 items-center justify-center text-slate-400 border-2 border-dashed border-slate-200 rounded-xl"><p>Select an alert</p></div>)}
-    </div>
-  );
-};
-
-const OperationsDashboardView = ({ excelData, user, globalDataSource, setGlobalDataSource }) => {
-  const [range, setRange] = useState('7d');
-  const [supplierKpis, setSupplierKpis] = useState([]);
-  const [loadingKpis, setLoadingKpis] = useState(false);
-
-  const ranges = [
-    { id: '7d', label: '7d' },
-    { id: '30d', label: '30d' },
-    { id: '90d', label: '90d' }
-  ];
-
-  // Load supplier KPI data
-  useEffect(() => {
-    const loadSupplierKpis = async () => {
-      if (!user?.id) return;
-
-      setLoadingKpis(true);
-      try {
-        const { getSupplierKpiSummary } = await import('./services/supplierKpiService');
-        const kpiData = await getSupplierKpiSummary(user.id);
-        setSupplierKpis(Array.isArray(kpiData) ? kpiData.slice(0, 10) : []);
-      } catch (error) {
-        console.error('Failed to load supplier KPIs:', error);
-      } finally {
-        setLoadingKpis(false);
-      }
-    };
-
-    loadSupplierKpis();
-  }, [user]);
-
-  const hasData = Array.isArray(excelData) && excelData.length > 0;
-  const columns = hasData ? Object.keys(excelData[0]) : [];
-  const totalCells = hasData ? excelData.length * columns.length : 0;
-
-  let emptyFields = 0;
-  if (hasData) {
-    excelData.forEach(row => {
-      columns.forEach(col => {
-        const value = row[col];
-        if (value === null || value === undefined || value === '') {
-          emptyFields += 1;
-        }
-      });
-    });
-  }
-
-  const fillRate = totalCells ? Math.round(((totalCells - emptyFields) / totalCells) * 100) : 0;
-  const numericColumns = hasData ? columns.filter(col => excelData.some(row => typeof row[col] === 'number' && !Number.isNaN(row[col]))) : [];
-  const stringColumns = hasData ? columns.filter(col => typeof excelData[0][col] === 'string') : [];
-  const firstNumeric = numericColumns[0];
-  const categoryColumn = stringColumns[0] || columns[0];
-
-  const lineChartData = hasData && firstNumeric
-    ? excelData.slice(0, Math.min(12, excelData.length)).map(row => Number(row[firstNumeric]) || 0)
-    : [];
-
-  const categoryCounts = hasData && categoryColumn ? excelData.reduce((acc, row) => {
-    const key = row[categoryColumn] ? String(row[categoryColumn]) : 'Unspecified';
-    acc[key] = (acc[key] || 0) + 1;
-    return acc;
-  }, {}) : {};
-
-  const topCategories = Object.entries(categoryCounts).sort((a, b) => b[1] - a[1]).slice(0, 5);
-
-  const barChartData = topCategories.length
-    ? {
-        labels: topCategories.map(([label]) => label),
-        values: topCategories.map(([, count]) => Math.round((count / excelData.length) * 100))
-      }
-    : { labels: [], values: [] };
-
-  const shortages = topCategories.length
-    ? topCategories.map(([label, count], i) => ({
-        label,
-        percent: Math.min(100, Math.round((count / excelData.length) * 100)),
-        color: ['bg-blue-500', 'bg-purple-500', 'bg-amber-500', 'bg-emerald-500', 'bg-rose-500'][i % 5]
-      }))
-    : [];
-
-  const kpis = hasData ? [
-    { label: "Rows", value: excelData.length.toLocaleString(), delta: `${columns.length} columns`, color: "text-emerald-500", icon: Activity },
-    { label: "Completeness", value: `${fillRate}%`, delta: `${emptyFields} empty cells`, color: "text-blue-500", icon: CheckCircle },
-    { label: "Numeric Fields", value: numericColumns.length || '0', delta: firstNumeric ? `Charting ${firstNumeric}` : "No numeric columns detected", color: "text-amber-500", icon: TrendingUp },
-    { label: "Top Category", value: topCategories[0]?.[0] || 'N/A', delta: topCategories[0] ? `${topCategories[0][1]} rows` : "Upload data to populate", color: "text-red-500", icon: AlertTriangle }
-  ] : [
-    { label: "Health", value: "--", delta: "No data", color: "text-emerald-500", icon: Activity },
-    { label: "On-Time", value: "--", delta: "No data", color: "text-blue-500", icon: CheckCircle },
-    { label: "Production", value: "--", delta: "No data", color: "text-amber-500", icon: TrendingUp },
-    { label: "Delays", value: "--", delta: "No data", color: "text-red-500", icon: AlertTriangle }
-  ];
-
-  return (
-    <div className="space-y-6 animate-fade-in">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <div>
-          <h2 className="text-xl md:text-2xl font-bold flex items-center gap-2">
-            <LayoutDashboard className="w-6 h-6 text-emerald-500" />
-            Operations Dashboard
-          </h2>
-          <p className="text-slate-500 text-sm">Supply chain health and short-term trends</p>
-        </div>
-        <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
-          {/* Global Data Source Toggle */}
-          <div className="flex items-center gap-2 bg-slate-50 dark:bg-slate-800/50 rounded-lg p-2 border border-slate-200 dark:border-slate-700">
-            <span className="text-xs font-medium text-slate-600 dark:text-slate-400">全域資料來源:</span>
-            <div className="flex bg-white dark:bg-slate-700 rounded-md p-0.5 border border-slate-200 dark:border-slate-600">
-              <button
-                onClick={() => setGlobalDataSource('local')}
-                className={`flex items-center gap-1 px-2 py-1 text-xs font-medium rounded transition-all ${
-                  globalDataSource === 'local'
-                    ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
-                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
-                }`}
-              >
-                <Database className="w-3 h-3" />
-                本地
-              </button>
-              <button
-                onClick={() => setGlobalDataSource('sap')}
-                className={`flex items-center gap-1 px-2 py-1 text-xs font-medium rounded transition-all ${
-                  globalDataSource === 'sap'
-                    ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'
-                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
-                }`}
-              >
-                <Cloud className="w-3 h-3" />
-                SAP
-              </button>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            {ranges.map(r => (
-              <button
-                key={r.id}
-                onClick={() => setRange(r.id)}
-                className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition ${range === r.id ? 'bg-blue-600 text-white border-blue-600' : 'border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300'}`}
-              >
-                {r.label}
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {hasData ? (
-        <Badge type="success">Using {excelData.length} uploaded rows</Badge>
-      ) : (
-        <Badge type="warning">Upload an Excel file in External Systems to populate this dashboard</Badge>
-      )}
-
-      {/* KPI Row */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {kpis.map((k, i) => (
-          <Card key={i} className="p-4 flex items-start justify-between">
-            <div>
-              <div className="text-xs uppercase text-slate-500 font-semibold">{k.label}</div>
-              <div className={`text-2xl font-bold ${k.color} mt-1`}>{k.value}</div>
-              <div className="text-xs text-emerald-600 dark:text-emerald-400 mt-1">{k.delta}</div>
-            </div>
-            <div className="p-2 rounded-lg bg-slate-100 dark:bg-slate-700/50">
-              <k.icon className={`w-5 h-5 ${k.color}`} />
-            </div>
-          </Card>
-        ))}
-      </div>
-
-      {/* Supplier Performance Section */}
-      {supplierKpis.length > 0 && (
-        <Card>
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="font-semibold flex items-center gap-2">
-              <Building2 className="w-5 h-5 text-purple-600" />
-              Supplier Performance Overview
-            </h3>
-            <Badge type="info">{supplierKpis.length} Suppliers</Badge>
-          </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="text-xs uppercase bg-slate-50 dark:bg-slate-700/50">
-                <tr>
-                  <th className="px-3 py-2 text-left">Supplier</th>
-                  <th className="px-3 py-2 text-center">Score</th>
-                  <th className="px-3 py-2 text-center">Defect %</th>
-                  <th className="px-3 py-2 text-center">On-Time %</th>
-                  <th className="px-3 py-2 text-center">Volatility %</th>
-                  <th className="px-3 py-2 text-center">Risk</th>
-                </tr>
-              </thead>
-              <tbody>
-                {supplierKpis.map((supplier, idx) => (
-                  <tr key={supplier.supplier_id} className="border-b dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800/50">
-                    <td className="px-3 py-2 font-medium">{supplier.supplier_name}</td>
-                    <td className="px-3 py-2 text-center">
-                      <span className={`font-bold ${
-                        supplier.overall_score >= 90 ? 'text-green-600' :
-                        supplier.overall_score >= 70 ? 'text-yellow-600' :
-                        'text-red-600'
-                      }`}>
-                        {supplier.overall_score?.toFixed(0)}
-                      </span>
-                    </td>
-                    <td className="px-3 py-2 text-center">
-                      <span className={supplier.defect_rate > 5 ? 'text-red-600 font-semibold' : 'text-slate-600'}>
-                        {supplier.defect_rate?.toFixed(2)}%
-                      </span>
-                    </td>
-                    <td className="px-3 py-2 text-center">
-                      <span className={supplier.on_time_rate < 90 ? 'text-red-600 font-semibold' : 'text-green-600'}>
-                        {supplier.on_time_rate?.toFixed(2)}%
-                      </span>
-                    </td>
-                    <td className="px-3 py-2 text-center">
-                      <span className={supplier.max_price_volatility > 15 ? 'text-red-600 font-semibold' : 'text-slate-600'}>
-                        {supplier.max_price_volatility?.toFixed(2)}%
-                      </span>
-                    </td>
-                    <td className="px-3 py-2 text-center">
-                      <Badge type={
-                        supplier.risk_level === 'low' ? 'success' :
-                        supplier.risk_level === 'medium' ? 'warning' : 'danger'
-                      }>
-                        {supplier.risk_level}
-                      </Badge>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          {supplierKpis.length === 0 && !loadingKpis && (
-            <div className="text-center py-8 text-slate-500">
-              <Building2 className="w-12 h-12 mx-auto mb-2 opacity-20" />
-              <p>No supplier KPI data available</p>
-              <p className="text-xs mt-1">Upload goods receipt data to calculate supplier KPIs</p>
-            </div>
-          )}
-
-          {loadingKpis && (
-            <div className="text-center py-8">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600 mx-auto"></div>
-              <p className="mt-2 text-sm text-slate-500">Loading supplier KPIs...</p>
-            </div>
-          )}
-        </Card>
-      )}
-
-      {/* Charts */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <Card>
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="font-semibold">Production Trend</h3>
-            <span className="text-xs text-slate-400">Range: {range.toUpperCase()}</span>
-          </div>
-          <SimpleLineChart data={lineChartData} />
-        </Card>
-        <Card>
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="font-semibold">{hasData ? 'Top Categories' : 'On-Time Delivery'}</h3>
-            <Badge type="info">{hasData ? 'Share of rows' : 'Top lanes'}</Badge>
-          </div>
-          <SimpleBarChart data={barChartData.values} labels={barChartData.labels} colorClass="bg-indigo-500" />
-        </Card>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <Card className="lg:col-span-2">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="font-semibold">Delay Heatmap</h3>
-            <span className="text-xs text-slate-400">Working days</span>
-          </div>
-          <div className="grid grid-cols-7 gap-1 md:gap-2">
-            {['M','T','W','T','F','S','S'].map((d, idx) => <div key={`day-${idx}`} className="text-center text-xs text-slate-500">{d}</div>)}
-            {hasData ? (
-              lineChartData.slice(0, 14).map((val, i) => (
-                <div key={i} className={`h-8 md:h-12 rounded flex items-center justify-center text-xs font-medium text-white ${val === 0 ? 'bg-slate-100 dark:bg-slate-800 text-slate-400' : val < 3 ? 'bg-emerald-400' : val < 6 ? 'bg-amber-400' : 'bg-red-500'}`}>{val > 0 ? val : ''}</div>
-              ))
-            ) : (
-              <div className="col-span-7 text-center py-8 text-slate-400">Upload data to view heatmap</div>
-            )}
-          </div>
-        </Card>
-        <Card>
-          <h3 className="font-semibold mb-4">Shortages</h3>
-          <div className="flex flex-col gap-4">
-            {shortages.map((item, i) => (
-              <div key={i}>
-                <div className="flex justify-between text-sm mb-1">
-                  <span>{item.label}</span>
-                  <span>{item.percent}%</span>
-                </div>
-                <div className="w-full bg-slate-200 h-2 rounded-full">
-                  <div className={`h-full ${item.color}`} style={{ width: `${item.percent}%` }}></div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </Card>
-      </div>
-    </div>
-  );
-};
-
-const AnalyticsCenterView = ({ excelData }) => {
-  const [activeTab, setActiveTab] = useState('cost');
-  const [report, setReport] = useState(null);
-  const [generating, setGenerating] = useState(false);
-  const generateReport = async () => { setReport(null); setGenerating(true); const result = await callGeminiAPI("Summarize analytics."); setReport(result); setGenerating(false); };
-  return (
-    <div className="space-y-6 animate-fade-in">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <h2 className="text-xl md:text-2xl font-bold flex items-center gap-2"><TrendingUp className="w-6 h-6 text-indigo-500" />Analytics</h2>
-        <Button variant="magic" icon={Sparkles} onClick={generateReport} disabled={generating}>{generating ? "..." : "AI Summary"}</Button>
-      </div>
-      {report && <Card className="bg-indigo-50 dark:bg-indigo-900/20"><p className="text-indigo-900 dark:text-indigo-200 text-sm whitespace-pre-line">{report}</p></Card>}
-      <div className="flex border-b border-slate-200 overflow-x-auto"><button className="px-6 py-3 text-sm font-medium border-b-2 border-indigo-500 text-indigo-600">Cost Analysis</button></div>
-      <Card><h3 className="font-semibold mb-6">Monthly Costs</h3><SimpleLineChart data={[]} color='#ef4444' /></Card>
-    </div>
-  );
-};
 
 // DecisionSupportView is now imported from ./views/DecisionSupportView
 

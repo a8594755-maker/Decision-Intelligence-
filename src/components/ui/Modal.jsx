@@ -4,7 +4,7 @@ import Button from './Button';
 
 /**
  * Modal Component
- * 通用的對話框組件
+ * General-purpose dialog component
  */
 export const Modal = ({
   isOpen,

@@ -1,8 +1,8 @@
 /**
- * Task 4: MLOps 數據漂移檢測面板
+ * Task 4: MLOps Data Drift Detection Panel
  * 
- * 從 /drift-check API 檢測當前數據是否偏離訓練基線 (μ±3σ)。
- * 以視覺化高斯分佈 + Z-score 指標呈現漂移狀態。
+ * Detects whether current data deviates from training baseline (μ±3σ) via /drift-check API.
+ * Visualizes drift status with Gaussian distribution + Z-score metrics.
  */
 
 import React, { useState } from 'react';
@@ -24,7 +24,7 @@ const DriftMonitorPanel = ({ history }) => {
 
   const checkDrift = async () => {
     if (!history || history.length < 10) {
-      setError('需要至少 10 個歷史數據點進行漂移檢測');
+      setError('At least 10 historical data points are required for drift detection');
       return;
     }
 
@@ -57,7 +57,7 @@ const DriftMonitorPanel = ({ history }) => {
         <div className="flex items-center gap-2">
           <Activity className="w-5 h-5 text-cyan-500" />
           <h3 className="font-semibold text-slate-900 dark:text-slate-100">
-            數據漂移監控
+            Data Drift Monitor
           </h3>
           <span className="text-xs bg-cyan-100 dark:bg-cyan-900/30 text-cyan-700 dark:text-cyan-300 px-2 py-0.5 rounded-full">
             MLOps
@@ -69,7 +69,7 @@ const DriftMonitorPanel = ({ history }) => {
           className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-cyan-50 dark:bg-cyan-900/30 text-cyan-700 dark:text-cyan-300 hover:bg-cyan-100 dark:hover:bg-cyan-900/50 transition-colors disabled:opacity-50"
         >
           <RefreshCw className={`w-3 h-3 ${loading ? 'animate-spin' : ''}`} />
-          {loading ? '檢測中...' : '執行漂移檢測'}
+          {loading ? 'Detecting...' : 'Run Drift Detection'}
         </button>
       </div>
 
@@ -83,7 +83,7 @@ const DriftMonitorPanel = ({ history }) => {
       {/* No data yet */}
       {!data && !error && (
         <div className="px-5 py-8 text-center text-sm text-slate-400 dark:text-slate-500">
-          點擊「執行漂移檢測」比較當前數據與訓練基線
+          Click "Run Drift Detection" to compare current data with training baseline
         </div>
       )}
 
@@ -106,12 +106,12 @@ const DriftMonitorPanel = ({ history }) => {
           {/* Metrics Grid */}
           <div className="px-5 py-4 grid grid-cols-2 sm:grid-cols-4 gap-4">
             <MetricCard
-              label="訓練基線 μ"
+              label="Training Baseline μ"
               value={data.details.training_baseline.mean}
               unit=""
             />
             <MetricCard
-              label="當前均值"
+              label="Current Mean"
               value={data.details.current_window.mean}
               unit=""
               highlight={data.drift_detected}
@@ -123,7 +123,7 @@ const DriftMonitorPanel = ({ history }) => {
               highlight={data.details.z_score > 3}
             />
             <MetricCard
-              label="波動率比"
+              label="Volatility Ratio"
               value={data.details.std_ratio}
               unit="×"
               highlight={data.details.std_ratio > 2 || data.details.std_ratio < 0.3}
@@ -133,7 +133,7 @@ const DriftMonitorPanel = ({ history }) => {
           {/* Visual Gauge */}
           <div className="px-5 py-4">
             <div className="text-xs text-slate-500 dark:text-slate-400 mb-2">
-              μ ± 3σ 範圍: [{data.details.training_baseline.lower_3sigma} ~ {data.details.training_baseline.upper_3sigma}]
+              μ ± 3σ Range: [{data.details.training_baseline.lower_3sigma} ~ {data.details.training_baseline.upper_3sigma}]
             </div>
             <div className="relative h-3 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden">
               {/* Safe zone */}

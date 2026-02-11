@@ -2,7 +2,7 @@ import React from 'react';
 
 /**
  * Simple Line Chart Component
- * 簡單的折線圖組件
+ * Simple line chart component
  */
 export const SimpleLineChart = ({ data = [], color = "#3b82f6", yAxisRange = null }) => {
   // Guard against invalid data
@@ -15,7 +15,7 @@ export const SimpleLineChart = ({ data = [], color = "#3b82f6", yAxisRange = nul
     );
   }
   
-  // 使用提供的 y 軸範圍，或默認自動計算
+  // Use provided y-axis range, or default to auto-calculated
   const dataMax = Math.max(...validData);
   const dataMin = Math.min(...validData);
   const min = yAxisRange?.min ?? Math.min(0, dataMin);

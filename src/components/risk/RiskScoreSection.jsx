@@ -84,7 +84,7 @@ const RiskScoreSection = ({
                 className="px-4 py-2 bg-slate-200 text-slate-700 rounded-lg text-sm hover:bg-slate-300 transition-colors flex items-center gap-1"
               >
                 <RefreshCw className="w-4 h-4" />
-                刷新
+                Refresh
               </button>
             </div>
           </div>

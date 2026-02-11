@@ -1,12 +1,12 @@
 /**
  * Risk Dashboard - Details Panel Component（Bucket-Based Version）
  * 
- * 統一名詞：
+ * Unified terminology:
  * - On hand
  * - Safety stock
  * - Net available
- * - Next time bucket（取代 Days to stockout）
- * - Inbound count/qty in horizon（buckets）
+ * - Next time bucket (replaces Days to stockout)
+ * - Inbound count/qty in horizon (buckets)
  */
 
 import React, { useState } from 'react';
@@ -112,7 +112,7 @@ const DetailsPanel = ({
       <div className="bg-slate-50 dark:bg-slate-800/50 rounded-xl border-2 border-dashed border-slate-300 dark:border-slate-600 p-6 flex flex-col items-center justify-center h-full min-h-[400px]">
         <Package className="w-16 h-16 text-slate-300 dark:text-slate-600 mb-4" />
         <p className="text-slate-500 dark:text-slate-400 text-center">
-          點選表格列查看詳細資訊
+          Click a table row to view details
         </p>
       </div>
     );
@@ -133,7 +133,7 @@ const DetailsPanel = ({
             </div>
             <h3 className="text-lg font-bold text-slate-900 dark:text-slate-100">
               {details.item === '(unknown)' ? (
-                <span className="text-slate-400 dark:text-slate-500 italic" title="來源資料缺少料號欄位">
+                <span className="text-slate-400 dark:text-slate-500 italic" title="Source data missing material code field">
                   (unknown)
                 </span>
               ) : (
@@ -141,13 +141,13 @@ const DetailsPanel = ({
               )}
             </h3>
             <p className="text-sm text-slate-600 dark:text-slate-400">
-              工廠: {details.plantId}
+              Plant: {details.plantId}
             </p>
           </div>
           <button
             onClick={onClose}
             className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1"
-            title="關閉"
+            title="Close"
           >
             <X className="w-5 h-5" />
           </button>
@@ -156,36 +156,36 @@ const DetailsPanel = ({
 
       {/* Body */}
       <div className="p-4 space-y-4">
-        {/* 追溯：Forecast Run */}
+        {/* Traceability: Forecast Run */}
         {activeForecastRun && (
           <div className="text-xs text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-slate-900/50 rounded-lg p-2">
             <span className="font-medium text-slate-600 dark:text-slate-300">Forecast Run:</span>{' '}
             {activeForecastRun.scenario_name || 'baseline'} ({String(activeForecastRun.id).slice(0, 8)}…)
             <br />
-            <span>可至 Planning → Forecasts 選對應 BOM Explosion 批次 → Trace 查看 FG→Component 追溯</span>
+            <span>Go to Planning → Forecasts, select the corresponding BOM Explosion batch → Trace to view FG→Component traceability</span>
           </div>
         )}
-        {/* 風險警示 */}
+        {/* Risk Alert */}
         {details.riskLevel === 'critical' && (
           <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-3">
             <div className="flex items-start gap-2">
               <AlertCircle className="w-5 h-5 text-red-600 dark:text-red-400 flex-shrink-0 mt-0.5" />
               <div>
                 <div className="font-semibold text-red-900 dark:text-red-100 text-sm mb-1">
-                  為什麼是 Critical？
+                  Why is it Critical?
                 </div>
                 <ul className="text-xs text-red-800 dark:text-red-200 space-y-0.5">
                   {details.reason && (
                     <li>• {details.reason}</li>
                   )}
                   {details.inboundCount === 0 && (
-                    <li>• 未來 {horizonDays} 個 bucket 內無入庫</li>
+                    <li>• No inbound within next {horizonDays} buckets</li>
                   )}
                   {details.inboundCount === 1 && (
-                    <li>• 未來 {horizonDays} 個 bucket 僅 1 次入庫</li>
+                    <li>• Only 1 inbound within next {horizonDays} buckets</li>
                   )}
                   {details.inboundQty < 10 && details.inboundCount > 0 && (
-                    <li>• 入庫總量僅 {details.inboundQty}（風險偏高）</li>
+                    <li>• Total inbound qty only {details.inboundQty} (higher risk)</li>
                   )}
                 </ul>
               </div>
@@ -193,11 +193,11 @@ const DetailsPanel = ({
           </div>
         )}
 
-        {/* Section 1: 庫存狀況 */}
+        {/* Section 1: Inventory Status */}
         <div>
           <div className="flex items-center gap-2 mb-2">
             <Package className="w-4 h-4 text-slate-600 dark:text-slate-400" />
-            <h4 className="font-semibold text-slate-700 dark:text-slate-300">庫存狀況</h4>
+            <h4 className="font-semibold text-slate-700 dark:text-slate-300">Inventory Status</h4>
           </div>
           <div className="bg-slate-50 dark:bg-slate-900/50 rounded-lg p-3 space-y-2">
             <div className="flex justify-between text-sm">
@@ -222,19 +222,19 @@ const DetailsPanel = ({
                 {formatNumber(details.netAvailable)}
               </span>
             </div>
-            {/* 公式說明 */}
+            {/* Formula explanation */}
             <div className="text-xs text-slate-500 dark:text-slate-400 pt-1 border-t border-slate-200 dark:border-slate-700">
               <div className="font-mono">Net available = On hand - Safety stock</div>
             </div>
           </div>
         </div>
 
-        {/* Section 2: 未來供需（Bucket-Based）*/}
+        {/* Section 2: Future Supply & Demand (Bucket-Based) */}
         <div>
           <div className="flex items-center gap-2 mb-2">
             <TrendingDown className="w-4 h-4 text-slate-600 dark:text-slate-400" />
             <h4 className="font-semibold text-slate-700 dark:text-slate-300">
-              未來 {horizonDays} buckets 供需
+              Next {horizonDays} Buckets Supply & Demand
             </h4>
           </div>
           <div className="bg-slate-50 dark:bg-slate-900/50 rounded-lg p-3 space-y-2">
@@ -257,7 +257,7 @@ const DetailsPanel = ({
                 details.inboundCount === 1 ? 'text-yellow-600 dark:text-yellow-400' :
                 'text-blue-600 dark:text-blue-400'
               }`}>
-                {details.inboundCount || 0} 次
+                {details.inboundCount || 0}
               </span>
             </div>
             <div className="flex justify-between text-sm">
@@ -269,11 +269,11 @@ const DetailsPanel = ({
           </div>
         </div>
 
-        {/* Section 3: 風險指標（Bucket-Based）*/}
+        {/* Section 3: Risk Indicators (Bucket-Based) */}
         <div>
           <div className="flex items-center gap-2 mb-2">
             <Calendar className="w-4 h-4 text-slate-600 dark:text-slate-400" />
-            <h4 className="font-semibold text-slate-700 dark:text-slate-300">風險指標</h4>
+            <h4 className="font-semibold text-slate-700 dark:text-slate-300">Risk Indicators</h4>
           </div>
           <div className="bg-slate-50 dark:bg-slate-900/50 rounded-lg p-3 space-y-2">
             <div className="flex justify-between text-sm">
@@ -304,7 +304,7 @@ const DetailsPanel = ({
               <span className="text-slate-600 dark:text-slate-400">Days to stockout</span>
               <span className="font-semibold text-slate-900 dark:text-slate-100">
                 {typeof details.daysToStockout === 'number' && details.daysToStockout !== Infinity
-                  ? `${details.daysToStockout} 天`
+                  ? `${details.daysToStockout} days`
                   : '—'}
               </span>
             </div>
@@ -323,40 +323,40 @@ const DetailsPanel = ({
               </span>
             </div>
             <div className="flex justify-between text-sm">
-              <span className="text-slate-600 dark:text-slate-400">Lead time（本筆 P(stockout) 用）</span>
+              <span className="text-slate-600 dark:text-slate-400">Lead time (used for this P(stockout))</span>
               <span className="font-semibold text-slate-900 dark:text-slate-100">
-                {details.leadTimeDaysUsed != null ? `${details.leadTimeDaysUsed} 天` : '—'}
+                {details.leadTimeDaysUsed != null ? `${details.leadTimeDaysUsed} days` : '—'}
                 {details.leadTimeDaysSource === 'fallback' && (
-                  <span className="ml-1 text-amber-600 dark:text-amber-400 text-xs" title="無 supplier lead_time_days，使用系統預設">(預設)</span>
+                  <span className="ml-1 text-amber-600 dark:text-amber-400 text-xs" title="No supplier lead_time_days, using system default">(default)</span>
                 )}
               </span>
             </div>
-            {/* 公式說明 */}
+            {/* Formula explanation */}
             <div className="text-xs text-slate-500 dark:text-slate-400 pt-1 border-t border-slate-200 dark:border-slate-700">
               <div className="font-mono">Gap qty = max(0, Safety stock - On hand)</div>
               {typeof details.daysToStockout === 'number' && details.daysToStockout !== Infinity && (
                 <div className="font-mono mt-0.5">Days to stockout / P(stockout) from Inventory domain (component_demand)</div>
               )}
-              <div className="mt-0.5">Lead time 來源: {details.leadTimeDaysSource === 'supplier' ? 'suppliers.lead_time_days' : '系統預設 (7 天)'}</div>
+              <div className="mt-0.5">Lead time source: {details.leadTimeDaysSource === 'supplier' ? 'suppliers.lead_time_days' : 'System default (7 days)'}</div>
             </div>
           </div>
         </div>
 
-        {/* Section 4: 補貨資訊（Supply Coverage 專屬）*/}
+        {/* Section 4: Replenishment Info (Supply Coverage) */}
         <div>
           <div className="flex items-center gap-2 mb-2">
             <TrendingDown className="w-4 h-4 text-slate-600 dark:text-slate-400" />
             <h4 className="font-semibold text-slate-700 dark:text-slate-300">
-              未來 {horizonDays} 天內 PO 明細
+              PO Details within Next {horizonDays} Buckets
             </h4>
           </div>
           
-          {/* PO 統計摘要（Bucket-Based）*/}
+          {/* PO Summary (Bucket-Based) */}
           <div className="bg-slate-50 dark:bg-slate-900/50 rounded-lg p-3 mb-3 space-y-2">
             <div className="flex justify-between text-sm">
               <span className="text-slate-600 dark:text-slate-400">Inbound count</span>
               <span className="font-bold text-lg text-blue-600 dark:text-blue-400">
-                {details.inboundCount || 0} 次
+                {details.inboundCount || 0}
               </span>
             </div>
             <div className="flex justify-between text-sm">
@@ -373,14 +373,14 @@ const DetailsPanel = ({
             </div>
           </div>
           
-          {/* PO Top 5 列表 */}
+          {/* PO List (Top 5) */}
           {details.poDetails && details.poDetails.length > 0 ? (
             <div className="space-y-2">
               <div className="text-xs font-semibold text-slate-600 dark:text-slate-400 uppercase">
-                PO 列表 (Top 5)
+                PO List (Top 5)
               </div>
               {details.poDetails.map((po, idx) => {
-                // 確保 key 唯一：使用 poNumber + poLine + timeBucket + idx
+                // Ensure unique key: use poNumber + poLine + timeBucket + idx
                 const poKey = `${po.poNumber}-${po.poLine || ''}-${po.timeBucket}-${idx}`;
                 
                 return (
@@ -412,32 +412,32 @@ const DetailsPanel = ({
               
               {details.inboundCount > 5 && (
                 <div className="text-xs text-center text-slate-500 dark:text-slate-400 pt-1">
-                  還有 {details.inboundCount - 5} 筆 PO 未顯示
+                  {details.inboundCount - 5} more POs not shown
                 </div>
               )}
             </div>
           ) : (
             <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-3">
               <div className="text-sm text-red-800 dark:text-red-200">
-                ⚠️ 未來 {horizonDays} buckets 內無 PO
+                ⚠️ No PO within next {horizonDays} buckets
               </div>
               <div className="text-xs text-red-600 dark:text-red-400 mt-1">
-                建議盡快確認補貨計畫
+                Recommend confirming replenishment plan as soon as possible
               </div>
             </div>
           )}
         </div>
 
-        {/* Section 5: Profit at Risk（M2 貨幣化）*/}
+        {/* Section 5: Profit at Risk (M2 Monetization) */}
         <div>
           <div className="flex items-center gap-2 mb-2">
             <DollarSign className="w-4 h-4 text-slate-600 dark:text-slate-400" />
             <h4 className="font-semibold text-slate-700 dark:text-slate-300">
-              Profit at Risk（貨幣化）
+              Profit at Risk (Monetization)
             </h4>
           </div>
           
-          {/* Profit 來源標籤 */}
+          {/* Profit source label */}
           <div className="mb-2">
             {details.profitAtRiskReason === 'REAL' && (
               <span className="inline-flex items-center gap-1 px-2 py-1 text-xs font-semibold rounded-full bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400">
@@ -479,7 +479,7 @@ const DetailsPanel = ({
                 {formatCurrency(details.profitAtRisk || 0, details.currency)}
               </span>
             </div>
-            {/* 公式說明 */}
+            {/* Formula explanation */}
             <div className="text-xs text-slate-500 dark:text-slate-400 pt-1 border-t border-slate-200 dark:border-slate-700">
               <div className="font-mono">profitAtRisk = max(0, gapQty) * profitPerUnit</div>
               {details.profitAtRiskReason === 'MISSING' && (
@@ -491,7 +491,7 @@ const DetailsPanel = ({
           </div>
         </div>
 
-        {/* Section 6: What-if Simulator（M3 - Expedite）*/}
+        {/* Section 6: What-if Simulator (M3 - Expedite) */}
         <div>
           <div className="flex items-center gap-2 mb-2">
             <Zap className="w-4 h-4 text-purple-600 dark:text-purple-400" />
@@ -504,7 +504,7 @@ const DetailsPanel = ({
           </div>
           
           <div className="bg-gradient-to-br from-purple-50 to-blue-50 dark:from-purple-900/20 dark:to-blue-900/20 border border-purple-200 dark:border-purple-800 rounded-lg p-3 space-y-3">
-            {/* 控制區 */}
+            {/* Controls */}
             <div className="space-y-2">
               <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 block">
                 Scenario: Expedite earliest inbound
@@ -522,7 +522,7 @@ const DetailsPanel = ({
                 </select>
               </div>
               
-              {/* 按鈕區 */}
+              {/* Buttons */}
               <div className="flex gap-2">
                 {!simulationResult ? (
                   <button
@@ -544,7 +544,7 @@ const DetailsPanel = ({
               </div>
             </div>
             
-            {/* 結果顯示 */}
+            {/* Results */}
             {simulationResult && (
               <div className="pt-3 border-t border-purple-300 dark:border-purple-700">
                 {!simulationResult.success ? (
@@ -558,7 +558,7 @@ const DetailsPanel = ({
                   </div>
                 ) : (
                   <div className="space-y-2">
-                    {/* Changes 說明 */}
+                    {/* Changes description */}
                     <div className="bg-white dark:bg-slate-800 rounded-lg p-2 text-xs">
                       <div className="font-semibold text-slate-700 dark:text-slate-300 mb-1">
                         📦 Simulated Change:
@@ -699,7 +699,7 @@ const DetailsPanel = ({
                       </div>
                     </div>
                     
-                    {/* Delta 總結 */}
+                    {/* Delta Summary */}
                     <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-2">
                       <div className="text-xs font-semibold text-blue-900 dark:text-blue-100 mb-1">
                         📊 Impact Summary
@@ -744,7 +744,7 @@ const DetailsPanel = ({
                       </div>
                     </div>
                     
-                    {/* 公式說明 */}
+                    {/* Formula explanation */}
                     <div className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-2">
                       <div className="text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                         📐 Calculation Formula
@@ -760,7 +760,7 @@ const DetailsPanel = ({
                       </div>
                     </div>
                     
-                    {/* 免責聲明 */}
+                    {/* Disclaimer */}
                     <div className="text-xs text-slate-500 dark:text-slate-400 italic">
                       💡 This is a simplified simulation. Actual results may vary.
                     </div>
@@ -832,7 +832,7 @@ const DetailsPanel = ({
 
         {/* Footer Note */}
         <div className="text-xs text-slate-500 dark:text-slate-400 pt-2 border-t border-slate-200 dark:border-slate-700">
-          💡 計算邏輯：
+          💡 Calculation logic:
           <code className="bg-slate-200 dark:bg-slate-700 px-1 rounded mx-1">domains/risk/coverageCalculator.js</code>
           +
           <code className="bg-slate-200 dark:bg-slate-700 px-1 rounded mx-1">profitAtRiskCalculator.js</code>

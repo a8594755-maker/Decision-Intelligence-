@@ -73,8 +73,8 @@ export default function RiskListView({
 
   const formatDays = (days) => {
     if (days === null || days === undefined) return '—';
-    if (days <= 0) return '已斷料';
-    return `${days} 天`;
+    if (days <= 0) return 'Stockout';
+    return `${days} days`;
   };
 
   if (loading) {
@@ -116,10 +116,10 @@ export default function RiskListView({
           </svg>
         </div>
         <h3 className="text-lg font-medium text-slate-900 dark:text-slate-100 mb-2">
-          暫無風險項目
+          No Risk Items
         </h3>
         <p className="text-sm text-slate-500 dark:text-slate-400 text-center max-w-md">
-          當前篩選條件下沒有符合的風險項目，或所有項目狀態良好。
+          No matching risk items under current filters, or all items are in good status.
         </p>
       </div>
     );
@@ -134,10 +134,10 @@ export default function RiskListView({
             <thead className="bg-slate-50 dark:bg-slate-700/50 border-b border-slate-200 dark:border-slate-700">
               <tr>
                 <th className="px-4 py-3 text-left font-semibold text-slate-700 dark:text-slate-300">
-                  狀態
+                  Status
                 </th>
                 <th className="px-4 py-3 text-left font-semibold text-slate-700 dark:text-slate-300">
-                  料號 / 工廠
+                  Material / Plant
                 </th>
                 <th className="px-4 py-3 text-right font-semibold text-slate-700 dark:text-slate-300">
                   Profit at Risk

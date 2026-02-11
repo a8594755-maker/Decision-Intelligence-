@@ -2,17 +2,17 @@ import React from 'react';
 
 /**
  * Table Component
- * 基本表格容器，支援 sticky header、hover、點選樣式
+ * Basic table container with sticky header, hover, and selection styles
  * 
- * @param {Array} columns - 欄位定義 [{ key, label, align, sortable, width }]
- * @param {Array} data - 資料陣列
- * @param {Function} onRowClick - 點擊列的回調
- * @param {string} selectedRowId - 選中列的 ID
- * @param {Function} renderCell - 自定義 cell 渲染函數 (column, row, value)
- * @param {boolean} stickyHeader - 是否固定表頭
- * @param {string} emptyMessage - 空狀態訊息
- * @param {ReactNode} emptyIcon - 空狀態圖示
- * @param {string} className - 額外 CSS class
+ * @param {Array} columns - Column definitions [{ key, label, align, sortable, width }]
+ * @param {Array} data - Data array
+ * @param {Function} onRowClick - Row click callback
+ * @param {string} selectedRowId - Selected row ID
+ * @param {Function} renderCell - Custom cell render function (column, row, value)
+ * @param {boolean} stickyHeader - Whether to fix header
+ * @param {string} emptyMessage - Empty state message
+ * @param {ReactNode} emptyIcon - Empty state icon
+ * @param {string} className - Additional CSS class
  */
 export const Table = ({
   columns = [],
@@ -21,11 +21,11 @@ export const Table = ({
   selectedRowId,
   renderCell,
   stickyHeader = true,
-  emptyMessage = '暫無資料',
+  emptyMessage = 'No data',
   emptyIcon,
   className = ''
 }) => {
-  // 取得欄位對齊樣式
+  // Get column alignment class
   const getAlignClass = (align) => {
     switch (align) {
       case 'right': return 'text-right';
@@ -34,7 +34,7 @@ export const Table = ({
     }
   };
 
-  // Empty 狀態
+  // Empty state
   if (data.length === 0) {
     return (
       <div className={`w-full ${className}`}>
@@ -136,8 +136,8 @@ export const Table = ({
 };
 
 /**
- * TableHeader Component (子元件)
- * 可單獨使用的表頭元件，支援排序
+ * TableHeader Component (sub-component)
+ * Standalone header component with sorting support
  */
 export const TableHeader = ({
   column,

@@ -2,7 +2,7 @@ import React from 'react';
 
 /**
  * Badge Component
- * 用於顯示狀態標籤的組件
+ * Component for displaying status labels
  */
 export const Badge = ({ children, type = "info" }) => {
   const styles = {

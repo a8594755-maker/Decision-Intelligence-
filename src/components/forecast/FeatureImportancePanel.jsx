@@ -1,8 +1,8 @@
 /**
- * Task 3: 模型可解釋性 — Feature Importance Panel
+ * Task 3: Model Explainability — Feature Importance Panel
  * 
- * 從 /feature-importance API 取得 LightGBM 特徵貢獻度，
- * 以水平條形圖 + 自然語言解釋呈現在 Dashboard 上。
+ * Retrieves LightGBM feature importance from /feature-importance API,
+ * displayed as horizontal bar chart + natural language explanation on Dashboard.
  */
 
 import React, { useState, useEffect } from 'react';
@@ -45,7 +45,7 @@ const FeatureImportancePanel = () => {
       <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6">
         <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400">
           <RefreshCw className="w-4 h-4 animate-spin" />
-          <span className="text-sm">載入模型解釋...</span>
+          <span className="text-sm">Loading model explanation...</span>
         </div>
       </div>
     );
@@ -74,7 +74,7 @@ const FeatureImportancePanel = () => {
         <div className="flex items-center gap-2">
           <Brain className="w-5 h-5 text-purple-500" />
           <h3 className="font-semibold text-slate-900 dark:text-slate-100">
-            AI 模型可解釋性
+            AI Model Explainability
           </h3>
           <span className="text-xs bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 px-2 py-0.5 rounded-full">
             LightGBM
@@ -89,7 +89,7 @@ const FeatureImportancePanel = () => {
           <button
             onClick={fetchImportance}
             className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
-            title="重新載入"
+            title="Reload"
           >
             <RefreshCw className="w-3.5 h-3.5 text-slate-400" />
           </button>
@@ -104,7 +104,7 @@ const FeatureImportancePanel = () => {
         </p>
         {data.optuna && !data.optuna.skipped && (
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-            Optuna 自動調參: {data.optuna.n_trials} 次試驗, 最佳 MAPE {data.optuna.best_mape}%
+            Optuna auto-tuning: {data.optuna.n_trials} trials, best MAPE {data.optuna.best_mape}%
           </p>
         )}
       </div>
@@ -150,7 +150,7 @@ const FeatureImportancePanel = () => {
             className="flex items-center gap-1 text-xs text-purple-600 dark:text-purple-400 hover:text-purple-800 dark:hover:text-purple-300"
           >
             {expanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-            {expanded ? '收起' : `展開全部 ${data.total_features} 個特徵`}
+            {expanded ? 'Collapse' : `Show all ${data.total_features} features`}
           </button>
         </div>
       )}
@@ -158,10 +158,10 @@ const FeatureImportancePanel = () => {
       {/* Footer: Optuna params */}
       {data.params_used && (
         <div className="px-5 py-3 bg-slate-50 dark:bg-slate-900/30 border-t border-slate-200 dark:border-slate-700 text-xs text-slate-500 dark:text-slate-400">
-          <span className="font-medium">超參數:</span>{' '}
+          <span className="font-medium">Hyperparameters:</span>{' '}
           lr={data.params_used.learning_rate}, leaves={data.params_used.num_leaves}, ff={data.params_used.feature_fraction}
           {data.trained_at && (
-            <span className="ml-2">· 訓練於 {new Date(data.trained_at).toLocaleString('zh-TW')}</span>
+            <span className="ml-2">· Trained at {new Date(data.trained_at).toLocaleString('en-US')}</span>
           )}
         </div>
       )}

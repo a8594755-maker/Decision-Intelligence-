@@ -1,14 +1,14 @@
 /**
  * Risk Dashboard View - Supply Coverage Risk
  *
- * 資料流：
- * 1. 載入 Forecast Runs（可選 run_id）
- * 2. 載入 Open PO（必需）+ Inventory Snapshots（可選）+ component_demand（依 forecast_run_id）
- * 3. Domain 計算（coverageCalculator）→ Inventory risk（daysToStockout / P(stockout)）→ Profit at Risk
+ * Data flow:
+ * 1. Load Forecast Runs (optional run_id)
+ * 2. Load Open PO (required) + Inventory Snapshots (optional) + component_demand (by forecast_run_id)
+ * 3. Domain calculation (coverageCalculator) → Inventory risk (daysToStockout / P(stockout)) → Profit at Risk
  * 4. mapSupplyCoverageToUI → uiRows
- * 5. KPI/Table/Details 全部從 uiRows 派生
+ * 5. KPI/Table/Details all derived from uiRows
  *
- * Horizon: 固定 3 buckets
+ * Horizon: fixed 3 buckets
  */
 
 import React, { useState, useEffect, useMemo } from 'react';
@@ -17,65 +17,65 @@ import { Button } from '../components/ui';
 import { supabase } from '../services/supabaseClient';
 import { forecastRunsService, componentDemandService } from '../services/supabaseClient';
 
-// Domain 層計算函數
+// Domain layer calculation functions
 import { calculateSupplyCoverageRiskBatch } from '../domains/risk/coverageCalculator.js';
 import { calculateInventoryRisk } from '../domains/inventory/calculator.js';
 
-// Profit at Risk 計算（M2）
+// Profit at Risk calculation (M2)
 import {
   calculateProfitAtRiskBatch,
   getFallbackAssumption
 } from '../domains/risk/profitAtRiskCalculator.js';
 
-// Risk Dashboard 子元件
+// Risk Dashboard sub-components
 import FilterBar from '../components/risk/FilterBar';
 import KPICards from '../components/risk/KPICards';
 import RiskTable from '../components/risk/RiskTable';
 import DetailsPanel from '../components/risk/DetailsPanel';
 import AuditTimeline from '../components/risk/AuditTimeline'; // M7.3 WP3
 
-// 雙模式視圖元件（M8）
+// Dual-mode view components (M8)
 import ViewToggle from '../components/risk/ViewToggle';
 import RiskCardGrid from '../components/risk/RiskCardGrid';
 import RiskListView from '../components/risk/RiskListView';
 import RiskDetailModal from '../components/risk/RiskDetailModal';
 
-// 資料轉換 Adapter（新版）
+// Data transformation Adapter (new version)
 import { mapSupplyCoverageToUI } from '../components/risk/mapDomainToUI';
 
-// PO 正規化、component_demand 彙總
+// PO normalization, component_demand aggregation
 import { normalizeOpenPOBatch } from '../utils/poNormalizer';
 import { aggregateComponentDemandToDaily, normalizeKey } from '../utils/componentDemandAggregator';
 
-// 固定 Horizon（Bucket-Based）
-const HORIZON_BUCKETS = 3; // 未來 N 個 time_bucket
-const DEFAULT_LEAD_TIME_DAYS = 7; // Inventory domain 用於 P(stockout)
+// Fixed Horizon (Bucket-Based)
+const HORIZON_BUCKETS = 3; // Next N time_buckets
+const DEFAULT_LEAD_TIME_DAYS = 7; // Used by Inventory domain for P(stockout)
 
 const RiskDashboardView = ({ addNotification, user, setView, globalDataSource, setGlobalDataSource }) => {
-  // ========== State 管理 ==========
+  // ========== State Management ==========
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [uiRows, setUiRows] = useState([]); // 單一資料來源
+  const [uiRows, setUiRows] = useState([]); // Single data source
 
-  // Forecast Run 選擇（可選；null = 使用 latest run）
+  // Forecast Run selection (optional; null = use latest run)
   const [forecastRunsList, setForecastRunsList] = useState([]);
   const [selectedForecastRunId, setSelectedForecastRunId] = useState(null); // null = "Latest"
-  const [activeForecastRun, setActiveForecastRun] = useState(null); // 本次載入實際使用的 run { id, scenario_name, created_at }
-  const [componentDemandCountForRun, setComponentDemandCountForRun] = useState(0); // 該 run 的 component_demand 筆數（0 = 無資料或未選 run）
+  const [activeForecastRun, setActiveForecastRun] = useState(null); // Actual run used for this load { id, scenario_name, created_at }
+  const [componentDemandCountForRun, setComponentDemandCountForRun] = useState(0); // component_demand count for this run (0 = no data or no run selected)
 
-  // 篩選與搜尋
+  // Filtering and search
   const [plants, setPlants] = useState(['all']);
   const [selectedPlant, setSelectedPlant] = useState('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedRiskLevel, setSelectedRiskLevel] = useState('all');
 
-  // 右側 Details Panel
+  // Right-side Details Panel
   const [selectedRow, setSelectedRow] = useState(null);
 
-  // 資料批次時間
+  // Data snapshot time
   const [dataSnapshotTime, setDataSnapshotTime] = useState(null);
 
-  // 診斷 KPI（A3: demandKeysWithoutRiskRow / riskRowsWithoutDemand 供 key 對齊 debug）
+  // Diagnostic KPI (A3: demandKeysWithoutRiskRow / riskRowsWithoutDemand for key alignment debug)
   const [diagnostics, setDiagnostics] = useState({
     inventoryPairs: 0,
     poPairs: 0,
@@ -86,7 +86,7 @@ const RiskDashboardView = ({ addNotification, user, setView, globalDataSource, s
     riskRowsWithoutDemand: 0
   });
 
-  // Profit at Risk 汇总（M2）
+  // Profit at Risk summary (M2)
   const [profitSummary, setProfitSummary] = useState({
     totalProfitAtRisk: 0,
     criticalProfitAtRisk: 0,
@@ -135,7 +135,7 @@ const RiskDashboardView = ({ addNotification, user, setView, globalDataSource, s
     return 'grid';
   });
 
-  // ========== 資料載入 ==========
+  // ========== Data Loading ==========
 
   const loadRiskData = async () => {
     if (!user?.id) return;
@@ -144,13 +144,13 @@ const RiskDashboardView = ({ addNotification, user, setView, globalDataSource, s
     setError(null);
 
     try {
-      // Step 0: 載入 Forecast Runs 清單，並決定本次使用的 run_id
+      // Step 0: Load Forecast Runs list and determine run_id for this load
       let runsList = [];
       try {
         runsList = await forecastRunsService.listRuns(user.id, { limit: 30 });
         setForecastRunsList(runsList || []);
       } catch (e) {
-        console.warn('載入 forecast runs 失敗（將不使用 component_demand）:', e);
+        console.warn('Failed to load forecast runs (will not use component_demand):', e);
       }
 
       const runId = selectedForecastRunId || (runsList && runsList[0]?.id) || null;
@@ -158,7 +158,7 @@ const RiskDashboardView = ({ addNotification, user, setView, globalDataSource, s
       setActiveForecastRun(runMeta);
       if (!runId) setComponentDemandCountForRun(0);
 
-      // Step 0.5: 依 forecast_run_id 載入 component_demand 並彙總為 (material, plant) → dailyDemand
+      // Step 0.5: Load component_demand by forecast_run_id and aggregate to (material, plant) → dailyDemand
       let componentDemandAggregated = {};
       if (runId) {
         try {
@@ -180,12 +180,12 @@ const RiskDashboardView = ({ addNotification, user, setView, globalDataSource, s
           console.log(`📦 Forecast Run ${runId}: fetch ${demandRows?.length ?? 0} rows in ${fetchMs}ms, aggregate ${aggregateMs}ms → ${Object.keys(componentDemandAggregated).length} keys${timeBucketsFromRun ? ` (time_bucket in ${timeBucketsFromRun.length} buckets)` : ''}`);
         } catch (e) {
           setComponentDemandCountForRun(0);
-          console.warn('載入 component_demand 失敗（Risk 將不顯示 daysToStockout）:', e);
-          addNotification(`無法載入該 Forecast Run 的需求資料: ${e.message}`, 'warning');
+          console.warn('Failed to load component_demand (Risk will not show daysToStockout):', e);
+          addNotification(`Unable to load demand data for this Forecast Run: ${e.message}`, 'warning');
         }
       }
 
-      // Step 1: 載入 Open PO（必需）— 根據 dataSource 過濾
+      // Step 1: Load Open PO (required) — filter by dataSource
       let poQuery = supabase
         .from('po_open_lines')
         .select('*')
@@ -193,7 +193,7 @@ const RiskDashboardView = ({ addNotification, user, setView, globalDataSource, s
       if (globalDataSource === 'sap') {
         poQuery = poQuery.eq('source', 'sap_sync');
       } else {
-        // Local: 排除 SAP 同步資料（source 為 null 或非 sap_sync）
+        // Local: exclude SAP synced data (source is null or not sap_sync)
         poQuery = poQuery.or('source.is.null,source.neq.sap_sync');
       }
       poQuery = poQuery.order('time_bucket', { ascending: true });
@@ -201,18 +201,18 @@ const RiskDashboardView = ({ addNotification, user, setView, globalDataSource, s
       const { data: rawPoData, error: poError } = await poQuery;
 
       if (poError) {
-        console.error('PO 查詢錯誤:', poError);
+        console.error('PO query error:', poError);
         if (poError.code === '42P01') {
-          throw new Error('資料表 po_open_lines 尚未建立，請聯絡管理員');
+          throw new Error('Table po_open_lines has not been created, please contact administrator');
         }
-        throw new Error(`載入 PO 資料失敗: ${poError.message}`);
+        throw new Error(`Failed to load PO data: ${poError.message}`);
       }
 
       if (!rawPoData || rawPoData.length === 0) {
         throw new Error('EMPTY_PO_DATA');
       }
 
-      // Step 2: 載入庫存快照（可選）— 根據 dataSource 過濾
+      // Step 2: Load inventory snapshots (optional) — filter by dataSource
       let inventoryData = [];
       let invQuery = supabase
         .from('material_stock_snapshots')
@@ -228,13 +228,13 @@ const RiskDashboardView = ({ addNotification, user, setView, globalDataSource, s
       const { data: invData, error: invError } = await invQuery;
 
       if (invError) {
-        console.warn('載入庫存資料失敗（將使用 0 庫存）:', invError);
+        console.warn('Failed to load inventory data (will use 0 inventory):', invError);
       } else {
         inventoryData = invData || [];
         setDataSnapshotTime(invData?.[0]?.created_at || new Date());
       }
 
-      // Step 2.3: 載入 inventory_snapshots（safety_stock 來源）— material_stock_snapshots 無 safety_stock 欄位
+      // Step 2.3: Load inventory_snapshots (safety_stock source) — material_stock_snapshots has no safety_stock field
       const safetyStockMap = {}; // key: "MATERIAL|PLANT" -> safety_stock
       try {
         const { data: isData, error: isError } = await supabase
@@ -251,13 +251,13 @@ const RiskDashboardView = ({ addNotification, user, setView, globalDataSource, s
               };
             }
           });
-          console.log(`🛡️ 載入 ${Object.keys(safetyStockMap).length} 筆 safety_stock（from inventory_snapshots）`);
+          console.log(`🛡️ Loaded ${Object.keys(safetyStockMap).length} safety_stock entries (from inventory_snapshots)`);
         }
       } catch (e) {
-        console.warn('載入 inventory_snapshots（safety_stock）失敗，將使用 0:', e);
+        console.warn('Failed to load inventory_snapshots (safety_stock), will use 0:', e);
       }
 
-      // Step 2.5: 載入 FG Financials（M2 - Profit at Risk）
+      // Step 2.5: Load FG Financials (M2 - Profit at Risk)
       let financialsData = [];
       const { data: finData, error: finError } = await supabase
         .from('fg_financials')
@@ -265,19 +265,19 @@ const RiskDashboardView = ({ addNotification, user, setView, globalDataSource, s
         .eq('user_id', user.id);
 
       if (finError) {
-        console.warn('載入 financials 資料失敗（將使用 fallback 假設）:', finError);
+        console.warn('Failed to load financials data (will use fallback assumption):', finError);
       } else {
         financialsData = finData || [];
-        console.log(`💰 載入 ${financialsData.length} 筆 financials 資料`);
+        console.log(`💰 Loaded ${financialsData.length} financials entries`);
       }
 
-      // 正規化 PO 資料
+      // Normalize PO data
       const normalizedPOData = normalizeOpenPOBatch(rawPoData);
       if (normalizedPOData.length === 0) {
-        throw new Error('PO 資料正規化後為空（可能欄位格式錯誤）');
+        throw new Error('PO data is empty after normalization (possible field format error)');
       }
 
-      // Step 2.6: 載入 suppliers（A2: leadTimeDays 來源）→ 建 (item|factory) -> { leadTimeDays, source }
+      // Step 2.6: Load suppliers (A2: leadTimeDays source) → build (item|factory) -> { leadTimeDays, source }
       let supplierIdToLeadDays = {};
       try {
         const { data: suppliersData } = await supabase
@@ -291,7 +291,7 @@ const RiskDashboardView = ({ addNotification, user, setView, globalDataSource, s
           });
         }
       } catch (e) {
-        console.warn('載入 suppliers（lead_time_days）失敗，將使用預設值:', e);
+        console.warn('Failed to load suppliers (lead_time_days), will use default value:', e);
       }
       const keyToLeadTime = {};
       normalizedPOData.forEach(po => {
@@ -307,7 +307,7 @@ const RiskDashboardView = ({ addNotification, user, setView, globalDataSource, s
         }
       });
 
-      // 診斷：Inventory / PO / Matched pairs（A3: 全用 normalizeKey 對齊）
+      // Diagnostics: Inventory / PO / Matched pairs (A3: all using normalizeKey for alignment)
       const inventoryPairsSet = new Set();
       inventoryData.forEach(inv => {
         const key = normalizeKey(inv.material_code || inv.item, inv.plant_id || inv.factory);
@@ -322,14 +322,14 @@ const RiskDashboardView = ({ addNotification, user, setView, globalDataSource, s
       poPairsSet.forEach(key => { if (inventoryPairsSet.has(key)) matchedPairsSet.add(key); });
       const unionKeys = new Set([...inventoryPairsSet, ...poPairsSet]);
 
-      // A3: debug 用 mismatch 計數（demand 有但 risk 無 / risk 有但 demand 無）
+      // A3: debug mismatch count (demand has but risk doesn't / risk has but demand doesn't)
       const demandKeySet = new Set(Object.keys(componentDemandAggregated));
       const demandKeysWithoutRisk = [...demandKeySet].filter(k => !unionKeys.has(k)).length;
       const riskRowsWithoutDemand = [...unionKeys].filter(k => !demandKeySet.has(k)).length;
-      console.log('📊 診斷: Inv pairs', inventoryPairsSet.size, 'PO pairs', poPairsSet.size, 'Matched', matchedPairsSet.size);
-      console.log('📊 Key 對齊: demand keys 無對應 risk row', demandKeysWithoutRisk, '| risk rows 無對應 demand', riskRowsWithoutDemand);
+      console.log('📊 Diagnostics: Inv pairs', inventoryPairsSet.size, 'PO pairs', poPairsSet.size, 'Matched', matchedPairsSet.size);
+      console.log('📊 Key alignment: demand keys without risk row', demandKeysWithoutRisk, '| risk rows without demand', riskRowsWithoutDemand);
 
-      // Step 3: Domain 計算（Supply Coverage Risk - Bucket-Based）
+      // Step 3: Domain calculation (Supply Coverage Risk - Bucket-Based)
       const domainResults = calculateSupplyCoverageRiskBatch({
         openPOs: normalizedPOData,
         inventorySnapshots: inventoryData.map(inv => {
@@ -346,7 +346,7 @@ const RiskDashboardView = ({ addNotification, user, setView, globalDataSource, s
         horizonBuckets: HORIZON_BUCKETS
       });
 
-      // Step 3.5: 使用 component_demand 彙總 + Inventory domain 計算 daysToStockout / P(stockout)；A2: leadTimeDays 從 supplier 或 fallback
+      // Step 3.5: Use component_demand aggregation + Inventory domain to calculate daysToStockout / P(stockout); A2: leadTimeDays from supplier or fallback
       domainResults.forEach(row => {
         const itemKey = normalizeKey(row.material_code || row.item, row.plant_id || row.factory);
         const demandInfo = componentDemandAggregated[itemKey];
@@ -369,21 +369,21 @@ const RiskDashboardView = ({ addNotification, user, setView, globalDataSource, s
             row.daysToStockout = invRisk.daysToStockout;
             row.stockoutProbability = invRisk.probability;
           } catch (e) {
-            console.warn(`Inventory risk 計算跳過 ${itemKey}:`, e);
+            console.warn(`Inventory risk calculation skipped for ${itemKey}:`, e);
           }
         }
       });
 
-      // Step 4: 計算 Profit at Risk（M2）
+      // Step 4: Calculate Profit at Risk (M2)
       const { rows: rowsWithProfit, summary: profitSummaryData } = calculateProfitAtRiskBatch({
         riskRows: domainResults,
         financials: financialsData,
         useFallback: true
       });
 
-      console.log('💰 Profit at Risk 汇总:', profitSummaryData);
+      console.log('💰 Profit at Risk summary:', profitSummaryData);
 
-      // Step 5: 轉換為 UI 格式
+      // Step 5: Transform to UI format
       const warnings = [];
       const calculatedRows = rowsWithProfit.map(domainResult => {
         const rowWarnings = [];
@@ -392,13 +392,13 @@ const RiskDashboardView = ({ addNotification, user, setView, globalDataSource, s
         return uiRow;
       });
 
-      // 設定 Profit Summary
+      // Set Profit Summary
       setProfitSummary({
         ...profitSummaryData,
         usingFallback: financialsData.length === 0 || profitSummaryData.itemsWithAssumption > 0
       });
 
-      // 診斷：計算 Union pairs 和 Inbound pairs in horizon
+      // Diagnostics: Calculate Union pairs and Inbound pairs in horizon
       const unionPairsSet = new Set();
       const inboundPairsSet = new Set();
       
@@ -410,9 +410,9 @@ const RiskDashboardView = ({ addNotification, user, setView, globalDataSource, s
           inboundPairsSet.add(key);
         }
         
-        // 🔍 診斷：檢查工廠欄位錯位
+        // 🔍 Diagnostics: check plant field misalignment
         if (typeof row.plantId === 'number' && [5, 10, 50].includes(row.plantId)) {
-          console.warn('⚠️ 工廠欄位疑似錯位:', {
+          console.warn('⚠️ Plant field suspected misalignment:', {
             item: row.item,
             plantId: row.plantId,
             factory: row.factory,
@@ -423,7 +423,7 @@ const RiskDashboardView = ({ addNotification, user, setView, globalDataSource, s
         }
       });
 
-      // 設定診斷 KPI（含 A3: key 對齊 mismatch 計數，供 debug/panel 使用）
+      // Set diagnostic KPI (including A3: key alignment mismatch count for debug/panel)
       setDiagnostics({
         inventoryPairs: inventoryPairsSet.size,
         poPairs: poPairsSet.size,
@@ -434,45 +434,45 @@ const RiskDashboardView = ({ addNotification, user, setView, globalDataSource, s
         riskRowsWithoutDemand
       });
 
-      console.log('📊 診斷資訊（計算後）:');
+      console.log('📊 Diagnostics (after calculation):');
       console.log(`- Union pairs (Inventory ∪ PO): ${unionPairsSet.size}`);
       console.log(`- Inbound pairs in horizon: ${inboundPairsSet.size}`);
 
-      // 提取 unique plants
+      // Extract unique plants
       const uniquePlants = new Set();
       calculatedRows.forEach(row => {
         if (row.plantId) uniquePlants.add(row.plantId);
       });
 
-      // 設定單一資料來源（真實資料模式）
+      // Set single data source (real data mode)
       setUiRows(calculatedRows);
       setPlants(['all', ...Array.from(uniquePlants).sort()]);
 
-      // 顯示警告（如果有）
+      // Show warnings (if any)
       if (warnings.length > 0) {
-        console.warn('資料轉換警告:', warnings);
+        console.warn('Data transformation warnings:', warnings);
       }
 
-      addNotification(`已載入 ${calculatedRows.length} 筆風險資料（REAL DATA）`, 'success');
+      addNotification(`Loaded ${calculatedRows.length} risk entries (REAL DATA)`, 'success');
     } catch (error) {
-      console.error('載入風險資料失敗:', error);
+      console.error('Failed to load risk data:', error);
       
       if (error.message === 'EMPTY_PO_DATA') {
         setError({
           type: 'empty',
-          message: '尚無 Open PO 資料',
-          hint: '請至「資料上傳」頁面匯入以下模板',
-          templates: ['po_open_lines.xlsx (必需)', 'inventory_snapshots.xlsx (選填)']
+          message: 'No Open PO data available',
+          hint: 'Please go to the Data Upload page to import the following templates',
+          templates: ['po_open_lines.xlsx (required)', 'inventory_snapshots.xlsx (optional)']
         });
       } else {
         setError({
           type: 'error',
-          message: error.message || '載入失敗',
-          hint: '請檢查資料來源或聯絡管理員'
+          message: error.message || 'Loading failed',
+          hint: 'Please check data source or contact administrator'
         });
       }
       
-      addNotification(`載入失敗: ${error.message}`, 'error');
+      addNotification(`Loading failed: ${error.message}`, 'error');
     } finally {
       setLoading(false);
     }
@@ -482,9 +482,9 @@ const RiskDashboardView = ({ addNotification, user, setView, globalDataSource, s
     loadRiskData();
   }, [user, selectedForecastRunId, globalDataSource]);
 
-  // ========== 派生資料（從 uiRows 單一來源）==========
+  // ========== Derived Data (from uiRows single source) ==========
 
-  // 篩選後的資料（含 Revenue 整合 M6 Gate-R5）
+  // Filtered data (with Revenue integration M6 Gate-R5)
   const filteredRows = useMemo(() => {
     let filtered = [...uiRows];
 
@@ -525,7 +525,7 @@ const RiskDashboardView = ({ addNotification, user, setView, globalDataSource, s
     });
   }, [uiRows, selectedPlant, searchTerm, selectedRiskLevel, revenueState.summaryByKey, riskScoreState.scoreByKey]);
 
-  // KPI 統計（從 filteredRows 派生）
+  // KPI statistics (derived from filteredRows)
   const kpis = useMemo(() => {
     const criticalCount = filteredRows.filter(r => r.riskLevel === 'critical').length;
     const warningCount = filteredRows.filter(r => r.riskLevel === 'warning').length;
@@ -542,7 +542,7 @@ const RiskDashboardView = ({ addNotification, user, setView, globalDataSource, s
     };
   }, [filteredRows]);
 
-  // ========== 互動處理 ==========
+  // ========== Interaction Handlers ==========
 
   const handleRowSelect = (row) => {
     setSelectedRow(row);
@@ -565,7 +565,7 @@ const RiskDashboardView = ({ addNotification, user, setView, globalDataSource, s
   };
 
   const handleExport = () => {
-    addNotification('Export 功能開發中（Week 2）', 'info');
+    addNotification('Export feature in development (Week 2)', 'info');
   };
 
   const handleRetry = () => {
@@ -869,20 +869,20 @@ const RiskDashboardView = ({ addNotification, user, setView, globalDataSource, s
     }
   };
 
-  // ========== 渲染 ==========
+  // ========== Rendering ==========
 
-  // Loading 狀態
+  // Loading state
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen">
         <Loader2 className="w-8 h-8 animate-spin text-blue-500 mb-3" />
-        <span className="text-slate-600 dark:text-slate-400">載入風險資料中...</span>
-        <span className="text-xs text-slate-500 mt-1">正在計算 {HORIZON_BUCKETS} buckets 風險評估</span>
+        <span className="text-slate-600 dark:text-slate-400">Loading risk data...</span>
+        <span className="text-xs text-slate-500 mt-1">Calculating {HORIZON_BUCKETS} buckets risk assessment</span>
       </div>
     );
   }
 
-  // Error 狀態
+  // Error state
   if (error) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen p-4">
@@ -893,7 +893,7 @@ const RiskDashboardView = ({ addNotification, user, setView, globalDataSource, s
             </div>
             <div>
               <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
-                {error.type === 'empty' ? '無資料' : '載入錯誤'}
+                {error.type === 'empty' ? 'No Data' : 'Loading Error'}
               </h3>
               <p className="text-sm text-slate-600 dark:text-slate-400">
                 {error.message}
@@ -918,14 +918,14 @@ const RiskDashboardView = ({ addNotification, user, setView, globalDataSource, s
 
           <div className="flex gap-2">
             <Button onClick={handleRetry} variant="primary" icon={RefreshCw}>
-              重試
+              Retry
             </Button>
             {error.type === 'empty' && (
               <Button 
                 onClick={() => setView?.('external')} 
                 variant="secondary"
               >
-                前往上傳
+                Go to Upload
               </Button>
             )}
           </div>
@@ -946,7 +946,7 @@ const RiskDashboardView = ({ addNotification, user, setView, globalDataSource, s
                 🚨 Supply Coverage Risk
               </h1>
               <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-                Horizon: {HORIZON_BUCKETS} buckets · 最後更新: {dataSnapshotTime ? new Date(dataSnapshotTime).toLocaleString('zh-TW') : 'N/A'}
+                Horizon: {HORIZON_BUCKETS} buckets · Last updated: {dataSnapshotTime ? new Date(dataSnapshotTime).toLocaleString('en-US') : 'N/A'}
                 {activeForecastRun && (
                   <span className="ml-2 text-blue-600 dark:text-blue-400">
                     · Risk based on Forecast Run: {activeForecastRun.scenario_name || 'baseline'} ({String(activeForecastRun.id).slice(0, 8)}…)
@@ -956,7 +956,7 @@ const RiskDashboardView = ({ addNotification, user, setView, globalDataSource, s
                   <span className="ml-2 text-amber-600 dark:text-amber-400">· No forecast run (supply coverage only)</span>
                 )}
               </p>
-              {/* 診斷 KPI */}
+              {/* Diagnostic KPI */}
               <div className="flex items-center gap-3 mt-2 text-xs text-slate-600 dark:text-slate-400">
                 <span title="Inventory pairs (Universe)">
                   Inv: <span className="font-semibold text-slate-900 dark:text-slate-100">{diagnostics.inventoryPairs}</span>
@@ -980,7 +980,7 @@ const RiskDashboardView = ({ addNotification, user, setView, globalDataSource, s
                 {(diagnostics.demandKeysWithoutRiskRow > 0 || diagnostics.riskRowsWithoutDemand > 0) && (
                   <>
                     <span className="text-slate-300 dark:text-slate-600">|</span>
-                    <span title="Key 對齊：demand 有但 risk 無 / risk 有但 demand 無">
+                    <span title="Key alignment: demand has but risk doesn't / risk has but demand doesn't">
                       Demand↔Risk: <span className="font-semibold text-amber-600 dark:text-amber-400">{diagnostics.demandKeysWithoutRiskRow}</span> / <span className="font-semibold text-amber-600 dark:text-amber-400">{diagnostics.riskRowsWithoutDemand}</span>
                     </span>
                   </>
@@ -1003,7 +1003,7 @@ const RiskDashboardView = ({ addNotification, user, setView, globalDataSource, s
               <option value="">Latest run</option>
               {(forecastRunsList || []).map((run) => (
                 <option key={run.id} value={run.id}>
-                  {run.scenario_name || 'baseline'} — {run.created_at ? new Date(run.created_at).toLocaleString('zh-TW', { dateStyle: 'short', timeStyle: 'short' }) : run.id?.slice(0, 8)}
+                  {run.scenario_name || 'baseline'} — {run.created_at ? new Date(run.created_at).toLocaleString('en-US', { dateStyle: 'short', timeStyle: 'short' }) : run.id?.slice(0, 8)}
                 </option>
               ))}
             </select>
@@ -1013,7 +1013,7 @@ const RiskDashboardView = ({ addNotification, user, setView, globalDataSource, s
               icon={RefreshCw}
               disabled={loading}
             >
-              重新整理
+              Refresh
             </Button>
             
             {/* M7 Gate-7.1: Calculate Risk Scores button */}
@@ -1022,29 +1022,29 @@ const RiskDashboardView = ({ addNotification, user, setView, globalDataSource, s
               variant="secondary"
               icon={Calculator}
               disabled={loading || !activeForecastRun?.id || calculatingRiskScores}
-              title="計算 Risk Score (P(stockout) × $Impact × Urgency)"
+              title="Calculate Risk Score (P(stockout) × $Impact × Urgency)"
             >
-              {calculatingRiskScores ? '計算中...' : 'Calculate Risk Scores'}
+              {calculatingRiskScores ? 'Calculating...' : 'Calculate Risk Scores'}
             </Button>
           </div>
         </div>
 
         {/* Global Data Source Indicator */}
         <div className="flex items-center gap-3 bg-slate-50 dark:bg-slate-800/50 rounded-lg p-3 border border-slate-200 dark:border-slate-700">
-          <span className="text-sm font-medium text-slate-700 dark:text-slate-300">全域資料來源:</span>
+          <span className="text-sm font-medium text-slate-700 dark:text-slate-300">Data Source:</span>
           <div className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md ${
             globalDataSource === 'sap' 
               ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' 
               : 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
           }`}>
             {globalDataSource === 'sap' ? <Cloud className="w-4 h-4" /> : <Database className="w-4 h-4" />}
-            {globalDataSource === 'sap' ? 'SAP資料' : '本地上傳'}
+            {globalDataSource === 'sap' ? 'SAP Data' : 'Local Upload'}
           </div>
           <span className="text-xs text-slate-500">
-            {globalDataSource === 'sap' ? '顯示 SAP 同步的資料' : '顯示手動上傳的資料'}
+            {globalDataSource === 'sap' ? 'Showing SAP synced data' : 'Showing manually uploaded data'}
           </span>
           <span className="text-xs text-blue-600 dark:text-blue-400">
-            在主頁 Dashboard 切換
+            Switch on main Dashboard
           </span>
         </div>
 
@@ -1061,9 +1061,9 @@ const RiskDashboardView = ({ addNotification, user, setView, globalDataSource, s
                 Supply Coverage Risk (Bucket-Based)
               </div>
               <div className="text-blue-800 dark:text-blue-200 space-y-1">
-                <div>• <span className="font-medium">Horizon:</span> {HORIZON_BUCKETS} buckets（約 {HORIZON_BUCKETS} 週）</div>
-                <div>• <span className="font-medium">Data source:</span> Open PO + Inventory snapshots{profitSummary.itemsWithRealFinancials > 0 && ' + FG financials'}{activeForecastRun && (componentDemandCountForRun > 0 ? ` + Demand: component_demand (${componentDemandCountForRun} rows)` : ' + Demand: 無（該 Run 無 component_demand）')}</div>
-                <div>• <span className="font-medium">Days to stockout / P(stockout):</span> {activeForecastRun ? (componentDemandCountForRun > 0 ? '依 Forecast Run 的 component_demand 彙總為日均需求後計算' : '該 Forecast Run 無 component_demand 資料，無法計算（請確認已執行 BOM Explosion 並選對 Run）') : '請選擇 Forecast Run 以顯示（需先執行 BOM Explosion）；目前為 supply coverage only'}</div>
+                <div>• <span className="font-medium">Horizon:</span> {HORIZON_BUCKETS} buckets (approx. {HORIZON_BUCKETS} weeks)</div>
+                <div>• <span className="font-medium">Data source:</span> Open PO + Inventory snapshots{profitSummary.itemsWithRealFinancials > 0 && ' + FG financials'}{activeForecastRun && (componentDemandCountForRun > 0 ? ` + Demand: component_demand (${componentDemandCountForRun} rows)` : ' + Demand: None (this Run has no component_demand)')}</div>
+                <div>• <span className="font-medium">Days to stockout / P(stockout):</span> {activeForecastRun ? (componentDemandCountForRun > 0 ? 'Calculated from Forecast Run component_demand aggregated to daily demand' : 'This Forecast Run has no component_demand data, cannot calculate (please confirm BOM Explosion has been run and correct Run is selected)') : 'Please select a Forecast Run to display (BOM Explosion must be run first); currently supply coverage only'}</div>
                 {profitSummary.usingFallback && (
                   <div className="pt-1 border-t border-blue-300 dark:border-blue-700 mt-2">
                     • <span className="font-medium">Profit at Risk:</span> {profitSummary.itemsWithRealFinancials > 0 
@@ -1108,10 +1108,10 @@ const RiskDashboardView = ({ addNotification, user, setView, globalDataSource, s
         <div className="max-w-[1400px] mx-auto bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm overflow-hidden">
           <div className="p-4 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between">
             <h2 className="font-semibold text-lg text-slate-900 dark:text-slate-100">
-              風險清單
+              Risk List
             </h2>
             <span className="text-sm text-slate-500 dark:text-slate-400">
-              共 {filteredRows.length} 筆
+              {filteredRows.length} items
             </span>
           </div>
           <div className="overflow-x-auto">

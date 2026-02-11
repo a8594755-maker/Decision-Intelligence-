@@ -3,27 +3,27 @@ import { ChevronDown } from 'lucide-react';
 
 /**
  * Select Component
- * 原生 <select> 的樣式化包裝，支援鍵盤操作
+ * Styled wrapper for native <select>, supports keyboard interaction
  * 
- * @param {Array} options - 選項陣列 [{ value, label }] 或 string[]
- * @param {string} value - 當前選中值
- * @param {Function} onChange - 變更回調 (value) => void
- * @param {string} placeholder - 預設提示文字
- * @param {boolean} disabled - 是否禁用
- * @param {string} className - 額外 CSS class
- * @param {string} size - 尺寸 sm | md | lg
+ * @param {Array} options - Options array [{ value, label }] or string[]
+ * @param {string} value - Currently selected value
+ * @param {Function} onChange - Change callback (value) => void
+ * @param {string} placeholder - Default placeholder text
+ * @param {boolean} disabled - Whether disabled
+ * @param {string} className - Additional CSS class
+ * @param {string} size - Size: sm | md | lg
  */
 export const Select = ({
   options = [],
   value,
   onChange,
-  placeholder = '請選擇',
+  placeholder = 'Select...',
   disabled = false,
   className = '',
   size = 'md',
   ...props
 }) => {
-  // 處理選項格式（支援 string[] 或 object[]）
+  // Normalize options format (supports string[] or object[])
   const normalizedOptions = options.map(opt => {
     if (typeof opt === 'string') {
       return { value: opt, label: opt };
@@ -31,7 +31,7 @@ export const Select = ({
     return opt;
   });
 
-  // 尺寸樣式
+  // Size styles
   const sizeClasses = {
     sm: 'px-2 py-1 text-xs',
     md: 'px-3 py-2 text-sm',
@@ -69,7 +69,7 @@ export const Select = ({
         ))}
       </select>
       
-      {/* 下拉箭頭圖示 */}
+      {/* Dropdown arrow icon */}
       <div className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-400">
         <ChevronDown className="w-4 h-4" />
       </div>
@@ -79,7 +79,7 @@ export const Select = ({
 
 /**
  * SelectGroup Component
- * 帶標籤的 Select 元件
+ * Select component with label
  */
 export const SelectGroup = ({
   label,

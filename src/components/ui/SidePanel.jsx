@@ -3,16 +3,16 @@ import { X } from 'lucide-react';
 
 /**
  * SidePanel Component
- * 右側詳情面板，桌面端固定，行動端變抽屜
+ * Right-side details panel, fixed on desktop, drawer on mobile
  * 
- * @param {boolean} isOpen - 是否開啟
- * @param {Function} onClose - 關閉回調
- * @param {string} title - 標題
- * @param {ReactNode} children - 內容
- * @param {ReactNode} emptyState - 空狀態內容（未選取時顯示）
- * @param {string} width - 寬度（桌面端）desktop | mobile
- * @param {string} position - 位置 left | right
- * @param {string} className - 額外 CSS class
+ * @param {boolean} isOpen - Whether panel is open
+ * @param {Function} onClose - Close callback
+ * @param {string} title - Title
+ * @param {ReactNode} children - Content
+ * @param {ReactNode} emptyState - Empty state content (shown when nothing selected)
+ * @param {string} width - Width mode: desktop | mobile
+ * @param {string} position - Position: left | right
+ * @param {string} className - Additional CSS class
  */
 export const SidePanel = ({
   isOpen = false,
@@ -20,11 +20,11 @@ export const SidePanel = ({
   title,
   children,
   emptyState,
-  width = 'desktop', // desktop (桌面端固定) | mobile (行動端抽屜)
+  width = 'desktop', // desktop (fixed) | mobile (drawer)
   position = 'right',
   className = ''
 }) => {
-  // 鍵盤 ESC 關閉
+  // Keyboard ESC close
   useEffect(() => {
     const handleEscape = (e) => {
       if (e.key === 'Escape' && isOpen && onClose) {
@@ -35,7 +35,7 @@ export const SidePanel = ({
     return () => document.removeEventListener('keydown', handleEscape);
   }, [isOpen, onClose]);
 
-  // 行動端鎖定滾動
+  // Mobile lock scroll
   useEffect(() => {
     if (width === 'mobile' && isOpen) {
       document.body.style.overflow = 'hidden';
@@ -45,9 +45,9 @@ export const SidePanel = ({
     }
   }, [isOpen, width]);
 
-  // 桌面端模式：固定在頁面中（不使用 overlay）
+  // Desktop mode: fixed in page (no overlay)
   if (width === 'desktop') {
-    // 未開啟時，顯示空狀態
+    // When not open, show empty state
     if (!isOpen) {
       return emptyState || null;
     }
@@ -65,7 +65,7 @@ export const SidePanel = ({
                 <button
                   onClick={onClose}
                   className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1 rounded hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
-                  aria-label="關閉"
+                  aria-label="Close"
                 >
                   <X className="w-5 h-5" />
                 </button>
@@ -82,7 +82,7 @@ export const SidePanel = ({
     );
   }
 
-  // 行動端模式：overlay + drawer（從右側滑入）
+  // Mobile mode: overlay + drawer (slide in from right)
   if (!isOpen) return null;
 
   return (
@@ -115,7 +115,7 @@ export const SidePanel = ({
             <button
               onClick={onClose}
               className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1 rounded hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
-              aria-label="關閉"
+              aria-label="Close"
             >
               <X className="w-5 h-5" />
             </button>
@@ -133,7 +133,7 @@ export const SidePanel = ({
 
 /**
  * SidePanelSection Component
- * SidePanel 內的區塊元件
+ * Section component within SidePanel
  */
 export const SidePanelSection = ({
   title,
@@ -160,7 +160,7 @@ export const SidePanelSection = ({
 
 /**
  * SidePanelRow Component
- * SidePanel 內的資料行元件
+ * Data row component within SidePanel
  */
 export const SidePanelRow = ({
   label,

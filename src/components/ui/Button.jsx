@@ -2,7 +2,7 @@ import React from 'react';
 
 /**
  * Button Component
- * 可重用的按鈕組件，支持多種樣式變體
+ * Reusable button component with multiple style variants
  */
 export const Button = ({
   children,

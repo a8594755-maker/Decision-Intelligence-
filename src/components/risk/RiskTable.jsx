@@ -1,11 +1,11 @@
 /**
  * Risk Dashboard - Risk Table Component（Bucket-Based Version）
  * 
- * 統一名詞：
- * - Days to stockout（Bucket-based 無此概念）
+ * Unified terminology:
+ * - Days to stockout (not applicable in Bucket-based)
  * - Net available
  * - Gap qty
- * - Next time bucket（取代 Next inbound ETA）
+ * - Next time bucket (replaces Next inbound ETA)
  */
 
 import React, { useState } from 'react';
@@ -21,8 +21,8 @@ const RiskTable = ({
   probResults = {} // Step 2: P0 - Probabilistic results map
 }) => {
   const [sortConfig, setSortConfig] = useState({
-    key: 'profitAtRisk',  // M2: 預設按 Profit at Risk 排序
-    direction: 'desc'      // 降序（最大損失在前）
+    key: 'profitAtRisk',  // M2: Default sort by Profit at Risk
+    direction: 'desc'      // Descending (largest loss first)
   });
 
   const sortedRisks = React.useMemo(() => {
@@ -102,7 +102,7 @@ const RiskTable = ({
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
-        <div className="text-slate-500">載入資料中...</div>
+        <div className="text-slate-500">Loading data...</div>
       </div>
     );
   }
@@ -111,8 +111,8 @@ const RiskTable = ({
     return (
       <div className="flex flex-col items-center justify-center py-12 text-slate-500">
         <Package className="w-16 h-16 text-slate-300 dark:text-slate-600 mb-4" />
-        <p className="text-lg font-medium">無符合條件的資料</p>
-        <p className="text-sm mt-1">請調整篩選條件</p>
+        <p className="text-lg font-medium">No matching data</p>
+        <p className="text-sm mt-1">Please adjust filter criteria</p>
       </div>
     );
   }
@@ -127,7 +127,7 @@ const RiskTable = ({
               className="px-3 py-2 text-left text-xs font-semibold uppercase text-slate-700 dark:text-slate-300 cursor-pointer hover:bg-slate-200 dark:hover:bg-slate-700 sticky left-0 z-20 bg-slate-100 dark:bg-slate-800 w-[140px] min-w-[140px]"
             >
               <div className="flex items-center gap-1">
-                料號
+                Material
                 {renderSortIcon('materialCode')}
               </div>
             </th>
@@ -137,7 +137,7 @@ const RiskTable = ({
               className="px-2 py-2 text-left text-xs font-semibold uppercase text-slate-700 dark:text-slate-300 cursor-pointer hover:bg-slate-200 dark:hover:bg-slate-700 sticky left-[140px] z-20 bg-slate-100 dark:bg-slate-800 w-[80px] min-w-[80px]"
             >
               <div className="flex items-center gap-1">
-                工廠
+                Plant
                 {renderSortIcon('plantId')}
               </div>
             </th>
@@ -147,7 +147,7 @@ const RiskTable = ({
               className="px-2 py-2 text-center text-xs font-semibold uppercase text-slate-700 dark:text-slate-300 cursor-pointer hover:bg-slate-200 dark:hover:bg-slate-700 sticky left-[220px] z-20 bg-slate-100 dark:bg-slate-800 w-[70px] min-w-[70px]"
             >
               <div className="flex items-center justify-center gap-1">
-                狀態
+                Status
                 {renderSortIcon('riskLevel')}
               </div>
             </th>
@@ -175,7 +175,7 @@ const RiskTable = ({
             <th 
               onClick={() => handleSort('daysToStockout')}
               className="px-2 py-2 text-right text-xs font-semibold uppercase text-slate-700 dark:text-slate-300 cursor-pointer hover:bg-slate-200 dark:hover:bg-slate-700 w-[80px] min-w-[80px]"
-              title="需選擇 Forecast Run 並有 component_demand 時顯示"
+              title="Displayed when Forecast Run is selected and component_demand is available"
             >
               <div className="flex items-center justify-end gap-1">
                 Days Left
@@ -231,7 +231,7 @@ const RiskTable = ({
             </th>
             
             <th className="px-2 py-2 text-center text-xs font-semibold uppercase text-slate-700 dark:text-slate-300 w-[60px] min-w-[60px]">
-              操作
+              Actions
             </th>
           </tr>
         </thead>
@@ -240,7 +240,7 @@ const RiskTable = ({
           {sortedRisks.map((risk, index) => {
             const config = getRiskLevelConfig(risk.riskLevel);
             
-            // 確保 key 唯一：使用組合 key（item + factory + eta + index）
+            // Ensure unique key: use composite key (item + factory + eta + index)
             const uniqueKey = `${risk.item || 'unknown'}-${risk.plantId || 'unknown'}-${risk.nextInboundEta || 'none'}-${index}`;
             
             return (
@@ -253,7 +253,7 @@ const RiskTable = ({
                   {risk.item === '(unknown)' ? (
                     <span 
                       className="text-slate-400 dark:text-slate-500 italic" 
-                      title="來源資料缺少料號欄位"
+                      title="Source data missing material code field"
                     >
                       (unknown)
                     </span>
@@ -291,7 +291,7 @@ const RiskTable = ({
                 
                 <td className="px-2 py-1.5 text-right text-slate-700 dark:text-slate-300">
                   {typeof risk.daysToStockout === 'number' && risk.daysToStockout !== Infinity
-                    ? `${risk.daysToStockout} 天`
+                    ? `${risk.daysToStockout} days`
                     : '—'}
                 </td>
 
@@ -390,7 +390,7 @@ const RiskTable = ({
                       onRowSelect(risk);
                     }}
                     className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 p-1 rounded hover:bg-blue-50 dark:hover:bg-blue-900/20"
-                    title="查看詳情"
+                    title="View details"
                   >
                     <Info className="w-4 h-4" />
                   </button>

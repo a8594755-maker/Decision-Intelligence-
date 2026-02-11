@@ -62,7 +62,7 @@ export default function RiskCard({ risk, onClick, onExpedite, onSubstitute, sele
       return (
         <div className="flex items-center gap-1.5">
           <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold bg-red-600 text-white">
-            已斷料
+            Stockout
           </span>
         </div>
       );
@@ -82,7 +82,7 @@ export default function RiskCard({ risk, onClick, onExpedite, onSubstitute, sele
       <div className={`flex items-center gap-1.5 ${colorClass}`}>
         {icon}
         <span className="text-lg font-bold">{risk.daysToStockout}</span>
-        <span className="text-xs text-gray-500 dark:text-gray-400">天</span>
+        <span className="text-xs text-gray-500 dark:text-gray-400">days</span>
       </div>
     );
   };
@@ -185,7 +185,7 @@ export default function RiskCard({ risk, onClick, onExpedite, onSubstitute, sele
                 icon={Zap}
                 className="text-xs px-2 py-1"
               >
-                模擬加急
+                Simulate Expedite
               </Button>
             )}
             {risk.actions?.canSubstitute !== false && (
@@ -196,7 +196,7 @@ export default function RiskCard({ risk, onClick, onExpedite, onSubstitute, sele
                 icon={GitBranch}
                 className="text-xs px-2 py-1"
               >
-                替代料
+                Substitutes
               </Button>
             )}
           </div>
@@ -204,11 +204,11 @@ export default function RiskCard({ risk, onClick, onExpedite, onSubstitute, sele
           {/* Additional metrics row */}
           <div className="flex items-center gap-3 text-xs text-slate-400 dark:text-slate-500">
             <span title="Net Available">
-              可用: {risk.netAvailable?.toLocaleString() || '—'}
+              Avail: {risk.netAvailable?.toLocaleString() || '—'}
             </span>
             {risk.gapQty > 0 && (
               <span className="text-red-500 dark:text-red-400" title="Gap Quantity">
-                缺口: {risk.gapQty.toLocaleString()}
+                Gap: {risk.gapQty.toLocaleString()}
               </span>
             )}
           </div>

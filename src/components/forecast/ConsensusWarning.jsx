@@ -63,11 +63,11 @@ const ConsensusWarning = ({
   const getRecommendationText = (rec) => {
     switch (rec) {
       case 'consider_external_factors':
-        return '建議檢查是否有未登錄的市場活動、促銷或供應鏈變化';
+        return 'Consider checking for unrecorded market activities, promotions, or supply chain changes';
       case 'monitor_closely':
-        return '建議密切監控實際銷售情況，及時調整預測';
+        return 'Recommend closely monitoring actual sales and adjusting forecasts promptly';
       default:
-        return '建議進一步分析數據或諮詢業務專家';
+        return 'Recommend further data analysis or consulting business experts';
     }
   };
 
@@ -79,10 +79,10 @@ const ConsensusWarning = ({
         <div className="flex items-center space-x-2">
           <AlertTriangle className={`w-4 h-4 text-${levelColor}-600`} />
           <span className={`text-sm font-medium text-${levelColor}-800`}>
-            模型預測差異 {deviation_pct?.toFixed(1)}%
+            Model prediction deviation {deviation_pct?.toFixed(1)}%
           </span>
           <Badge variant={getLevelBadgeVariant(level)} className="text-xs">
-            {level === 'high' ? '高' : level === 'medium' ? '中' : '低'}風險
+            {level === 'high' ? 'High' : level === 'medium' ? 'Medium' : 'Low'} Risk
           </Badge>
         </div>
       </div>
@@ -97,7 +97,7 @@ const ConsensusWarning = ({
           <AlertTriangle className={`w-5 h-5 text-${levelColor}-600`} />
           <div>
             <h4 className={`font-semibold text-${levelColor}-800`}>
-              模型共識警告
+              Model Consensus Warning
             </h4>
             <p className={`text-sm text-${levelColor}-700`}>
               {message}
@@ -107,7 +107,7 @@ const ConsensusWarning = ({
         
         <div className="flex items-center space-x-2">
           <Badge variant={getLevelBadgeVariant(level)}>
-            {level === 'high' ? '高' : level === 'medium' ? '中' : '低'}風險
+            {level === 'high' ? 'High' : level === 'medium' ? 'Medium' : 'Low'} Risk
           </Badge>
           {onDismiss && (
             <button
@@ -151,7 +151,7 @@ const ConsensusWarning = ({
             <div className={`text-lg font-bold text-${levelColor}-600`}>
               {deviation_pct?.toFixed(1)}%
             </div>
-            <div className="text-xs text-gray-500">偏差</div>
+            <div className="text-xs text-gray-500">Deviation</div>
           </div>
         </div>
       </div>
@@ -162,7 +162,7 @@ const ConsensusWarning = ({
           {getRecommendationIcon(recommendation)}
           <div>
             <p className={`text-sm font-medium text-${levelColor}-800 mb-1`}>
-              智能建議
+              Smart Recommendation
             </p>
             <p className="text-sm text-gray-700">
               {getRecommendationText(recommendation)}
@@ -178,26 +178,26 @@ const ConsensusWarning = ({
             onClick={() => onModelSwitch(consensusData.secondary_model?.toLowerCase())}
             className={`px-3 py-2 bg-${levelColor}-600 text-white rounded-lg hover:bg-${levelColor}-700 transition-colors text-sm`}
           >
-            切換到 {consensusData.secondary_model?.toUpperCase()}
+            Switch to {consensusData.secondary_model?.toUpperCase()}
           </button>
         )}
         
         <button
           className={`px-3 py-2 border border-${levelColor}-300 text-${levelColor}-700 rounded-lg hover:bg-${levelColor}-100 transition-colors text-sm`}
         >
-          查看詳細分析
+          View Detailed Analysis
         </button>
       </div>
 
       {/* Additional Context */}
       <div className={`text-xs text-${levelColor}-600 border-t border-${levelColor}-200 pt-2`}>
         <p>
-          當兩個模型的預測結果差異較大時，可能表示：
+          When two models show significant prediction differences, it may indicate:
         </p>
         <ul className="mt-1 space-y-1">
-          <li>&bull; 市場環境發生變化（促銷、競爭、季節性因素）</li>
-          <li>&bull; 數據質量問題或異常值</li>
-          <li>&bull; 模型適用性差異（不同模型擅長不同模式）</li>
+          <li>&bull; Market conditions have changed (promotions, competition, seasonal factors)</li>
+          <li>&bull; Data quality issues or outliers</li>
+          <li>&bull; Model suitability differences (different models excel at different patterns)</li>
         </ul>
       </div>
     </div>

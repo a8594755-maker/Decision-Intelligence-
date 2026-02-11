@@ -1,6 +1,6 @@
 /**
- * View Data Modal - 查看批次資料的進階 Modal
- * 支援篩選、分頁和錯誤處理
+ * View Data Modal - Advanced modal for viewing batch data
+ * Supports filtering, pagination, and error handling
  */
 
 import React, { useState, useEffect } from 'react';
@@ -115,32 +115,32 @@ const ViewDataModal = ({ isOpen, onClose, batch, user, addNotification }) => {
     switch (batch?.target_table) {
       case 'bom_edges':
         return [
-          { key: 'parent_material', label: 'Parent Material', placeholder: '搜尋父件料號...' },
-          { key: 'child_material', label: 'Child Material', placeholder: '搜尋子件料號...' },
-          { key: 'plant_id', label: 'Plant ID', placeholder: '搜尋工廠代碼...' }
+          { key: 'parent_material', label: 'Parent Material', placeholder: 'Search parent material...' },
+          { key: 'child_material', label: 'Child Material', placeholder: 'Search child material...' },
+          { key: 'plant_id', label: 'Plant ID', placeholder: 'Search plant code...' }
         ];
       case 'demand_fg':
         return [
-          { key: 'material_code', label: 'Material Code', placeholder: '搜尋料號...' },
-          { key: 'plant_id', label: 'Plant ID', placeholder: '搜尋工廠代碼...' },
-          { key: 'time_bucket', label: 'Time Bucket', placeholder: '搜尋時間桶...' }
+          { key: 'material_code', label: 'Material Code', placeholder: 'Search material code...' },
+          { key: 'plant_id', label: 'Plant ID', placeholder: 'Search plant code...' },
+          { key: 'time_bucket', label: 'Time Bucket', placeholder: 'Search time bucket...' }
         ];
       case 'goods_receipts':
         return [
-          { key: 'material_code', label: 'Material Code', placeholder: '搜尋料號...' },
-          { key: 'supplier_name', label: 'Supplier', placeholder: '搜尋供應商...' },
-          { key: 'plant_id', label: 'Plant ID', placeholder: '搜尋工廠代碼...' }
+          { key: 'material_code', label: 'Material Code', placeholder: 'Search material code...' },
+          { key: 'supplier_name', label: 'Supplier', placeholder: 'Search supplier...' },
+          { key: 'plant_id', label: 'Plant ID', placeholder: 'Search plant code...' }
         ];
       case 'price_history':
         return [
-          { key: 'material_code', label: 'Material Code', placeholder: '搜尋料號...' },
-          { key: 'supplier_name', label: 'Supplier', placeholder: '搜尋供應商...' },
-          { key: 'plant_id', label: 'Plant ID', placeholder: '搜尋工廠代碼...' }
+          { key: 'material_code', label: 'Material Code', placeholder: 'Search material code...' },
+          { key: 'supplier_name', label: 'Supplier', placeholder: 'Search supplier...' },
+          { key: 'plant_id', label: 'Plant ID', placeholder: 'Search plant code...' }
         ];
       case 'suppliers':
         return [
-          { key: 'supplier_code', label: 'Supplier Code', placeholder: '搜尋供應商代碼...' },
-          { key: 'supplier_name', label: 'Supplier Name', placeholder: '搜尋供應商名稱...' }
+          { key: 'supplier_code', label: 'Supplier Code', placeholder: 'Search supplier code...' },
+          { key: 'supplier_name', label: 'Supplier Name', placeholder: 'Search supplier name...' }
         ];
       case 'bom_explosion':
         if (activeTab === 'trace') {
@@ -148,16 +148,16 @@ const ViewDataModal = ({ isOpen, onClose, batch, user, addNotification }) => {
           return [
             { key: 'component_demand_id', label: 'Component Demand ID', placeholder: 'UUID...' },
             { key: 'fg_demand_id', label: 'FG Demand ID', placeholder: 'UUID...' },
-            { key: 'bom_level', label: 'BOM Level', placeholder: '例如 1, 2, 3...' },
-            { key: 'component_material_code', label: 'Component Material', placeholder: '搜尋 Component 料號...' },
-            { key: 'fg_material_code', label: 'FG Material', placeholder: '搜尋 FG 料號...' }
+            { key: 'bom_level', label: 'BOM Level', placeholder: 'e.g. 1, 2, 3...' },
+            { key: 'component_material_code', label: 'Component Material', placeholder: 'Search component material...' },
+            { key: 'fg_material_code', label: 'FG Material', placeholder: 'Search FG material...' }
           ];
         }
         // Results tab filters
         return [
-          { key: 'material_code', label: 'Material Code', placeholder: '搜尋料號...' },
-          { key: 'plant_id', label: 'Plant ID', placeholder: '搜尋工廠代碼...' },
-          { key: 'time_bucket', label: 'Time Bucket', placeholder: '例如 2026-W02 或 2026-01-08' }
+          { key: 'material_code', label: 'Material Code', placeholder: 'Search material code...' },
+          { key: 'plant_id', label: 'Plant ID', placeholder: 'Search plant code...' },
+          { key: 'time_bucket', label: 'Time Bucket', placeholder: 'e.g. 2026-W02 or 2026-01-08' }
         ];
       default:
         return [];
@@ -300,7 +300,7 @@ const ViewDataModal = ({ isOpen, onClose, batch, user, addNotification }) => {
                     ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' 
                     : 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
                 }`}>
-                  {dataSource === 'sap' ? 'SAP資料' : '本地上傳'}
+                  {dataSource === 'sap' ? 'SAP Data' : 'Local Upload'}
                 </span>
               </div>
             </div>
@@ -343,7 +343,7 @@ const ViewDataModal = ({ isOpen, onClose, batch, user, addNotification }) => {
           <div className="border-b dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 p-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <span className="text-sm font-medium text-slate-700 dark:text-slate-300">資料來源:</span>
+                <span className="text-sm font-medium text-slate-700 dark:text-slate-300">Data Source:</span>
                 <div className="flex bg-white dark:bg-slate-700 rounded-lg p-1 border border-slate-200 dark:border-slate-600">
                   <button
                     onClick={() => setDataSource('local')}
@@ -354,7 +354,7 @@ const ViewDataModal = ({ isOpen, onClose, batch, user, addNotification }) => {
                     }`}
                   >
                     <Database className="w-4 h-4" />
-                    本地上傳
+                    Local Upload
                   </button>
                   <button
                     onClick={() => setDataSource('sap')}
@@ -365,7 +365,7 @@ const ViewDataModal = ({ isOpen, onClose, batch, user, addNotification }) => {
                     }`}
                   >
                     <Cloud className="w-4 h-4" />
-                    SAP資料
+                    SAP Data
                   </button>
                 </div>
               </div>
@@ -376,7 +376,7 @@ const ViewDataModal = ({ isOpen, onClose, batch, user, addNotification }) => {
               )}
               {dataSource === 'sap' && (
                 <span className="text-xs text-slate-500">
-                  顯示所有SAP同步資料
+                  Showing all SAP synced data
                 </span>
               )}
             </div>
@@ -390,14 +390,14 @@ const ViewDataModal = ({ isOpen, onClose, batch, user, addNotification }) => {
                 className="flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-300 hover:text-blue-600 dark:hover:text-blue-400"
               >
                 <Filter className="w-4 h-4" />
-                {showFilters ? '隱藏篩選' : '顯示篩選'}
+                {showFilters ? 'Hide Filters' : 'Show Filters'}
               </button>
               {Object.keys(filters).some(key => filters[key]) && (
                 <button
                   onClick={clearFilters}
                   className="text-sm text-blue-600 dark:text-blue-400 hover:underline"
                 >
-                  清除篩選
+                  Clear Filters
                 </button>
               )}
             </div>
@@ -430,7 +430,7 @@ const ViewDataModal = ({ isOpen, onClose, batch, user, addNotification }) => {
             {loading ? (
               <div className="flex items-center justify-center py-12">
                 <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
-                <span className="ml-3 text-slate-600 dark:text-slate-400">載入中...</span>
+                <span className="ml-3 text-slate-600 dark:text-slate-400">Loading...</span>
               </div>
             ) : error ? (
               <div className="py-12">
@@ -439,7 +439,7 @@ const ViewDataModal = ({ isOpen, onClose, batch, user, addNotification }) => {
                     <AlertCircle className="w-6 h-6 text-red-600 flex-shrink-0 mt-1" />
                     <div>
                       <h4 className="font-semibold text-red-900 dark:text-red-100 mb-2">
-                        載入失敗
+                        Loading Failed
                       </h4>
                       <p className="text-sm text-red-800 dark:text-red-200 font-mono whitespace-pre-wrap">
                         {error}
@@ -450,7 +450,7 @@ const ViewDataModal = ({ isOpen, onClose, batch, user, addNotification }) => {
               </div>
             ) : data.length === 0 ? (
               <div className="py-12 text-center">
-                <p className="text-slate-500">無資料</p>
+                <p className="text-slate-500">No data</p>
               </div>
             ) : (
               <div className="overflow-x-auto">
@@ -491,7 +491,7 @@ const ViewDataModal = ({ isOpen, onClose, batch, user, addNotification }) => {
             <div className="border-t dark:border-slate-700 p-4 bg-slate-50 dark:bg-slate-800/50">
               <div className="flex items-center justify-between">
                 <div className="text-sm text-slate-600 dark:text-slate-400">
-                  顯示 {startItem} - {endItem} / 共 {totalCount} 筆
+                  Showing {startItem} - {endItem} of {totalCount}
                 </div>
                 
                 <div className="flex items-center gap-2">

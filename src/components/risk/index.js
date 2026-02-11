@@ -1,6 +1,6 @@
 /**
  * Risk Dashboard Components Index
- * 統一匯出所有風險儀表板子元件
+ * Unified export of all risk dashboard sub-components
  */
 
 export { default as FilterBar } from './FilterBar';

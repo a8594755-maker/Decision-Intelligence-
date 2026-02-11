@@ -2,7 +2,7 @@ import React from 'react';
 
 /**
  * Card Component
- * 可重用的卡片容器組件
+ * Reusable card container component
  */
 export const Card = ({
   children,
