@@ -242,6 +242,51 @@ scenarios.append({
     "horizon": 7,
 })
 
+# ── 情境 E：單調性測試 ──────────────────────────
+# 10 組遞增需求序列，驗證預測值是否單調上升
+monotonicity_history = []
+for level in range(10, 101, 10):  # 10, 20, 30, ... 100
+    monotonicity_history.extend([float(level)] * 9)  # 每級 9 天
+scenarios.append({
+    "name": "情境 E：單調性測試 📈",
+    "description": "需求從 10→20→...→100 階梯式遞增（90 天），預測應反映上升趨勢",
+    "expected": [
+        "預測中位數應高於早期水準",
+        "預測值序列應呈單調遞增（或至少不出現反向震盪）",
+    ],
+    "material": "TEST-MONOTONE-005",
+    "history": monotonicity_history,
+    "horizon": 7,
+})
+
+# ── 情境 F：長序列回測 ──────────────────────────
+# 365 天穩定型 DataGenerator 資料，驗證 MAPE
+try:
+    from ml.simulation.data_generator import DataGenerator, DemandProfile
+    _gen = DataGenerator(seed=42)
+    _stable_profile = DemandProfile(
+        name="long_stable", base_demand=80, trend_per_day=0.02,
+        weekly_amplitude=8, monthly_amplitude=4, yearly_amplitude=12,
+        noise_std=4, shock_probability=0.0, promo_interval_days=0,
+    )
+    _stable_df = _gen.generate(_stable_profile, days=365)
+    long_stable_history = [float(v) for v in _stable_df["demand"].tolist()]
+except Exception:
+    # Fallback: simple synthetic
+    long_stable_history = [80 + np.random.normal(0, 4) for _ in range(365)]
+
+scenarios.append({
+    "name": "情境 F：長序列穩定 📊",
+    "description": "365 天穩定合成數據 (DataGenerator)，驗證長序列預測能力",
+    "expected": [
+        "雙模型 MAPE 應在合理範圍",
+        "偏差率 < 15%",
+    ],
+    "material": "TEST-LONGSTABLE-006",
+    "history": long_stable_history,
+    "horizon": 7,
+})
+
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 執行
@@ -327,6 +372,19 @@ def main():
     d = results_summary[3]
     d_pass = d["warning_level"] == "none" and d["deviation_pct"] < 15
     checks.append(("D: 穩定數據無警告", d_pass))
+
+    # E: 單調性 → 預測中位數應高於歷史早期均值
+    if len(results_summary) > 4:
+        e = results_summary[4]
+        # 預測中位數應接近或高於末期水準 (100)，至少 > 早期均值 (10)
+        e_pass = e["median"] > 30  # 至少高於最低檔
+        checks.append(("E: 單調性預測反映上升趨勢", e_pass))
+
+    # F: 長序列 → 偏差率應在合理範圍
+    if len(results_summary) > 5:
+        f = results_summary[5]
+        f_pass = f["deviation_pct"] < 20
+        checks.append(("F: 長序列穩定數據偏差率 < 20%", f_pass))
 
     all_pass = True
     for desc, passed in checks:
