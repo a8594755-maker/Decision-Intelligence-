@@ -1,6 +1,6 @@
-# Decision Intelligence
+# Decision-Intelligence
 
-An intelligent supplier performance and cost operations dashboard built with React + Vite, integrating Supabase cloud database, Google Gemini AI decision assistant, Excel/CSV import, KPI visualization, anomaly analysis, and automated workflows.
+An intelligent supplier performance and cost operations dashboard built with React + Vite, integrating Supabase cloud database, Gemini + DeepSeek AI decision assistant, Excel/CSV import, KPI visualization, anomaly analysis, and automated workflows.
 
 ## 🌟 Key Features
 
@@ -20,7 +20,7 @@ An intelligent supplier performance and cost operations dashboard built with Rea
 ### 💰 Material Cost Analysis (New Feature)
 - **Cost Structure Analysis**: Automatically calculate material cost proportions
 - **Anomaly Detection**: Identify price anomalies and cost fluctuations
-- **AI Insight Reports**: Gemini AI generates improvement suggestions
+- **AI Insight Reports**: AI models generate improvement suggestions
 - **Historical Trend Tracking**: Multi-period cost comparison analysis
 - 📖 See details: [Material Cost Analysis Quick Guide](MATERIAL_COST_QUICK_START.md)
 
@@ -62,10 +62,10 @@ An intelligent supplier performance and cost operations dashboard built with Rea
   - Cloud storage
   
 ### AI Integration
-- **Google Gemini Pro + DeepSeek V3.2**
-  - Prompt 1-3 (profiling/mapping/readiness): Gemini Pro
+- **Gemini 3.1 Pro + DeepSeek V3.2**
+  - Prompt 1-3 (profiling/mapping/readiness): Gemini 3.1 Pro
   - Prompt 4-5 (report/blocking questions): DeepSeek V3.2
-  - Conversational decision assistant (DeepSeek-priority routing)
+  - Conversational decision assistant (DeepSeek routing)
   - Anomaly detection and recommendations
 
 ### Data Processing
@@ -80,13 +80,14 @@ An intelligent supplier performance and cost operations dashboard built with Rea
 - **npm** or **yarn**
 - **Supabase Account** (free tier is sufficient)
 - **Google AI Studio Account** (to obtain Gemini API Key)
+- **DeepSeek Account** (to obtain DeepSeek API Key)
 
 ### 2. Installation Steps
 
 ```bash
 # Clone the project
-git clone https://github.com/your-username/smartops-app.git
-cd smartops-app
+git clone https://github.com/your-username/decision-intelligence.git
+cd decision-intelligence
 
 # Install dependencies
 npm install
@@ -124,10 +125,17 @@ Execute database/cost_analysis_schema.sql
   VITE_SUPABASE_ANON_KEY=your-anon-key
   ```
 
-**Gemini API Key**:
-- Method 1: Enter in the application's "Settings" interface (stored in localStorage)
-- Method 2: Set environment variable `VITE_GEMINI_API_KEY`
-- Get API key: https://ai.google.dev/
+**AI Provider Keys (Recommended: Edge Function Secrets)**:
+- This project routes AI calls through Supabase Edge Function `ai-proxy`
+- Set server-side secrets (do not place keys in frontend `.env`):
+  ```bash
+  supabase secrets set GEMINI_API_KEY=your-gemini-key
+  supabase secrets set DEEPSEEK_API_KEY=your-deepseek-key
+  supabase functions deploy ai-proxy
+  ```
+- Optional model config remains in frontend env:
+  - `VITE_DI_GEMINI_MODEL` (recommend: `gemini-3.1-pro-preview`)
+  - `VITE_DI_DEEPSEEK_MODEL`
 
 ### 5. First Login
 - Create a user in Supabase dashboard's Authentication
@@ -138,14 +146,18 @@ Execute database/cost_analysis_schema.sql
 
 ### Network Permissions
 - Gemini AI requires internet connection
+- DeepSeek AI requires internet connection
 - Supabase needs to configure allowed domains (CORS)
 - It's recommended to set domain whitelist in Supabase dashboard
 
 ### API Quota Management
-- Gemini API free tier: 15 requests/min
+- Gemini API has request limits based on your plan
+- DeepSeek API has request limits based on your plan
 - It's recommended to upgrade to paid plan for higher quota
 - The application has built-in error handling and retry mechanisms
-- 📖 See details: [Gemini API Quota Issue](GEMINI_API_QUOTA_ISSUE.md)
+- 📖 See details:
+  - Gemini: https://ai.google.dev/
+  - DeepSeek: https://platform.deepseek.com/api-docs/
 
 ## 🗄️ Database Schema
 
@@ -224,7 +236,7 @@ Execute database/cost_analysis_schema.sql
 ## 📁 Project Structure
 
 ```
-smartops-app/
+decision-intelligence/
 ├── src/
 │   ├── App.jsx                          # Main application, routing and layout
 │   ├── main.jsx                         # Application entry point
@@ -237,7 +249,7 @@ smartops-app/
 │   │
 │   ├── services/                        # Service layer
 │   │   ├── supabaseClient.js            # Supabase connection settings
-│   │   ├── geminiAPI.js                 # Gemini AI integration
+│   │   ├── geminiAPI.js                 # AI integration service (routed to DeepSeek via Edge Function)
 │   │   ├── supplierKpiService.js        # Supplier KPI service
 │   │   ├── materialCostService.js       # Material cost service
 │   │   └── importHistoryService.js      # Import history service
@@ -347,7 +359,7 @@ npm run preview      # Preview production build
 - Use [data reset script](HOW_TO_RESET_DATA.md) to clean test data
 
 ### API Quota
-- Gemini API free tier has request limits
+- DeepSeek API has request limits
 - It's recommended to implement caching mechanisms to reduce API calls
 - Monitor API usage to avoid exceeding limits
 - Consider upgrading to paid plan
@@ -368,4 +380,4 @@ This project is licensed under the MIT License.
 
 ---
 
-**Decision Intelligence** - Making supply chain management smarter and more efficient 🚀
+**Decision-Intelligence** - Making supply chain management smarter and more efficient 🚀

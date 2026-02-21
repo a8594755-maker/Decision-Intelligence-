@@ -9,6 +9,12 @@
  */
 
 console.log('%c===== Phase 1 RPC Integration Test =====', 'color: blue; font-weight: bold;');
+const RPC_JSON_OPTIONS = {
+  headers: {
+    'Content-Type': 'application/json',
+    'Accept': 'application/json'
+  }
+};
 
 // ===== 測試 1: 檢查 RPC Functions 是否存在 =====
 console.log('%c[Test 1] Checking RPC function existence...', 'color: cyan;');
@@ -20,7 +26,7 @@ async function testRpcExists() {
       p_batch_id: '00000000-0000-0000-0000-000000000000',
       p_upload_file_id: '00000000-0000-0000-0000-000000000000',
       p_rows: []
-    });
+    }, RPC_JSON_OPTIONS);
 
     if (error) {
       if (error.code === '42883') {
@@ -87,7 +93,7 @@ async function testGoodsReceiptRpc() {
       p_batch_id: testBatchId,
       p_upload_file_id: testUploadFileId,
       p_rows: testData
-    });
+    }, RPC_JSON_OPTIONS);
 
     if (error) {
       console.error('%c✗ RPC insert failed:', 'color: red;', error);
@@ -154,7 +160,7 @@ async function testIdempotency() {
       p_batch_id: testBatchId,
       p_upload_file_id: testUploadFileId,
       p_rows: testData
-    });
+    }, RPC_JSON_OPTIONS);
 
     if (error1) {
       console.error('%c✗ First insert failed:', 'color: red;', error1);
@@ -181,7 +187,7 @@ async function testIdempotency() {
       p_batch_id: testBatchId,
       p_upload_file_id: testUploadFileId,
       p_rows: testData
-    });
+    }, RPC_JSON_OPTIONS);
 
     if (error2) {
       console.error('%c✗ Second insert failed:', 'color: red;', error2);
@@ -262,7 +268,7 @@ async function testPriceHistoryRpc() {
       p_batch_id: testBatchId,
       p_upload_file_id: testUploadFileId,
       p_rows: testData
-    });
+    }, RPC_JSON_OPTIONS);
 
     if (error) {
       console.error('%c✗ RPC insert failed:', 'color: red;', error);

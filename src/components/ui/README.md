@@ -1,6 +1,6 @@
 # UI Components 使用指南
 
-這是 SmartOps 專案的 UI 元件庫，使用 Tailwind CSS v4 構建，無外部依賴。
+這是 Decision-Intelligence 專案的 UI 元件庫，使用 Tailwind CSS v4 構建，無外部依賴。
 
 ## 📦 元件清單
 

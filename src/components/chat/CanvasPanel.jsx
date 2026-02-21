@@ -1,13 +1,28 @@
-import React from 'react';
-import { CheckCircle2, AlertTriangle, Loader2, Download, Code2, BarChart3, Terminal, ChevronRight, X } from 'lucide-react';
+import React, { useState } from 'react';
+import { CheckCircle2, AlertTriangle, Loader2, Download, Code2, BarChart3, Terminal, ChevronRight, X, ShieldAlert, Share2, FlaskConical, ExternalLink, PanelRightClose } from 'lucide-react';
 import { Card, Button, Badge } from '../ui';
 import { SimpleLineChart, SimpleBarChart } from '../charts';
+import TopologyTab from './TopologyTab';
+import WhatIfPanel from '../whatif/WhatIfPanel';
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ResponsiveContainer
+} from 'recharts';
+import { buildActualVsForecastSeries } from '../../utils/charts/buildActualVsForecastSeries';
 
 const TAB_OPTIONS = [
   { id: 'logs', label: 'Log View', icon: Terminal },
   { id: 'code', label: 'Code View', icon: Code2 },
   { id: 'charts', label: 'Charts', icon: BarChart3 },
-  { id: 'downloads', label: 'Downloads', icon: Download }
+  { id: 'topology', label: 'Topology', icon: Share2 },
+  { id: 'downloads', label: 'Downloads', icon: Download },
+  { id: 'whatif', label: 'What-If', icon: FlaskConical }
 ];
 
 const statusChip = (status) => {
@@ -32,6 +47,113 @@ const downloadFile = (download) => {
   URL.revokeObjectURL(url);
 };
 
+const chartTick = (value) => String(value || '').slice(-10);
+
+// ── Risk Comparison Card ──────────────────────────────────────────────────────
+function RiskComparisonCard({ comparison }) {
+  if (!comparison || !comparison.kpis) return null;
+
+  const { base, risk, delta } = comparison.kpis;
+  const keyChanges = Array.isArray(comparison.key_changes) ? comparison.key_changes.slice(0, 3) : [];
+
+  const fmtPct = (v) => (v !== null && v !== undefined && Number.isFinite(v) ? `${(v * 100).toFixed(2)}%` : '—');
+  const fmtNum = (v) => (v !== null && v !== undefined && Number.isFinite(v) ? v.toFixed(2) : '—');
+  const fmtDelta = (v, invert = false) => {
+    if (v === null || v === undefined || !Number.isFinite(v)) return null;
+    const isPositive = invert ? v < 0 : v > 0;
+    const sign = v > 0 ? '+' : '';
+    return { label: `${sign}${v.toFixed(2)}`, good: isPositive };
+  };
+
+  const metrics = [
+    {
+      label: 'Service Level',
+      base: fmtPct(base?.service_level),
+      risk: fmtPct(risk?.service_level),
+      delta: fmtDelta(delta?.service_level, false)
+    },
+    {
+      label: 'Stockout Units',
+      base: fmtNum(base?.stockout_units),
+      risk: fmtNum(risk?.stockout_units),
+      delta: fmtDelta(delta?.stockout_units, true)   // lower is better
+    },
+    {
+      label: 'Holding Units',
+      base: fmtNum(base?.holding_units),
+      risk: fmtNum(risk?.holding_units),
+      delta: fmtDelta(delta?.holding_units, true)    // lower is better
+    }
+  ];
+
+  return (
+    <div className="rounded-xl border border-amber-200 dark:border-amber-800/60 bg-amber-50/40 dark:bg-amber-900/10 p-4 space-y-4">
+      <div className="flex items-center gap-2 mb-1">
+        <ShieldAlert className="w-4 h-4 text-amber-600 dark:text-amber-400 flex-shrink-0" />
+        <p className="text-xs font-semibold text-amber-800 dark:text-amber-300">Risk-Aware Plan Comparison</p>
+      </div>
+
+      {/* KPI comparison table */}
+      <div className="overflow-x-auto">
+        <table className="w-full text-[11px]">
+          <thead>
+            <tr className="text-slate-500 dark:text-slate-400 border-b border-slate-200 dark:border-slate-700">
+              <th className="text-left pb-1 font-medium">Metric</th>
+              <th className="text-right pb-1 font-medium">Base</th>
+              <th className="text-right pb-1 font-medium">Risk-Aware</th>
+              <th className="text-right pb-1 font-medium">Delta</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+            {metrics.map((m) => (
+              <tr key={m.label}>
+                <td className="py-1.5 text-slate-700 dark:text-slate-300 font-medium">{m.label}</td>
+                <td className="py-1.5 text-right text-slate-600 dark:text-slate-400">{m.base}</td>
+                <td className="py-1.5 text-right text-slate-800 dark:text-slate-200 font-medium">{m.risk}</td>
+                <td className="py-1.5 text-right">
+                  {m.delta ? (
+                    <span className={`font-medium ${m.delta.good ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
+                      {m.delta.label}
+                    </span>
+                  ) : <span className="text-slate-400">—</span>}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Top SKU changes */}
+      {keyChanges.length > 0 && (
+        <div>
+          <p className="text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-2 uppercase tracking-wide">
+            Top Changed SKUs
+          </p>
+          <div className="space-y-1.5">
+            {keyChanges.map((change, idx) => (
+              <div key={`${change.sku}-${idx}`} className="rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-3 py-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-medium text-slate-800 dark:text-slate-200">
+                    {change.sku}{change.plant_id ? ` / ${change.plant_id}` : ''}
+                  </span>
+                  <span className={`text-[11px] font-semibold ${change.delta > 0 ? 'text-blue-600 dark:text-blue-400' : 'text-orange-600 dark:text-orange-400'}`}>
+                    {change.delta > 0 ? '+' : ''}{change.delta?.toFixed(2)} units
+                  </span>
+                </div>
+                {Array.isArray(change.reason_refs) && change.reason_refs.length > 0 && (
+                  <p className="text-[10px] text-slate-500 mt-0.5 truncate">
+                    {change.reason_refs[0]}
+                  </p>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function CanvasPanel({
   onToggleOpen,
   activeTab,
@@ -41,7 +163,19 @@ export default function CanvasPanel({
   stepStatuses = {},
   codeText = '',
   chartPayload = {},
-  downloads = []
+  downloads = [],
+  topologyGraph = null,
+  topologyRunId = null,
+  onRunTopology = null,
+  topologyRunning = false,
+  // What-If Explorer props
+  userId = null,
+  latestPlanRunId = null,
+  datasetProfileId = null,
+  datasetProfileRow = null,
+  // Popout/detach props
+  onPopout = null,
+  isDetached = false
 }) {
   // Determine which step is currently active (running or next queued)
   const activeStep = (() => {
@@ -54,6 +188,22 @@ export default function CanvasPanel({
 
   // Check if any step is currently running
   const hasRunningStep = Object.values(stepStatuses).some((meta) => meta?.status === 'running');
+
+  // Series selector: use series_groups if available (50 SKUs), else fall back to flat rows
+  const [selectedSeriesKey, setSelectedSeriesKey] = useState(null);
+  const seriesGroups = Array.isArray(chartPayload.series_groups) ? chartPayload.series_groups : [];
+  const effectiveGroupKey = selectedSeriesKey || seriesGroups[0]?.key || null;
+
+  const actualVsForecast = seriesGroups.length > 0
+    ? buildActualVsForecastSeries({ groups: seriesGroups }, { groupKey: effectiveGroupKey })
+    : buildActualVsForecastSeries({ rows: chartPayload.actual_vs_forecast || [] });
+  const actualVsForecastRows = actualVsForecast.rows;
+  const showActual = actualVsForecast.series.some((series) => series.key === 'actual');
+  const showP50 = actualVsForecast.series.some((series) => series.key === 'p50');
+  const showP90 = actualVsForecast.series.some((series) => series.key === 'p90');
+  const showLower = actualVsForecast.series.some((series) => series.key === 'lower');
+  const showUpper = actualVsForecast.series.some((series) => series.key === 'upper');
+  const hasRenderableActualVsForecastSeries = showActual || showP50 || showP90 || showLower || showUpper;
 
   return (
     <div className="w-full h-full flex flex-col bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-700/60 overflow-hidden">
@@ -81,18 +231,28 @@ export default function CanvasPanel({
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
           {run?.status && (
-            <Badge 
+            <Badge
               type={run.status === 'succeeded' ? 'success' : run.status === 'failed' ? 'warning' : 'info'}
               className="text-xs"
             >
               {run.status}
             </Badge>
           )}
+          {onPopout && (
+            <button
+              type="button"
+              onClick={onPopout}
+              className="p-1.5 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-500 transition-colors"
+              title={isDetached ? 'Dock back' : 'Detach to floating window'}
+            >
+              {isDetached ? <PanelRightClose className="w-4 h-4" /> : <ExternalLink className="w-4 h-4" />}
+            </button>
+          )}
           <button
             type="button"
             onClick={onToggleOpen}
             className="p-1.5 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-500 transition-colors"
-            title="Close Canvas"
+            title={isDetached ? 'Close floating canvas' : 'Close Canvas'}
           >
             <X className="w-4 h-4" />
           </button>
@@ -221,11 +381,99 @@ export default function CanvasPanel({
         {activeTab === 'charts' && (
           <div className="space-y-4">
             <div className="rounded-xl border border-slate-200 dark:border-slate-700 p-4">
-              <p className="text-xs font-semibold text-slate-700 dark:text-slate-300 mb-3">Actual vs Forecast</p>
-              <SimpleLineChart
-                data={(chartPayload.actual_vs_forecast || []).map((row) => row.actual ?? row.forecast ?? 0)}
-                color="#2563eb"
-              />
+              <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
+                <p className="text-xs font-semibold text-slate-700 dark:text-slate-300">Actual vs Forecast</p>
+                {seriesGroups.length > 1 && (
+                  <div className="flex items-center gap-2">
+                    <label className="text-[11px] text-slate-500 dark:text-slate-400 whitespace-nowrap">
+                      Series ({seriesGroups.length} total):
+                    </label>
+                    <select
+                      value={effectiveGroupKey || ''}
+                      onChange={(e) => setSelectedSeriesKey(e.target.value)}
+                      className="text-[11px] border border-slate-200 dark:border-slate-600 rounded-md px-2 py-1 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 max-w-[200px]"
+                    >
+                      {seriesGroups.map((g) => (
+                        <option key={g.key} value={g.key}>
+                          {g.material_code || g.key}{g.plant_id ? ` / ${g.plant_id}` : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+              </div>
+              {actualVsForecastRows.length === 0 || !hasRenderableActualVsForecastSeries ? (
+                <div className="h-48 md:h-64 w-full flex items-center justify-center text-slate-400 text-sm">
+                  No data available
+                </div>
+              ) : (
+                <div className="h-48 md:h-64 w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={actualVsForecastRows}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey={actualVsForecast.xKey} tickFormatter={chartTick} fontSize={11} />
+                      <YAxis fontSize={11} />
+                      <Tooltip />
+                      <Legend />
+                      {showActual && (
+                        <Line
+                          type="monotone"
+                          dataKey="actual"
+                          name="Actual"
+                          stroke="#10b981"
+                          strokeWidth={2}
+                          dot={false}
+                          connectNulls={false}
+                        />
+                      )}
+                      {showP50 && (
+                        <Line
+                          type="monotone"
+                          dataKey="p50"
+                          name="P50 (Forecast)"
+                          stroke="#2563eb"
+                          strokeWidth={2}
+                          dot={false}
+                          connectNulls={false}
+                        />
+                      )}
+                      {showP90 && (
+                        <Line
+                          type="monotone"
+                          dataKey="p90"
+                          name="P90"
+                          stroke="#1d4ed8"
+                          strokeDasharray="4 4"
+                          dot={false}
+                          connectNulls={false}
+                        />
+                      )}
+                      {showLower && (
+                        <Line
+                          type="monotone"
+                          dataKey="lower"
+                          name="Lower"
+                          stroke="#60a5fa"
+                          strokeDasharray="4 4"
+                          dot={false}
+                          connectNulls={false}
+                        />
+                      )}
+                      {showUpper && (
+                        <Line
+                          type="monotone"
+                          dataKey="upper"
+                          name="Upper"
+                          stroke="#60a5fa"
+                          strokeDasharray="4 4"
+                          dot={false}
+                          connectNulls={false}
+                        />
+                      )}
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
             </div>
 
             <div className="rounded-xl border border-slate-200 dark:border-slate-700 p-4">
@@ -244,7 +492,30 @@ export default function CanvasPanel({
                 colorClass="bg-emerald-500"
               />
             </div>
+
+            {/* Risk-aware plan comparison card — only shown when risk_mode='on' */}
+            {chartPayload.plan_comparison && (
+              <RiskComparisonCard comparison={chartPayload.plan_comparison} />
+            )}
           </div>
+        )}
+
+        {activeTab === 'topology' && (
+          <TopologyTab
+            topologyGraph={topologyGraph || chartPayload.topology_graph || null}
+            topologyRunId={topologyRunId}
+            onRunTopology={onRunTopology}
+            topologyRunning={topologyRunning}
+          />
+        )}
+
+        {activeTab === 'whatif' && (
+          <WhatIfPanel
+            userId={userId}
+            baseRunId={latestPlanRunId}
+            datasetProfileId={datasetProfileId}
+            datasetProfileRow={datasetProfileRow}
+          />
         )}
 
         {activeTab === 'downloads' && (

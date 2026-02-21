@@ -8,9 +8,19 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
+const JSON_HEADERS = {
+  'Content-Type': 'application/json',
+  'Accept': 'application/json'
+};
+
 const supabase = createClient(
   process.env.VITE_SUPABASE_URL,
-  process.env.VITE_SUPABASE_ANON_KEY
+  process.env.VITE_SUPABASE_ANON_KEY,
+  {
+    global: {
+      headers: JSON_HEADERS
+    }
+  }
 );
 
 async function runQuery(name, query) {
@@ -19,7 +29,7 @@ async function runQuery(name, query) {
   console.log('='.repeat(80));
   
   try {
-    const { data, error } = await supabase.rpc('exec_sql', { sql_query: query });
+    const { data, error } = await supabase.rpc('exec_sql', { sql_query: query }, { headers: JSON_HEADERS });
     
     if (error) {
       console.error('Error:', error.message);

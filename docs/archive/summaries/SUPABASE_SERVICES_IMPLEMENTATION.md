@@ -2,7 +2,7 @@
 
 ## 📋 概述
 
-為 SmartOps 系統的 3 種新資料類型新增 Supabase service layer，提供完整的 CRUD 操作和查詢功能。
+為 Decision-Intelligence 系統的 3 種新資料類型新增 Supabase service layer，提供完整的 CRUD 操作和查詢功能。
 
 **修改檔案：** `src/services/supabaseClient.js`
 

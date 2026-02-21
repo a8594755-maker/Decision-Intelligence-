@@ -1,4 +1,4 @@
--- SmartOps Supabase Database Setup
+-- Decision-Intelligence Supabase Database Setup
 -- 運行此腳本在 Supabase SQL Editor 中創建所需的資料表
 
 -- 1. 創建 conversations 資料表 (用於 AI 對話紀錄)
@@ -74,7 +74,7 @@ CREATE POLICY "Users can delete their own files"
   USING (auth.uid() = user_id);
 
 -- 完成!
--- 執行成功後，你的 SmartOps 應用程式將能夠:
+-- 執行成功後，你的 Decision-Intelligence 應用程式將能夠:
 -- 1. 管理多個 AI 對話
 -- 2. 每個用戶的資料完全隔離
 -- 3. 自動追蹤創建和更新時間

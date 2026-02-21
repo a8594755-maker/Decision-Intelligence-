@@ -3,7 +3,7 @@
  * Manages ingest_sheet_runs table (for idempotency and audit)
  */
 
-import { supabase } from './supabaseClient';
+import { supabase, RPC_JSON_OPTIONS } from './supabaseClient';
 
 /**
  * Check if ingest_key migration is deployed
@@ -11,7 +11,7 @@ import { supabase } from './supabaseClient';
  */
 export async function checkIngestKeySupport() {
   try {
-    const { data, error } = await supabase.rpc('check_ingest_key_support');
+    const { data, error } = await supabase.rpc('check_ingest_key_support', {}, RPC_JSON_OPTIONS);
     
     if (error) {
       console.warn('[SheetRuns] Failed to check ingest_key support:', error);

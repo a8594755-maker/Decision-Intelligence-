@@ -150,7 +150,7 @@ def compute_mae_over_windows(daily_df, window_size=7):
 
 def main():
     print(f"\n{'━' * 72}")
-    print(f"  🌪️ SmartOps 混沌引擎 × 預測整合測試")
+    print(f"  🌪️ Decision-Intelligence 混沌引擎 × 預測整合測試")
     print(f"  ⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"  📅 模擬天數: {SIM_DAYS}")
     print(f"  🌱 隨機種子: {SEED}")

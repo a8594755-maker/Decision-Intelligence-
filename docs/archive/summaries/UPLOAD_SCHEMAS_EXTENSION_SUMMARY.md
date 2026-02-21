@@ -2,7 +2,7 @@
 
 ## 📋 概述
 
-本次更新為 SmartOps 系統新增了 3 種資料上傳類型，支援採購訂單、庫存快照和成品財務資料的上傳功能。
+本次更新為 Decision-Intelligence 系統新增了 3 種資料上傳類型，支援採購訂單、庫存快照和成品財務資料的上傳功能。
 
 ---
 
@@ -389,4 +389,4 @@ const allFields = getAllFields('fg_financials');
 
 **文件版本：** 1.0  
 **創建日期：** 2026-01-31  
-**作者：** SmartOps 開發團隊
+**作者：** Decision-Intelligence 開發團隊

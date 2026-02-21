@@ -63,11 +63,11 @@ upload_mappings:1 Failed to load resource: the server responded with a status of
 3. 選擇「Create API key in new project」
 4. 複製新的 API Key
 
-#### 步驟 B：在 SmartOps 中更新 API Key
+#### 步驟 B：在 Decision-Intelligence 中更新 API Key
 
 **方法 1：使用設置介面（如果有）**
 
-如果您的 SmartOps 有設置頁面：
+如果您的 Decision-Intelligence 有設置頁面：
 1. 前往「Settings」或「設定」
 2. 找到「Gemini API Key」欄位
 3. 貼上新的 API Key

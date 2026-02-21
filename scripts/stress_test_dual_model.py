@@ -293,7 +293,7 @@ scenarios.append({
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 def main():
     print("\n" + "━" * 72)
-    print("  🏭 SmartOps 雙模型壓力測試 — 供應鏈災難模擬器")
+    print("  🏭 Decision-Intelligence 雙模型壓力測試 — 供應鏈災難模擬器")
     print(f"  ⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"  🔧 模式: {'HTTP API' if USE_API else '本地離線'}")
     print("━" * 72)

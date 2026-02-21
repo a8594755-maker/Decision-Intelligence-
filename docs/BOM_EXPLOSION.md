@@ -16,7 +16,7 @@
 
 ## 概述
 
-BOM Explosion (物料清單展開) 是 SmartOps 的核心功能之一,用於將成品 (FG) 需求展開成零組件 (Component) 需求。
+BOM Explosion (物料清單展開) 是 Decision-Intelligence 的核心功能之一,用於將成品 (FG) 需求展開成零組件 (Component) 需求。
 
 ### 核心功能
 
@@ -294,6 +294,6 @@ const result = await executeBomExplosion(userId, options);
 
 ---
 
-**維護者**: SmartOps Team  
+**維護者**: Decision-Intelligence Team  
 **文件版本**: 1.0  
 **程式碼版本**: 以 src/services/bomExplosionService.js 為準

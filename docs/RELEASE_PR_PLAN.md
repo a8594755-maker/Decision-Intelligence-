@@ -164,7 +164,7 @@ DROP FUNCTION IF EXISTS public.ingest_price_history_v1(UUID, UUID, JSONB);
 ## 驗收步驟（可複製貼上）
 
 1. 登入後進入 Data → BOM Data → 切到「FG 需求」tab；確認 URL 為 `/data/bom-data?tab=demand_fg`。  
-2. 開新分頁（例如 about:blank），約 30 秒後切回 SmartOps；預期：仍為 BOM Data 頁且為 FG 需求 tab。  
+2. 開新分頁（例如 about:blank），約 30 秒後切回 Decision-Intelligence；預期：仍為 BOM Data 頁且為 FG 需求 tab。  
 3. 在 Planning → Forecasts 切到 Trace tab，按 F5 重新整理；預期：仍為 Forecasts 頁且為 Trace tab。  
 4. 進入 Data → Data Upload，點「上一頁」；預期：回到前一頁（或首頁）。在非首頁再點一次「上一頁」；預期：無報錯、不關閉分頁。  
 5. Data Upload 勾選 One-shot，確認 URL 含 `?tab=oneshot`；重新整理後預期：仍為 Data Upload 且 One-shot 仍勾選。  

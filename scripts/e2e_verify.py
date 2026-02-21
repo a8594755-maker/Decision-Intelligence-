@@ -6,7 +6,7 @@ import numpy as np
 API = "http://127.0.0.1:8000"
 
 print("=" * 50)
-print("  SmartOps E2E Verification")
+print("  Decision-Intelligence E2E Verification")
 print("=" * 50)
 
 # Generate test history

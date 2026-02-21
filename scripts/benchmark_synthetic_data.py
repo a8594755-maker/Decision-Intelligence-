@@ -113,7 +113,7 @@ def grade_mape(mape):
 
 def run_benchmark():
     print(f"\n{'━' * 72}")
-    print(f"  📊 SmartOps 合成數據基準線測試")
+    print(f"  📊 Decision-Intelligence 合成數據基準線測試")
     print(f"  ⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"  📅 總天數: {TOTAL_DAYS} (訓練: {TRAIN_DAYS}, 測試: {TEST_DAYS})")
     print(f"  🌱 隨機種子: {SEED}")

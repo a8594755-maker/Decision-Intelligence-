@@ -9,7 +9,7 @@
  * - Fallback mechanism (falls back to legacy API if RPC fails)
  */
 
-import { supabase } from './supabaseClient';
+import { supabase, RPC_JSON_OPTIONS } from './supabaseClient';
 
 /**
  * Batch data size limit
@@ -119,7 +119,7 @@ export async function ingestGoodsReceiptsRpc({
       p_batch_id: batchId,
       p_upload_file_id: uploadFileId,
       p_rows: rows // Pass validRows directly (must be canonical keys)
-    });
+    }, RPC_JSON_OPTIONS);
 
     // ===== Error handling =====
     if (error) {
@@ -223,7 +223,7 @@ export async function ingestPriceHistoryRpc({
       p_batch_id: batchId,
       p_upload_file_id: uploadFileId,
       p_rows: rows // Pass validRows directly (must be canonical keys)
-    });
+    }, RPC_JSON_OPTIONS);
 
     // ===== Error handling =====
     if (error) {
@@ -289,7 +289,7 @@ export async function checkRpcHealth() {
       p_batch_id: '00000000-0000-0000-0000-000000000000',
       p_upload_file_id: '00000000-0000-0000-0000-000000000000',
       p_rows: []
-    });
+    }, RPC_JSON_OPTIONS);
 
     // If function doesn't exist, error.code will be '42883' (undefined_function)
     if (error && error.code === '42883') {

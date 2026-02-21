@@ -1,6 +1,6 @@
-# SmartOps 環境設定指南
+# Decision-Intelligence 環境設定指南
 
-> 本文件說明如何從零開始設定 SmartOps 開發和生產環境
+> 本文件說明如何從零開始設定 Decision-Intelligence 開發和生產環境
 
 ## 📋 目錄
 
@@ -32,8 +32,8 @@
 ### 1. Clone 專案
 
 ```bash
-git clone https://github.com/your-username/smartops-app.git
-cd smartops-app
+git clone https://github.com/your-username/decision-intelligence.git
+cd decision-intelligence
 ```
 
 ### 2. 安裝依賴
@@ -66,7 +66,7 @@ cp .env.example .env.local
 1. 前往 [Supabase Dashboard](https://supabase.com/dashboard)
 2. 點擊 **New Project**
 3. 填寫專案資訊:
-   - Name: `smartops-production` (或自訂名稱)
+   - Name: `decision-intelligence-production` (或自訂名稱)
    - Database Password: **記住此密碼**
    - Region: 選擇最近的區域 (例如: Singapore)
 4. 等待專案建立完成 (約 2-3 分鐘)
@@ -372,4 +372,4 @@ SELECT * FROM import_batches WHERE user_id = auth.uid() ORDER BY created_at DESC
 
 ---
 
-**設定完成!** 🎉 現在可以開始使用 SmartOps 了!
+**設定完成!** 🎉 現在可以開始使用 Decision-Intelligence 了!

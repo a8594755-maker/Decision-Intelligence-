@@ -5,6 +5,13 @@ import { ASSISTANT_NAME } from '../config/branding';
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 const missingSupabaseError = new Error('Supabase configuration error: Missing environment variables');
+export const SUPABASE_JSON_HEADERS = Object.freeze({
+  'Content-Type': 'application/json',
+  'Accept': 'application/json'
+});
+export const RPC_JSON_OPTIONS = Object.freeze({
+  headers: SUPABASE_JSON_HEADERS
+});
 
 const createDisabledQueryBuilder = () => {
   const terminalPromise = Promise.resolve({ data: null, error: missingSupabaseError, count: 0 });
@@ -31,6 +38,7 @@ const createDisabledQueryBuilder = () => {
 
 const createDisabledSupabaseClient = () => ({
   from: () => createDisabledQueryBuilder(),
+  rpc: async () => ({ data: null, error: missingSupabaseError }),
   auth: {
     getSession: async () => ({ data: { session: null }, error: missingSupabaseError }),
     onAuthStateChange: () => ({ data: { subscription: { unsubscribe: () => {} } } }),
@@ -47,7 +55,11 @@ if (!isSupabaseConfigured) {
 }
 
 export const supabase = isSupabaseConfigured
-  ? createClient(supabaseUrl, supabaseKey)
+  ? createClient(supabaseUrl, supabaseKey, {
+    global: {
+      headers: SUPABASE_JSON_HEADERS
+    }
+  })
   : createDisabledSupabaseClient();
 
 /**

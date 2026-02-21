@@ -264,7 +264,7 @@ def compute_verdict(all_findings):
 
 def main():
     print(f"\n{'━' * 72}")
-    print(f"  📊 SmartOps 量化分析與真實性判讀")
+    print(f"  📊 Decision-Intelligence 量化分析與真實性判讀")
     print(f"  ⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"{'━' * 72}")
 

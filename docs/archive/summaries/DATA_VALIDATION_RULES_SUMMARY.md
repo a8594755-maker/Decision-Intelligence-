@@ -2,7 +2,7 @@
 
 ## 📋 概述
 
-本文件說明 SmartOps 系統中 3 種新增 upload type 的資料驗證與清理規則。
+本文件說明 Decision-Intelligence 系統中 3 種新增 upload type 的資料驗證與清理規則。
 
 **修改檔案：** `src/utils/dataValidation.js`
 

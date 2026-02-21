@@ -31,6 +31,9 @@ export default function PlanSummaryCard({ payload }) {
           <div className="flex items-center gap-2">
             <Badge type="success">{payload.solver_status || 'unknown'}</Badge>
             <Badge type="info">Rows: {payload.total_plan_rows || 0}</Badge>
+            {payload.multi_echelon_mode && payload.multi_echelon_mode !== 'off' && (
+              <Badge type="warning">BOM mode</Badge>
+            )}
           </div>
         </div>
 
@@ -41,6 +44,9 @@ export default function PlanSummaryCard({ payload }) {
           <Badge type="info">Stockout units: {formatNum(kpis.estimated_stockout_units)}</Badge>
           <Badge type="info">Holding units: {formatNum(kpis.estimated_holding_units)}</Badge>
           <Badge type="info">Cost proxy: {formatNum(kpis.estimated_total_cost)}</Badge>
+          {payload.component_plan_rows > 0 && (
+            <Badge type="info">Component rows: {payload.component_plan_rows}</Badge>
+          )}
         </div>
       </div>
     </Card>

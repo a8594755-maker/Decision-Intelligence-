@@ -4,7 +4,7 @@
 
 本文件定義 BOM Explosion（物料清單展開）功能的 MVP 規格，包含輸入輸出定義、計算規則、邊界案例處理，以及測試資料與預期結果。
 
-**適用範圍**：SmartOps Step A - Component Demand 計算  
+**適用範圍**：Decision-Intelligence Step A - Component Demand 計算  
 **版本**：v1.0 MVP  
 **日期**：2026-01-25
 
@@ -782,4 +782,4 @@ CREATE TABLE component_demand_trace (
 
 **文件版本**：v1.0 MVP  
 **建立日期**：2026-01-25  
-**適用範圍**：SmartOps BOM Explosion MVP 功能
+**適用範圍**：Decision-Intelligence BOM Explosion MVP 功能

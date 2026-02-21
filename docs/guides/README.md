@@ -1,4 +1,4 @@
-# SmartOps 使用指南
+# Decision-Intelligence 使用指南
 
 > 此目錄包含所有使用者指南、操作手冊和功能說明文件
 
@@ -204,6 +204,6 @@
 
 ---
 
-**維護者**: SmartOps Team  
+**維護者**: Decision-Intelligence Team  
 **最後更新**: 2026-02-04  
 **文件數量**: 9 個使用指南

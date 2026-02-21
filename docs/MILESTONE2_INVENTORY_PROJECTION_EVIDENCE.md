@@ -7,7 +7,7 @@
 **完整輸出：**
 
 ```
- RUN  v4.0.18 C:/Users/a8594/smartops-app
+ RUN  v4.0.18 C:/Users/a8594/decision-intelligence
 
  ✓ src/domains/inventory/inventoryProjection.test.js (8 tests) 3ms
 

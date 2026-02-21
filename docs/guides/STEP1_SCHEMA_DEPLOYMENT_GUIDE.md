@@ -2,7 +2,7 @@
 
 ## 📋 概述
 
-本文件說明如何部署 `step1_supply_inventory_financials_schema.sql`，為 SmartOps 系統新增 3 張表：
+本文件說明如何部署 `step1_supply_inventory_financials_schema.sql`，為 Decision-Intelligence 系統新增 3 張表：
 
 1. **po_open_lines** - 采購訂單未交貨明細（Open PO / Supply Commitments）
 2. **inventory_snapshots** - 庫存快照（Inventory Snapshot）
@@ -110,7 +110,7 @@ WHERE table_schema = 'public'
 ### Step 2: 執行 Schema 腳本
 
 1. **登入 Supabase Dashboard**
-   - 前往您的 SmartOps 專案
+   - 前往您的 Decision-Intelligence 專案
    - 點擊左側選單的 **SQL Editor**
 
 2. **開啟新查詢**

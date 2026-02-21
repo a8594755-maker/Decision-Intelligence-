@@ -2,7 +2,7 @@
 
 ## ✅ 任務完成度：100%
 
-已成功為 SmartOps 系統新增 3 個 Supabase service layer，提供完整的 CRUD 操作和查詢功能。
+已成功為 Decision-Intelligence 系統新增 3 個 Supabase service layer，提供完整的 CRUD 操作和查詢功能。
 
 ---
 
@@ -745,4 +745,4 @@ console.log(`✅ Deleted ${totalDeleted} rows from batch ${batchId}`);
 - ✅ CRUD 完整功能
 - ✅ Plant fallback 特殊邏輯
 
-**🎉 SmartOps 系統擴充全面完成！**
+**🎉 Decision-Intelligence 系統擴充全面完成！**

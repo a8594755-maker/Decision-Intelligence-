@@ -80,6 +80,267 @@ function buildSkuMap(rows = [], valueKey) {
   return map;
 }
 
+function inferPeriodDays(sortedDates = []) {
+  if (!Array.isArray(sortedDates) || sortedDates.length <= 1) return 1;
+  const deltas = [];
+  for (let i = 1; i < sortedDates.length; i += 1) {
+    const prev = parseIsoDay(sortedDates[i - 1]);
+    const next = parseIsoDay(sortedDates[i]);
+    if (!prev || !next) continue;
+    const days = Math.round((next.getTime() - prev.getTime()) / (24 * 60 * 60 * 1000));
+    if (days > 0) deltas.push(days);
+  }
+  if (deltas.length === 0) return 1;
+  deltas.sort((a, b) => a - b);
+  return Math.max(1, deltas[Math.floor(deltas.length / 2)]);
+}
+
+function applyLotSizing({ sku, qty, moqBySku, packBySku, maxBySku }) {
+  let next = Math.max(0, toNumber(qty, 0));
+  const moq = moqBySku.get(sku) || 0;
+  const pack = packBySku.get(sku) || 0;
+  const maxQty = maxBySku.get(sku) || 0;
+
+  if (maxQty > 0 && next > maxQty) next = maxQty;
+  if (moq > 0 && next > 0 && next < moq) next = moq;
+  if (pack > 1 && next > 0) next = Math.ceil(next / pack) * pack;
+  return Number(next.toFixed(6));
+}
+
+function buildComponentFallbackArtifacts({
+  payload = {},
+  fgPlan = [],
+  moqBySku,
+  packBySku,
+  maxBySku
+}) {
+  const mode = String(payload?.multi_echelon?.mode || '').trim().toLowerCase();
+  const usageRows = Array.isArray(payload?.bom_usage) ? payload.bom_usage : [];
+  if (mode !== 'bom_v0' || usageRows.length === 0) {
+    return {
+      component_plan: [],
+      component_inventory_projection: { total_rows: 0, rows: [], truncated: false },
+      bottlenecks: { generated_at: new Date().toISOString(), total_rows: 0, rows: [] }
+    };
+  }
+
+  const horizonDates = Array.from(new Set(
+    (Array.isArray(payload?.demand_forecast?.series) ? payload.demand_forecast.series : [])
+      .map((row) => toIsoDay(parseIsoDay(row?.date)))
+      .filter(Boolean)
+  )).sort((a, b) => a.localeCompare(b));
+
+  if (horizonDates.length === 0) {
+    return {
+      component_plan: [],
+      component_inventory_projection: { total_rows: 0, rows: [], truncated: false },
+      bottlenecks: { generated_at: new Date().toISOString(), total_rows: 0, rows: [] }
+    };
+  }
+
+  const periodDays = inferPeriodDays(horizonDates);
+  const usageByFg = new Map();
+  const componentToFg = new Map();
+  usageRows.forEach((row) => {
+    const fgSku = String(row?.fg_sku || '').trim();
+    const componentSku = String(row?.component_sku || '').trim();
+    const plantId = String(row?.plant_id || '').trim() || null;
+    const usageQty = Math.max(0, toNumber(row?.usage_qty, 0));
+    if (!fgSku || !componentSku || usageQty <= 0) return;
+    const key = keyOf(fgSku, plantId);
+    if (!usageByFg.has(key)) usageByFg.set(key, []);
+    usageByFg.get(key).push({
+      fg_sku: fgSku,
+      component_sku: componentSku,
+      plant_id: plantId,
+      usage_qty: usageQty
+    });
+
+    const componentKey = keyOf(componentSku, plantId);
+    if (!componentToFg.has(componentKey)) componentToFg.set(componentKey, new Set());
+    componentToFg.get(componentKey).add(fgSku);
+  });
+
+  const depDemandByCompDate = new Map();
+  fgPlan.forEach((row) => {
+    const fgSku = String(row?.sku || '').trim();
+    const fgPlant = String(row?.plant_id || '').trim() || null;
+    const arrivalDate = toIsoDay(parseIsoDay(row?.arrival_date));
+    const qty = Math.max(0, toNumber(row?.order_qty, 0));
+    if (!fgSku || !arrivalDate || qty <= 0) return;
+
+    const usageCandidates = [
+      ...(usageByFg.get(keyOf(fgSku, fgPlant)) || []),
+      ...(fgPlant ? [] : (usageByFg.get(keyOf(fgSku, null)) || []))
+    ];
+
+    usageCandidates.forEach((usage) => {
+      const compKey = keyOf(usage.component_sku, usage.plant_id || fgPlant);
+      if (!depDemandByCompDate.has(compKey)) depDemandByCompDate.set(compKey, new Map());
+      const dateMap = depDemandByCompDate.get(compKey);
+      dateMap.set(arrivalDate, toNumber(dateMap.get(arrivalDate), 0) + (qty * usage.usage_qty));
+    });
+  });
+
+  const inventoryRows = Array.isArray(payload?.inventory) ? payload.inventory : [];
+  const componentInventory = new Map();
+  inventoryRows.forEach((row) => {
+    const sku = String(row?.sku || '').trim();
+    if (!sku) return;
+    const key = keyOf(row?.sku, row?.plant_id);
+    const snapshot = parseIsoDay(row?.as_of_date);
+    if (!snapshot) return;
+    const prev = componentInventory.get(key);
+    if (!prev || snapshot > prev.snapshot) {
+      componentInventory.set(key, {
+        snapshot,
+        on_hand: Math.max(0, toNumber(row?.on_hand, 0)),
+        safety_stock: Math.max(0, toNumber(row?.safety_stock, 0)),
+        lead_time_days: Math.max(0, Math.floor(toNumber(row?.lead_time_days, 0)))
+      });
+    }
+  });
+
+  const openPosRows = Array.isArray(payload?.open_pos) ? payload.open_pos : [];
+  const openPosByCompDate = new Map();
+  openPosRows.forEach((row) => {
+    const sku = String(row?.sku || '').trim();
+    const eta = toIsoDay(parseIsoDay(row?.eta_date));
+    const qty = Math.max(0, toNumber(row?.qty, 0));
+    if (!sku || !eta || qty <= 0) return;
+    const key = keyOf(row?.sku, row?.plant_id);
+    if (!openPosByCompDate.has(key)) openPosByCompDate.set(key, new Map());
+    const dateMap = openPosByCompDate.get(key);
+    dateMap.set(eta, toNumber(dateMap.get(eta), 0) + qty);
+  });
+
+  const componentKeys = Array.from(new Set([
+    ...Array.from(depDemandByCompDate.keys()),
+    ...Array.from(componentInventory.keys())
+  ])).sort();
+
+  const componentPlan = [];
+  const componentProjection = [];
+  const bottleneckByComp = new Map();
+
+  componentKeys.forEach((compKey) => {
+    const [componentSku, plantRaw] = compKey.split('|');
+    const plantId = plantRaw || null;
+    const inv = componentInventory.get(compKey) || {
+      on_hand: 0,
+      safety_stock: 0,
+      lead_time_days: 0
+    };
+    const leadOffset = Math.max(0, Math.ceil(toNumber(inv.lead_time_days, 0) / periodDays));
+    const demandMap = depDemandByCompDate.get(compKey) || new Map();
+    const openMap = openPosByCompDate.get(compKey) || new Map();
+    const plannedArrivals = new Map();
+
+    let onHand = Math.max(0, toNumber(inv.on_hand, 0));
+    const safetyStock = Math.max(0, toNumber(inv.safety_stock, 0));
+
+    horizonDates.forEach((date, idx) => {
+      const inboundOpenPos = toNumber(openMap.get(date), 0);
+      const inboundPlan = toNumber(plannedArrivals.get(date), 0);
+      onHand += inboundOpenPos + inboundPlan;
+
+      const dependentDemand = Math.max(0, toNumber(demandMap.get(date), 0));
+      const shortage = Math.max(0, dependentDemand - onHand);
+      const onHandEnd = onHand - dependentDemand;
+
+      if (shortage > 0) {
+        if (!bottleneckByComp.has(compKey)) {
+          bottleneckByComp.set(compKey, {
+            component_sku: componentSku,
+            plant_id: plantId,
+            missing_qty: 0,
+            periods_impacted: new Set(),
+            affected_fg_skus: new Set()
+          });
+        }
+        const bucket = bottleneckByComp.get(compKey);
+        bucket.missing_qty += shortage;
+        bucket.periods_impacted.add(date);
+        (componentToFg.get(compKey) || new Set()).forEach((fgSku) => bucket.affected_fg_skus.add(fgSku));
+      }
+
+      const refill = Math.max(0, safetyStock - onHandEnd);
+      if (refill > 0) {
+        const arrivalIdx = idx + leadOffset;
+        if (arrivalIdx < horizonDates.length) {
+          const orderQty = applyLotSizing({
+            sku: componentSku,
+            qty: refill,
+            moqBySku,
+            packBySku,
+            maxBySku
+          });
+          if (orderQty > 0) {
+            const orderDate = horizonDates[idx];
+            const arrivalDate = horizonDates[arrivalIdx];
+            componentPlan.push({
+              component_sku: componentSku,
+              plant_id: plantId,
+              order_date: orderDate,
+              arrival_date: arrivalDate,
+              order_qty: orderQty
+            });
+            plannedArrivals.set(arrivalDate, toNumber(plannedArrivals.get(arrivalDate), 0) + orderQty);
+          }
+        }
+      }
+
+      componentProjection.push({
+        component_sku: componentSku,
+        plant_id: plantId,
+        date,
+        on_hand_end: Number(onHandEnd.toFixed(6)),
+        backlog: Number(shortage.toFixed(6)),
+        demand_dependent: Number(dependentDemand.toFixed(6)),
+        inbound_plan: Number(inboundPlan.toFixed(6)),
+        inbound_open_pos: Number(inboundOpenPos.toFixed(6))
+      });
+
+      onHand = onHandEnd;
+    });
+  });
+
+  componentPlan.sort((a, b) => {
+    if (a.component_sku !== b.component_sku) return a.component_sku.localeCompare(b.component_sku);
+    if ((a.plant_id || '') !== (b.plant_id || '')) return (a.plant_id || '').localeCompare(b.plant_id || '');
+    if (a.order_date !== b.order_date) return a.order_date.localeCompare(b.order_date);
+    return a.arrival_date.localeCompare(b.arrival_date);
+  });
+
+  const bottlenecksRows = Array.from(bottleneckByComp.values())
+    .map((row) => ({
+      component_sku: row.component_sku,
+      plant_id: row.plant_id,
+      missing_qty: Number(row.missing_qty.toFixed(6)),
+      periods_impacted: Array.from(row.periods_impacted).sort((a, b) => a.localeCompare(b)),
+      affected_fg_skus: Array.from(row.affected_fg_skus).sort((a, b) => a.localeCompare(b))
+    }))
+    .sort((a, b) => {
+      if (b.missing_qty !== a.missing_qty) return b.missing_qty - a.missing_qty;
+      if (a.component_sku !== b.component_sku) return a.component_sku.localeCompare(b.component_sku);
+      return (a.plant_id || '').localeCompare(b.plant_id || '');
+    });
+
+  return {
+    component_plan: componentPlan,
+    component_inventory_projection: {
+      total_rows: componentProjection.length,
+      rows: componentProjection,
+      truncated: false
+    },
+    bottlenecks: {
+      generated_at: new Date().toISOString(),
+      total_rows: bottlenecksRows.length,
+      rows: bottlenecksRows
+    }
+  };
+}
+
 function runLocalHeuristic(payload = {}) {
   const started = Date.now();
 
@@ -384,6 +645,21 @@ function runLocalHeuristic(payload = {}) {
     ? 'infeasible'
     : (allChecksPass && uniqueReasons.length === 0 ? 'optimal' : 'feasible');
 
+  const multiEchelonMode = String(payload?.multi_echelon?.mode || '').trim().toLowerCase() === 'bom_v0'
+    ? 'bom_v0'
+    : 'off';
+  const componentArtifacts = buildComponentFallbackArtifacts({
+    payload,
+    fgPlan: plan,
+    moqBySku,
+    packBySku,
+    maxBySku
+  });
+
+  if (multiEchelonMode === 'bom_v0' && componentArtifacts?.bottlenecks?.total_rows > 0) {
+    uniqueReasons.push(`BOM bottlenecks detected: ${componentArtifacts.bottlenecks.total_rows} components.`);
+  }
+
   const serviceLevel = totalDemand > 0
     ? Math.max(0, Math.min(1, 1 - (stockoutUnits / totalDemand)))
     : null;
@@ -401,7 +677,11 @@ function runLocalHeuristic(payload = {}) {
       solver: 'heuristic',
       solve_time_ms: Date.now() - started,
       objective_value: Number(estimatedTotalCost.toFixed(6)),
-      gap: 0
+      gap: 0,
+      multi_echelon_mode: multiEchelonMode,
+      max_bom_depth: toNumber(payload?.multi_echelon?.max_bom_depth, 50),
+      bom_explosion_used: Boolean(payload?.multi_echelon?.bom_explosion_used),
+      bom_explosion_reused: Boolean(payload?.multi_echelon?.bom_explosion_reused)
     },
     infeasible_reasons: uniqueReasons,
     proof: {
@@ -409,9 +689,17 @@ function runLocalHeuristic(payload = {}) {
         { name: 'ordered_units', value: Number(totalOrderQty.toFixed(6)), note: 'Total planned replenishment quantity.' },
         { name: 'stockout_units', value: Number(stockoutUnits.toFixed(6)), note: 'Projected unmet demand units.' },
         { name: 'holding_units', value: Number(holdingUnits.toFixed(6)), note: 'Projected positive inventory accumulation.' },
-        { name: 'estimated_total_cost', value: Number(estimatedTotalCost.toFixed(6)), note: 'Heuristic cost proxy from order + penalties.' }
+        { name: 'estimated_total_cost', value: Number(estimatedTotalCost.toFixed(6)), note: 'Heuristic cost proxy from order + penalties.' },
+        { name: 'component_plan_rows', value: Number(componentArtifacts?.component_plan?.length || 0), note: 'Derived component procurement rows in BOM mode.' }
       ],
       constraints_checked: constraintChecks.concat(
+        multiEchelonMode === 'bom_v0'
+          ? [{
+              name: 'bom_mode',
+              passed: true,
+              details: `BOM mode active. bottlenecks=${componentArtifacts?.bottlenecks?.total_rows || 0}.`
+            }]
+          : [],
         roundingAdjustments.length > 0
           ? [{
               name: 'rounding_adjustments',
@@ -420,7 +708,10 @@ function runLocalHeuristic(payload = {}) {
             }]
           : []
       )
-    }
+    },
+    component_plan: componentArtifacts?.component_plan || [],
+    component_inventory_projection: componentArtifacts?.component_inventory_projection || { total_rows: 0, rows: [], truncated: false },
+    bottlenecks: componentArtifacts?.bottlenecks || { generated_at: new Date().toISOString(), total_rows: 0, rows: [] }
   };
 }
 

@@ -5,14 +5,16 @@ import {
   runNextStep as runNextWorkflowAStep,
   resumeRun as resumeWorkflowARun,
   replayRun as replayWorkflowARun,
-  getWorkflowARunSnapshot
+  getWorkflowARunSnapshot,
+  submitBlockingAnswers as submitBlockingAnswersA
 } from './workflowAEngine';
 import {
   startWorkflowB,
   runNextStep as runNextWorkflowBStep,
   resumeRun as resumeWorkflowBRun,
   replayRun as replayWorkflowBRun,
-  getWorkflowBRunSnapshot
+  getWorkflowBRunSnapshot,
+  submitBlockingAnswers as submitBlockingAnswersB
 } from './workflowBEngine';
 
 export const WORKFLOW_NAMES = {
@@ -33,14 +35,16 @@ const ENGINES = {
     runNextStep: runNextWorkflowAStep,
     resumeRun: resumeWorkflowARun,
     replayRun: replayWorkflowARun,
-    getRunSnapshot: getWorkflowARunSnapshot
+    getRunSnapshot: getWorkflowARunSnapshot,
+    submitBlockingAnswers: submitBlockingAnswersA
   },
   [WORKFLOW_NAMES.B]: {
     start: startWorkflowB,
     runNextStep: runNextWorkflowBStep,
     resumeRun: resumeWorkflowBRun,
     replayRun: replayWorkflowBRun,
-    getRunSnapshot: getWorkflowBRunSnapshot
+    getRunSnapshot: getWorkflowBRunSnapshot,
+    submitBlockingAnswers: submitBlockingAnswersB
   }
 };
 
@@ -124,6 +128,13 @@ export async function getRunSnapshot(run_id) {
   return engine.getRunSnapshot(runId);
 }
 
+export async function submitBlockingAnswers(run_id, answers = {}) {
+  const runId = Number(run_id);
+  if (!Number.isFinite(runId)) throw new Error('run_id must be numeric');
+  const { engine } = await resolveEngineByRun(runId);
+  return engine.submitBlockingAnswers(runId, answers);
+}
+
 export default {
   WORKFLOW_NAMES,
   normalizeWorkflowName,
@@ -132,5 +143,6 @@ export default {
   runNextStep,
   resumeRun,
   replayRun,
-  getRunSnapshot
+  getRunSnapshot,
+  submitBlockingAnswers
 };

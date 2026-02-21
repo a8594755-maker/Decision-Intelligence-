@@ -1,4 +1,4 @@
-# 📁 SmartOps 文件系統重構完成報告
+# 📁 Decision-Intelligence 文件系統重構完成報告
 
 **執行日期：** 2026-02-05  
 **執行者：** AI Agent (Claude Sonnet 4.5)  
@@ -138,7 +138,7 @@
 - **建議：** 與程式碼放在一起符合慣例，建議保留
 - **狀態：** ✅ 保留原位
 
-### 4. `SmartOps.txt`
+### 4. `Decision-Intelligence.txt`
 
 - **位置：** 根目錄
 - **類型：** 未知文字檔案（可能是臨時筆記）
@@ -150,7 +150,7 @@
 ## 📂 最終目錄結構
 
 ```
-smartops-app/
+decision-intelligence/
 ├── .cursorrules                    # ✨ 新建：文件管理規範
 ├── .env.example
 ├── .gitignore
@@ -159,7 +159,7 @@ smartops-app/
 ├── package.json
 ├── package-lock.json
 ├── README.md                       # 唯一根目錄 .md
-├── SmartOps.txt                    # 🟡 待確認
+├── Decision-Intelligence.txt                    # 🟡 待確認
 ├── vite.config.js
 ├── vitest.config.js
 │
@@ -265,7 +265,7 @@ smartops-app/
 
 ### 1. 立即行動
 
-- [ ] 檢查 `SmartOps.txt` 內容，決定保留或刪除
+- [ ] 檢查 `Decision-Intelligence.txt` 內容，決定保留或刪除
 - [ ] 審閱 12 份核心指南，確認內容無誤
 - [ ] 在團隊中分享 `docs/README.md` 索引
 

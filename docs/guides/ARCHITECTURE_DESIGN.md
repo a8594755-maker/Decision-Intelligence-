@@ -1,4 +1,4 @@
-# SmartOps 系统架构设计
+# Decision-Intelligence 系统架构设计
 
 ## 🏗️ 整体架构
 
@@ -58,7 +58,7 @@
 ## 📁 文件结构
 
 ```
-smartops-app/
+decision-intelligence/
 ├── src/
 │   ├── App.jsx                          # 主应用（路由与布局）
 │   │

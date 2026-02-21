@@ -6,9 +6,9 @@ root_dir = str(Path(__file__).resolve().parents[3])
 if root_dir not in sys.path:
     sys.path.append(root_dir)
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from ml.demand_forecasting.prophet_trainer import ProphetTrainer
 from ml.demand_forecasting.lightgbm_trainer import LightGBMTrainer
@@ -22,6 +22,36 @@ import numpy as np
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any, Tuple
 import math
+
+try:
+    from ortools.sat.python import cp_model
+    ORTOOLS_AVAILABLE = True
+except Exception:
+    cp_model = None
+    ORTOOLS_AVAILABLE = False
+
+# Solver engine selection: "heuristic" (default) or "ortools" (CP-SAT MILP v0).
+# Set environment variable DI_SOLVER_ENGINE=ortools to activate the CP-SAT solver.
+DI_SOLVER_ENGINE: str = os.getenv("DI_SOLVER_ENGINE", "heuristic").lower()
+
+if ORTOOLS_AVAILABLE:
+    from ml.api.replenishment_solver import solve_replenishment as _cp_sat_solve
+    from ml.api.replenishment_solver import solve_replenishment_multi_echelon as _cp_sat_me_solve
+else:
+    _cp_sat_solve = None      # type: ignore[assignment]
+    _cp_sat_me_solve = None   # type: ignore[assignment]
+
+import asyncio
+
+from ml.api.async_runs import (
+    AsyncRunConfig,
+    AsyncRunService,
+    AsyncRunStatusResponse,
+    AsyncRunSubmitRequest,
+    AsyncRunSubmitResponse,
+    PostgresAsyncRunStore,
+    TERMINAL_JOB_STATUSES,
+)
 
 def sanitize_numpy(obj):
     """Recursively convert numpy types to native Python types for JSON serialization."""
@@ -81,20 +111,128 @@ lightgbm_trainer = LightGBMTrainer()
 chronos_trainer = ChronosTrainer()
 forecaster_factory = ForecasterFactory()
 supabase_client = SupabaseRESTClient()
+_async_run_service: Optional[AsyncRunService] = None
+
+
+def get_async_run_service() -> AsyncRunService:
+    global _async_run_service
+    if _async_run_service is None:
+        store = PostgresAsyncRunStore()
+        _async_run_service = AsyncRunService(store=store, config=AsyncRunConfig.from_env())
+    return _async_run_service
 
 class ForecastRequest(BaseModel):
+    model_config = {"populate_by_name": True}
     materialCode: str
     horizonDays: int = 30
     modelType: Optional[str] = None  # None = auto-recommend, "prophet", "lightgbm", "chronos", "AUTO"
     includeComparison: bool = True  # 是否包含模型比较
     userPreference: Optional[str] = None  # 用户偏好模型
     history: Optional[List[float]] = None  # 直接传入的历史数据序列（压力测试/离线模式）
+    async_mode: bool = Field(default=False, alias="async")
+    userId: Optional[str] = None
+    datasetProfileId: Optional[int] = None
+    datasetFingerprint: Optional[str] = None
+    contractTemplateId: Optional[int] = None
+    workflow: Optional[str] = None
+    engineFlags: Dict[str, Any] = Field(default_factory=dict)
+    settings: Dict[str, Any] = Field(default_factory=dict)
+    maxAttempts: Optional[int] = None
+    workload: Dict[str, Any] = Field(default_factory=dict)
 
 class ModelAnalysisRequest(BaseModel):
     materialCode: str
 
 class ModelStatusRequest(BaseModel):
     pass
+
+
+def _request_async_enabled(model: BaseModel) -> bool:
+    if bool(getattr(model, "async_mode", False)):
+        return True
+    extras = getattr(model, "model_extra", None) or {}
+    return bool(extras.get("async"))
+
+
+@app.post("/jobs", response_model=AsyncRunSubmitResponse)
+async def submit_async_job(request: AsyncRunSubmitRequest, raw_request: Request):
+    try:
+        service = get_async_run_service()
+        return service.submit(request, base_url=str(raw_request.base_url))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/runs", response_model=AsyncRunSubmitResponse)
+async def submit_async_run(request: AsyncRunSubmitRequest, raw_request: Request):
+    return await submit_async_job(request, raw_request)
+
+
+@app.get("/jobs/{job_id}", response_model=AsyncRunStatusResponse)
+async def get_async_job_status(job_id: str):
+    service = get_async_run_service()
+    try:
+        return service.get_job_status(job_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/jobs/{job_id}/cancel")
+async def cancel_async_job(job_id: str):
+    service = get_async_run_service()
+    try:
+        return service.cancel_job(job_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/runs/{run_id}/steps")
+async def get_run_steps(run_id: int):
+    service = get_async_run_service()
+    return {
+        "run_id": run_id,
+        "steps": service.get_run_steps(run_id),
+    }
+
+
+@app.get("/runs/{run_id}/artifacts")
+async def get_run_artifacts(run_id: int):
+    service = get_async_run_service()
+    return {
+        "run_id": run_id,
+        "artifacts": service.get_run_artifacts(run_id),
+    }
+
+
+@app.get("/jobs/{job_id}/events")
+async def stream_job_events(
+    job_id: str,
+    interval_seconds: float = Query(2.0, ge=0.5, le=10.0),
+):
+    service = get_async_run_service()
+
+    async def event_stream():
+        previous_payload = None
+        while True:
+            try:
+                status = service.get_job_status(job_id)
+            except KeyError:
+                yield "event: error\\ndata: {\"error\":\"job_not_found\"}\\n\\n"
+                break
+
+            payload = status.model_dump(mode="json")
+            payload_json = json.dumps(payload, ensure_ascii=False)
+            if payload_json != previous_payload:
+                yield f"event: status\\ndata: {payload_json}\\n\\n"
+                previous_payload = payload_json
+
+            if str(status.status).lower() in TERMINAL_JOB_STATUSES:
+                break
+            await asyncio.sleep(interval_seconds)
+
+        yield "event: end\\ndata: {\"done\":true}\\n\\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 @app.post("/demand-forecast")
 async def demand_forecast(request: ForecastRequest):
@@ -104,6 +242,38 @@ async def demand_forecast(request: ForecastRequest):
     :return: 预测结果
     """
     try:
+        if _request_async_enabled(request):
+            if not request.userId:
+                raise HTTPException(status_code=400, detail="userId is required when async mode is enabled")
+            if not request.datasetProfileId:
+                raise HTTPException(status_code=400, detail="datasetProfileId is required when async mode is enabled")
+            dataset_fingerprint = request.datasetFingerprint or f"material:{request.materialCode}"
+            service = get_async_run_service()
+            submit_response = service.submit(
+                AsyncRunSubmitRequest(
+                    user_id=request.userId,
+                    dataset_profile_id=request.datasetProfileId,
+                    dataset_fingerprint=dataset_fingerprint,
+                    contract_template_id=request.contractTemplateId,
+                    workflow=request.workflow or "forecast_only",
+                    engine_flags=request.engineFlags or {},
+                    settings=request.settings or {
+                        "forecast": {
+                            "horizon_days": request.horizonDays,
+                            "model_type": request.modelType,
+                        }
+                    },
+                    horizon=request.horizonDays,
+                    granularity="day",
+                    max_attempts=request.maxAttempts,
+                    workload={
+                        "forecast_series": len(request.history or []),
+                        **(request.workload or {}),
+                    },
+                ),
+            )
+            return submit_response.model_dump(mode="json")
+
         inline_history = request.history
         
         # 1. 检查缓存（仅当无 inline 数据时）
@@ -419,11 +589,39 @@ class SkuQtyConstraint(BaseModel):
     max_qty: Optional[float] = None
 
 
+class SkuUnitCostConstraint(BaseModel):
+    sku: str
+    unit_cost: Optional[float] = None
+
+
+class BomUsagePoint(BaseModel):
+    fg_sku: str
+    component_sku: str
+    plant_id: Optional[str] = None
+    usage_qty: float
+    level: Optional[int] = None
+    path_count: Optional[int] = None
+
+
+class MultiEchelonInput(BaseModel):
+    mode: str = "off"
+    max_bom_depth: Optional[int] = None
+    fg_to_components_scope: Dict[str, Any] = Field(default_factory=dict)
+    lot_sizing_mode: Optional[str] = None
+    mapping_rules: Dict[str, Any] = Field(default_factory=dict)
+    bom_explosion_used: Optional[bool] = None
+    bom_explosion_reused: Optional[bool] = None
+    production_capacity_per_period: Optional[float] = None
+    inventory_capacity_per_period: Optional[float] = None
+    component_stockout_penalty: Optional[float] = None
+
+
 class ConstraintsInput(BaseModel):
     moq: List[SkuQtyConstraint] = Field(default_factory=list)
     pack_size: List[SkuQtyConstraint] = Field(default_factory=list)
     budget_cap: Optional[float] = None
     max_order_qty: List[SkuQtyConstraint] = Field(default_factory=list)
+    unit_costs: List[SkuUnitCostConstraint] = Field(default_factory=list)
 
 
 class ObjectiveInput(BaseModel):
@@ -434,6 +632,7 @@ class ObjectiveInput(BaseModel):
 
 
 class ReplenishmentPlanRequest(BaseModel):
+    model_config = {"populate_by_name": True}
     dataset_profile_id: int
     planning_horizon_days: int = 30
     demand_forecast: DemandForecastInput
@@ -441,6 +640,18 @@ class ReplenishmentPlanRequest(BaseModel):
     open_pos: List[OpenPOPoint] = Field(default_factory=list)
     constraints: ConstraintsInput = Field(default_factory=ConstraintsInput)
     objective: ObjectiveInput = Field(default_factory=ObjectiveInput)
+    multi_echelon: MultiEchelonInput = Field(default_factory=MultiEchelonInput)
+    bom_usage: List[BomUsagePoint] = Field(default_factory=list)
+    bom_explosion: Optional[Dict[str, Any]] = None
+    async_mode: bool = Field(default=False, alias="async")
+    user_id: Optional[str] = None
+    dataset_fingerprint: Optional[str] = None
+    contract_template_id: Optional[int] = None
+    workflow: Optional[str] = None
+    engine_flags: Dict[str, Any] = Field(default_factory=dict)
+    settings: Dict[str, Any] = Field(default_factory=dict)
+    max_attempts: Optional[int] = None
+    workload: Dict[str, Any] = Field(default_factory=dict)
 
 
 def _parse_iso_day(value: str):
@@ -480,6 +691,49 @@ def _build_sku_lookup(rows: List[SkuQtyConstraint], value_key: str) -> Dict[str,
             continue
         lookup[sku] = max(0.0, _to_float(value, 0.0))
     return lookup
+
+
+def _build_unit_cost_lookup(rows: List[SkuUnitCostConstraint]) -> Dict[str, float]:
+    lookup = {}
+    for row in rows or []:
+        sku = str(row.sku or "").strip()
+        if not sku:
+            continue
+        unit_cost = row.unit_cost
+        if unit_cost is None:
+            continue
+        lookup[sku] = max(0.0, _to_float(unit_cost, 0.0))
+    return lookup
+
+
+def _parse_env_bool(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name, "")
+    if raw is None:
+        return default
+    text = str(raw).strip().lower()
+    if text in {"1", "true", "yes", "y", "on"}:
+        return True
+    if text in {"0", "false", "no", "n", "off"}:
+        return False
+    return default
+
+
+def _infer_period_days(sorted_dates: List[Any]) -> int:
+    if len(sorted_dates) <= 1:
+        return 1
+    deltas = []
+    for idx in range(1, len(sorted_dates)):
+        prev_day = sorted_dates[idx - 1]
+        next_day = sorted_dates[idx]
+        if not prev_day or not next_day:
+            continue
+        days = int((next_day - prev_day).days)
+        if days > 0:
+            deltas.append(days)
+    if not deltas:
+        return 1
+    deltas.sort()
+    return max(1, int(deltas[len(deltas) // 2]))
 
 
 def _format_plan_row(sku: str, plant_id: str, order_date, arrival_date, order_qty: float):
@@ -795,6 +1049,11 @@ def _deterministic_replenishment_plan(payload: ReplenishmentPlanRequest) -> Dict
     return response
 
 
+def _cp_sat_multi_echelon_plan(payload: ReplenishmentPlanRequest) -> Dict[str, Any]:
+    """Thin wrapper — logic lives in replenishment_solver.solve_replenishment_multi_echelon."""
+    return sanitize_numpy(_cp_sat_me_solve(payload))
+
+
 @app.post("/replenishment-plan")
 async def replenishment_plan(request: ReplenishmentPlanRequest):
     """
@@ -802,12 +1061,75 @@ async def replenishment_plan(request: ReplenishmentPlanRequest):
     Returns a stable response schema for chat workflow integration.
     """
     try:
-        result = _deterministic_replenishment_plan(request)
+        if _request_async_enabled(request):
+            if not request.user_id:
+                raise HTTPException(status_code=400, detail="user_id is required when async mode is enabled")
+            dataset_fingerprint = request.dataset_fingerprint or f"profile:{request.dataset_profile_id}"
+            service = get_async_run_service()
+            submit_response = service.submit(
+                AsyncRunSubmitRequest(
+                    user_id=request.user_id,
+                    dataset_profile_id=request.dataset_profile_id,
+                    dataset_fingerprint=dataset_fingerprint,
+                    contract_template_id=request.contract_template_id,
+                    workflow=request.workflow or "workflow_A_replenishment",
+                    engine_flags=request.engine_flags or {},
+                    settings=request.settings or {
+                        "solver": request.objective.model_dump(mode="json"),
+                        "constraints": request.constraints.model_dump(mode="json"),
+                    },
+                    horizon=request.planning_horizon_days,
+                    granularity=request.demand_forecast.granularity,
+                    max_attempts=request.max_attempts,
+                    workload={
+                        "forecast_series": len(request.demand_forecast.series or []),
+                        "skus": len({str(point.sku) for point in (request.demand_forecast.series or []) if point.sku}),
+                        **(request.workload or {}),
+                    },
+                ),
+            )
+            return submit_response.model_dump(mode="json")
+
+        requested_mode = str(request.multi_echelon.mode or "").strip().lower()
+        env_multi_echelon = _parse_env_bool("DI_MULTI_ECHELON", False)
+        use_multi_echelon = (requested_mode == "bom_v0") or (requested_mode in {"", "off"} and env_multi_echelon)
+
+        if use_multi_echelon and ORTOOLS_AVAILABLE:
+            result = _cp_sat_multi_echelon_plan(request)
+        elif use_multi_echelon:
+            result = _deterministic_replenishment_plan(request)
+            result["component_plan"] = []
+            result["component_inventory_projection"] = {"total_rows": 0, "rows": [], "truncated": False}
+            result["bottlenecks"] = {"generated_at": datetime.utcnow().isoformat(), "items": [], "rows": [], "total_rows": 0}
+            result["solver_meta"] = {
+                **(result.get("solver_meta") or {}),
+                "solver": "heuristic",
+                "multi_echelon_mode": "bom_v0",
+                "max_bom_depth": request.multi_echelon.max_bom_depth if request.multi_echelon.max_bom_depth is not None else 50,
+                "bom_explosion_used": bool(request.multi_echelon.bom_explosion_used),
+                "bom_explosion_reused": bool(request.multi_echelon.bom_explosion_reused),
+                "fallback_reason": "OR-Tools is unavailable; multi-echelon fallback ran with single-echelon heuristic."
+            }
+        else:
+            # Single-echelon path: dispatch to CP-SAT MILP v0 or heuristic baseline.
+            if DI_SOLVER_ENGINE == "ortools" and _cp_sat_solve is not None:
+                result = _cp_sat_solve(request)
+            elif DI_SOLVER_ENGINE == "ortools":
+                # ortools requested but not installed; fall back to heuristic silently.
+                result = _deterministic_replenishment_plan(request)
+                result.setdefault("solver_meta", {})["note"] = (
+                    "DI_SOLVER_ENGINE=ortools requested but ortools is not installed; used heuristic fallback."
+                )
+            else:
+                result = _deterministic_replenishment_plan(request)
         return sanitize_numpy(result)
     except Exception as e:
         return {
             "status": "error",
             "plan": [],
+            "component_plan": [],
+            "component_inventory_projection": {"total_rows": 0, "rows": [], "truncated": False},
+            "bottlenecks": {"generated_at": datetime.utcnow().isoformat(), "items": [], "rows": [], "total_rows": 0},
             "kpis": {
                 "estimated_service_level": None,
                 "estimated_stockout_units": None,
@@ -1382,7 +1704,7 @@ class SimulationRequest(BaseModel):
     scenario: str = "normal"                   # normal | volatile | disaster | seasonal
     seed: int = 42
     duration_days: Optional[int] = None        # 覆寫情境預設天數
-    use_forecaster: bool = False               # True = 用 SmartOps 預測, False = naive baseline
+    use_forecaster: bool = False               # True = 用 Decision-Intelligence 預測, False = naive baseline
     forecast_interval: int = 7                 # 每 N 天跑一次預測
     chaos_intensity: Optional[str] = None      # 覆寫混沌強度
 

@@ -1,4 +1,4 @@
-# SmartOps App 重構進度報告
+# Decision-Intelligence App 重構進度報告
 
 ## 📅 重構日期：2025-12-01
 

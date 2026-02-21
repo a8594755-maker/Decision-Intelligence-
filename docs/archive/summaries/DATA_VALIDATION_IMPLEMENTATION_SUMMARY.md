@@ -2,7 +2,7 @@
 
 ## ✅ 任務完成度：100%
 
-已成功為 SmartOps 系統的 3 種新 upload type 加入完整的資料驗證與清理流程。
+已成功為 Decision-Intelligence 系統的 3 種新 upload type 加入完整的資料驗證與清理流程。
 
 ---
 

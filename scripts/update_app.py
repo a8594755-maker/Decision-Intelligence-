@@ -42,7 +42,7 @@ for i, line in enumerate(lines):
 # 如果沒找到 Mock Data，找 export default
 if start_idx == 0:
     for i, line in enumerate(lines):
-        if 'export default function SmartOpsApp' in line:
+        if 'export default function DecisionIntelligenceApp' in line:
             start_idx = i
             break
 

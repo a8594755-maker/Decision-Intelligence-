@@ -2,7 +2,7 @@
 
 ## 📋 實施摘要
 
-本次實施在 SmartOps 應用中加入了 BOM Explosion 執行入口，允許使用者從 UI 觸發 BOM 展開計算，並整合到批次管理和撤銷機制中。
+本次實施在 Decision-Intelligence 應用中加入了 BOM Explosion 執行入口，允許使用者從 UI 觸發 BOM 展開計算，並整合到批次管理和撤銷機制中。
 
 ### 完成日期
 2026-01-26
@@ -114,7 +114,7 @@ psql -U postgres -h <your-supabase-host> -d postgres -f database/add_bom_explosi
 
 ### Step 1: 執行資料庫 Patch
 ```bash
-cd c:\Users\a8594\smartops-app
+cd c:\Users\a8594\decision-intelligence
 psql -U postgres -h <your-supabase-host> -d postgres -f database/add_bom_explosion_batch_support.sql
 ```
 

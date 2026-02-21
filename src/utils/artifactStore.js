@@ -1,7 +1,64 @@
 import { supabase, userFilesService } from '../services/supabaseClient';
 import { diRunsService } from '../services/diRunsService';
+import {
+  ARTIFACT_CONTRACT_VERSION,
+  validateArtifactOrThrow
+} from '../contracts/diArtifactContractV1';
 
 const DEFAULT_SIZE_THRESHOLD = 200 * 1024;
+const runtimeEnv = import.meta.env || {};
+
+const parseEnvBoolean = (value, defaultValue = false) => {
+  if (value === undefined || value === null || value === '') return defaultValue;
+  const normalized = String(value).trim().toLowerCase();
+  if (['1', 'true', 'yes', 'y', 'on'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'n', 'off'].includes(normalized)) return false;
+  return defaultValue;
+};
+
+// Default strict mode freezes V1 artifact contracts; disable only to avoid hard production stops.
+const STRICT_ARTIFACT_CONTRACT = parseEnvBoolean(runtimeEnv.VITE_DI_STRICT_ARTIFACT_CONTRACT, true);
+
+const validateArtifactWithPolicy = ({ artifactType, payload }) => {
+  try {
+    return validateArtifactOrThrow({
+      artifact_type: artifactType,
+      payload
+    });
+  } catch (error) {
+    if (STRICT_ARTIFACT_CONTRACT) {
+      throw error;
+    }
+
+    console.warn(
+      `[artifactStore] Artifact contract ${ARTIFACT_CONTRACT_VERSION} warning for ${artifactType}: ${error.message}`,
+      {
+        artifact_type: artifactType,
+        contract_version: ARTIFACT_CONTRACT_VERSION,
+        strict_mode: STRICT_ARTIFACT_CONTRACT,
+        issues: Array.isArray(error?.issues) ? error.issues.slice(0, 8) : []
+      }
+    );
+    return payload;
+  }
+};
+
+const enforceCsvInputShape = (rows) => {
+  if (typeof rows === 'string') return;
+  if (!Array.isArray(rows)) {
+    const message = 'CSV artifact payload must be a string or row array.';
+    if (STRICT_ARTIFACT_CONTRACT) throw new Error(message);
+    console.warn(`[artifactStore] ${message}`, { received_type: typeof rows });
+    return;
+  }
+
+  const invalidRowIndex = rows.findIndex((row) => !row || typeof row !== 'object' || Array.isArray(row));
+  if (invalidRowIndex !== -1) {
+    const message = `CSV row payload must be an array of objects (invalid row at index ${invalidRowIndex}).`;
+    if (STRICT_ARTIFACT_CONTRACT) throw new Error(message);
+    console.warn(`[artifactStore] ${message}`);
+  }
+};
 
 const encodeSize = (text) => {
   const value = String(text || '');
@@ -68,16 +125,20 @@ export async function saveJsonArtifact(run_id, type, payload, size_threshold = D
   if (!run_id) throw new Error('run_id is required');
   if (!type) throw new Error('type is required');
 
-  const serialized = JSON.stringify(payload ?? {});
+  const artifactType = String(type);
+  const validatedPayload = validateArtifactWithPolicy({
+    artifactType,
+    payload: payload ?? {}
+  });
+  const serialized = JSON.stringify(validatedPayload ?? {});
   const sizeBytes = encodeSize(serialized);
   const threshold = Number.isFinite(Number(size_threshold)) ? Number(size_threshold) : DEFAULT_SIZE_THRESHOLD;
-  const artifactType = String(type);
 
   if (sizeBytes <= threshold) {
     const artifact = await diRunsService.saveArtifact({
       run_id,
       artifact_type: artifactType,
-      artifact_json: payload ?? {}
+      artifact_json: validatedPayload ?? {}
     });
 
     return {
@@ -100,7 +161,7 @@ export async function saveJsonArtifact(run_id, type, payload, size_threshold = D
     user_id: userId,
     fileName,
     contentType: 'application/json',
-    payload: payload ?? {}
+    payload: validatedPayload ?? {}
   });
 
   const artifact = await diRunsService.saveArtifact({
@@ -152,10 +213,16 @@ export async function saveCsvArtifact(run_id, type, rows, filename, size_thresho
   if (!run_id) throw new Error('run_id is required');
   if (!type) throw new Error('type is required');
 
-  const csv = typeof rows === 'string' ? rows : rowsToCsv(rows);
-  const sizeBytes = encodeSize(csv);
+  enforceCsvInputShape(rows);
+
   const threshold = Number.isFinite(Number(size_threshold)) ? Number(size_threshold) : DEFAULT_SIZE_THRESHOLD;
   const artifactType = String(type);
+  const rawCsv = typeof rows === 'string' ? rows : (Array.isArray(rows) ? rowsToCsv(rows) : '');
+  const csv = validateArtifactWithPolicy({
+    artifactType,
+    payload: rawCsv
+  });
+  const sizeBytes = encodeSize(csv);
 
   if (sizeBytes <= threshold) {
     const artifact = await diRunsService.saveArtifact({

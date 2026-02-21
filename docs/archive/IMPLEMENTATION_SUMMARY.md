@@ -2,7 +2,7 @@
 
 ## 專案概述
 
-本專案實作了一個完整的企業級資料上傳、驗證、清洗和寫入系統，專為供應鏈管理 (SmartOps) 設計。系統支援多種資料類型的上傳，並提供智能欄位映射、自動資料驗證清洗，以及 mapping 模板保存功能。
+本專案實作了一個完整的企業級資料上傳、驗證、清洗和寫入系統，專為供應鏈管理 (Decision-Intelligence) 設計。系統支援多種資料類型的上傳，並提供智能欄位映射、自動資料驗證清洗，以及 mapping 模板保存功能。
 
 ---
 
@@ -251,7 +251,7 @@ uploadMappingsService.deleteMapping(userId, uploadType)
 ## 📂 專案結構
 
 ```
-smartops-app/
+decision-intelligence/
 ├── src/
 │   ├── views/
 │   │   └── EnhancedExternalSystemsView.jsx  ⭐ 主要 UI 組件
@@ -457,7 +457,7 @@ test('getRequiredFields should return required fields', () => {
 ### 資料庫遷移
 ```bash
 # 1. 執行 SQL 建表
-psql -U postgres -d smartops < database/upload_mappings_schema.sql
+psql -U postgres -d decision_intelligence < database/upload_mappings_schema.sql
 
 # 2. 驗證表結構
 SELECT * FROM upload_mappings LIMIT 1;

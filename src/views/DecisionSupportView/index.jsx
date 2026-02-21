@@ -11,7 +11,8 @@ import { prepareChatUploadFromFile, buildDataSummaryCardPayload, MAX_UPLOAD_BYTE
 import { createDatasetProfileFromSheets } from '../../services/datasetProfilingService';
 import { datasetProfilesService } from '../../services/datasetProfilesService';
 import { reuseMemoryService } from '../../services/reuseMemoryService';
-import { streamChatWithAI, saveApiKey } from '../../services/geminiAPI';
+import { streamChatWithAI } from '../../services/geminiAPI';
+import { diResetService } from '../../services/diResetService';
 import { runForecastFromDatasetProfile, buildForecastCardPayload } from '../../services/chatForecastService';
 import {
   runPlanFromDatasetProfile,
@@ -19,19 +20,28 @@ import {
   buildPlanTableCardPayload,
   buildInventoryProjectionCardPayload,
   buildPlanExceptionsCardPayload,
-  buildPlanDownloadsPayload
+  buildBomBottlenecksCardPayload,
+  buildPlanDownloadsPayload,
+  buildRiskAwarePlanComparisonCardPayload
 } from '../../services/chatPlanningService';
+import {
+  generateTopologyGraphForRun,
+  loadTopologyGraphForRun
+} from '../../services/topology/topologyService';
 import {
   startWorkflow,
   runNextStep as runWorkflowNextStep,
   resumeRun as resumeWorkflowRun,
   replayRun as replayWorkflowRun,
   getRunSnapshot as getWorkflowRunSnapshot,
+  submitBlockingAnswers as submitWorkflowBlockingAnswers,
   WORKFLOW_NAMES
 } from '../../workflows/workflowRegistry';
+import asyncRunsApiClient from '../../services/asyncRunsApiClient';
 import { buildDatasetFingerprint } from '../../utils/datasetFingerprint';
 import { buildSignature } from '../../utils/datasetSimilarity';
 import { buildReusePlan, applyContractTemplateToProfile } from '../../utils/reusePlanner';
+import { buildActualVsForecastSeries } from '../../utils/charts/buildActualVsForecastSeries';
 import UPLOAD_SCHEMAS from '../../utils/uploadSchemas';
 import { getRequiredMappingStatus } from '../../utils/requiredMappingStatus';
 import { ruleBasedMapping } from '../../utils/aiMappingHelper';
@@ -44,6 +54,7 @@ import PlanSummaryCard from '../../components/chat/PlanSummaryCard';
 import PlanTableCard from '../../components/chat/PlanTableCard';
 import InventoryProjectionCard from '../../components/chat/InventoryProjectionCard';
 import PlanExceptionsCard from '../../components/chat/PlanExceptionsCard';
+import BomBottlenecksCard from '../../components/chat/BomBottlenecksCard';
 import RiskSummaryCard from '../../components/chat/RiskSummaryCard';
 import RiskExceptionsCard from '../../components/chat/RiskExceptionsCard';
 import RiskDrilldownCard from '../../components/chat/RiskDrilldownCard';
@@ -51,20 +62,24 @@ import PlanErrorCard from '../../components/chat/PlanErrorCard';
 import WorkflowProgressCard from '../../components/chat/WorkflowProgressCard';
 import WorkflowErrorCard from '../../components/chat/WorkflowErrorCard';
 import BlockingQuestionsCard from '../../components/chat/BlockingQuestionsCard';
+import BlockingQuestionsInteractiveCard from '../../components/chat/BlockingQuestionsInteractiveCard';
 import WorkflowReportCard from '../../components/chat/WorkflowReportCard';
 import ReuseDecisionCard from '../../components/chat/ReuseDecisionCard';
 import ValidationCard from '../../components/chat/ValidationCard';
 import DownloadsCard from '../../components/chat/DownloadsCard';
 import ContractConfirmationCard from '../../components/chat/ContractConfirmationCard';
 import CanvasPanel from '../../components/chat/CanvasPanel';
+import RiskAwarePlanComparisonCard from '../../components/chat/RiskAwarePlanComparisonCard';
 import AIErrorCard from '../../components/chat/AIErrorCard';
 import SplitShell from '../../components/chat/SplitShell';
 import ConversationSidebar from '../../components/chat/ConversationSidebar';
 import ChatThread from '../../components/chat/ChatThread';
 import ChatComposer from '../../components/chat/ChatComposer';
 
-const STORAGE_KEY = 'smartops_conversations';
-const TABLE_UNAVAILABLE_KEY = 'smartops_conversations_table_unavailable';
+const STORAGE_KEY = 'decision_intelligence_conversations';
+const TABLE_UNAVAILABLE_KEY = 'decision_intelligence_conversations_table_unavailable';
+const SIDEBAR_COLLAPSED_KEY_PREFIX = 'decision_intelligence_sidebar_collapsed_';
+const CANVAS_SPLIT_RATIO_KEY_PREFIX = 'decision_intelligence_canvas_split_ratio_';
 const MAX_UPLOAD_MESSAGE = 'Please upload aggregated data (e.g., SKU-store-day/week). Maximum 50MB.';
 
 const tableUnavailableAtLoad = sessionStorage.getItem(TABLE_UNAVAILABLE_KEY) === '1';
@@ -88,9 +103,11 @@ const DEFAULT_CANVAS_STATE = {
   chartPayload: {
     actual_vs_forecast: [],
     inventory_projection: [],
-    cost_breakdown: []
+    cost_breakdown: [],
+    topology_graph: null
   },
-  downloads: []
+  downloads: [],
+  topologyRunning: false
 };
 
 const EXECUTION_KEYWORDS = [
@@ -107,6 +124,8 @@ const EXECUTION_KEYWORDS = [
 
 const SPLIT_RATIO_MIN = 0.25;
 const SPLIT_RATIO_MAX = 0.75;
+const ASYNC_JOB_POLL_INTERVAL_MS = 2000;
+const ASYNC_JOB_MAX_POLLS = 1200;
 
 function clampSplitRatio(value) {
   const numeric = Number(value);
@@ -124,6 +143,8 @@ function isApiKeyConfigError(message = '') {
     || text.includes('no api key');
   return (
     text.includes('warning: no api key found')
+    || text.includes('missing_server_keys')
+    || text.includes('not configured on server')
     || (mentionsKey && text.includes('(400)'))
     || (mentionsKey && keyStateError)
   );
@@ -147,6 +168,9 @@ function getErrorMessage(error, fallback = 'Unexpected error') {
   }
   return fallback;
 }
+
+// Allowlisted bind_to prefixes for blocking-question answers (PR-5)
+const BIND_TO_ALLOWLIST = ['mapping.', 'settings.'];
 
 const QUICK_PROMPTS = [
   { label: 'Top risk items', prompt: 'What are my top 5 highest-risk materials right now? Show their risk scores and recommended actions.' },
@@ -543,26 +567,8 @@ function toFiniteNumber(value) {
 }
 
 function buildActualVsForecastRowsFromForecastCard(payload = {}) {
-  const groups = Array.isArray(payload?.series_groups) && payload.series_groups.length > 0
-    ? payload.series_groups
-    : (Array.isArray(payload?.forecast_series_json?.groups) ? payload.forecast_series_json.groups : []);
-  const selected = groups.find((group) => Array.isArray(group?.points) && group.points.length > 0);
-  if (!selected) return [];
-
-  return selected.points
-    .map((point, index) => ({
-      period: point?.time_bucket || point?.period || `p_${index + 1}`,
-      actual: toFiniteNumber(point?.actual),
-      forecast: toFiniteNumber(point?.forecast),
-      lower: toFiniteNumber(point?.lower),
-      upper: toFiniteNumber(point?.upper)
-    }))
-    .filter((row) => (
-      row.actual !== null
-      || row.forecast !== null
-      || row.lower !== null
-      || row.upper !== null
-    ));
+  const built = buildActualVsForecastSeries(payload);
+  return built.series.length > 0 ? built.rows : [];
 }
 
 function buildInventoryProjectionRowsFromCard(payload = {}) {
@@ -613,7 +619,9 @@ function buildCostBreakdownRowsFromPlanSummary(payload = {}) {
 function deriveCanvasChartPatchFromCard(cardType, payload = {}) {
   if (cardType === 'forecast_result_card') {
     const rows = buildActualVsForecastRowsFromForecastCard(payload);
-    return rows.length > 0 ? { actual_vs_forecast: rows } : null;
+    if (rows.length === 0) return null;
+    const groups = Array.isArray(payload.series_groups) ? payload.series_groups : [];
+    return { actual_vs_forecast: rows, ...(groups.length > 0 ? { series_groups: groups } : {}) };
   }
   if (cardType === 'inventory_projection_card') {
     const rows = buildInventoryProjectionRowsFromCard(payload);
@@ -622,6 +630,50 @@ function deriveCanvasChartPatchFromCard(cardType, payload = {}) {
   if (cardType === 'plan_summary_card') {
     const rows = buildCostBreakdownRowsFromPlanSummary(payload);
     return rows.length > 0 ? { cost_breakdown: rows } : null;
+  }
+  if (cardType === 'topology_graph_card') {
+    if (payload?.graph && typeof payload.graph === 'object') {
+      return { topology_graph: payload.graph };
+    }
+  }
+  if (cardType === 'risk_aware_plan_comparison_card') {
+    if (payload?.kpis) {
+      return { plan_comparison: { kpis: payload.kpis, key_changes: payload.key_changes || [] } };
+    }
+    return null;
+  }
+  return null;
+}
+
+function extractRunIdFromMessage(message) {
+  if (!message) return null;
+  const payload = message.payload || {};
+  const fields = [payload.run_id, payload.runId, payload.forecast_run_id];
+  for (const field of fields) {
+    const numeric = Number(field);
+    if (Number.isFinite(numeric)) return numeric;
+  }
+  return null;
+}
+
+function findLatestRunIdFromMessages(messages = []) {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const runId = extractRunIdFromMessage(messages[i]);
+    if (Number.isFinite(runId)) return runId;
+  }
+  return null;
+}
+
+function findLatestWorkflowRunIdFromMessages(messages = []) {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const message = messages[i];
+    if (!message) continue;
+    const type = String(message.type || '').trim();
+    if (type && type !== 'workflow_progress_card' && type !== 'topology_graph_card') {
+      continue;
+    }
+    const runId = extractRunIdFromMessage(message);
+    if (Number.isFinite(runId)) return runId;
   }
   return null;
 }
@@ -724,6 +776,8 @@ function isExecutionIntent(text = '') {
 
 export default function DecisionSupportView({ user, addNotification }) {
   const userStorageSuffix = user?.id || 'anon';
+  const sidebarKey = `${SIDEBAR_COLLAPSED_KEY_PREFIX}${userStorageSuffix}`;
+  const splitRatioKey = `${CANVAS_SPLIT_RATIO_KEY_PREFIX}${userStorageSuffix}`;
   const [input, setInput] = useState('');
   const [conversations, setConversations] = useState([]);
   const [isConversationsLoading, setIsConversationsLoading] = useState(false);
@@ -743,30 +797,36 @@ export default function DecisionSupportView({ user, addNotification }) {
   const [runningPlanKeys, setRunningPlanKeys] = useState({});
   const [workflowSnapshots, setWorkflowSnapshots] = useState({});
   const [activeWorkflowRuns, setActiveWorkflowRuns] = useState({});
+  // What-If Explorer: tracks the last succeeded plan run ID for the active conversation
+  const [latestPlanRunId, setLatestPlanRunId] = useState(null);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => {
     try {
-      return localStorage.getItem(`smartops_sidebar_collapsed_${userStorageSuffix}`) === '1';
+      return localStorage.getItem(sidebarKey) === '1';
     } catch {
       return false;
     }
   });
   const [splitRatio, setSplitRatio] = useState(() => {
     try {
-      return clampSplitRatio(localStorage.getItem(`smartops_canvas_split_ratio_${userStorageSuffix}`) ?? 0.5);
+      return clampSplitRatio(localStorage.getItem(splitRatioKey) ?? 0.5);
     } catch {
       return 0.5;
     }
   });
 
+  const [isCanvasDetached, setIsCanvasDetached] = useState(false);
+
   const textareaRef = useRef(null);
   const fileInputRef = useRef(null);
+  const asyncJobByRunRef = useRef({});
+  const topologyAutoLoadRef = useRef({});
 
   const sidebarCollapseStorageKey = useMemo(
-    () => `smartops_sidebar_collapsed_${user?.id || 'anon'}`,
+    () => `${SIDEBAR_COLLAPSED_KEY_PREFIX}${user?.id || 'anon'}`,
     [user?.id]
   );
   const splitRatioStorageKey = useMemo(
-    () => `smartops_canvas_split_ratio_${user?.id || 'anon'}`,
+    () => `${CANVAS_SPLIT_RATIO_KEY_PREFIX}${user?.id || 'anon'}`,
     [user?.id]
   );
 
@@ -903,7 +963,8 @@ export default function DecisionSupportView({ user, addNotification }) {
     const seed = {
       actual_vs_forecast: [],
       inventory_projection: [],
-      cost_breakdown: []
+      cost_breakdown: [],
+      topology_graph: null
     };
 
     (currentMessages || []).forEach((message) => {
@@ -920,6 +981,9 @@ export default function DecisionSupportView({ user, addNotification }) {
       if (Array.isArray(patch.cost_breakdown) && patch.cost_breakdown.length > 0) {
         seed.cost_breakdown = patch.cost_breakdown;
       }
+      if (patch.topology_graph && typeof patch.topology_graph === 'object') {
+        seed.topology_graph = patch.topology_graph;
+      }
     });
 
     return seed;
@@ -930,13 +994,42 @@ export default function DecisionSupportView({ user, addNotification }) {
     const liveActual = toArray(live.actual_vs_forecast);
     const liveInventory = toArray(live.inventory_projection);
     const liveCost = toArray(live.cost_breakdown);
+    const liveTopology = live.topology_graph && typeof live.topology_graph === 'object'
+      ? live.topology_graph
+      : null;
 
+    const liveGroups = toArray(live.series_groups);
+    const derivedGroups = toArray(derivedChartPayloadFromMessages.series_groups);
     return {
       actual_vs_forecast: liveActual.length > 0 ? liveActual : derivedChartPayloadFromMessages.actual_vs_forecast,
+      series_groups: liveGroups.length > 0 ? liveGroups : derivedGroups,
       inventory_projection: liveInventory.length > 0 ? liveInventory : derivedChartPayloadFromMessages.inventory_projection,
-      cost_breakdown: liveCost.length > 0 ? liveCost : derivedChartPayloadFromMessages.cost_breakdown
+      cost_breakdown: liveCost.length > 0 ? liveCost : derivedChartPayloadFromMessages.cost_breakdown,
+      topology_graph: liveTopology || derivedChartPayloadFromMessages.topology_graph || null
     };
   }, [activeCanvasState?.chartPayload, derivedChartPayloadFromMessages]);
+  const topologyRunId = useMemo(() => {
+    const graphRunId = Number(
+      effectiveCanvasChartPayload?.topology_graph?.run_id
+      || effectiveCanvasChartPayload?.topology_graph?.runId
+    );
+    if (Number.isFinite(graphRunId)) return graphRunId;
+
+    const workflowRunId = findLatestWorkflowRunIdFromMessages(currentMessages);
+    if (Number.isFinite(workflowRunId)) return workflowRunId;
+
+    const canvasRunId = Number(activeCanvasState?.run?.id || activeCanvasState?.run?.run_id);
+    if (Number.isFinite(canvasRunId)) return canvasRunId;
+
+    const fallbackRunId = findLatestRunIdFromMessages(currentMessages);
+    return Number.isFinite(fallbackRunId) ? fallbackRunId : null;
+  }, [effectiveCanvasChartPayload?.topology_graph, currentMessages, activeCanvasState?.run]);
+  const topologyRunStatus = useMemo(() => {
+    const numericRunId = Number(topologyRunId);
+    if (!Number.isFinite(numericRunId)) return '';
+    const snapshot = workflowSnapshots[numericRunId] || workflowSnapshots[String(numericRunId)] || null;
+    return String(snapshot?.run?.status || '').toLowerCase();
+  }, [topologyRunId, workflowSnapshots]);
 
   const handleSidebarToggle = useCallback(() => {
     setIsSidebarCollapsed((prev) => {
@@ -1030,6 +1123,75 @@ export default function DecisionSupportView({ user, addNotification }) {
       clearInterval(intervalId);
     };
   }, [activeWorkflowRuns, upsertWorkflowSnapshot, setWorkflowRunActive]);
+
+  useEffect(() => {
+    if (!currentConversationId) return;
+    const targetRunId = Number(topologyRunId);
+    if (!Number.isFinite(targetRunId)) return;
+
+    const existingGraphRunId = Number(
+      activeCanvasState?.chartPayload?.topology_graph?.run_id
+      || activeCanvasState?.chartPayload?.topology_graph?.runId
+    );
+    if (Number.isFinite(existingGraphRunId) && existingGraphRunId === targetRunId) return;
+
+    const cacheKey = `${currentConversationId}:${targetRunId}`;
+    const cacheEntry = topologyAutoLoadRef.current[cacheKey] || {
+      loaded: false,
+      inFlight: false,
+      lastAttemptAt: 0
+    };
+    if (cacheEntry.loaded || cacheEntry.inFlight) return;
+    if ((Date.now() - Number(cacheEntry.lastAttemptAt || 0)) < 2000) return;
+    topologyAutoLoadRef.current[cacheKey] = {
+      ...cacheEntry,
+      inFlight: true,
+      lastAttemptAt: Date.now()
+    };
+
+    let cancelled = false;
+    loadTopologyGraphForRun({ runId: targetRunId })
+      .then((loaded) => {
+        const current = topologyAutoLoadRef.current[cacheKey] || {};
+        if (cancelled || !loaded?.graph) {
+          topologyAutoLoadRef.current[cacheKey] = {
+            ...current,
+            inFlight: false
+          };
+          return;
+        }
+        updateCanvasState(currentConversationId, (prev) => ({
+          ...prev,
+          chartPayload: {
+            ...(prev.chartPayload || {}),
+            topology_graph: loaded.graph
+          }
+        }));
+        topologyAutoLoadRef.current[cacheKey] = {
+          ...current,
+          loaded: true,
+          inFlight: false
+        };
+      })
+      .catch(() => {
+        const current = topologyAutoLoadRef.current[cacheKey] || {};
+        topologyAutoLoadRef.current[cacheKey] = {
+          ...current,
+          inFlight: false
+        };
+        // topology artifact may not exist yet for this run
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    currentConversationId,
+    topologyRunId,
+    topologyRunStatus,
+    activeCanvasState?.chartPayload?.topology_graph,
+    updateCanvasState
+  ]);
 
   const handleUseDatasetContextFromCard = useCallback((cardPayload) => {
     if (!currentConversationId || !cardPayload?.dataset_profile_id) return;
@@ -1480,13 +1642,14 @@ export default function DecisionSupportView({ user, addNotification }) {
       const confirmationPayload = buildConfirmationPayload(dataSummaryPayload);
       const validationPayload = buildValidationPayload(resolvedProfileRow);
       const blockingQuestions = forecastGate.issues.map((issue) => {
-        if (issue.reason === 'missing_dataset') {
-          return `Missing required dataset mapping for "${issue.upload_type}".`;
-        }
-        const missing = Array.isArray(issue.missing_required_fields) && issue.missing_required_fields.length > 0
-          ? issue.missing_required_fields.join(', ')
-          : 'required fields';
-        return `${issue.sheet_name || issue.upload_type}: map missing required fields (${missing}).`;
+        const text = issue.reason === 'missing_dataset'
+          ? `Missing required dataset mapping for "${issue.upload_type}".`
+          : `${issue.sheet_name || issue.upload_type}: map missing required fields (${
+              Array.isArray(issue.missing_required_fields) && issue.missing_required_fields.length > 0
+                ? issue.missing_required_fields.join(', ')
+                : 'required fields'
+            }).`;
+        return { id: null, question: text, answer_type: 'text', options: null, why_needed: null, bind_to: null };
       }).slice(0, 2);
 
       const messages = [
@@ -1504,7 +1667,7 @@ export default function DecisionSupportView({ user, addNotification }) {
         {
           role: 'ai',
           type: 'blocking_questions_card',
-          payload: { questions: blockingQuestions },
+          payload: { questions: blockingQuestions, dataset_profile_id: resolvedProfileRow.id, run_id: null },
           timestamp: new Date().toISOString()
         }
       ];
@@ -1566,11 +1729,13 @@ export default function DecisionSupportView({ user, addNotification }) {
       ]);
 
       if (actualVsForecastRows.length > 0) {
+        const forecastSeriesGroups = Array.isArray(cardPayload.series_groups) ? cardPayload.series_groups : [];
         updateCanvasState(currentConversationId, (prev) => ({
           ...prev,
           chartPayload: {
             ...(prev.chartPayload || {}),
-            actual_vs_forecast: actualVsForecastRows
+            actual_vs_forecast: actualVsForecastRows,
+            ...(forecastSeriesGroups.length > 0 ? { series_groups: forecastSeriesGroups } : {})
           },
           activeTab: 'charts'
         }));
@@ -1617,7 +1782,8 @@ export default function DecisionSupportView({ user, addNotification }) {
   const executePlanFlow = useCallback(async ({
     datasetProfileId = null,
     forecastRunId = null,
-    forecastCardPayload = null
+    forecastCardPayload = null,
+    riskMode = 'off'
   } = {}) => {
     if (!user?.id) {
       addNotification?.('Please sign in before running plan.', 'error');
@@ -1661,14 +1827,17 @@ export default function DecisionSupportView({ user, addNotification }) {
         planningHorizonDays: Number.isFinite(requestedPlanHorizon) ? requestedPlanHorizon : null,
         constraintsOverride: runtimeSettings?.plan?.constraints || null,
         objectiveOverride: runtimeSettings?.plan?.objective || null,
-        settings: runtimeSettings
+        settings: runtimeSettings,
+        riskMode
       });
 
       const summaryPayload = buildPlanSummaryCardPayload(planResult, resolvedProfileRow);
       const tablePayload = buildPlanTableCardPayload(planResult);
       const projectionPayload = buildInventoryProjectionCardPayload(planResult);
       const exceptionsPayload = buildPlanExceptionsCardPayload(planResult);
+      const bottlenecksPayload = buildBomBottlenecksCardPayload(planResult);
       const downloadsPayload = buildPlanDownloadsPayload(planResult);
+      const riskComparisonPayload = buildRiskAwarePlanComparisonCardPayload(planResult);
       const inventoryRows = buildInventoryProjectionRowsFromCard(projectionPayload);
       const costRows = buildCostBreakdownRowsFromPlanSummary(summaryPayload);
 
@@ -1702,12 +1871,26 @@ export default function DecisionSupportView({ user, addNotification }) {
           payload: exceptionsPayload,
           timestamp: new Date().toISOString()
         },
+        ...(bottlenecksPayload.total_rows > 0
+          ? [{
+              role: 'ai',
+              type: 'bom_bottlenecks_card',
+              payload: bottlenecksPayload,
+              timestamp: new Date().toISOString()
+            }]
+          : []),
         {
           role: 'ai',
           type: 'downloads_card',
           payload: downloadsPayload,
           timestamp: new Date().toISOString()
-        }
+        },
+        ...(riskComparisonPayload ? [{
+          role: 'ai',
+          type: 'risk_aware_plan_comparison_card',
+          payload: riskComparisonPayload,
+          timestamp: new Date().toISOString()
+        }] : [])
       ]);
 
       if (inventoryRows.length > 0 || costRows.length > 0) {
@@ -1724,6 +1907,8 @@ export default function DecisionSupportView({ user, addNotification }) {
 
       markCanvasRunFinished('succeeded', '✅ Plan completed.', 'solver');
       addNotification?.(`Plan run #${planResult?.run?.id || ''} completed.`, 'success');
+      // Track latest plan run for What-If Explorer
+      if (planResult?.run?.id) setLatestPlanRunId(planResult.run.id);
     } catch (error) {
       const constraintViolations = Array.isArray(error?.constraint_check?.violations)
         ? error.constraint_check.violations
@@ -1764,7 +1949,20 @@ export default function DecisionSupportView({ user, addNotification }) {
     updateCanvasState
   ]);
 
-  const appendWorkflowStepEventMessages = useCallback((runId, stepEvent) => {
+  const executeRiskAwarePlanFlow = useCallback(async ({
+    datasetProfileId = null,
+    forecastRunId = null,
+    forecastCardPayload = null
+  } = {}) => {
+    return executePlanFlow({
+      datasetProfileId,
+      forecastRunId,
+      forecastCardPayload,
+      riskMode: 'on'
+    });
+  }, [executePlanFlow]);
+
+  const appendWorkflowStepEventMessages = useCallback((runId, stepEvent, profileId = null) => {
     if (!stepEvent) return;
 
     const timestamp = new Date().toISOString();
@@ -1799,7 +1997,18 @@ export default function DecisionSupportView({ user, addNotification }) {
       });
     }
 
-    if (stepEvent.status === 'failed' && stepEvent.error) {
+    if (stepEvent.status === 'blocked' && stepEvent.error) {
+      messages.push({
+        role: 'ai',
+        type: 'blocking_questions_interactive_card',
+        payload: {
+          run_id: runId || null,
+          step: stepEvent.step,
+          questions: Array.isArray(stepEvent.error.blocking_questions) ? stepEvent.error.blocking_questions : []
+        },
+        timestamp
+      });
+    } else if (stepEvent.status === 'failed' && stepEvent.error) {
       messages.push({
         role: 'ai',
         type: 'workflow_error_card',
@@ -1817,7 +2026,9 @@ export default function DecisionSupportView({ user, addNotification }) {
           role: 'ai',
           type: 'blocking_questions_card',
           payload: {
-            questions: stepEvent.error.blocking_questions
+            questions: stepEvent.error.blocking_questions,
+            run_id: runId || null,
+            dataset_profile_id: profileId || null
           },
           timestamp
         });
@@ -1838,7 +2049,65 @@ export default function DecisionSupportView({ user, addNotification }) {
         activeTab: 'charts'
       }));
     }
+
+    if (stepEvent?.step === 'topology' && stepEvent?.status === 'succeeded' && currentConversationId) {
+      const numericRunId = Number(runId);
+      if (Number.isFinite(numericRunId)) {
+        loadTopologyGraphForRun({ runId: numericRunId })
+          .then((loaded) => {
+            if (!loaded?.graph) return;
+            updateCanvasState(currentConversationId, (prev) => ({
+              ...prev,
+              chartPayload: {
+                ...(prev.chartPayload || {}),
+                topology_graph: loaded.graph
+              },
+              topologyRunning: false
+            }));
+          })
+          .catch(() => {
+            // best effort graph hydration for topology step
+          });
+      }
+    }
   }, [appendMessagesToCurrentConversation, currentConversationId, updateCanvasState]);
+
+  const sleepMs = useCallback((ms) => new Promise((resolve) => setTimeout(resolve, ms)), []);
+
+  const processAsyncWorkflowJob = useCallback(async ({ jobId, runId }) => {
+    if (!jobId || !runId) return null;
+    let latestSnapshot = null;
+
+    setWorkflowRunActive(runId, true);
+    try {
+      for (let i = 0; i < ASYNC_JOB_MAX_POLLS; i += 1) {
+        const jobStatus = await asyncRunsApiClient.getJob(jobId);
+        const runStatus = String(jobStatus?.run_status || jobStatus?.status || 'queued').toLowerCase();
+
+        latestSnapshot = {
+          run: {
+            id: runId,
+            workflow: jobStatus?.workflow || null,
+            stage: jobStatus?.run_stage || jobStatus?.current_step || null,
+            status: runStatus,
+            meta: jobStatus?.run_meta || {}
+          },
+          steps: Array.isArray(jobStatus?.step_summary) ? jobStatus.step_summary : [],
+          artifacts: []
+        };
+        upsertWorkflowSnapshot(latestSnapshot);
+
+        const jobStatusNorm = String(jobStatus?.status || '').toLowerCase();
+        if (['succeeded', 'failed', 'canceled'].includes(jobStatusNorm) || runStatus === 'waiting_user') {
+          break;
+        }
+        await sleepMs(ASYNC_JOB_POLL_INTERVAL_MS);
+      }
+    } finally {
+      setWorkflowRunActive(runId, false);
+    }
+    return latestSnapshot;
+  }, [setWorkflowRunActive, sleepMs, upsertWorkflowSnapshot]);
 
   const processWorkflowRun = useCallback(async (runId) => {
     if (!runId) return null;
@@ -1855,7 +2124,7 @@ export default function DecisionSupportView({ user, addNotification }) {
           artifacts: next.artifacts
         };
         upsertWorkflowSnapshot(snapshot);
-        appendWorkflowStepEventMessages(runId, next.step_event);
+        appendWorkflowStepEventMessages(runId, next.step_event, next.run?.dataset_profile_id || null);
 
         const runStatus = String(next?.run?.status || '').toLowerCase();
         if (runStatus === 'succeeded' || runStatus === 'failed') {
@@ -1932,13 +2201,14 @@ export default function DecisionSupportView({ user, addNotification }) {
       const confirmationPayload = buildConfirmationPayload(dataSummaryPayload);
       const validationPayload = buildValidationPayload(profileRow);
       const blockingQuestions = workflowGate.issues.map((issue) => {
-        if (issue.reason === 'missing_dataset') {
-          return `${workflowLabel} requires dataset "${issue.upload_type}". Please map a sheet to this upload type.`;
-        }
-        const missing = Array.isArray(issue.missing_required_fields) && issue.missing_required_fields.length > 0
-          ? issue.missing_required_fields.join(', ')
-          : 'required fields';
-        return `${issue.sheet_name || issue.upload_type}: missing required fields (${missing}).`;
+        const text = issue.reason === 'missing_dataset'
+          ? `${workflowLabel} requires dataset "${issue.upload_type}". Please map a sheet to this upload type.`
+          : `${issue.sheet_name || issue.upload_type}: missing required fields (${
+              Array.isArray(issue.missing_required_fields) && issue.missing_required_fields.length > 0
+                ? issue.missing_required_fields.join(', ')
+                : 'required fields'
+            }).`;
+        return { id: null, question: text, answer_type: 'text', options: null, why_needed: null, bind_to: null };
       }).slice(0, 2);
 
       const messages = [
@@ -1956,7 +2226,7 @@ export default function DecisionSupportView({ user, addNotification }) {
         {
           role: 'ai',
           type: 'blocking_questions_card',
-          payload: { questions: blockingQuestions },
+          payload: { questions: blockingQuestions, dataset_profile_id: profileRow.id, run_id: null },
           timestamp: new Date().toISOString()
         }
       ];
@@ -1982,11 +2252,84 @@ export default function DecisionSupportView({ user, addNotification }) {
     }
 
     try {
+      const runtimeSettings = buildRuntimeWorkflowSettings(activeDatasetContext || {}, settings || {});
+
+      if (asyncRunsApiClient.isConfigured()) {
+        const submitResponse = await asyncRunsApiClient.submitRun({
+          user_id: user.id,
+          dataset_profile_id: profileRow.id,
+          dataset_fingerprint: profileRow?.fingerprint || `profile_${profileRow.id}`,
+          contract_template_id: activeDatasetContext?.contract_template_id || null,
+          workflow: selectedWorkflow,
+          engine_flags: {
+            solver_engine: runtimeSettings?.plan?.solver_engine || 'heuristic',
+            risk_mode: runtimeSettings?.risk?.mode || null,
+            multi_echelon_mode: Boolean(runtimeSettings?.plan?.multi_echelon_mode)
+          },
+          settings: runtimeSettings,
+          horizon: Number(runtimeSettings?.forecast?.horizon_periods || runtimeSettings?.forecast_horizon_periods || null) || null,
+          granularity: profileRow?.profile_json?.global?.time_range_guess?.granularity || null,
+          workload: {
+            rows_per_sheet: Number(profileRow?.profile_json?.global?.rows_per_sheet || 0) || null,
+            skus: Number(profileRow?.profile_json?.global?.sku_count || 0) || null
+          },
+          async_mode: true
+        });
+
+        const runId = Number(submitResponse?.run_id);
+        const jobId = submitResponse?.job_id;
+        if (!Number.isFinite(runId) || !jobId) {
+          throw new Error('Async run submit did not return job_id/run_id');
+        }
+        asyncJobByRunRef.current[runId] = jobId;
+
+        markCanvasRunStarted(`${workflowLabel} run (profile #${profileRow.id})`);
+        updateCanvasState(currentConversationId, (prev) => ({
+          ...prev,
+          run: {
+            ...(prev.run || {}),
+            id: runId,
+            run_id: runId,
+            workflow: selectedWorkflow
+          }
+        }));
+        appendMessagesToCurrentConversation([
+          {
+            role: 'ai',
+            content: `${workflowLabel} started (run #${runId}, job ${jobId}).`,
+            timestamp: new Date().toISOString()
+          },
+          {
+            role: 'ai',
+            type: 'workflow_progress_card',
+            payload: {
+              run_id: runId,
+              job_id: jobId,
+              workflow: selectedWorkflow,
+              status: 'queued'
+            },
+            timestamp: new Date().toISOString()
+          }
+        ]);
+
+        const finalSnapshot = await processAsyncWorkflowJob({ jobId, runId });
+        const finalStatus = String(finalSnapshot?.run?.status || '').toLowerCase();
+        if (finalStatus === 'succeeded') {
+          markCanvasRunFinished('succeeded', `✅ ${workflowLabel} run #${runId} completed.`, 'report');
+          addNotification?.(`${workflowLabel} run #${runId} completed.`, 'success');
+        } else if (finalStatus === 'failed' || finalStatus === 'canceled') {
+          const label = finalStatus === 'canceled' ? 'canceled' : 'failed';
+          markCanvasRunFinished('failed', `❌ ${workflowLabel} run #${runId} ${label}.`, 'report');
+          addNotification?.(`${workflowLabel} run #${runId} ${label}.`, 'error');
+        }
+        return;
+      }
+
       const startSnapshot = await startWorkflow({
         user_id: user.id,
         dataset_profile_id: profileRow.id,
         workflow: selectedWorkflow,
-        settings: buildRuntimeWorkflowSettings(activeDatasetContext || {}, settings || {})
+        settings: runtimeSettings
       });
       markCanvasRunStarted(`${workflowLabel} run (profile #${profileRow.id})`);
       upsertWorkflowSnapshot(startSnapshot);
@@ -1996,6 +2339,16 @@ export default function DecisionSupportView({ user, addNotification }) {
         addNotification?.('Unable to start workflow run.', 'error');
         return;
       }
+
+      updateCanvasState(currentConversationId, (prev) => ({
+        ...prev,
+        run: {
+          ...(prev.run || {}),
+          id: runId,
+          run_id: runId,
+          workflow: selectedWorkflow
+        }
+      }));
 
       appendMessagesToCurrentConversation([
         {
@@ -2055,9 +2408,11 @@ export default function DecisionSupportView({ user, addNotification }) {
     appendMessagesToCurrentConversation,
     addNotification,
     upsertWorkflowSnapshot,
+    processAsyncWorkflowJob,
     processWorkflowRun,
     markCanvasRunStarted,
-    markCanvasRunFinished
+    markCanvasRunFinished,
+    updateCanvasState
   ]);
 
   const executeWorkflowAFlow = useCallback((params = {}) => {
@@ -2073,6 +2428,133 @@ export default function DecisionSupportView({ user, addNotification }) {
       workflowName: WORKFLOW_NAMES.B
     });
   }, [executeWorkflowFlow]);
+
+  const handleRunTopology = useCallback(async (requestedRunId = null) => {
+    if (!user?.id) {
+      addNotification?.('Please sign in before running topology.', 'error');
+      return;
+    }
+    if (!currentConversationId) {
+      addNotification?.('Please start a conversation first.', 'error');
+      return;
+    }
+
+    const explicitRunId = Number(requestedRunId);
+    const fallbackRunId = findLatestWorkflowRunIdFromMessages(currentMessages);
+    const runId = Number.isFinite(explicitRunId) ? explicitRunId : fallbackRunId;
+    if (!Number.isFinite(runId)) {
+      appendMessagesToCurrentConversation([{
+        role: 'ai',
+        content: 'No workflow run id found for topology. Run Workflow A/B first or use `/topology <run_id>`.',
+        timestamp: new Date().toISOString()
+      }]);
+      addNotification?.('No workflow run id available for topology.', 'warning');
+      return;
+    }
+
+    updateCanvasState(currentConversationId, (prev) => ({
+      ...prev,
+      isOpen: true,
+      activeTab: 'topology',
+      topologyRunning: true,
+      logs: [
+        ...(prev.logs || []),
+        {
+          id: `topology_start_${Date.now()}`,
+          step: 'topology',
+          message: `Running topology graph build for run #${runId}...`,
+          timestamp: new Date().toISOString()
+        }
+      ]
+    }));
+
+    try {
+      const result = await generateTopologyGraphForRun({
+        userId: user.id,
+        runId,
+        scope: {},
+        forceRebuild: false,
+        reuse: true,
+        manageRunStep: true
+      });
+
+      if (!result?.graph) {
+        throw new Error('Topology graph payload is empty.');
+      }
+
+      const noticeText = result.reused
+        ? `Topology graph ready for run #${runId} (reused from run #${result.reused_from_run_id}).`
+        : `Topology graph generated for run #${runId}.`;
+
+      appendMessagesToCurrentConversation([
+        {
+          role: 'ai',
+          content: noticeText,
+          timestamp: new Date().toISOString()
+        },
+        {
+          role: 'ai',
+          type: 'topology_graph_card',
+          payload: {
+            run_id: runId,
+            graph: result.graph,
+            ref: result.ref || null,
+            reused: Boolean(result.reused),
+            reused_from_run_id: result.reused_from_run_id || null
+          },
+          timestamp: new Date().toISOString()
+        }
+      ]);
+
+      updateCanvasState(currentConversationId, (prev) => ({
+        ...prev,
+        activeTab: 'topology',
+        topologyRunning: false,
+        chartPayload: {
+          ...(prev.chartPayload || {}),
+          topology_graph: result.graph
+        },
+        logs: [
+          ...(prev.logs || []),
+          {
+            id: `topology_done_${Date.now()}`,
+            step: 'topology',
+            message: `✅ Topology graph ready for run #${runId}.`,
+            timestamp: new Date().toISOString()
+          }
+        ]
+      }));
+
+      addNotification?.(`Topology graph ready for run #${runId}.`, 'success');
+    } catch (error) {
+      updateCanvasState(currentConversationId, (prev) => ({
+        ...prev,
+        topologyRunning: false,
+        logs: [
+          ...(prev.logs || []),
+          {
+            id: `topology_failed_${Date.now()}`,
+            step: 'topology',
+            message: `❌ Topology generation failed: ${error.message}`,
+            timestamp: new Date().toISOString()
+          }
+        ]
+      }));
+      appendMessagesToCurrentConversation([{
+        role: 'ai',
+        content: `Topology generation failed: ${error.message}`,
+        timestamp: new Date().toISOString()
+      }]);
+      addNotification?.(`Topology generation failed: ${error.message}`, 'error');
+    }
+  }, [
+    user?.id,
+    currentConversationId,
+    currentMessages,
+    updateCanvasState,
+    appendMessagesToCurrentConversation,
+    addNotification
+  ]);
 
   const handleResumeWorkflowA = useCallback(async (runId) => {
     if (!runId) return;
@@ -2100,6 +2582,96 @@ export default function DecisionSupportView({ user, addNotification }) {
       addNotification?.(`Workflow resume failed: ${error.message}`, 'error');
     }
   }, [
+    appendWorkflowStepEventMessages,
+    appendMessagesToCurrentConversation,
+    addNotification,
+    processWorkflowRun,
+    upsertWorkflowSnapshot
+  ]);
+
+  // PR-5: Apply blocking-question answers to contract_json then resume the run.
+  const handleBlockingQuestionsSubmit = useCallback(async ({ answersById = {}, questions = [], runId = null, profileId = null }) => {
+    if (!user?.id) return;
+
+    // Apply answers to contract_json if we have a profile to update
+    if (profileId && questions.length > 0) {
+      try {
+        const profileRow = await datasetProfilesService.getDatasetProfileById(user.id, Number(profileId));
+        const contractJson = profileRow?.contract_json;
+        if (contractJson && typeof contractJson === 'object') {
+          let updated = JSON.parse(JSON.stringify(contractJson));
+
+          questions.forEach((q) => {
+            const bindTo = q.bind_to ? String(q.bind_to).trim() : null;
+            const answerId = q.id || null;
+            const value = answerId ? answersById[answerId] : null;
+
+            if (!bindTo || value == null) return;
+
+            // Enforce allowlist
+            const isAllowed = BIND_TO_ALLOWLIST.some((prefix) => bindTo.startsWith(prefix));
+            if (!isAllowed) return;
+
+            // Validate value is within declared options (if any)
+            if (Array.isArray(q.options) && q.options.length > 0 && !q.options.includes(value)) return;
+
+            // Apply: split "section.key" and write into contract
+            const [section, ...rest] = bindTo.split('.');
+            const key = rest.join('.');
+            if (!section || !key) return;
+            if (typeof updated[section] !== 'object' || updated[section] === null) {
+              updated[section] = {};
+            }
+            updated[section][key] = value;
+          });
+
+          await datasetProfilesService.updateDatasetProfile(user.id, Number(profileId), {
+            contract_json: updated
+          });
+        }
+      } catch (err) {
+        appendMessagesToCurrentConversation([{
+          role: 'ai',
+          content: `Failed to apply answers to contract: ${err.message}`,
+          timestamp: new Date().toISOString()
+        }]);
+        return;
+      }
+    }
+
+    // Resume run if we have one
+    if (runId) {
+      await handleResumeWorkflowA(runId);
+    }
+  }, [user?.id, appendMessagesToCurrentConversation, handleResumeWorkflowA]);
+
+  const handleSubmitBlockingAnswers = useCallback(async (runId, answers = {}) => {
+    if (!runId || !user?.id) return;
+    try {
+      const result = await submitWorkflowBlockingAnswers(Number(runId), answers);
+      upsertWorkflowSnapshot(result);
+      if (Array.isArray(result.events)) {
+        result.events.forEach((event) => appendWorkflowStepEventMessages(runId, event));
+      }
+      if (String(result?.run?.status || '').toLowerCase() === 'running') {
+        await processWorkflowRun(runId);
+      }
+    } catch (error) {
+      appendMessagesToCurrentConversation([{
+        role: 'ai',
+        type: 'workflow_error_card',
+        payload: {
+          step: 'resume',
+          error_code: 'UNKNOWN',
+          error_message: error.message || 'Unable to resume after answering.',
+          next_actions: ['Retry or use the Resume button.']
+        },
+        timestamp: new Date().toISOString()
+      }]);
+      addNotification?.(`Failed to submit answers: ${error.message}`, 'error');
+    }
+  }, [
+    user?.id,
     appendWorkflowStepEventMessages,
     appendMessagesToCurrentConversation,
     addNotification,
@@ -2161,6 +2733,23 @@ export default function DecisionSupportView({ user, addNotification }) {
     upsertWorkflowSnapshot,
     processWorkflowRun
   ]);
+
+  const handleCancelAsyncWorkflow = useCallback(async (runId, explicitJobId = null) => {
+    const numericRunId = Number(runId);
+    if (!Number.isFinite(numericRunId)) return;
+    const jobId = explicitJobId || asyncJobByRunRef.current[numericRunId];
+    if (!jobId) {
+      addNotification?.(`No async job found for run #${numericRunId}.`, 'error');
+      return;
+    }
+
+    try {
+      await asyncRunsApiClient.cancelJob(jobId);
+      addNotification?.(`Cancel requested for run #${numericRunId}.`, 'info');
+    } catch (error) {
+      addNotification?.(`Cancel failed for run #${numericRunId}: ${error.message}`, 'error');
+    }
+  }, [addNotification]);
 
   const handleDatasetUpload = useCallback(async (file) => {
     if (!file) return;
@@ -2542,8 +3131,10 @@ export default function DecisionSupportView({ user, addNotification }) {
       chartPayload: {
         actual_vs_forecast: [],
         inventory_projection: [],
-        cost_breakdown: []
-      }
+        cost_breakdown: [],
+        topology_graph: null
+      },
+      topologyRunning: false
     }));
 
     try {
@@ -2796,6 +3387,70 @@ export default function DecisionSupportView({ user, addNotification }) {
       return;
     }
 
+    if (command === '/reset_data') {
+      const parts = lower.split(/\s+/);
+      const confirmed = parts[1] === 'confirm';
+
+      if (!confirmed) {
+        appendMessagesToCurrentConversation([{
+          role: 'ai',
+          content: 'Type /reset_data confirm to proceed.',
+          timestamp: new Date().toISOString()
+        }]);
+        setIsTyping(false);
+        setStreamingContent('');
+        return;
+      }
+
+      try {
+        await diResetService.resetCurrentUserData();
+
+        setConversationDatasetContext((prev) => {
+          const next = {};
+          Object.keys(prev || {}).forEach((conversationId) => {
+            next[conversationId] = {
+              ...(prev[conversationId] || {}),
+              dataset_profile_id: null,
+              dataset_fingerprint: null,
+              user_file_id: null,
+              summary: '',
+              profileJson: {},
+              contractJson: {},
+              contractConfirmed: false,
+              minimalQuestions: [],
+              pending_reuse_plan: null,
+              reused_settings_template: null
+            };
+          });
+          return next;
+        });
+
+        setLatestPlanRunId(null);
+        setRunningForecastProfiles({});
+        setRunningPlanKeys({});
+        setWorkflowSnapshots({});
+        setActiveWorkflowRuns({});
+        setCanvasStateByConversation({});
+        topologyAutoLoadRef.current = {};
+
+        appendMessagesToCurrentConversation([{
+          role: 'ai',
+          content: '✅ Cleared old profiles/runs/artifacts for this user.',
+          timestamp: new Date().toISOString()
+        }]);
+      } catch (error) {
+        appendMessagesToCurrentConversation([{
+          role: 'ai',
+          content: `❌ Failed to clear DI data: ${getErrorMessage(error, 'Unexpected error')}`,
+          timestamp: new Date().toISOString()
+        }]);
+      }
+
+      setIsTyping(false);
+      setStreamingContent('');
+      return;
+    }
+
     if (lower.startsWith('/forecast')) {
       const parts = trimmed.split(/\s+/);
       const profileId = parts.length > 1 ? Number(parts[1]) : null;
@@ -2871,6 +3526,15 @@ export default function DecisionSupportView({ user, addNotification }) {
       return;
     }
 
+    if (command === '/topology') {
+      const parts = trimmed.split(/\s+/);
+      const explicitRunId = parts.length > 1 ? Number(parts[1]) : null;
+      await handleRunTopology(Number.isFinite(explicitRunId) ? explicitRunId : topologyRunId);
+      setIsTyping(false);
+      setStreamingContent('');
+      return;
+    }
+
     const canExecute = Boolean(activeDatasetContext?.dataset_profile_id) && isExecutionIntent(messageText);
     if (canExecute) {
       const handled = await handleCanvasRun(messageText, updatedMessages);
@@ -2898,9 +3562,9 @@ export default function DecisionSupportView({ user, addNotification }) {
       console.error('AI call failed:', error);
       if (isApiKeyConfigError(error?.message)) {
         aiErrorPayload = {
-          title: 'AI configuration required',
-          message: 'Your API key is missing or invalid. Update it to continue.',
-          ctaLabel: 'Configure API Key'
+          title: 'AI service configuration required',
+          message: 'Server-side AI keys are missing or invalid. Ask an admin to set Supabase Edge Function secrets.',
+          ctaLabel: 'Show setup hint'
         };
       } else {
         fullResult = `❌ AI service temporarily unavailable\n\nError: ${error.message}`;
@@ -2909,9 +3573,9 @@ export default function DecisionSupportView({ user, addNotification }) {
 
     if (!aiErrorPayload && isApiKeyConfigError(fullResult)) {
       aiErrorPayload = {
-        title: 'AI configuration required',
-        message: 'Your API key is missing or invalid. Update it to continue.',
-        ctaLabel: 'Configure API Key'
+        title: 'AI service configuration required',
+        message: 'Server-side AI keys are missing or invalid. Ask an admin to set Supabase Edge Function secrets.',
+        ctaLabel: 'Show setup hint'
       };
     }
 
@@ -2973,7 +3637,10 @@ export default function DecisionSupportView({ user, addNotification }) {
     executePlanFlow,
     executeWorkflowFlow,
     executeWorkflowAFlow,
-    executeWorkflowBFlow
+    executeWorkflowBFlow,
+    handleRunTopology,
+    topologyRunId,
+    setActiveWorkflowRuns
   ]);
 
   const handleKeyDown = useCallback((e) => {
@@ -3031,13 +3698,10 @@ export default function DecisionSupportView({ user, addNotification }) {
   }, [domainContext, contextLoading, activeDatasetContext]);
 
   const handleConfigureApiKey = useCallback(() => {
-    const nextKey = window.prompt('Paste your Google AI API key');
-    if (nextKey == null) return;
-    if (saveApiKey(nextKey)) {
-      addNotification?.('API key saved. Retry your request.', 'success');
-    } else {
-      addNotification?.('Please provide a non-empty API key.', 'error');
-    }
+    addNotification?.(
+      'AI keys are now managed in Supabase Edge Function secrets (GEMINI_API_KEY / DEEPSEEK_API_KEY).',
+      'info'
+    );
   }, [addNotification]);
 
   const renderSpecialMessage = useCallback((message) => {
@@ -3077,6 +3741,7 @@ export default function DecisionSupportView({ user, addNotification }) {
           snapshot={snapshot}
           onResume={handleResumeWorkflowA}
           onReplay={handleReplayWorkflowA}
+          onCancel={handleCancelAsyncWorkflow}
         />
       );
     }
@@ -3084,10 +3749,50 @@ export default function DecisionSupportView({ user, addNotification }) {
       return <WorkflowErrorCard payload={message.payload} />;
     }
     if (message.type === 'blocking_questions_card') {
-      return <BlockingQuestionsCard payload={message.payload} />;
+      return <BlockingQuestionsCard payload={message.payload} onSubmit={handleBlockingQuestionsSubmit} />;
+    }
+    if (message.type === 'blocking_questions_interactive_card') {
+      const runId = message.payload?.run_id;
+      return (
+        <BlockingQuestionsInteractiveCard
+          payload={message.payload}
+          onSubmit={(answers) => handleSubmitBlockingAnswers(runId, answers)}
+        />
+      );
     }
     if (message.type === 'workflow_report_card') {
       return <WorkflowReportCard payload={message.payload} />;
+    }
+    if (message.type === 'topology_graph_card') {
+      const runId = Number(message?.payload?.run_id || message?.payload?.graph?.run_id || NaN);
+      return (
+        <Card className="w-full border border-slate-200 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-900/30">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold text-slate-800 dark:text-slate-100">Topology Graph Ready</p>
+              <p className="text-xs text-slate-500">
+                {Number.isFinite(runId)
+                  ? `Run #${runId} topology artifact is available in Canvas.`
+                  : 'Topology artifact is available in Canvas.'}
+              </p>
+            </div>
+            <Button
+              variant="secondary"
+              className="text-xs"
+              onClick={() => {
+                if (!currentConversationId) return;
+                updateCanvasState(currentConversationId, (prev) => ({
+                  ...prev,
+                  isOpen: true,
+                  activeTab: 'topology'
+                }));
+              }}
+            >
+              Open Topology
+            </Button>
+          </div>
+        </Card>
+      );
     }
     if (message.type === 'reuse_decision_card') {
       return (
@@ -3107,6 +3812,11 @@ export default function DecisionSupportView({ user, addNotification }) {
             forecastRunId: forecastPayload?.run_id || null,
             forecastCardPayload: forecastPayload
           })}
+          onRunRiskAwarePlan={() => executeRiskAwarePlanFlow({
+            datasetProfileId: message.payload?.dataset_profile_id,
+            forecastRunId: message.payload?.run_id,
+            forecastCardPayload: message.payload
+          })}
           isPlanRunning={Boolean(runningPlanKeys[message.payload?.run_id || `profile_${message.payload?.dataset_profile_id}`])}
         />
       );
@@ -3125,6 +3835,9 @@ export default function DecisionSupportView({ user, addNotification }) {
     }
     if (message.type === 'plan_exceptions_card') {
       return <PlanExceptionsCard payload={message.payload} />;
+    }
+    if (message.type === 'bom_bottlenecks_card') {
+      return <BomBottlenecksCard payload={message.payload} />;
     }
     if (message.type === 'plan_error_card') {
       return <PlanErrorCard payload={message.payload} />;
@@ -3152,6 +3865,9 @@ export default function DecisionSupportView({ user, addNotification }) {
         />
       );
     }
+    if (message.type === 'risk_aware_plan_comparison_card') {
+      return <RiskAwarePlanComparisonCard payload={message.payload} />;
+    }
     if (message.type === 'ai_error_card') {
       return (
         <AIErrorCard
@@ -3163,9 +3879,11 @@ export default function DecisionSupportView({ user, addNotification }) {
     return null;
   }, [
     activeDatasetContext,
+    currentConversationId,
     handleConfigureApiKey,
     handleContractConfirmation,
     handleUseDatasetContextFromCard,
+    updateCanvasState,
     executeForecastFlow,
     executePlanFlow,
     executeWorkflowAFlow,
@@ -3176,8 +3894,12 @@ export default function DecisionSupportView({ user, addNotification }) {
     workflowSnapshots,
     handleResumeWorkflowA,
     handleReplayWorkflowA,
+    handleBlockingQuestionsSubmit,
+    handleSubmitBlockingAnswers,
+    handleCancelAsyncWorkflow,
     handleApplyReuseSuggestion,
-    handleReviewReuseSuggestion
+    handleReviewReuseSuggestion,
+    executeRiskAwarePlanFlow
   ]);
 
   return (
@@ -3278,7 +4000,13 @@ export default function DecisionSupportView({ user, addNotification }) {
         )}
         canvas={(
           <CanvasPanel
-            onToggleOpen={handleCanvasToggle}
+            onToggleOpen={isCanvasDetached
+              ? () => { setIsCanvasDetached(false); handleCanvasToggle(); }
+              : handleCanvasToggle}
+            onPopout={isCanvasDetached
+              ? () => setIsCanvasDetached(false)
+              : () => setIsCanvasDetached(true)}
+            isDetached={isCanvasDetached}
             activeTab={activeCanvasState.activeTab}
             onTabChange={(tabId) => {
               if (!currentConversationId) return;
@@ -3293,6 +4021,19 @@ export default function DecisionSupportView({ user, addNotification }) {
             codeText={activeCanvasState.codeText}
             chartPayload={effectiveCanvasChartPayload}
             downloads={activeCanvasState.downloads}
+            topologyGraph={effectiveCanvasChartPayload.topology_graph || null}
+            topologyRunId={topologyRunId}
+            onRunTopology={handleRunTopology}
+            topologyRunning={Boolean(activeCanvasState.topologyRunning)}
+            userId={user?.id || null}
+            latestPlanRunId={latestPlanRunId}
+            datasetProfileId={activeDatasetContext?.dataset_profile_id || null}
+            datasetProfileRow={activeDatasetContext?.dataset_profile_id ? {
+              id: activeDatasetContext.dataset_profile_id,
+              user_file_id: activeDatasetContext.user_file_id || null,
+              profile_json: activeDatasetContext.profileJson || {},
+              contract_json: activeDatasetContext.contractJson || {}
+            } : null}
           />
         )}
         sidebarCollapsed={isSidebarCollapsed}
@@ -3301,6 +4042,7 @@ export default function DecisionSupportView({ user, addNotification }) {
         onCanvasToggle={handleCanvasToggle}
         initialSplitRatio={splitRatio}
         onSplitRatioCommit={handleSplitRatioCommit}
+        canvasDetached={isCanvasDetached}
       />
 
       {showNewChatConfirm && (

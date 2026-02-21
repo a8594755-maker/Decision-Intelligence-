@@ -1,5 +1,5 @@
 -- ============================================================
--- SmartOps Demo Seed Data
+-- Decision-Intelligence Demo Seed Data
 -- ============================================================
 -- 執行前請先設定 YOUR_USER_ID:
 --   在 Supabase SQL Editor 執行: SELECT id FROM auth.users LIMIT 1;

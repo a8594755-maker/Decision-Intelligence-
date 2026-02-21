@@ -13,11 +13,11 @@ export default function AIErrorCard({ payload, onConfigure }) {
         </span>
         <div className="flex-1 min-w-0">
           <h4 className="text-sm font-semibold text-red-700 dark:text-red-300">{payload.title || 'AI unavailable'}</h4>
-          <p className="text-xs text-red-700/85 dark:text-red-200/90 mt-1">{payload.message || 'Please configure a valid API key.'}</p>
+          <p className="text-xs text-red-700/85 dark:text-red-200/90 mt-1">{payload.message || 'Please configure server-side AI provider keys.'}</p>
           <div className="mt-3">
             <Button variant="primary" className="text-xs px-3 py-1.5" onClick={onConfigure}>
               <KeyRound className="w-3.5 h-3.5 mr-1" />
-              {payload.ctaLabel || 'Configure API Key'}
+              {payload.ctaLabel || 'Show setup hint'}
             </Button>
           </div>
         </div>

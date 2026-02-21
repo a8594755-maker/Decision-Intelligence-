@@ -1,8 +1,34 @@
 import React from 'react';
-import { CheckCircle2, AlertTriangle } from 'lucide-react';
+import { CheckCircle2, AlertTriangle, Lock } from 'lucide-react';
 import { Card, Button, Badge } from '../ui';
 
 const formatPct = (value) => `${Math.round((Number(value) || 0) * 100)}%`;
+
+const IGNORED_SHEET_PATTERN = /^(readme|assumptions?|instructions?|guide|notes?|docs?|changelog|cover\s*sheet|template\s*notes?)$/i;
+
+function computeReadiness(sheets = []) {
+  const activeTypes = new Set(
+    sheets
+      .filter(s => s.upload_type && s.upload_type !== 'unknown' && !IGNORED_SHEET_PATTERN.test(s.sheet_name || ''))
+      .map(s => s.upload_type)
+  );
+  const hasDemand = activeTypes.has('demand_fg');
+  const hasInventory = activeTypes.has('inventory_snapshots');
+  return {
+    forecast:  { ready: hasDemand,                   missing: hasDemand ? [] : ['demand_fg'] },
+    workflowA: { ready: hasDemand && hasInventory,    missing: [!hasDemand && 'demand_fg', !hasInventory && 'inventory_snapshots'].filter(Boolean) },
+    risk:      { ready: hasDemand && hasInventory,    missing: [!hasDemand && 'demand_fg', !hasInventory && 'inventory_snapshots'].filter(Boolean) },
+  };
+}
+
+function ReadinessHint({ missing }) {
+  if (!missing || missing.length === 0) return null;
+  return (
+    <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-0.5">
+      Missing: {missing.join(', ')}
+    </p>
+  );
+}
 
 export default function DataSummaryCard({
   payload,
@@ -23,6 +49,9 @@ export default function DataSummaryCard({
   const minimalQuestions = Array.isArray(payload.minimal_questions) ? payload.minimal_questions : [];
   const profileId = payload.dataset_profile_id;
 
+  const readiness = computeReadiness(sheets);
+  const ignoredSheets = sheets.filter(s => IGNORED_SHEET_PATTERN.test(s.sheet_name || ''));
+
   return (
     <Card className="w-full border border-blue-200 dark:border-blue-800 bg-blue-50/70 dark:bg-blue-900/10">
       <div className="space-y-3">
@@ -39,7 +68,7 @@ export default function DataSummaryCard({
               <p className="text-xs text-slate-500">{workflow.reason}</p>
             )}
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <Badge type="info">Profile #{profileId || 'N/A'}</Badge>
             <Button
               variant={isContextSelected ? 'secondary' : 'primary'}
@@ -48,30 +77,42 @@ export default function DataSummaryCard({
             >
               {isContextSelected ? 'Context Selected' : 'Use this dataset context'}
             </Button>
-            <Button
-              variant="secondary"
-              className="text-xs px-3 py-1"
-              disabled={isForecastRunning}
-              onClick={() => onRunForecast?.(payload)}
-            >
-              {isForecastRunning ? 'Running Forecast...' : 'Run Forecast'}
-            </Button>
-            <Button
-              variant="secondary"
-              className="text-xs px-3 py-1"
-              disabled={isWorkflowRunning}
-              onClick={() => onRunWorkflow?.(payload)}
-            >
-              {isWorkflowRunning ? 'Running Workflow...' : 'Run Workflow A'}
-            </Button>
-            <Button
-              variant="secondary"
-              className="text-xs px-3 py-1"
-              disabled={isRiskRunning}
-              onClick={() => onRunRisk?.(payload)}
-            >
-              {isRiskRunning ? 'Running Risk Scan...' : 'Run Risk Scan'}
-            </Button>
+            <div className="flex flex-col items-start gap-0">
+              <Button
+                variant="secondary"
+                className="text-xs px-3 py-1"
+                disabled={isForecastRunning || !readiness.forecast.ready}
+                title={!readiness.forecast.ready ? `Missing: ${readiness.forecast.missing.join(', ')}` : undefined}
+                onClick={() => onRunForecast?.(payload)}
+              >
+                {isForecastRunning ? 'Running Forecast...' : 'Run Forecast'}
+              </Button>
+              <ReadinessHint missing={!isForecastRunning ? readiness.forecast.missing : []} />
+            </div>
+            <div className="flex flex-col items-start gap-0">
+              <Button
+                variant="secondary"
+                className="text-xs px-3 py-1"
+                disabled={isWorkflowRunning || !readiness.workflowA.ready}
+                title={!readiness.workflowA.ready ? `Missing: ${readiness.workflowA.missing.join(', ')}` : undefined}
+                onClick={() => onRunWorkflow?.(payload)}
+              >
+                {isWorkflowRunning ? 'Running Workflow...' : readiness.workflowA.ready ? 'Run Workflow A' : <span className="inline-flex items-center gap-1"><Lock className="w-3 h-3" />Workflow A</span>}
+              </Button>
+              <ReadinessHint missing={!isWorkflowRunning ? readiness.workflowA.missing : []} />
+            </div>
+            <div className="flex flex-col items-start gap-0">
+              <Button
+                variant="secondary"
+                className="text-xs px-3 py-1"
+                disabled={isRiskRunning || !readiness.risk.ready}
+                title={!readiness.risk.ready ? `Missing: ${readiness.risk.missing.join(', ')}` : undefined}
+                onClick={() => onRunRisk?.(payload)}
+              >
+                {isRiskRunning ? 'Running Risk Scan...' : readiness.risk.ready ? 'Run Risk Scan' : <span className="inline-flex items-center gap-1"><Lock className="w-3 h-3" />Risk Scan</span>}
+              </Button>
+              <ReadinessHint missing={!isRiskRunning ? readiness.risk.missing : []} />
+            </div>
           </div>
         </div>
 
@@ -113,6 +154,12 @@ export default function DataSummaryCard({
             </tbody>
           </table>
         </div>
+
+        {ignoredSheets.length > 0 && (
+          <p className="text-[11px] text-slate-400 italic">
+            Skipped non-data sheets: {ignoredSheets.map(s => s.sheet_name).join(', ')}
+          </p>
+        )}
 
         {minimalQuestions.length > 0 && (
           <div>

@@ -2,7 +2,7 @@
 
 ## Overview
 
-This implementation introduces a sophisticated dual-model forecasting system that combines the stability of classical statistical methods with the power of modern AI, specifically designed for the SmartOps supply chain risk dashboard.
+This implementation introduces a sophisticated dual-model forecasting system that combines the stability of classical statistical methods with the power of modern AI, specifically designed for the Decision-Intelligence supply chain risk dashboard.
 
 ## Architecture Components
 

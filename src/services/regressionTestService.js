@@ -3,7 +3,7 @@
 // Phase 4: Frontend service for regression testing
 // ============================================
 
-import { supabase } from './supabaseClient';
+import { supabase, RPC_JSON_OPTIONS } from './supabaseClient';
 
 /**
  * Fetch regression test results for a logic version
@@ -37,7 +37,7 @@ export async function fetchRegressionResults(logicVersionId) {
 export async function runRegressionTests(logicVersionId) {
   const { data, error } = await supabase.rpc('run_regression_tests', {
     p_logic_version_id: logicVersionId,
-  });
+  }, RPC_JSON_OPTIONS);
 
   if (error) {
     console.error('Error running regression tests:', error);
@@ -54,7 +54,7 @@ export async function checkPublishGate(logicVersionId, thresholdOverrides = {}) 
   const { data, error } = await supabase.rpc('can_publish_version', {
     p_logic_version_id: logicVersionId,
     p_threshold_overrides: thresholdOverrides,
-  });
+  }, RPC_JSON_OPTIONS);
 
   if (error) {
     console.error('Error checking publish gate:', error);

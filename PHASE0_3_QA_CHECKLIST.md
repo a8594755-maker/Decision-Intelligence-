@@ -2,7 +2,7 @@
 
 ## 📋 測試環境
 
-- **專案**：SmartOps App (Vite + React + Supabase)
+- **專案**：Decision-Intelligence App (Vite + React + Supabase)
 - **分支**：`feat/upload-optimization`
 - **測試日期**：2026-02-05
 - **測試者**：_____________

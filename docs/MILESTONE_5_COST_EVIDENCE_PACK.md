@@ -119,7 +119,7 @@ ORDER BY tablename, policyname;
 ### 2.1 執行單元測試
 
 ```bash
-cd c:\Users\a8594\smartops-app
+cd c:\Users\a8594\decision-intelligence
 npx vitest run src/domains/inventory/costForecast.test.js
 ```
 

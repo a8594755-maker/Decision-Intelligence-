@@ -14,6 +14,11 @@ import { Card, Button, Badge } from '../ui';
 import { loadArtifact } from '../../utils/artifactStore';
 
 const formatMetric = (value, suffix = '') => (Number.isFinite(value) ? `${value.toFixed(2)}${suffix}` : 'N/A');
+const formatCoverage = (value) => (Number.isFinite(value) ? value.toFixed(3) : 'N/A');
+const toFiniteNumber = (value) => {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+};
 const EMPTY_GROUPS = [];
 
 const downloadBlob = (content, fileName, contentType) => {
@@ -73,7 +78,7 @@ const downloadCsv = async (content, fileName, ref = null) => {
 
 const chartTick = (value) => String(value || '').slice(-10);
 
-export default function ForecastCard({ payload, onRunPlan, isPlanRunning = false }) {
+export default function ForecastCard({ payload, onRunPlan, onRunRiskAwarePlan, isPlanRunning = false }) {
   const groups = Array.isArray(payload?.series_groups) ? payload.series_groups : EMPTY_GROUPS;
   const [groupKey, setGroupKey] = useState('');
   const selectedGroupKey = useMemo(() => {
@@ -93,12 +98,14 @@ export default function ForecastCard({ payload, onRunPlan, isPlanRunning = false
     if (!selectedGroup?.points) return [];
     return selectedGroup.points.map((point) => ({
       time_bucket: point.time_bucket,
-      actual: point.actual,
-      forecast: point.forecast,
-      lower: point.lower,
-      upper: point.upper
+      actual: toFiniteNumber(point.actual),
+      p50: toFiniteNumber(point.p50 ?? point.forecast),
+      p90: toFiniteNumber(point.p90 ?? point.upper),
+      lower: toFiniteNumber(point.lower ?? point.p10)
     }));
   }, [selectedGroup]);
+  const hasP90 = useMemo(() => chartData.some((row) => row.p90 !== null), [chartData]);
+  const hasLower = useMemo(() => chartData.some((row) => row.lower !== null), [chartData]);
 
   if (!payload) return null;
 
@@ -132,12 +139,23 @@ export default function ForecastCard({ payload, onRunPlan, isPlanRunning = false
             >
               {isPlanRunning ? 'Running Plan...' : 'Run Plan'}
             </Button>
+            {onRunRiskAwarePlan && (
+              <Button
+                variant="secondary"
+                className="text-xs px-3 py-1"
+                disabled={isPlanRunning}
+                onClick={onRunRiskAwarePlan}
+              >
+                {isPlanRunning ? 'Running...' : '⚡ Risk-aware Plan'}
+              </Button>
+            )}
           </div>
         </div>
 
         <div className="flex flex-wrap gap-2 text-xs">
           <Badge type="info">MAPE: {formatMetric(metrics.mape, '%')}</Badge>
           <Badge type="info">MAE: {formatMetric(metrics.mae)}</Badge>
+          <Badge type="info">P90 Coverage: {formatCoverage(metrics.p90_coverage)}</Badge>
           <Badge type="info">Groups: {metrics.groups_processed ?? payload.total_groups ?? 0}</Badge>
           <Badge type="info">Horizon: {metrics.horizon_periods ?? 0}</Badge>
         </div>
@@ -173,10 +191,14 @@ export default function ForecastCard({ payload, onRunPlan, isPlanRunning = false
               <YAxis fontSize={11} />
               <Tooltip />
               <Legend />
-              <Line type="monotone" dataKey="actual" name="Actual" stroke="#10b981" strokeWidth={2} dot={false} />
-              <Line type="monotone" dataKey="forecast" name="Forecast" stroke="#2563eb" strokeWidth={2} dot={false} />
-              <Line type="monotone" dataKey="lower" name="Lower" stroke="#2563eb" strokeDasharray="4 4" dot={false} />
-              <Line type="monotone" dataKey="upper" name="Upper" stroke="#2563eb" strokeDasharray="4 4" dot={false} />
+              <Line type="monotone" dataKey="actual" name="Actual" stroke="#10b981" strokeWidth={2} dot={false} connectNulls={false} />
+              <Line type="monotone" dataKey="p50" name="P50 (Forecast)" stroke="#2563eb" strokeWidth={2} dot={false} connectNulls={false} />
+              {hasP90 && (
+                <Line type="monotone" dataKey="p90" name="P90" stroke="#1d4ed8" strokeDasharray="4 4" dot={false} connectNulls={false} />
+              )}
+              {hasLower && (
+                <Line type="monotone" dataKey="lower" name="Lower" stroke="#60a5fa" strokeDasharray="4 4" dot={false} connectNulls={false} />
+              )}
             </LineChart>
           </ResponsiveContainer>
         </div>

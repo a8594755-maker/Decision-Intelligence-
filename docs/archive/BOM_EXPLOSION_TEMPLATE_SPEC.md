@@ -221,7 +221,7 @@
 
 ---
 
-## SmartOps 上傳注意事項
+## Decision-Intelligence 上傳注意事項
 
 ### 📋 檔案準備要求
 

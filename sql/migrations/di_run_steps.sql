@@ -1,4 +1,4 @@
--- Decision Intelligence Step 4
+-- Decision-Intelligence Step 4
 -- Workflow step-level tracking for resumable/replayable orchestration
 
 DO $$

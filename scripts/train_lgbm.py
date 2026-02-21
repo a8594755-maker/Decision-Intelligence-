@@ -199,7 +199,7 @@ def main():
     args = parser.parse_args()
 
     print("\n" + "=" * 60)
-    print("  🏭 SmartOps LightGBM 模型訓練器")
+    print("  🏭 Decision-Intelligence LightGBM 模型訓練器")
     print(f"  ⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 60)
 

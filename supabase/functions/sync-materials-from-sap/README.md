@@ -1,6 +1,6 @@
 # SAP Materials Sync Edge Function
 
-Read-only sync from SAP OData V2 to SmartOps materials table.
+Read-only sync from SAP OData V2 to Decision-Intelligence materials table.
 
 ## Environment Variables
 

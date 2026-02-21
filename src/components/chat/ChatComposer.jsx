@@ -56,7 +56,7 @@ function ChatComposer({
             onChange={onInputChange}
             onKeyDown={onKeyDown}
             disabled={isTyping || isUploading}
-            placeholder={isDragOver ? 'Drop CSV/XLSX to upload...' : 'Message Decision Intelligence'}
+            placeholder={isDragOver ? 'Drop CSV/XLSX to upload...' : 'Message Decision-Intelligence'}
             className="w-full resize-none overflow-hidden rounded-2xl bg-transparent pl-12 pr-12 py-3 text-sm outline-none"
             style={{ minHeight: '52px', maxHeight: '180px' }}
           />

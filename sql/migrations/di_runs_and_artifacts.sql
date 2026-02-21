@@ -1,4 +1,4 @@
--- Decision Intelligence Step 2
+-- Decision-Intelligence Step 2
 -- Forecast run tracking + artifacts for chat-first workflow
 
 DO $$

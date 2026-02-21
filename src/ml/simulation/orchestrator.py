@@ -2,13 +2,13 @@
 Week 2A: SimulationOrchestrator — 模擬迴圈編排器
 ==================================================
 The main loop that ties everything together:
-  ChaosEngine (Environment) ↔ SmartOps (Brain) ↔ InventorySimulator (Body)
+  ChaosEngine (Environment) ↔ Decision-Intelligence (Brain) ↔ InventorySimulator (Body)
 
 Each tick = 1 simulated day:
   1. DataGenerator produces base demand
   2. ChaosEngine modifies it (spikes, crashes) + supplier disruptions
   3. InventorySimulator depletes stock, checks stockout
-  4. SmartOps forecaster predicts future demand
+  4. Decision-Intelligence forecaster predicts future demand
   5. Inventory decides whether to place PO
   6. Deliveries arrive (with delays/defects from ChaosEngine)
 """
@@ -191,7 +191,7 @@ class SimulationOrchestrator:
             model_acc = {
                 "mae": round(mae, 2),
                 "forecasts_made": len(self._forecast_errors),
-                "method": "smartops_forecaster" if self.use_forecaster else "naive_mean",
+                "method": "decision_intelligence_forecaster" if self.use_forecaster else "naive_mean",
             }
 
         result = SimulationResult(
@@ -289,7 +289,7 @@ class SimulationOrchestrator:
         return float(np.mean(history[-14:])) if len(history) >= 14 else float(np.mean(history))
 
     def _run_forecast(self, history: List[float]) -> Optional[List[float]]:
-        """呼叫 SmartOps 預測引擎"""
+        """呼叫 Decision-Intelligence 預測引擎"""
         if not self.use_forecaster:
             # Naive: last-14-day mean
             recent = history[-14:] if len(history) >= 14 else history

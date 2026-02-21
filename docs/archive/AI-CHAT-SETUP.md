@@ -1,4 +1,4 @@
-# SmartOps AI Chat 對話紀錄系統設置指南
+# Decision-Intelligence AI Chat 對話紀錄系統設置指南
 
 ## 🎯 新功能概覽
 

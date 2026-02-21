@@ -1,27 +1,45 @@
 /**
  * AI API Service
- * - General analysis calls use Gemini
- * - Conversational chat prefers DeepSeek V3.2, with Gemini fallback
+ * - General analysis calls are routed to DeepSeek V3.2 via Edge Function
+ * - Conversational chat uses DeepSeek V3.2
  */
 
 import { buildDataProfilerPrompt } from '../prompts/dataProfilerPrompt';
+import { invokeAiProxy, streamTextToChunks } from './aiProxyService';
+
+const USE_EDGE_AI_PROXY = true;
 
 // Using environment variable for API key (falls back to empty string)
 const DEFAULT_API_KEY = import.meta.env.VITE_GEMINI_API_KEY || "";
-const DEFAULT_GEMINI_MODEL = 'gemini-3-pro';
-const GEMINI_MODEL = import.meta.env.VITE_GEMINI_MODEL || import.meta.env.VITE_DI_GEMINI_MODEL || DEFAULT_GEMINI_MODEL;
+const DEFAULT_GEMINI_MODEL = 'gemini-3-pro-preview';
+const GEMINI_MODEL_ALIASES = Object.freeze({
+  'gemini-3-pro': 'gemini-3-pro-preview',
+  'gemini-3.1-pro': 'gemini-3.1-pro-preview'
+});
+const normalizeGeminiModelName = (model) => {
+  const normalized = String(model || '').trim().replace(/^models\//i, '');
+  if (!normalized) return '';
+  return GEMINI_MODEL_ALIASES[normalized] || normalized;
+};
+const isGeminiModelName = (model) => /^gemini-/i.test(String(model || '').trim());
+const resolveGeminiModel = (model, fallback = DEFAULT_GEMINI_MODEL) => {
+  const normalized = normalizeGeminiModelName(model);
+  return isGeminiModelName(normalized) ? normalized : fallback;
+};
+const GEMINI_MODEL = resolveGeminiModel(
+  import.meta.env.VITE_GEMINI_MODEL || import.meta.env.VITE_DI_GEMINI_MODEL || DEFAULT_GEMINI_MODEL
+);
 const GEMINI_MODEL_CANDIDATES = Array.from(new Set(
   [
     GEMINI_MODEL,
     import.meta.env.VITE_DI_GEMINI_MODEL,
     import.meta.env.VITE_GEMINI_MODEL,
     DEFAULT_GEMINI_MODEL,
-    'gemini-3.1-pro',
-    'gemini-3-pro',
+    'gemini-3.1-pro-preview',
     'gemini-3-pro-preview'
   ]
-    .map((model) => String(model || '').trim())
-    .filter(Boolean)
+    .map(normalizeGeminiModelName)
+    .filter((model) => Boolean(model) && isGeminiModelName(model))
 ));
 const API_VERSION = "v1beta"; // Use v1beta for experimental models
 const DEEPSEEK_LOCAL_STORAGE_KEY = 'deepseek_api_key';
@@ -106,6 +124,7 @@ const postGeminiWithModelFallback = async ({
  * Priority: environment variable > localStorage > default value
  */
 export const getApiKey = () => {
+  if (USE_EDGE_AI_PROXY) return '';
   // Prefer environment variable (if exists)
   if (import.meta.env.VITE_GEMINI_API_KEY) {
     return import.meta.env.VITE_GEMINI_API_KEY;
@@ -124,6 +143,7 @@ export const getApiKey = () => {
  * Save API Key to localStorage
  */
 export const saveApiKey = (apiKey) => {
+  if (USE_EDGE_AI_PROXY) return false;
   if (typeof localStorage === 'undefined') return false;
   if (apiKey && apiKey.trim()) {
     localStorage.setItem('gemini_api_key', apiKey.trim());
@@ -136,11 +156,13 @@ export const saveApiKey = (apiKey) => {
  * Clear API Key
  */
 export const clearApiKey = () => {
+  if (USE_EDGE_AI_PROXY) return;
   if (typeof localStorage === 'undefined') return;
   localStorage.removeItem('gemini_api_key');
 };
 
 export const getDeepSeekApiKey = () => {
+  if (USE_EDGE_AI_PROXY) return '';
   if (import.meta.env.VITE_DEEPSEEK_API_KEY) {
     return import.meta.env.VITE_DEEPSEEK_API_KEY;
   }
@@ -149,6 +171,7 @@ export const getDeepSeekApiKey = () => {
 };
 
 export const saveDeepSeekApiKey = (apiKey) => {
+  if (USE_EDGE_AI_PROXY) return false;
   if (typeof localStorage === 'undefined') return false;
   if (!apiKey || !String(apiKey).trim()) return false;
   localStorage.setItem(DEEPSEEK_LOCAL_STORAGE_KEY, String(apiKey).trim());
@@ -156,6 +179,7 @@ export const saveDeepSeekApiKey = (apiKey) => {
 };
 
 export const clearDeepSeekApiKey = () => {
+  if (USE_EDGE_AI_PROXY) return;
   if (typeof localStorage === 'undefined') return;
   localStorage.removeItem(DEEPSEEK_LOCAL_STORAGE_KEY);
 };
@@ -289,6 +313,32 @@ const postDeepSeekWithModelFallback = async ({
  * @returns {Promise<string>} AI response
  */
 export const callGeminiAPI = async (prompt, systemContext = "", options = {}) => {
+  if (USE_EDGE_AI_PROXY) {
+    try {
+      const fullPrompt = systemContext
+        ? `${systemContext}\n\nUser Query: ${prompt}`
+        : prompt;
+      const result = await invokeAiProxy('di_prompt', {
+        provider: 'deepseek',
+        prompt: fullPrompt,
+        model: options.model || DEFAULT_DEEPSEEK_CHAT_MODEL,
+        temperature: options.temperature || 0.7,
+        maxOutputTokens: options.maxOutputTokens || 8192
+      });
+      const text = typeof result?.text === 'string' ? result.text : '';
+      if (!text) {
+        return 'No response generated.\n\nPlease check AI proxy logs in Supabase Edge Functions.';
+      }
+      return text;
+    } catch (error) {
+      const message = String(error?.message || 'Unknown AI proxy error');
+      if (/not configured on server|missing_server_keys|api key/i.test(message)) {
+        return '⚠️ AI service is not configured on server.\n\nAsk your admin to set Supabase Edge Function secret: DEEPSEEK_API_KEY.';
+      }
+      return `❌ AI service request failed\n\nError message: ${message}\n\nPlease check Edge Function logs and retry.`;
+    }
+  }
+
   const apiKey = getApiKey();
 
   if (!apiKey) {
@@ -433,7 +483,30 @@ export const chatWithAI = async (message, conversationHistory = [], dataContext 
     baseSystemContext = `USER DATA CONTEXT: ${JSON.stringify(dataContext.slice(0, 5))}`;
   }
 
-  // Prefer DeepSeek chat (V3.2 via deepseek-chat alias), fallback to Gemini.
+  if (USE_EDGE_AI_PROXY) {
+    try {
+      const result = await invokeAiProxy('ai_chat', {
+        message,
+        conversationHistory,
+        systemPrompt: baseSystemContext,
+        temperature: 0.7,
+        maxOutputTokens: 8192
+      });
+      const text = typeof result?.text === 'string' ? result.text : '';
+      if (text) return text;
+      throw new Error('AI proxy returned empty content.');
+    } catch (error) {
+      console.warn('[chatWithAI] AI proxy failed, retrying via DeepSeek prompt route:', error.message);
+      const geminiSystemContext = buildChatSystemContext({
+        systemPrompt: baseSystemContext,
+        conversationHistory,
+        historyLimit: 5
+      });
+      return await callGeminiAPI(message, geminiSystemContext);
+    }
+  }
+
+  // Legacy local path: prefer DeepSeek chat (V3.2 via deepseek-chat alias).
   const deepSeekApiKey = getDeepSeekApiKey();
   if (deepSeekApiKey) {
     try {
@@ -692,6 +765,8 @@ const streamDeepSeekChat = async ({
   message,
   conversationHistory,
   systemPrompt,
+  
+  
   onChunk,
   temperature = 0.7,
   maxOutputTokens = 8192
@@ -767,6 +842,25 @@ const streamDeepSeekChat = async ({
  * @returns {Promise<string>} Full concatenated response
  */
 export const streamChatWithAI = async (message, conversationHistory = [], systemPrompt = '', onChunk = null) => {
+  if (USE_EDGE_AI_PROXY) {
+    try {
+      const result = await invokeAiProxy('ai_chat', {
+        message,
+        conversationHistory,
+        systemPrompt,
+        temperature: 0.7,
+        maxOutputTokens: 8192
+      });
+      const text = typeof result?.text === 'string' ? result.text : 'No response generated.';
+      streamTextToChunks(text, onChunk, 48);
+      return text;
+    } catch (error) {
+      const fallback = `❌ AI service request failed\n\nError message: ${error?.message || 'Unknown AI proxy error'}`;
+      onChunk?.(fallback);
+      return fallback;
+    }
+  }
+
   const deepSeekApiKey = getDeepSeekApiKey();
   const geminiApiKey = getApiKey();
   const noKeyWarning = "WARNING: No API key found. Add your DeepSeek API key (preferred) or Google AI API key in Settings.";

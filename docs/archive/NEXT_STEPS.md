@@ -1,4 +1,4 @@
-# 🎯 SmartOps App - 下一步操作指南
+# 🎯 Decision-Intelligence App - 下一步操作指南
 
 ## ✅ 已完成的重構（第 1-4 階段）
 

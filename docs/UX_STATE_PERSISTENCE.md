@@ -6,9 +6,9 @@
 
 ## 1. 問題與目標
 
-- **P0 現象**：使用者在 Chrome 切到其他分頁後再切回 SmartOps，有時會回到首頁，或遺失當前頁面／Tab。
+- **P0 現象**：使用者在 Chrome 切到其他分頁後再切回 Decision-Intelligence，有時會回到首頁，或遺失當前頁面／Tab。
 - **目標**：
-  - 切回 SmartOps 分頁時，**保留原本頁面（route）與 tab**。
+  - 切回 Decision-Intelligence 分頁時，**保留原本頁面（route）與 tab**。
   - 重新整理時，**至少保留 route**；若有採用 tab/filter 策略，一併保留。
   - 主要 view 提供**上一頁**：優先 `history.back()`，無 history 時導回上層／首頁。
 
@@ -80,7 +80,7 @@
 
 1. **Route + Tab 保留（切分頁）**  
    - 登入後進入 **Data → BOM Data**，切到 **FG 需求** tab，確認 URL 為 `/data/bom-data?tab=demand_fg`。  
-   - 開新分頁（例如 about:blank），約 30 秒後切回 SmartOps。  
+   - 開新分頁（例如 about:blank），約 30 秒後切回 Decision-Intelligence。  
    - **預期**：仍為 BOM Data 頁且為 FG 需求 tab，URL 不變。
 
 2. **重新整理保留 route + tab**  

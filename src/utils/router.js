@@ -1,5 +1,5 @@
 /**
- * Lightweight view ↔ URL path mapping for SmartOps SPA.
+ * Lightweight view ↔ URL path mapping for Decision-Intelligence SPA.
  * No react-router; used with History API (pushState / popstate).
  */
 

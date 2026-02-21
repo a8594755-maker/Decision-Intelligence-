@@ -15,7 +15,16 @@ if (!supabaseUrl || !supabaseKey) {
   process.exit(1);
 }
 
-const supabase = createClient(supabaseUrl, supabaseKey);
+const JSON_HEADERS = {
+  'Content-Type': 'application/json',
+  'Accept': 'application/json'
+};
+
+const supabase = createClient(supabaseUrl, supabaseKey, {
+  global: {
+    headers: JSON_HEADERS
+  }
+});
 
 const queries = {
   S1: `select column_name, data_type, is_nullable
@@ -46,7 +55,7 @@ async function runQuery(name, sql) {
   console.log(`${name} 結果:`);
   console.log('='.repeat(60));
   
-  const { data, error } = await supabase.rpc('exec_sql', { sql });
+  const { data, error } = await supabase.rpc('exec_sql', { sql }, { headers: JSON_HEADERS });
   
   if (error) {
     // fallback: try direct query via REST

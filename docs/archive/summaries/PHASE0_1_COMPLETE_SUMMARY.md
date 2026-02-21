@@ -159,7 +159,7 @@ saveGoodsReceipts() / savePriceHistory()
 ## 📂 檔案結構
 
 ```
-smartops-app/
+decision-intelligence/
 ├── database/
 │   ├── ingest_rpc.sql                    ← 🆕 RPC Functions 定義
 │   ├── INGEST_RPC_QUICKSTART.md          ← 🆕 RPC 快速指南

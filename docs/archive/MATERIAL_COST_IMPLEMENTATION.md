@@ -2,7 +2,7 @@
 
 ## 概述
 
-已成功實現 **Material Cost Analysis (材料成本分析)** 功能，作為 SmartOps 應用程式 Cost Analysis 模組的一部分。
+已成功實現 **Material Cost Analysis (材料成本分析)** 功能，作為 Decision-Intelligence 應用程式 Cost Analysis 模組的一部分。
 
 ## 實現的功能
 

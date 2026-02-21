@@ -109,7 +109,7 @@ Mac: Cmd + Shift + R
 
 ### 步驟 3：上傳 Supplier Master 資料
 
-1. 在 SmartOps 介面選擇「Supplier Master」
+1. 在 Decision-Intelligence 介面選擇「Supplier Master」
 2. 上傳 Excel 檔案
 3. 如有多個 sheets，選擇正確的 sheet
 4. 點擊「AI Field Suggestion」按鈕

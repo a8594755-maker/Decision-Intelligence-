@@ -1,4 +1,4 @@
-# 🎉 SmartOps App - 整合完成報告
+# 🎉 Decision-Intelligence App - 整合完成報告
 
 ## ✅ 所有工作已完成！
 
@@ -292,4 +292,4 @@ UI 組件完全獨立，可在多處重用。
 
 ---
 
-**🎉 恭喜！SmartOps App 重構成功完成！**
+**🎉 恭喜！Decision-Intelligence App 重構成功完成！**

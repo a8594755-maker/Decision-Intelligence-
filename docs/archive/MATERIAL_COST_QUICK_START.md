@@ -34,7 +34,7 @@ MAT002,Copper Wire,Supplier C,2024-11-25,55.00,USD,Raw Material
 
 ### Step 2: 上傳數據 (1 分鐘)
 
-1. 登入 SmartOps 應用程式
+1. 登入 Decision-Intelligence 應用程式
 2. 導航到 **External Systems** (或數據上傳頁面)
 3. 選擇 **Price History** 上傳類型
 4. 上傳您的 Excel/CSV 文件

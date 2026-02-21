@@ -7,7 +7,7 @@
 
 export const HEADER_SYNONYMS = {
   // Material / Part Number
-  'material_code': ['part_no', 'part_number', 'item', 'item_code', 'part', 'sku', 'product_code', 'article', 'pn', 'material_no'],
+  'material_code': ['part_no', 'part_number', 'item', 'item_code', 'item_id', 'part', 'sku', 'sku_id', 'product_code', 'product_id', 'article', 'pn', 'material_no'],
   'material_name': ['part_name', 'item_name', 'product_name', 'description', 'material_desc'],
   
   // Parent/Child (BOM)
@@ -18,18 +18,18 @@ export const HEADER_SYNONYMS = {
   // Quantity
   'qty': ['quantity', 'amount', 'volume'],
   'qty_per': ['usage', 'usage_qty', 'unit_qty', 'consumption', 'per_unit'],
-  'demand_qty': ['demand', 'forecast', 'requirement', 'need'],
+  'demand_qty': ['demand', 'forecast', 'requirement', 'need', 'units_sold', 'unit_sold', 'sold_units', 'sales_units'],
   'open_qty': ['open', 'outstanding', 'remaining', 'balance'],
-  'onhand_qty': ['onhand', 'on_hand', 'stock', 'inventory', 'oh_qty', 'available'],
+  'onhand_qty': ['onhand', 'on_hand', 'on_hand_start', 'on_hand_end_units', 'stock', 'inventory', 'oh_qty', 'available'],
   'received_qty': ['received', 'receipt_qty', 'gr_qty', 'goods_received'],
   'rejected_qty': ['rejected', 'reject_qty', 'ng_qty', 'defect_qty'],
   
   // Plant / Location
-  'plant_id': ['plant', 'site', 'location', 'factory', 'warehouse', 'plant_code'],
+  'plant_id': ['plant', 'site', 'location', 'factory', 'warehouse', 'plant_code', 'store', 'store_id', 'store_code', 'dc', 'dc_id'],
   
   // Time / Date
-  'time_bucket': ['week', 'bucket', 'period', 'time_period'],
-  'week_bucket': ['week', 'week_no', 'calendar_week', 'wk'],
+  'time_bucket': ['week', 'bucket', 'period', 'time_period', 'week_start', 'week_end', 'wm_yr_wk'],
+  'week_bucket': ['week', 'week_no', 'calendar_week', 'wk', 'wm_yr_wk'],
   'date': ['delivery_date', 'ship_date', 'due_date', 'schedule_date'],
   'snapshot_date': ['date', 'snapshot', 'as_of_date', 'stock_date'],
   'actual_delivery_date': ['actual_date', 'delivered_date', 'gr_date'],
@@ -37,7 +37,7 @@ export const HEADER_SYNONYMS = {
   'order_date': ['po_date', 'purchase_date', 'order_time'],
   
   // Financial
-  'unit_price': ['price', 'cost', 'unit_cost', 'piece_price'],
+  'unit_price': ['price', 'cost', 'unit_cost', 'piece_price', 'sell_price'],
   'unit_margin': ['margin', 'profit', 'profit_per_unit', 'contribution_margin'],
   'currency': ['curr', 'currency_code', 'ccy'],
 
@@ -62,7 +62,7 @@ export const HEADER_SYNONYMS = {
   'receipt_number': ['gr_no', 'receipt_no', 'goods_receipt', 'grn'],
   
   // Inventory
-  'safety_stock': ['ss', 'min_stock', 'buffer_stock'],
+  'safety_stock': ['ss', 'min_stock', 'buffer_stock', 'safety_stock_units'],
   'allocated_qty': ['allocated', 'reserved', 'committed'],
   'available_qty': ['available', 'free_stock', 'unreserved'],
   

@@ -8,8 +8,12 @@ export default function PlanExceptionsCard({ payload }) {
   const infeasibleReasons = Array.isArray(payload.infeasible_reasons) ? payload.infeasible_reasons : [];
   const violations = Array.isArray(payload.constraint_violations) ? payload.constraint_violations : [];
   const roundingNotes = Array.isArray(payload.rounding_notes) ? payload.rounding_notes : [];
+  const bomBottlenecks = Array.isArray(payload.bom_bottlenecks) ? payload.bom_bottlenecks : [];
 
-  const allClear = infeasibleReasons.length === 0 && violations.length === 0 && roundingNotes.length === 0;
+  const allClear = infeasibleReasons.length === 0
+    && violations.length === 0
+    && roundingNotes.length === 0
+    && bomBottlenecks.length === 0;
 
   return (
     <Card className="w-full border border-amber-200 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-900/10">
@@ -56,6 +60,19 @@ export default function PlanExceptionsCard({ payload }) {
                 <ul className="list-disc list-inside text-slate-600 dark:text-slate-300 space-y-1">
                   {roundingNotes.slice(0, 8).map((note, idx) => (
                     <li key={`${note}-${idx}`}>{note}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {bomBottlenecks.length > 0 && (
+              <div>
+                <p className="font-medium text-slate-700 dark:text-slate-200 mb-1">Top BOM bottlenecks</p>
+                <ul className="list-disc list-inside text-slate-600 dark:text-slate-300 space-y-1">
+                  {bomBottlenecks.slice(0, 5).map((row, idx) => (
+                    <li key={`${row.component_sku}-${idx}`}>
+                      <strong>{row.component_sku}</strong>: missing {Number(row.missing_qty || 0).toFixed(2)}
+                    </li>
                   ))}
                 </ul>
               </div>

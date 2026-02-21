@@ -3,7 +3,7 @@
  * Manage import history and batch undo functionality
  */
 
-import { supabase } from './supabaseClient';
+import { supabase, RPC_JSON_OPTIONS } from './supabaseClient';
 
 /**
  * Import Batches Operations
@@ -637,7 +637,7 @@ export const importBatchesService = {
       .rpc('undo_import_batch', {
         p_batch_id: batchId,
         p_user_id: userId
-      });
+      }, RPC_JSON_OPTIONS);
 
     if (error) throw error;
     return data;
@@ -654,7 +654,7 @@ export const importBatchesService = {
       .rpc('undo_multiple_batches', {
         p_batch_ids: batchIds,
         p_user_id: userId
-      });
+      }, RPC_JSON_OPTIONS);
 
     if (error) throw error;
     return data;
@@ -739,7 +739,6 @@ export const importBatchesService = {
 };
 
 export default importBatchesService;
-
 
 
 

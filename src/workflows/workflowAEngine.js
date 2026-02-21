@@ -9,15 +9,19 @@ import {
   buildPlanTableCardPayload,
   buildInventoryProjectionCardPayload,
   buildPlanExceptionsCardPayload,
-  buildPlanDownloadsPayload
+  buildBomBottlenecksCardPayload,
+  buildPlanDownloadsPayload,
+  buildRiskAwarePlanComparisonCardPayload
 } from '../services/chatPlanningService';
+import { generateTopologyGraphForRun } from '../services/topology/topologyService';
 import { loadArtifact, saveJsonArtifact } from '../utils/artifactStore';
 
-export const WORKFLOW_A_STEPS = ['profile', 'contract', 'validate', 'forecast', 'optimize', 'verify', 'report'];
+export const WORKFLOW_A_STEPS = ['profile', 'contract', 'validate', 'forecast', 'optimize', 'verify', 'topology', 'report'];
 
-const TERMINAL_STEP_STATUSES = new Set(['succeeded', 'failed', 'skipped']);
-const RUN_TERMINAL_STATUSES = new Set(['succeeded', 'failed']);
+const TERMINAL_STEP_STATUSES = new Set(['succeeded', 'failed', 'skipped', 'blocked']);
+const RUN_TERMINAL_STATUSES = new Set(['succeeded', 'failed', 'waiting_user']);
 const ARTIFACT_THRESHOLD = 200 * 1024;
+const MAX_BLOCKING_QUESTIONS = 2;
 
 export const WORKFLOW_ERROR_CODES = {
   DATA_CONTRACT_MISSING_REQUIRED: 'DATA_CONTRACT_MISSING_REQUIRED',
@@ -60,13 +64,39 @@ const ERROR_ACTIONS = {
   ]
 };
 
+const normalizeBlockingQuestions = (questions) => {
+  const list = Array.isArray(questions) ? questions : [];
+  return list
+    .map((item) => {
+      if (typeof item === 'string') {
+        const q = item.trim();
+        return q ? { id: null, question: q, answer_type: 'text', options: null, why_needed: null, bind_to: null } : null;
+      }
+      if (item && typeof item === 'object') {
+        const q = String(item.question || '').trim();
+        if (!q) return null;
+        return {
+          id: item.id || null,
+          question: q,
+          answer_type: item.answer_type || 'text',
+          options: Array.isArray(item.options) ? item.options : null,
+          why_needed: item.why_needed ? String(item.why_needed).trim() : null,
+          bind_to: item.bind_to ? String(item.bind_to).trim() : null
+        };
+      }
+      return null;
+    })
+    .filter(Boolean)
+    .slice(0, MAX_BLOCKING_QUESTIONS);
+};
+
 class WorkflowAError extends Error {
   constructor(code, message, options = {}) {
     super(message);
     this.name = 'WorkflowAError';
     this.code = code || WORKFLOW_ERROR_CODES.UNKNOWN;
     this.nextActions = Array.isArray(options.nextActions) ? options.nextActions.slice(0, 2) : (ERROR_ACTIONS[this.code] || ERROR_ACTIONS.UNKNOWN);
-    this.blockingQuestions = Array.isArray(options.blockingQuestions) ? options.blockingQuestions.slice(0, 2) : [];
+    this.blockingQuestions = normalizeBlockingQuestions(options.blockingQuestions);
     this.details = options.details || null;
   }
 }
@@ -182,6 +212,78 @@ const runIsSucceeded = (steps = []) => {
 
 const runHasFailedStep = (steps = []) => steps.some((step) => normalizeStatus(step.status) === 'failed');
 
+const runHasBlockedStep = (steps = []) => steps.some((step) => normalizeStatus(step.status) === 'blocked');
+
+const resetFailedAndDownstreamSteps = async (runId, steps = []) => {
+  const ordered = sortSteps(steps);
+  const firstFailed = ordered.find((step) => normalizeStatus(step.status) === 'failed');
+  if (!firstFailed) {
+    return {
+      resetFromStep: null,
+      resetStepCount: 0
+    };
+  }
+
+  const firstFailedOrder = getStepOrder(firstFailed.step);
+  const resetTargets = ordered.filter((step) => {
+    const order = getStepOrder(step.step);
+    return order >= firstFailedOrder;
+  });
+
+  for (const step of resetTargets) {
+    await diRunsService.updateRunStep({
+      run_id: runId,
+      step: step.step,
+      status: 'queued',
+      started_at: null,
+      finished_at: null,
+      error_code: null,
+      error_message: null,
+      output_ref: null
+    });
+  }
+
+  return {
+    resetFromStep: firstFailed.step,
+    resetStepCount: resetTargets.length
+  };
+};
+
+const resetBlockedAndDownstreamSteps = async (runId, steps = []) => {
+  const ordered = sortSteps(steps);
+  const firstBlocked = ordered.find((step) => normalizeStatus(step.status) === 'blocked');
+  if (!firstBlocked) {
+    return {
+      resetFromStep: null,
+      resetStepCount: 0
+    };
+  }
+
+  const firstBlockedOrder = getStepOrder(firstBlocked.step);
+  const resetTargets = ordered.filter((step) => {
+    const order = getStepOrder(step.step);
+    return order >= firstBlockedOrder;
+  });
+
+  for (const step of resetTargets) {
+    await diRunsService.updateRunStep({
+      run_id: runId,
+      step: step.step,
+      status: 'queued',
+      started_at: null,
+      finished_at: null,
+      error_code: null,
+      error_message: null,
+      output_ref: null
+    });
+  }
+
+  return {
+    resetFromStep: firstBlocked.step,
+    resetStepCount: resetTargets.length
+  };
+};
+
 const ensureRunInitialized = async (runId) => {
   await diRunsService.createRunSteps(runId, WORKFLOW_A_STEPS);
   const steps = await diRunsService.getRunSteps(runId);
@@ -236,10 +338,16 @@ const getForecastHorizonFromSettings = (settings = {}) => {
 const getPlanSettingsFromContext = (settings = {}) => {
   const plan = settings?.plan || {};
   const planningHorizon = Number(plan?.planning_horizon_days);
+  // risk_mode: 'off' | 'on'. Reads from plan.risk_mode, then settings.risk_mode, then env flag.
+  const rawRiskMode = plan?.risk_mode || settings?.risk_mode || 'off';
+  const riskMode = rawRiskMode === 'on' ? 'on' : 'off';
   return {
     planning_horizon_days: Number.isFinite(planningHorizon) && planningHorizon > 0 ? Math.floor(planningHorizon) : null,
     objective: plan?.objective || null,
-    constraints: plan?.constraints || null
+    constraints: plan?.constraints || null,
+    risk_mode: riskMode,
+    risk_run_id: plan?.risk_run_id || settings?.risk_run_id || null,
+    risk_config_overrides: plan?.risk_config_overrides || settings?.risk_config_overrides || {}
   };
 };
 
@@ -279,13 +387,22 @@ const loadForecastCardFromChildRun = async ({ childRunId, datasetProfileRow }) =
   const forecastSeries = await loadArtifactPayloadByType(childRunId, 'forecast_series');
   const metrics = await loadArtifactPayloadByType(childRunId, 'metrics');
   const reportJson = await loadArtifactPayloadByType(childRunId, 'report_json');
-  const csvPayload = await loadArtifactPayloadByType(childRunId, 'csv');
+  // Prefer explicit forecast_csv; fallback to legacy csv for backward compatibility with old runs.
+  const preferredCsvPayload = await loadArtifactPayloadByType(childRunId, 'forecast_csv');
+  const legacyCsvPayload = preferredCsvPayload
+    ? null
+    : await loadArtifactPayloadByType(childRunId, 'csv');
+  const csvPayload = preferredCsvPayload ?? legacyCsvPayload;
   const artifacts = await diRunsService.getArtifactsForRun(childRunId);
+  const preferredCsvRef = toArtifactRef(getLatestArtifactRecordByType(artifacts, 'forecast_csv'));
+  const legacyCsvRef = preferredCsvRef
+    ? null
+    : toArtifactRef(getLatestArtifactRecordByType(artifacts, 'csv'));
   const artifactRefs = {
     forecast_series: toArtifactRef(getLatestArtifactRecordByType(artifacts, 'forecast_series')),
     metrics: toArtifactRef(getLatestArtifactRecordByType(artifacts, 'metrics')),
     report_json: toArtifactRef(getLatestArtifactRecordByType(artifacts, 'report_json')),
-    forecast_csv: toArtifactRef(getLatestArtifactRecordByType(artifacts, 'csv'))
+    forecast_csv: preferredCsvRef || legacyCsvRef
   };
 
   return buildForecastCardPayload({
@@ -312,20 +429,39 @@ const loadPlanResultFromChildRun = async ({ childRunId }) => {
   const planTable = await loadArtifactPayloadByType(childRunId, 'plan_table');
   const replayMetrics = await loadArtifactPayloadByType(childRunId, 'replay_metrics');
   const projection = await loadArtifactPayloadByType(childRunId, 'inventory_projection');
+  const componentPlanTable = await loadArtifactPayloadByType(childRunId, 'component_plan_table');
+  const componentProjection = await loadArtifactPayloadByType(childRunId, 'component_inventory_projection');
+  const bomExplosion = await loadArtifactPayloadByType(childRunId, 'bom_explosion');
+  const bottlenecks = await loadArtifactPayloadByType(childRunId, 'bottlenecks');
   const report = await loadArtifactPayloadByType(childRunId, 'report_json');
   const evidencePack = await loadArtifactPayloadByType(childRunId, 'evidence_pack');
-  const csvPayload = await loadArtifactPayloadByType(childRunId, 'csv');
+  // Prefer explicit plan_csv; fallback to legacy csv for backward compatibility with old runs.
+  const preferredCsvPayload = await loadArtifactPayloadByType(childRunId, 'plan_csv');
+  const componentCsvPayload = await loadArtifactPayloadByType(childRunId, 'component_plan_csv');
+  const legacyCsvPayload = preferredCsvPayload
+    ? null
+    : await loadArtifactPayloadByType(childRunId, 'csv');
+  const csvPayload = preferredCsvPayload ?? legacyCsvPayload;
 
   const artifacts = await diRunsService.getArtifactsForRun(childRunId);
+  const preferredCsvRef = toArtifactRef(getLatestArtifactRecordByType(artifacts, 'plan_csv'));
+  const legacyCsvRef = preferredCsvRef
+    ? null
+    : toArtifactRef(getLatestArtifactRecordByType(artifacts, 'csv'));
   const artifactRefs = {
     solver_meta: toArtifactRef(getLatestArtifactRecordByType(artifacts, 'solver_meta')),
     constraint_check: toArtifactRef(getLatestArtifactRecordByType(artifacts, 'constraint_check')),
     plan_table: toArtifactRef(getLatestArtifactRecordByType(artifacts, 'plan_table')),
     replay_metrics: toArtifactRef(getLatestArtifactRecordByType(artifacts, 'replay_metrics')),
     inventory_projection: toArtifactRef(getLatestArtifactRecordByType(artifacts, 'inventory_projection')),
+    component_plan_table: toArtifactRef(getLatestArtifactRecordByType(artifacts, 'component_plan_table')),
+    component_plan_csv: toArtifactRef(getLatestArtifactRecordByType(artifacts, 'component_plan_csv')),
+    component_inventory_projection: toArtifactRef(getLatestArtifactRecordByType(artifacts, 'component_inventory_projection')),
+    bom_explosion: toArtifactRef(getLatestArtifactRecordByType(artifacts, 'bom_explosion')),
+    bottlenecks: toArtifactRef(getLatestArtifactRecordByType(artifacts, 'bottlenecks')),
     evidence_pack: toArtifactRef(getLatestArtifactRecordByType(artifacts, 'evidence_pack')),
     report_json: toArtifactRef(getLatestArtifactRecordByType(artifacts, 'report_json')),
-    plan_csv: toArtifactRef(getLatestArtifactRecordByType(artifacts, 'csv'))
+    plan_csv: preferredCsvRef || legacyCsvRef
   };
 
   const normalizedPlanRows = Array.isArray(planTable?.rows) ? planTable.rows : [];
@@ -345,9 +481,16 @@ const loadPlanResultFromChildRun = async ({ childRunId }) => {
     constraint_check: constraint || { passed: false, violations: [] },
     replay_metrics: replayMetrics || {},
     inventory_projection: projection || { total_rows: 0, rows: [], truncated: false },
+    component_plan_table: componentPlanTable || { total_rows: 0, rows: [], truncated: false },
+    component_inventory_projection: componentProjection || { total_rows: 0, rows: [], truncated: false },
+    bom_explosion: bomExplosion || null,
+    bottlenecks: bottlenecks || { total_rows: 0, rows: [] },
     final_report: report || { summary: 'Report unavailable', key_results: [], exceptions: [], recommended_actions: [] },
     evidence_pack: evidencePack || {},
     plan_csv: typeof csvPayload === 'string' ? csvPayload : (csvPayload?.content || ''),
+    component_plan_csv: typeof componentCsvPayload === 'string'
+      ? componentCsvPayload
+      : (componentCsvPayload?.content || ''),
     artifact_refs: artifactRefs,
     summary_text: report?.summary || 'Plan loaded from cached artifacts.'
   };
@@ -406,9 +549,9 @@ const stepHandlers = {
       : ['Contract validation reasons unavailable.'];
 
     if (status !== 'pass') {
-      const blockingQuestions = Array.isArray(ctx.datasetProfileRow?.profile_json?.global?.minimal_questions)
-        ? ctx.datasetProfileRow.profile_json.global.minimal_questions.slice(0, 2)
-        : [];
+      const blockingQuestions = normalizeBlockingQuestions(
+        ctx.datasetProfileRow?.profile_json?.global?.minimal_questions
+      );
 
       throw new WorkflowAError(
         WORKFLOW_ERROR_CODES.DATA_CONTRACT_MISSING_REQUIRED,
@@ -555,13 +698,24 @@ const stepHandlers = {
               constraint_passed: cachedPlanResult?.constraint_check?.passed === true,
               artifact_refs: cachedPlanResult?.artifact_refs || {}
             },
-            result_cards: [
-              { type: 'plan_summary_card', payload: buildPlanSummaryCardPayload(cachedPlanResult, ctx.datasetProfileRow) },
-              { type: 'plan_table_card', payload: buildPlanTableCardPayload(cachedPlanResult) },
-              { type: 'inventory_projection_card', payload: buildInventoryProjectionCardPayload(cachedPlanResult) },
-              { type: 'plan_exceptions_card', payload: buildPlanExceptionsCardPayload(cachedPlanResult) },
-              { type: 'downloads_card', payload: buildPlanDownloadsPayload(cachedPlanResult) }
-            ]
+            result_cards: (() => {
+              const cachedRiskPayload = (cachedPlanResult?.risk_mode === 'on' && cachedPlanResult?.risk_aware)
+                ? buildRiskAwarePlanComparisonCardPayload(cachedPlanResult)
+                : null;
+              return [
+                { type: 'plan_summary_card', payload: buildPlanSummaryCardPayload(cachedPlanResult, ctx.datasetProfileRow) },
+                { type: 'plan_table_card', payload: buildPlanTableCardPayload(cachedPlanResult) },
+                { type: 'inventory_projection_card', payload: buildInventoryProjectionCardPayload(cachedPlanResult) },
+                { type: 'plan_exceptions_card', payload: buildPlanExceptionsCardPayload(cachedPlanResult) },
+                ...(buildBomBottlenecksCardPayload(cachedPlanResult).total_rows > 0
+                  ? [{ type: 'bom_bottlenecks_card', payload: buildBomBottlenecksCardPayload(cachedPlanResult) }]
+                  : []),
+                { type: 'downloads_card', payload: buildPlanDownloadsPayload(cachedPlanResult) },
+                ...(cachedRiskPayload
+                  ? [{ type: 'risk_aware_plan_comparison_card', payload: cachedRiskPayload }]
+                  : [])
+              ];
+            })()
           };
         }
       }
@@ -584,7 +738,11 @@ const stepHandlers = {
       planningHorizonDays: planSettings.planning_horizon_days,
       objectiveOverride: planSettings.objective,
       constraintsOverride: planSettings.constraints,
-      settings: ctx.settings
+      settings: ctx.settings,
+      // Risk-aware planning (opt-in via settings.plan.risk_mode='on' or settings.risk_mode='on')
+      riskMode: planSettings.risk_mode,
+      riskRunId: planSettings.risk_run_id,
+      riskConfigOverrides: planSettings.risk_config_overrides
     });
 
     return {
@@ -598,15 +756,31 @@ const stepHandlers = {
         reused: false,
         solver_status: planResult?.solver_result?.status || 'unknown',
         constraint_passed: planResult?.constraint_check?.passed === true,
-        artifact_refs: planResult?.artifact_refs || {}
+        artifact_refs: planResult?.artifact_refs || {},
+        risk_mode: planResult?.risk_mode || 'off',
+        risk_aware: planResult?.risk_aware ? {
+          num_impacted_skus: planResult.risk_aware.risk_adjustments?.summary?.num_impacted_skus || 0,
+          plan_comparison_ref: planResult.artifact_refs?.plan_comparison || null
+        } : null
       },
-      result_cards: [
-        { type: 'plan_summary_card', payload: buildPlanSummaryCardPayload(planResult, ctx.datasetProfileRow) },
-        { type: 'plan_table_card', payload: buildPlanTableCardPayload(planResult) },
-        { type: 'inventory_projection_card', payload: buildInventoryProjectionCardPayload(planResult) },
-        { type: 'plan_exceptions_card', payload: buildPlanExceptionsCardPayload(planResult) },
-        { type: 'downloads_card', payload: buildPlanDownloadsPayload(planResult) }
-      ]
+      result_cards: (() => {
+        const riskComparisonPayload = (planResult?.risk_mode === 'on' && planResult?.risk_aware)
+          ? buildRiskAwarePlanComparisonCardPayload(planResult)
+          : null;
+        return [
+          { type: 'plan_summary_card', payload: buildPlanSummaryCardPayload(planResult, ctx.datasetProfileRow) },
+          { type: 'plan_table_card', payload: buildPlanTableCardPayload(planResult) },
+          { type: 'inventory_projection_card', payload: buildInventoryProjectionCardPayload(planResult) },
+          { type: 'plan_exceptions_card', payload: buildPlanExceptionsCardPayload(planResult) },
+          ...(buildBomBottlenecksCardPayload(planResult).total_rows > 0
+            ? [{ type: 'bom_bottlenecks_card', payload: buildBomBottlenecksCardPayload(planResult) }]
+            : []),
+          { type: 'downloads_card', payload: buildPlanDownloadsPayload(planResult) },
+          ...(riskComparisonPayload
+            ? [{ type: 'risk_aware_plan_comparison_card', payload: riskComparisonPayload }]
+            : [])
+        ];
+      })()
     };
   },
 
@@ -657,6 +831,40 @@ const stepHandlers = {
           reasons
         }
       }]
+    };
+  },
+
+  async topology(ctx) {
+    const topologyScope = {
+      ...(ctx.settings?.topology || {})
+    };
+
+    const topologyResult = await generateTopologyGraphForRun({
+      userId: ctx.run.user_id,
+      runId: ctx.run.id,
+      scope: topologyScope,
+      forceRebuild: Boolean(ctx.settings?.topology?.force_rebuild),
+      reuse: isReuseEnabled(ctx.settings),
+      manageRunStep: false
+    });
+
+    return {
+      status: 'succeeded',
+      notice_text: topologyResult?.reused
+        ? `Topology graph reused from run #${topologyResult.reused_from_run_id}.`
+        : 'Topology graph generated successfully.',
+      input_ref: {
+        scope: topologyScope
+      },
+      output_ref: {
+        topology_graph_ref: topologyResult?.ref || null,
+        settings_hash: topologyResult?.settings_hash || null,
+        reused: Boolean(topologyResult?.reused),
+        reused_from_run_id: topologyResult?.reused_from_run_id || null,
+        node_count: Array.isArray(topologyResult?.graph?.nodes) ? topologyResult.graph.nodes.length : 0,
+        edge_count: Array.isArray(topologyResult?.graph?.edges) ? topologyResult.graph.edges.length : 0
+      },
+      result_cards: []
     };
   },
 
@@ -776,11 +984,15 @@ export async function runNextStep(run_id) {
   const nextStep = findNextRunnableStep(steps);
 
   if (!nextStep) {
-    const nextRunStatus = runIsSucceeded(steps) ? 'succeeded' : (runHasFailedStep(steps) ? 'failed' : 'succeeded');
+    const isWaiting = runHasBlockedStep(steps);
+    const nextRunStatus = runIsSucceeded(steps) ? 'succeeded'
+      : isWaiting ? 'waiting_user'
+      : runHasFailedStep(steps) ? 'failed'
+      : 'succeeded';
     const finalizedRun = await diRunsService.updateRunStatus({
       run_id: runId,
       status: nextRunStatus,
-      finished_at: nowIso(),
+      finished_at: isWaiting ? null : nowIso(),
       error: nextRunStatus === 'failed' ? (run.error || 'Workflow failed') : null
     });
 
@@ -925,12 +1137,15 @@ export async function runNextStep(run_id) {
     };
   } catch (error) {
     const wfError = asWorkflowError(error, stepName);
+    const isBlocking = wfError.blockingQuestions.length > 0;
+    const stepStatus = isBlocking ? 'blocked' : 'failed';
+    const runStatus = isBlocking ? 'waiting_user' : 'failed';
 
     await diRunsService.updateRunStep({
       run_id: runId,
       step: stepName,
-      status: 'failed',
-      finished_at: nowIso(),
+      status: stepStatus,
+      finished_at: isBlocking ? null : nowIso(),
       error_code: wfError.code,
       error_message: wfError.message,
       output_ref: {
@@ -942,9 +1157,9 @@ export async function runNextStep(run_id) {
 
     await diRunsService.updateRunStatus({
       run_id: runId,
-      status: 'failed',
-      finished_at: nowIso(),
-      error: `[${wfError.code}] ${wfError.message}`
+      status: runStatus,
+      finished_at: isBlocking ? null : nowIso(),
+      error: isBlocking ? null : `[${wfError.code}] ${wfError.message}`
     });
 
     const finalSnapshot = await buildRunSnapshot(runId);
@@ -953,7 +1168,7 @@ export async function runNextStep(run_id) {
       progressed_step: stepName,
       step_event: {
         step: stepName,
-        status: 'failed',
+        status: stepStatus,
         error: {
           code: wfError.code,
           message: wfError.message,
@@ -975,6 +1190,29 @@ export async function resumeRun(run_id, options = {}) {
 
   const events = [];
   let latest = await buildRunSnapshot(run_id);
+
+  const currentStatus = normalizeStatus(latest.run?.status);
+  if (currentStatus === 'failed') {
+    const resetResult = await resetFailedAndDownstreamSteps(Number(run_id), latest.steps || []);
+    await diRunsService.updateRunStatus({
+      run_id: Number(run_id),
+      status: 'running',
+      stage: resetResult.resetFromStep || latest.run?.stage || WORKFLOW_A_STEPS[0],
+      finished_at: null,
+      error: null
+    });
+    latest = await buildRunSnapshot(run_id);
+  } else if (currentStatus === 'waiting_user') {
+    const resetResult = await resetBlockedAndDownstreamSteps(Number(run_id), latest.steps || []);
+    await diRunsService.updateRunStatus({
+      run_id: Number(run_id),
+      status: 'running',
+      stage: resetResult.resetFromStep || latest.run?.stage || WORKFLOW_A_STEPS[0],
+      finished_at: null,
+      error: null
+    });
+    latest = await buildRunSnapshot(run_id);
+  }
 
   for (let i = 0; i < maxSteps; i += 1) {
     if (RUN_TERMINAL_STATUSES.has(normalizeStatus(latest.run?.status))) {
@@ -1002,6 +1240,34 @@ export async function resumeRun(run_id, options = {}) {
     events,
     done: RUN_TERMINAL_STATUSES.has(normalizeStatus(latest.run?.status))
   };
+}
+
+export async function submitBlockingAnswers(run_id, answers = {}) {
+  const runId = Number(run_id);
+  if (!Number.isFinite(runId)) throw new Error('run_id must be numeric');
+
+  const snapshot = await buildRunSnapshot(runId);
+  const currentStatus = normalizeStatus(snapshot.run?.status);
+  if (currentStatus !== 'waiting_user') {
+    throw new Error(`Run ${runId} is not waiting_user (status: ${currentStatus})`);
+  }
+
+  const existingSettings = await getWorkflowSettings(runId);
+  const merged = {
+    ...existingSettings,
+    blocking_answers: {
+      ...(existingSettings.blocking_answers || {}),
+      ...answers
+    }
+  };
+  await persistWorkflowSettings(runId, snapshot.run.user_id, {
+    user_id: snapshot.run.user_id,
+    dataset_profile_id: snapshot.run.dataset_profile_id,
+    settings: merged,
+    updated_at: nowIso()
+  });
+
+  return resumeRun(runId);
 }
 
 export async function replayRun(run_id, { use_cached_forecast = false, use_cached_plan = false } = {}) {

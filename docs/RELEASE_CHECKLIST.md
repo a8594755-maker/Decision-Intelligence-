@@ -1,4 +1,4 @@
-# SmartOps 上線流程（Staging → Production）
+# Decision-Intelligence 上線流程（Staging → Production）
 
 本文件為**可執行的上線流程**，含 DB / RPC 部署、權限檢查、前端環境變數、Smoke Test、回滾方案與監控指標。  
 **任何人照此 checklist 可完成 Staging 部署，回滾不依賴原作者。**

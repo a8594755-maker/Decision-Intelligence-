@@ -8,7 +8,16 @@ import { createClient } from '@supabase/supabase-js';
 const SUPABASE_URL = 'https://cbvxqqqulwytdblivtoe.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNieHZxcXF1bHd5dGRibGl2dG9lIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQ0NjQzNjUsImV4cCI6MjA4MDA0MDM2NX0.3PeFtqJAkoxrosFeAiXbOklRCDxaQjH2VjXWwEiFyYI';
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+const JSON_HEADERS = {
+  'Content-Type': 'application/json',
+  'Accept': 'application/json'
+};
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
+  global: {
+    headers: JSON_HEADERS
+  }
+});
 
 async function runQuery(name, sql) {
   console.log(`\n${'='.repeat(70)}`);
@@ -16,7 +25,7 @@ async function runQuery(name, sql) {
   console.log('='.repeat(70));
   
   try {
-    const { data, error } = await supabase.rpc('exec_sql', { sql });
+    const { data, error } = await supabase.rpc('exec_sql', { sql }, { headers: JSON_HEADERS });
     
     if (error) {
       console.error('Error:', error.message);

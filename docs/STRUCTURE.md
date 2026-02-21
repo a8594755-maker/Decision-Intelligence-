@@ -1,11 +1,11 @@
-# SmartOps 文件結構圖
+# Decision-Intelligence 文件結構圖
 
 > 最後更新: 2026-02-04
 
 ## 📁 完整目錄結構
 
 ```
-SmartOps/
+Decision-Intelligence/
 │
 ├── 📄 README.md                          # ⭐ 專案總覽
 ├── 📄 ARCHITECTURE_DESIGN.md             # 系統架構設計
@@ -255,6 +255,6 @@ ls docs/archive/*.md
 
 ---
 
-**維護者**: SmartOps Team  
+**維護者**: Decision-Intelligence Team  
 **文件版本**: 1.0  
 **最後更新**: 2026-02-04

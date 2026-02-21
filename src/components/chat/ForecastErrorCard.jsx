@@ -21,9 +21,10 @@ export default function ForecastErrorCard({ payload }) {
           <div>
             <p className="text-xs font-medium text-red-700 dark:text-red-300 mb-1">Blocking questions</p>
             <ul className="list-disc list-inside text-xs text-red-700 dark:text-red-300 space-y-1">
-              {blocking.map((item, idx) => (
-                <li key={`${item}-${idx}`}>{item}</li>
-              ))}
+              {blocking.map((item, idx) => {
+                const text = typeof item === 'string' ? item : (item?.question || '');
+                return <li key={`${text}-${idx}`}>{text}</li>;
+              })}
             </ul>
           </div>
         )}

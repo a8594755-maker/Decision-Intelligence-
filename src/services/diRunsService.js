@@ -73,7 +73,7 @@ export const diRunsService = {
     return data || null;
   },
 
-  async getLatestRunByStage(user_id, { stage, status = null, dataset_profile_id = null, limit = 20 } = {}) {
+  async getLatestRunByStage(user_id, { stage, status = null, dataset_profile_id = null, workflow = null, limit = 20 } = {}) {
     if (!stage) throw new Error('stage is required');
 
     let query = supabase
@@ -90,6 +90,10 @@ export const diRunsService = {
 
     if (dataset_profile_id !== null && dataset_profile_id !== undefined) {
       query = query.eq('dataset_profile_id', dataset_profile_id);
+    }
+
+    if (workflow !== null && workflow !== undefined) {
+      query = query.eq('workflow', workflow);
     }
 
     const { data, error } = await query;
@@ -128,6 +132,41 @@ export const diRunsService = {
     const { data, error } = await query;
     if (error) throw error;
     return (data && data.length > 0) ? data[0] : null;
+  },
+
+  async getRecentRunsForDatasetProfiles(
+    user_id,
+    {
+      dataset_profile_ids = [],
+      status = null,
+      workflow = null,
+      limit = 50
+    } = {}
+  ) {
+    const ids = (Array.isArray(dataset_profile_ids) ? dataset_profile_ids : [])
+      .map((id) => Number(id))
+      .filter((id) => Number.isFinite(id));
+    if (ids.length === 0) return [];
+
+    let query = supabase
+      .from('di_runs')
+      .select('*')
+      .eq('user_id', user_id)
+      .in('dataset_profile_id', ids)
+      .order('created_at', { ascending: false })
+      .limit(limit);
+
+    if (status) {
+      query = query.eq('status', status);
+    }
+
+    if (workflow) {
+      query = query.eq('workflow', workflow);
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+    return data || [];
   },
 
   async getRun(run_id) {

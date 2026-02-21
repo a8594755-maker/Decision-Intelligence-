@@ -1,4 +1,4 @@
--- Decision Intelligence Step 5
+-- Decision-Intelligence Step 5
 -- Reuse / memory / learning loop tables for Workflow A
 
 DO $$

@@ -1,5 +1,5 @@
 -- ============================================
--- SmartOps Supply, Inventory & Financials 模块 - 数据库架构
+-- Decision-Intelligence Supply, Inventory & Financials 模块 - 数据库架构
 -- ============================================
 -- 创建日期: 2026-01-31
 -- 说明: 包含采购订单未交货、库存快照、成品财务数据所需的表

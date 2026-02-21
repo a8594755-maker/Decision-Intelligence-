@@ -1,4 +1,4 @@
-# SmartOps 文件重構執行報告
+# Decision-Intelligence 文件重構執行報告
 
 > 執行日期: 2026-02-04  
 > 執行者: AI Agent  
@@ -30,7 +30,7 @@
 ## 🗂️ 整理後的文件結構
 
 ```
-SmartOps/
+Decision-Intelligence/
 ├── README.md                             # ⭐ 專案總覽 (已更新)
 ├── ARCHITECTURE_DESIGN.md                # 系統架構設計
 ├── DATABASE_SCHEMA_GUIDE.md              # 資料庫結構說明
@@ -559,7 +559,7 @@ docs/archive/ (歷史參考)
 
 ### 產品化價值
 
-🌟 **SmartOps 現在擁有**:
+🌟 **Decision-Intelligence 現在擁有**:
 - ⭐ 專業級開源專案文件結構
 - ⭐ 清晰的新手入門路徑
 - ⭐ 完整的使用者指南體系
@@ -568,7 +568,7 @@ docs/archive/ (歷史參考)
 
 ### 與主流專案對標
 
-| 專案 | 文件結構 | SmartOps |
+| 專案 | 文件結構 | Decision-Intelligence |
 |-----|---------|---------|
 | React | docs/ 目錄 + guides/ | ✅ 相同 |
 | Vue | 核心文件 + API 文件 | ✅ 相同 |

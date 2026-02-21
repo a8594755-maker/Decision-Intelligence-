@@ -5,114 +5,165 @@
 
 import { buildSchemaContractMappingPrompt } from '../prompts/diJsonContracts';
 
+const parseJson = (value) => {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+};
+
+const stripMarkdownFence = (value) => String(value || '')
+  .replace(/```json\s*/gi, '')
+  .replace(/```javascript\s*/gi, '')
+  .replace(/```\s*/g, '')
+  .trim();
+
+const findJsonStartIndex = (value) => {
+  const objectIndex = value.indexOf('{');
+  const arrayIndex = value.indexOf('[');
+  if (objectIndex === -1) return arrayIndex;
+  if (arrayIndex === -1) return objectIndex;
+  return Math.min(objectIndex, arrayIndex);
+};
+
+const extractBalancedJsonSlice = (value, startIndex) => {
+  const stack = [value[startIndex]];
+  let inString = false;
+  let escaped = false;
+
+  for (let i = startIndex + 1; i < value.length; i++) {
+    const char = value[i];
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (char === '\\') {
+        escaped = true;
+        continue;
+      }
+      if (char === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === '"') {
+      inString = true;
+      continue;
+    }
+
+    if (char === '{' || char === '[') {
+      stack.push(char);
+      continue;
+    }
+
+    if (char === '}' || char === ']') {
+      const expectedOpen = char === '}' ? '{' : '[';
+      if (stack[stack.length - 1] !== expectedOpen) {
+        break;
+      }
+      stack.pop();
+      if (stack.length === 0) {
+        return {
+          complete: value.slice(startIndex, i + 1),
+          partial: '',
+          missingClosers: [],
+          hasOpenString: false
+        };
+      }
+    }
+  }
+
+  return {
+    complete: '',
+    partial: value.slice(startIndex).trim(),
+    missingClosers: stack.reverse().map((openChar) => (openChar === '{' ? '}' : ']')),
+    hasOpenString: inString
+  };
+};
+
+const repairPartialJson = ({ partial, missingClosers, hasOpenString }) => {
+  let repaired = String(partial || '').trim();
+  if (!repaired) return '';
+
+  if (hasOpenString) {
+    if (repaired.endsWith('\\')) {
+      repaired = repaired.slice(0, -1);
+    }
+    repaired += '"';
+  }
+
+  repaired = repaired.replace(/,\s*$/g, '');
+  repaired += (missingClosers || []).join('');
+  repaired = repaired.replace(/,\s*([}\]])/g, '$1');
+  return repaired;
+};
+
 /**
  * Extract JSON from AI response text (enhanced version)
  * @param {string} text - Raw AI response text
  * @returns {Object} Parsed JSON object, returns empty object on failure
  */
-export const extractAiJson = (text) => {
+export const extractAiJson = (text, options = {}) => {
   if (!text) {
     console.error('Empty AI response');
     return {};
   }
-  
-  console.log('Extracting JSON from:', text.substring(0, 200));
-  
+
+  const strictMode = Boolean(options?.strict);
+  const raw = String(text).trim();
+  console.log('Extracting JSON from:', raw.substring(0, 200));
+
   // Strategy 1: Direct parse
-  try {
-    const parsed = JSON.parse(text);
+  const direct = parseJson(raw);
+  if (direct !== null) {
     console.log('Strategy 1 (direct parse) succeeded');
-    return parsed;
-  } catch {
-    // Continue trying other strategies
+    return direct;
   }
-  
-  // Strategy 2: Remove markdown
-  try {
-    let cleaned = text
-      .replace(/```json\s*/gi, '')
-      .replace(/```javascript\s*/gi, '')
-      .replace(/```\s*/g, '')
-      .trim();
-    
-    const parsed = JSON.parse(cleaned);
+
+  // Strategy 2: Remove markdown wrapper and parse
+  const cleaned = stripMarkdownFence(raw);
+  const markdownCleaned = parseJson(cleaned);
+  if (markdownCleaned !== null) {
     console.log('Strategy 2 (remove markdown) succeeded');
-    return parsed;
-  } catch {
-    // Continue trying
+    return markdownCleaned;
   }
-  
-  // Strategy 3: Extract {...} block (smarter)
-  try {
-    // Find the first { and its matching }
-    const startIdx = text.indexOf('{');
-    if (startIdx === -1) {
-      console.error('No opening brace found');
-      return {};
-    }
-    
-    // Use brace matching to find correct end position
-    let braceCount = 0;
-    let endIdx = -1;
-    
-    for (let i = startIdx; i < text.length; i++) {
-      if (text[i] === '{') braceCount++;
-      if (text[i] === '}') braceCount--;
-      if (braceCount === 0) {
-        endIdx = i;
-        break;
+
+  // Strategy 3: Extract first balanced JSON block
+  const startIdx = findJsonStartIndex(cleaned);
+  if (startIdx !== -1) {
+    const extracted = extractBalancedJsonSlice(cleaned, startIdx);
+    if (extracted.complete) {
+      const parsed = parseJson(extracted.complete);
+      if (parsed !== null) {
+        console.log('Strategy 3 (balanced extraction) succeeded');
+        return parsed;
       }
     }
-    
-    if (endIdx === -1) {
-      console.error('No matching closing brace found');
-      return {};
-    }
-    
-    const jsonStr = text.substring(startIdx, endIdx + 1);
-    const parsed = JSON.parse(jsonStr);
-    console.log('Strategy 3 (extract braces) succeeded');
-    return parsed;
-  } catch (e) {
-    console.error('Strategy 3 failed:', e);
-  }
-  
-  // Strategy 4: Find JSON near "mappings" keyword
-  try {
-    const mappingsIdx = text.toLowerCase().indexOf('"mappings"');
-    if (mappingsIdx !== -1) {
-      // Find { before mappings
-      const startIdx = text.lastIndexOf('{', mappingsIdx);
-      
-      if (startIdx !== -1) {
-        // Use brace matching
-        let braceCount = 0;
-        let endIdx = -1;
-        
-        for (let i = startIdx; i < text.length; i++) {
-          if (text[i] === '{') braceCount++;
-          if (text[i] === '}') braceCount--;
-          if (braceCount === 0) {
-            endIdx = i;
-            break;
-          }
-        }
-        
-        if (endIdx !== -1) {
-          const jsonStr = text.substring(startIdx, endIdx + 1);
-          const parsed = JSON.parse(jsonStr);
-          console.log('Strategy 4 (find mappings) succeeded');
-          return parsed;
-        }
+
+    // Strategy 4: Repair truncated JSON (missing braces/quote)
+    // Strict mode forbids auto-repair to guarantee structurally valid model output.
+    if (!strictMode && extracted.partial) {
+      const repaired = repairPartialJson({
+        partial: extracted.partial,
+        missingClosers: extracted.missingClosers,
+        hasOpenString: extracted.hasOpenString
+      });
+      const parsed = parseJson(repaired);
+      if (parsed !== null) {
+        console.warn('Strategy 4 (repaired truncated JSON) succeeded');
+        return parsed;
       }
     }
-  } catch (e) {
-    console.error('Strategy 4 failed:', e);
+  } else {
+    console.error('No JSON object/array start token found');
   }
-  
-  // All strategies failed
+
   console.error('All extraction strategies failed');
-  console.error('Original text:', text);
+  console.error('Original text:', raw);
   return {};
 };
 
@@ -267,23 +318,23 @@ export const ruleBasedMapping = (originalColumns, uploadType) => {
     },
     demand_fg: {
       material_code: [
-        /^material$/i, /^material[-_ ]?code$/i, /^item[-_ ]?code$/i, /^sku$/i, /^part[-_ ]?(no|number)$/i,
+        /^material$/i, /^material[-_ ]?code$/i, /^item[-_ ]?code$/i, /^item[-_ ]?id$/i, /^sku$/i, /^part[-_ ]?(no|number)$/i,
         /^料號$/i, /^物料(編碼|代碼|编码|代码)$/i, /^品號$/i, /^品号$/i
       ],
       plant_id: [
-        /^plant$/i, /^plant[-_ ]?id$/i, /^site$/i, /^site[-_ ]?id$/i, /^factory$/i,
+        /^plant$/i, /^plant[-_ ]?id$/i, /^site$/i, /^site[-_ ]?id$/i, /^factory$/i, /^store$/i, /^store[-_ ]?id$/i, /^store[-_ ]?code$/i, /^dc[-_ ]?id$/i,
         /^工廠$/i, /^工厂$/i, /^廠別$/i, /^厂别$/i
       ],
       demand_qty: [
-        /^demand$/i, /^demand[-_ ]?qty$/i, /^demand[-_ ]?quantity$/i, /^qty$/i, /^quantity$/i, /^forecast$/i,
+        /^demand$/i, /^demand[-_ ]?qty$/i, /^demand[-_ ]?quantity$/i, /^units?[-_ ]?sold$/i, /^sales[-_ ]?qty$/i, /^qty$/i, /^quantity$/i, /^forecast$/i,
         /^需求(量|數量|数量)$/i
       ],
       time_bucket: [
-        /^time[-_ ]?bucket$/i, /^bucket$/i, /^period$/i,
+        /^time[-_ ]?bucket$/i, /^bucket$/i, /^period$/i, /^week[-_ ]?start$/i,
         /^時間桶$/i, /^时间桶$/i, /^期間$/i
       ],
       week_bucket: [
-        /^week$/i, /^week[-_ ]?bucket$/i, /^iso[-_ ]?week$/i,
+        /^week$/i, /^week[-_ ]?bucket$/i, /^iso[-_ ]?week$/i, /^wm[-_ ]?yr[-_ ]?wk$/i,
         /^週次$/i, /^周次$/i, /^週桶$/i, /^周桶$/i
       ],
       date: [
@@ -327,19 +378,19 @@ export const ruleBasedMapping = (originalColumns, uploadType) => {
     },
     inventory_snapshots: {
       material_code: [
-        /^material$/i, /^material[-_ ]?code$/i, /^item[-_ ]?code$/i, /^sku$/i, /^part[-_ ]?(no|number)$/i,
+        /^material$/i, /^material[-_ ]?code$/i, /^item[-_ ]?code$/i, /^item[-_ ]?id$/i, /^sku$/i, /^part[-_ ]?(no|number)$/i,
         /^料號$/i, /^物料(編碼|代碼|编码|代码)$/i
       ],
       plant_id: [
-        /^plant$/i, /^plant[-_ ]?id$/i, /^site$/i, /^factory$/i,
+        /^plant$/i, /^plant[-_ ]?id$/i, /^site$/i, /^factory$/i, /^store$/i, /^store[-_ ]?id$/i, /^store[-_ ]?code$/i, /^dc[-_ ]?id$/i,
         /^工廠$/i, /^工厂$/i, /^廠別$/i, /^厂别$/i
       ],
       snapshot_date: [
-        /^snapshot[-_ ]?date$/i, /^as[-_ ]?of[-_ ]?date$/i, /^date$/i,
+        /^snapshot[-_ ]?date$/i, /^as[-_ ]?of[-_ ]?date$/i, /^date$/i, /^week[-_ ]?start$/i, /^week[-_ ]?end$/i,
         /^快照日期$/i, /^盤點日期$/i, /^盘点日期$/i, /^日期$/i
       ],
       onhand_qty: [
-        /^on[-_ ]?hand$/i, /^on[-_ ]?hand[-_ ]?qty$/i, /^on[-_ ]?hand[-_ ]?quantity$/i, /^stock$/i, /^stock[-_ ]?qty$/i, /^inventory$/i, /^qty$/i,
+        /^on[-_ ]?hand$/i, /^on[-_ ]?hand[-_ ]?qty$/i, /^on[-_ ]?hand[-_ ]?quantity$/i, /^on[-_ ]?hand[-_ ]?start$/i, /^on[-_ ]?hand[-_ ]?end[-_ ]?units$/i, /^stock$/i, /^stock[-_ ]?qty$/i, /^inventory$/i, /^qty$/i,
         /^現有庫存$/i, /^现有库存$/i, /^在手庫存$/i, /^在手库存$/i
       ],
       allocated_qty: [
@@ -347,7 +398,7 @@ export const ruleBasedMapping = (originalColumns, uploadType) => {
         /^已分配(量|數量|数量)$/i, /^預留(量|數量|数量)$/i, /^预留(量|数量)$/i
       ],
       safety_stock: [
-        /^safety[-_ ]?stock$/i, /^safety[-_ ]?qty$/i, /^min[-_ ]?stock$/i,
+        /^safety[-_ ]?stock$/i, /^safety[-_ ]?qty$/i, /^safety[-_ ]?stock[-_ ]?units$/i, /^min[-_ ]?stock$/i,
         /^安全庫存$/i, /^安全库存$/i
       ]
     },

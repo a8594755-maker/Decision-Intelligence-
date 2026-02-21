@@ -22,9 +22,10 @@ export default function PlanErrorCard({ payload }) {
           <div>
             <p className="font-medium text-red-700 dark:text-red-300 mb-1">Blocking questions</p>
             <ul className="list-disc list-inside space-y-1 text-red-700 dark:text-red-300">
-              {blockingQuestions.slice(0, 2).map((question, idx) => (
-                <li key={`${question}-${idx}`}>{question}</li>
-              ))}
+              {blockingQuestions.slice(0, 2).map((question, idx) => {
+                const text = typeof question === 'string' ? question : (question?.question || '');
+                return <li key={`${text}-${idx}`}>{text}</li>;
+              })}
             </ul>
           </div>
         )}

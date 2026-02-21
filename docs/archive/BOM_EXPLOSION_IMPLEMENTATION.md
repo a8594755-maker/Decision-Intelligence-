@@ -180,7 +180,7 @@ WHERE schemaname = 'public'
 
 ### Step 2: 上傳 bom_edge 模板
 
-1. 開啟 SmartOps 應用程式
+1. 開啟 Decision-Intelligence 應用程式
 2. 導航到 **Data Upload (External Systems)** 頁面
 3. 選擇 Upload Type：**BOM Edge**
 4. 上傳 `templates/bom_edge.xlsx` 或 `templates/bom_edge.csv`

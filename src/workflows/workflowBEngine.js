@@ -11,14 +11,16 @@ import {
   buildRiskReportJson,
   buildRiskDownloadsPayload
 } from '../services/chatRiskService';
+import { generateTopologyGraphForRun } from '../services/topology/topologyService';
 import { loadArtifact, saveCsvArtifact, saveJsonArtifact } from '../utils/artifactStore';
 
-export const WORKFLOW_B_STEPS = ['profile', 'contract', 'validate', 'compute_risk', 'exceptions', 'report'];
+export const WORKFLOW_B_STEPS = ['profile', 'contract', 'validate', 'compute_risk', 'exceptions', 'topology', 'report'];
 
-const TERMINAL_STEP_STATUSES = new Set(['succeeded', 'failed', 'skipped']);
-const RUN_TERMINAL_STATUSES = new Set(['succeeded', 'failed']);
+const TERMINAL_STEP_STATUSES = new Set(['succeeded', 'failed', 'skipped', 'blocked']);
+const RUN_TERMINAL_STATUSES = new Set(['succeeded', 'failed', 'waiting_user']);
 const ARTIFACT_THRESHOLD = 200 * 1024;
 const MAX_EXCEPTION_ROWS = 1000;
+const MAX_BLOCKING_QUESTIONS = 2;
 
 export const WORKFLOW_B_ERROR_CODES = {
   DATA_CONTRACT_MISSING_REQUIRED: 'DATA_CONTRACT_MISSING_REQUIRED',
@@ -51,6 +53,32 @@ const ERROR_ACTIONS = {
   ]
 };
 
+const normalizeBlockingQuestions = (questions) => {
+  const list = Array.isArray(questions) ? questions : [];
+  return list
+    .map((item) => {
+      if (typeof item === 'string') {
+        const q = item.trim();
+        return q ? { id: null, question: q, answer_type: 'text', options: null, why_needed: null, bind_to: null } : null;
+      }
+      if (item && typeof item === 'object') {
+        const q = String(item.question || '').trim();
+        if (!q) return null;
+        return {
+          id: item.id || null,
+          question: q,
+          answer_type: item.answer_type || 'text',
+          options: Array.isArray(item.options) ? item.options : null,
+          why_needed: item.why_needed ? String(item.why_needed).trim() : null,
+          bind_to: item.bind_to ? String(item.bind_to).trim() : null
+        };
+      }
+      return null;
+    })
+    .filter(Boolean)
+    .slice(0, MAX_BLOCKING_QUESTIONS);
+};
+
 class WorkflowBError extends Error {
   constructor(code, message, options = {}) {
     super(message);
@@ -59,9 +87,7 @@ class WorkflowBError extends Error {
     this.nextActions = Array.isArray(options.nextActions)
       ? options.nextActions.slice(0, 2)
       : (ERROR_ACTIONS[this.code] || ERROR_ACTIONS.UNKNOWN);
-    this.blockingQuestions = Array.isArray(options.blockingQuestions)
-      ? options.blockingQuestions.slice(0, 2)
-      : [];
+    this.blockingQuestions = normalizeBlockingQuestions(options.blockingQuestions);
     this.details = options.details || null;
   }
 }
@@ -135,6 +161,78 @@ const runIsSucceeded = (steps = []) => {
 };
 
 const runHasFailedStep = (steps = []) => steps.some((step) => normalizeStatus(step.status) === 'failed');
+
+const runHasBlockedStep = (steps = []) => steps.some((step) => normalizeStatus(step.status) === 'blocked');
+
+const resetFailedAndDownstreamSteps = async (runId, steps = []) => {
+  const ordered = sortSteps(steps);
+  const firstFailed = ordered.find((step) => normalizeStatus(step.status) === 'failed');
+  if (!firstFailed) {
+    return {
+      resetFromStep: null,
+      resetStepCount: 0
+    };
+  }
+
+  const firstFailedOrder = getStepOrder(firstFailed.step);
+  const resetTargets = ordered.filter((step) => {
+    const order = getStepOrder(step.step);
+    return order >= firstFailedOrder;
+  });
+
+  for (const step of resetTargets) {
+    await diRunsService.updateRunStep({
+      run_id: runId,
+      step: step.step,
+      status: 'queued',
+      started_at: null,
+      finished_at: null,
+      error_code: null,
+      error_message: null,
+      output_ref: null
+    });
+  }
+
+  return {
+    resetFromStep: firstFailed.step,
+    resetStepCount: resetTargets.length
+  };
+};
+
+const resetBlockedAndDownstreamSteps = async (runId, steps = []) => {
+  const ordered = sortSteps(steps);
+  const firstBlocked = ordered.find((step) => normalizeStatus(step.status) === 'blocked');
+  if (!firstBlocked) {
+    return {
+      resetFromStep: null,
+      resetStepCount: 0
+    };
+  }
+
+  const firstBlockedOrder = getStepOrder(firstBlocked.step);
+  const resetTargets = ordered.filter((step) => {
+    const order = getStepOrder(step.step);
+    return order >= firstBlockedOrder;
+  });
+
+  for (const step of resetTargets) {
+    await diRunsService.updateRunStep({
+      run_id: runId,
+      step: step.step,
+      status: 'queued',
+      started_at: null,
+      finished_at: null,
+      error_code: null,
+      error_message: null,
+      output_ref: null
+    });
+  }
+
+  return {
+    resetFromStep: firstBlocked.step,
+    resetStepCount: resetTargets.length
+  };
+};
 
 const findNextRunnableStep = (steps = []) => {
   const ordered = sortSteps(steps);
@@ -306,9 +404,9 @@ const stepHandlers = {
     const validationPayload = buildValidationPayload(ctx.datasetProfileRow);
     const status = normalizeStatus(validationPayload.status, 'fail');
     if (status !== 'pass') {
-      const blockingQuestions = Array.isArray(ctx.datasetProfileRow?.profile_json?.global?.minimal_questions)
-        ? ctx.datasetProfileRow.profile_json.global.minimal_questions.slice(0, 2)
-        : [];
+      const blockingQuestions = normalizeBlockingQuestions(
+        ctx.datasetProfileRow?.profile_json?.global?.minimal_questions
+      );
 
       throw new WorkflowBError(
         WORKFLOW_B_ERROR_CODES.DATA_CONTRACT_MISSING_REQUIRED,
@@ -472,6 +570,40 @@ const stepHandlers = {
           }
         })
       }]
+    };
+  },
+
+  async topology(ctx) {
+    const topologyScope = {
+      ...(ctx.settings?.topology || {})
+    };
+
+    const topologyResult = await generateTopologyGraphForRun({
+      userId: ctx.run.user_id,
+      runId: ctx.run.id,
+      scope: topologyScope,
+      forceRebuild: Boolean(ctx.settings?.topology?.force_rebuild),
+      reuse: isReuseEnabled(ctx.settings),
+      manageRunStep: false
+    });
+
+    return {
+      status: 'succeeded',
+      notice_text: topologyResult?.reused
+        ? `Topology graph reused from run #${topologyResult.reused_from_run_id}.`
+        : 'Topology graph generated successfully.',
+      input_ref: {
+        scope: topologyScope
+      },
+      output_ref: {
+        topology_graph_ref: topologyResult?.ref || null,
+        settings_hash: topologyResult?.settings_hash || null,
+        reused: Boolean(topologyResult?.reused),
+        reused_from_run_id: topologyResult?.reused_from_run_id || null,
+        node_count: Array.isArray(topologyResult?.graph?.nodes) ? topologyResult.graph.nodes.length : 0,
+        edge_count: Array.isArray(topologyResult?.graph?.edges) ? topologyResult.graph.edges.length : 0
+      },
+      result_cards: []
     };
   },
 
@@ -647,11 +779,15 @@ export async function runNextStep(run_id) {
   const nextStep = findNextRunnableStep(steps);
 
   if (!nextStep) {
-    const nextRunStatus = runIsSucceeded(steps) ? 'succeeded' : (runHasFailedStep(steps) ? 'failed' : 'succeeded');
+    const isWaiting = runHasBlockedStep(steps);
+    const nextRunStatus = runIsSucceeded(steps) ? 'succeeded'
+      : isWaiting ? 'waiting_user'
+      : runHasFailedStep(steps) ? 'failed'
+      : 'succeeded';
     const finalizedRun = await diRunsService.updateRunStatus({
       run_id: runId,
       status: nextRunStatus,
-      finished_at: nowIso(),
+      finished_at: isWaiting ? null : nowIso(),
       error: nextRunStatus === 'failed' ? (run.error || 'Workflow failed') : null
     });
 
@@ -796,12 +932,15 @@ export async function runNextStep(run_id) {
     };
   } catch (error) {
     const wfError = asWorkflowError(error, stepName);
+    const isBlocking = wfError.blockingQuestions.length > 0;
+    const stepStatus = isBlocking ? 'blocked' : 'failed';
+    const runStatus = isBlocking ? 'waiting_user' : 'failed';
 
     await diRunsService.updateRunStep({
       run_id: runId,
       step: stepName,
-      status: 'failed',
-      finished_at: nowIso(),
+      status: stepStatus,
+      finished_at: isBlocking ? null : nowIso(),
       error_code: wfError.code,
       error_message: wfError.message,
       output_ref: {
@@ -813,9 +952,9 @@ export async function runNextStep(run_id) {
 
     await diRunsService.updateRunStatus({
       run_id: runId,
-      status: 'failed',
-      finished_at: nowIso(),
-      error: `[${wfError.code}] ${wfError.message}`
+      status: runStatus,
+      finished_at: isBlocking ? null : nowIso(),
+      error: isBlocking ? null : `[${wfError.code}] ${wfError.message}`
     });
 
     const finalSnapshot = await buildRunSnapshot(runId);
@@ -824,7 +963,7 @@ export async function runNextStep(run_id) {
       progressed_step: stepName,
       step_event: {
         step: stepName,
-        status: 'failed',
+        status: stepStatus,
         error: {
           code: wfError.code,
           message: wfError.message,
@@ -846,6 +985,29 @@ export async function resumeRun(run_id, options = {}) {
 
   const events = [];
   let latest = await buildRunSnapshot(run_id);
+
+  const currentStatus = normalizeStatus(latest.run?.status);
+  if (currentStatus === 'failed') {
+    const resetResult = await resetFailedAndDownstreamSteps(Number(run_id), latest.steps || []);
+    await diRunsService.updateRunStatus({
+      run_id: Number(run_id),
+      status: 'running',
+      stage: resetResult.resetFromStep || latest.run?.stage || WORKFLOW_B_STEPS[0],
+      finished_at: null,
+      error: null
+    });
+    latest = await buildRunSnapshot(run_id);
+  } else if (currentStatus === 'waiting_user') {
+    const resetResult = await resetBlockedAndDownstreamSteps(Number(run_id), latest.steps || []);
+    await diRunsService.updateRunStatus({
+      run_id: Number(run_id),
+      status: 'running',
+      stage: resetResult.resetFromStep || latest.run?.stage || WORKFLOW_B_STEPS[0],
+      finished_at: null,
+      error: null
+    });
+    latest = await buildRunSnapshot(run_id);
+  }
 
   for (let i = 0; i < maxSteps; i += 1) {
     if (RUN_TERMINAL_STATUSES.has(normalizeStatus(latest.run?.status))) {
@@ -873,6 +1035,34 @@ export async function resumeRun(run_id, options = {}) {
     events,
     done: RUN_TERMINAL_STATUSES.has(normalizeStatus(latest.run?.status))
   };
+}
+
+export async function submitBlockingAnswers(run_id, answers = {}) {
+  const runId = Number(run_id);
+  if (!Number.isFinite(runId)) throw new Error('run_id must be numeric');
+
+  const snapshot = await buildRunSnapshot(runId);
+  const currentStatus = normalizeStatus(snapshot.run?.status);
+  if (currentStatus !== 'waiting_user') {
+    throw new Error(`Run ${runId} is not waiting_user (status: ${currentStatus})`);
+  }
+
+  const existingSettings = await getWorkflowSettings(runId);
+  const merged = {
+    ...existingSettings,
+    blocking_answers: {
+      ...(existingSettings.blocking_answers || {}),
+      ...answers
+    }
+  };
+  await persistWorkflowSettings(runId, snapshot.run.user_id, {
+    user_id: snapshot.run.user_id,
+    dataset_profile_id: snapshot.run.dataset_profile_id,
+    settings: merged,
+    updated_at: nowIso()
+  });
+
+  return resumeRun(runId);
 }
 
 export async function replayRun(run_id, options = {}) {

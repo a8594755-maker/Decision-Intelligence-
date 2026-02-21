@@ -1,0 +1,140 @@
+品牌/命名	.cursorrules	1	# SmartOps Cursor Rules
+品牌/命名	.cursorrules	76	smartops-app/
+品牌/命名	DUAL_MODEL_ARCHITECTURE.md	5	This implementation introduces a sophisticated dual-model forecasting system that combines the stability of classical statistical methods with the power of modern AI, specifically designed for the SmartOps supply chain risk dashboard.
+品牌/命名	ONE_SHOT_FINAL_FIX_GUIDE.md	85	-- c:\Users\a8594\smartops-app\database\fix_suppliers_status.sql
+品牌/命名	ONE_SHOT_FINAL_FIX_GUIDE.md	94	cd c:\Users\a8594\smartops-app
+品牌/命名	PHASE0_1_COMPLETE_SUMMARY.md	162	smartops-app/
+品牌/命名	PHASE0_3_QA_CHECKLIST.md	5	- **專案**：SmartOps App (Vite + React + Supabase)
+品牌/命名	README.md	88	git clone https://github.com/your-username/smartops-app.git
+品牌/命名	README.md	89	cd smartops-app
+品牌/命名	README.md	227	smartops-app/
+品牌/命名	database/ingest_rpc.sql	2	-- SmartOps Ingest RPC Functions
+品牌/命名	docs/BOM_EXPLOSION.md	19	BOM Explosion (物料清單展開) 是 SmartOps 的核心功能之一,用於將成品 (FG) 需求展開成零組件 (Component) 需求。
+品牌/命名	docs/BOM_EXPLOSION.md	297	**維護者**: SmartOps Team  
+品牌/命名	docs/BOM_EXPLOSION_SPEC.md	7	**適用範圍**：SmartOps Step A - Component Demand 計算  
+品牌/命名	docs/BOM_EXPLOSION_SPEC.md	785	**適用範圍**：SmartOps BOM Explosion MVP 功能
+品牌/命名	docs/GLOSSARY.md	1	# SmartOps 術語表
+品牌/命名	docs/GLOSSARY.md	207	SmartOps 使用 Google Gemini AI 提供:
+品牌/命名	docs/GLOSSARY.md	303	SmartOps 使用的雲端資料庫平台,基於 PostgreSQL。
+品牌/命名	docs/GLOSSARY.md	401	**維護者**: SmartOps Team  
+品牌/命名	docs/MILESTONE2_INVENTORY_PROJECTION_EVIDENCE.md	10	 RUN  v4.0.18 C:/Users/a8594/smartops-app
+品牌/命名	docs/MILESTONE_5_COST_EVIDENCE_PACK.md	122	cd c:\Users\a8594\smartops-app
+品牌/命名	docs/QA_GO_LIVE_GATE.md	3	本文件為 **SmartOps 上線前回歸測試** 的完整矩陣，涵蓋：10 種 Upload Type、One-shot、Strict/Best-effort、Error Report、權限與效能。  
+品牌/命名	docs/README.md	1	# SmartOps 文件索引
+品牌/命名	docs/RELEASE_CHECKLIST.md	1	# SmartOps 上線流程（Staging → Production）
+品牌/命名	docs/RELEASE_PR_PLAN.md	167	2. 開新分頁（例如 about:blank），約 30 秒後切回 SmartOps；預期：仍為 BOM Data 頁且為 FG 需求 tab。  
+品牌/命名	docs/RESTRUCTURE_REPORT.md	1	# 📁 SmartOps 文件系統重構完成報告
+品牌/命名	docs/RESTRUCTURE_REPORT.md	141	### 4. `SmartOps.txt`
+品牌/命名	docs/RESTRUCTURE_REPORT.md	153	smartops-app/
+品牌/命名	docs/RESTRUCTURE_REPORT.md	162	├── SmartOps.txt                    # 🟡 待確認
+品牌/命名	docs/RESTRUCTURE_REPORT.md	268	- [ ] 檢查 `SmartOps.txt` 內容，決定保留或刪除
+品牌/命名	docs/SETUP.md	1	# SmartOps 環境設定指南
+品牌/命名	docs/SETUP.md	3	> 本文件說明如何從零開始設定 SmartOps 開發和生產環境
+品牌/命名	docs/SETUP.md	35	git clone https://github.com/your-username/smartops-app.git
+品牌/命名	docs/SETUP.md	36	cd smartops-app
+品牌/命名	docs/SETUP.md	69	   - Name: `smartops-production` (或自訂名稱)
+品牌/命名	docs/SETUP.md	375	**設定完成!** 🎉 現在可以開始使用 SmartOps 了!
+品牌/命名	docs/STRUCTURE.md	1	# SmartOps 文件結構圖
+品牌/命名	docs/STRUCTURE.md	8	SmartOps/
+品牌/命名	docs/STRUCTURE.md	258	**維護者**: SmartOps Team  
+品牌/命名	docs/UX_STATE_PERSISTENCE.md	9	- **P0 現象**：使用者在 Chrome 切到其他分頁後再切回 SmartOps，有時會回到首頁，或遺失當前頁面／Tab。
+品牌/命名	docs/UX_STATE_PERSISTENCE.md	11	  - 切回 SmartOps 分頁時，**保留原本頁面（route）與 tab**。
+品牌/命名	docs/UX_STATE_PERSISTENCE.md	83	   - 開新分頁（例如 about:blank），約 30 秒後切回 SmartOps。  
+品牌/命名	docs/archive/AI-CHAT-SETUP.md	1	# SmartOps AI Chat 對話紀錄系統設置指南
+品牌/命名	docs/archive/BOM_EXPLOSION_IMPLEMENTATION.md	183	1. 開啟 SmartOps 應用程式
+品牌/命名	docs/archive/BOM_EXPLOSION_TEMPLATE_SPEC.md	224	## SmartOps 上傳注意事項
+品牌/命名	docs/archive/BOM_EXPLOSION_UI_IMPLEMENTATION.md	5	本次實施在 SmartOps 應用中加入了 BOM Explosion 執行入口，允許使用者從 UI 觸發 BOM 展開計算，並整合到批次管理和撤銷機制中。
+品牌/命名	docs/archive/BOM_EXPLOSION_UI_IMPLEMENTATION.md	117	cd c:\Users\a8594\smartops-app
+品牌/命名	docs/archive/COST_ANALYSIS_GUIDE.md	5	成本分析模块已成功集成到 SmartOps 系统中。您现在可以：
+品牌/命名	docs/archive/COST_ANALYSIS_GUIDE.md	32	1. 登录 SmartOps 应用
+品牌/命名	docs/archive/COST_ANALYSIS_GUIDE.md	298	成本分析模块是 SmartOps 四大核心模块之一，它将帮助您：
+品牌/命名	docs/archive/GEMINI_API_QUOTA_ISSUE.md	66	#### 步驟 B：在 SmartOps 中更新 API Key
+品牌/命名	docs/archive/GEMINI_API_QUOTA_ISSUE.md	70	如果您的 SmartOps 有設置頁面：
+品牌/命名	docs/archive/IMPLEMENTATION_PLAN.md	1	# SmartOps 四大模块功能扩展 - 实施计划
+品牌/命名	docs/archive/IMPLEMENTATION_PLAN.md	6	为 SmartOps 系统新增/扩展四个核心管理模块：
+品牌/命名	docs/archive/IMPLEMENTATION_SUMMARY.md	5	本專案實作了一個完整的企業級資料上傳、驗證、清洗和寫入系統，專為供應鏈管理 (SmartOps) 設計。系統支援多種資料類型的上傳，並提供智能欄位映射、自動資料驗證清洗，以及 mapping 模板保存功能。
+品牌/命名	docs/archive/IMPLEMENTATION_SUMMARY.md	254	smartops-app/
+品牌/命名	docs/archive/IMPLEMENTATION_SUMMARY.md	460	psql -U postgres -d smartops < database/upload_mappings_schema.sql
+品牌/命名	docs/archive/INTEGRATION_COMPLETE.md	1	# 🎉 SmartOps App - 整合完成報告
+品牌/命名	docs/archive/INTEGRATION_COMPLETE.md	295	**🎉 恭喜！SmartOps App 重構成功完成！**
+品牌/命名	docs/archive/MATERIAL_COST_IMPLEMENTATION.md	5	已成功實現 **Material Cost Analysis (材料成本分析)** 功能，作為 SmartOps 應用程式 Cost Analysis 模組的一部分。
+品牌/命名	docs/archive/MATERIAL_COST_QUICK_START.md	37	1. 登入 SmartOps 應用程式
+品牌/命名	docs/archive/NEXT_STEPS.md	1	# 🎯 SmartOps App - 下一步操作指南
+品牌/命名	docs/archive/README.md	174	**維護者**: SmartOps Team
+品牌/命名	docs/archive/REFACTORING_PROGRESS.md	1	# SmartOps App 重構進度報告
+品牌/命名	docs/archive/SUPPLIER_AI_DEBUG_GUIDE.md	112	1. 在 SmartOps 介面選擇「Supplier Master」
+品牌/命名	docs/archive/SUPPLIER_KPI_IMPLEMENTATION_PLAN.md	1	# SmartOps 供应商管理模块优化 - 实施计划
+品牌/命名	docs/archive/summaries/DATA_VALIDATION_IMPLEMENTATION_SUMMARY.md	5	已成功為 SmartOps 系統的 3 種新 upload type 加入完整的資料驗證與清理流程。
+品牌/命名	docs/archive/summaries/DATA_VALIDATION_RULES_SUMMARY.md	5	本文件說明 SmartOps 系統中 3 種新增 upload type 的資料驗證與清理規則。
+品牌/命名	docs/archive/summaries/DOCS_REFACTOR_REPORT.md	1	# SmartOps 文件重構執行報告
+品牌/命名	docs/archive/summaries/DOCS_REFACTOR_REPORT.md	33	SmartOps/
+品牌/命名	docs/archive/summaries/DOCS_REFACTOR_REPORT.md	562	🌟 **SmartOps 現在擁有**:
+品牌/命名	docs/archive/summaries/DOCS_REFACTOR_REPORT.md	571	| 專案 | 文件結構 | SmartOps |
+品牌/命名	docs/archive/summaries/ONE_SHOT_FINAL_FIX_GUIDE.md	85	-- c:\Users\a8594\smartops-app\database\fix_suppliers_status.sql
+品牌/命名	docs/archive/summaries/ONE_SHOT_FINAL_FIX_GUIDE.md	94	cd c:\Users\a8594\smartops-app
+品牌/命名	docs/archive/summaries/PHASE0_1_COMPLETE_SUMMARY.md	162	smartops-app/
+品牌/命名	docs/archive/summaries/PHASE0_3_QA_CHECKLIST.md	5	- **專案**：SmartOps App (Vite + React + Supabase)
+品牌/命名	docs/archive/summaries/SUPABASE_SERVICES_FINAL_SUMMARY.md	5	已成功為 SmartOps 系統新增 3 個 Supabase service layer，提供完整的 CRUD 操作和查詢功能。
+品牌/命名	docs/archive/summaries/SUPABASE_SERVICES_FINAL_SUMMARY.md	748	**🎉 SmartOps 系統擴充全面完成！**
+品牌/命名	docs/archive/summaries/SUPABASE_SERVICES_IMPLEMENTATION.md	5	為 SmartOps 系統的 3 種新資料類型新增 Supabase service layer，提供完整的 CRUD 操作和查詢功能。
+品牌/命名	docs/archive/summaries/UI_IMPLEMENTATION_SUMMARY.md	295	**🎉 SmartOps 資料上傳系統全面完成！**
+品牌/命名	docs/archive/summaries/UI_IMPLEMENTATION_SUMMARY.md	461	**作者：** SmartOps Development Team
+品牌/命名	docs/archive/summaries/UPLOAD_SCHEMAS_EXTENSION_SUMMARY.md	5	本次更新為 SmartOps 系統新增了 3 種資料上傳類型，支援採購訂單、庫存快照和成品財務資料的上傳功能。
+品牌/命名	docs/archive/summaries/UPLOAD_SCHEMAS_EXTENSION_SUMMARY.md	392	**作者：** SmartOps 開發團隊
+品牌/命名	docs/guides/ARCHITECTURE_DESIGN.md	1	# SmartOps 系统架构设计
+品牌/命名	docs/guides/ARCHITECTURE_DESIGN.md	61	smartops-app/
+品牌/命名	docs/guides/NEW_TEMPLATES_GUIDE.md	158	透過 SmartOps 系統的資料上傳功能匯入檔案
+品牌/命名	docs/guides/README.md	1	# SmartOps 使用指南
+品牌/命名	docs/guides/README.md	207	**維護者**: SmartOps Team  
+品牌/命名	docs/guides/STEP1_SCHEMA_DEPLOYMENT_GUIDE.md	5	本文件說明如何部署 `step1_supply_inventory_financials_schema.sql`，為 SmartOps 系統新增 3 張表：
+品牌/命名	docs/guides/STEP1_SCHEMA_DEPLOYMENT_GUIDE.md	113	   - 前往您的 SmartOps 專案
+品牌/命名	docs/guides/UPLOAD_WORKFLOW_GUIDE.md	375	- **作者**：SmartOps Development Team
+品牌/命名	package-lock.json	2	  "name": "smartops-app",
+品牌/命名	package-lock.json	8	      "name": "smartops-app",
+品牌/命名	package.json	2	  "name": "smartops-app",
+品牌/命名	scripts/backtest_quick.py	60	print("📊 SmartOps 回測驗證 — AI 誠實度測試")
+品牌/命名	scripts/backtest_validator.py	2	📊 SmartOps 回測驗證器 (Backtesting Validator)
+品牌/命名	scripts/backtest_validator.py	276	    print("  📊 SmartOps 回測驗證器 — AI 誠實度測試")
+品牌/命名	scripts/benchmark_synthetic_data.py	116	    print(f"  📊 SmartOps 合成數據基準線測試")
+品牌/命名	scripts/chaos_forecast_integration.py	153	    print(f"  🌪️ SmartOps 混沌引擎 × 預測整合測試")
+品牌/命名	scripts/e2e_verify.py	9	print("  SmartOps E2E Verification")
+品牌/命名	scripts/quantitative_analysis.py	267	    print(f"  📊 SmartOps 量化分析與真實性判讀")
+品牌/命名	scripts/stress_test_dual_model.py	296	    print("  🏭 SmartOps 雙模型壓力測試 — 供應鏈災難模擬器")
+品牌/命名	scripts/train_lgbm.py	202	    print("  🏭 SmartOps LightGBM 模型訓練器")
+品牌/命名	scripts/update_app.py	45	        if 'export default function SmartOpsApp' in line:
+品牌/命名	sql/demo_seed_data.sql	2	-- SmartOps Demo Seed Data
+品牌/命名	sql/migrations/QUICK_SETUP.sql	2	-- SmartOps 匯入歷史功能 - 快速設定
+品牌/命名	sql/migrations/bom_forecast_schema.sql	2	-- SmartOps BOM Forecast 模块 - 数据库架构
+品牌/命名	sql/migrations/cost_analysis_schema.sql	2	-- SmartOps 成本分析模块 - 数据库架构
+品牌/命名	sql/migrations/cost_analysis_schema_skip_policies.sql	2	-- SmartOps 成本分析模块 - 数据库架构 (跳过已存在的策略)
+品牌/命名	sql/migrations/import_batches_schema.sql	2	-- SmartOps 匯入歷史與撤銷功能 - 資料庫架構
+品牌/命名	sql/migrations/ingest_rpc.sql	2	-- SmartOps Ingest RPC Functions
+品牌/命名	sql/migrations/reset_all_data.sql	2	-- SmartOps - 重置所有業務資料（含新模板 / Risk / BOM）
+品牌/命名	sql/migrations/step1_supply_inventory_financials_schema.sql	2	-- SmartOps Supply, Inventory & Financials 模块 - 数据库架构
+品牌/命名	sql/migrations/supabase-setup.sql	1	-- SmartOps Supabase Database Setup
+品牌/命名	sql/migrations/supabase-setup.sql	77	-- 執行成功後，你的 SmartOps 應用程式將能夠:
+品牌/命名	sql/migrations/supplier_kpi_schema.sql	2	-- SmartOps 供应商 KPI 模块 - 数据库架构（含 suppliers）
+品牌/命名	src/App.jsx	88	export default function SmartOpsApp() {
+品牌/命名	src/App.jsx.backup	148	export default function SmartOpsApp() {
+品牌/命名	src/App.jsx.backup	267	          <h1 className="text-3xl font-bold text-center mb-2">SmartOps</h1>
+品牌/命名	src/App.jsx.backup	291	            <span className="text-xl font-bold">SmartOps</span>
+品牌/命名	src/App.jsx.backup	1409	      messages: [{ role: 'ai', content: 'Hello! I am your SmartOps Decision Assistant. How can I help you today?' }],
+品牌/命名	src/components/ui/README.md	3	這是 SmartOps 專案的 UI 元件庫，使用 Tailwind CSS v4 構建，無外部依賴。
+品牌/命名	src/ml/api/main.py	1385	    use_forecaster: bool = False               # True = 用 SmartOps 預測, False = naive baseline
+品牌/命名	src/ml/simulation/__init__.py	2	SmartOps Supply Chain Digital Twin — Self-Generating Sandbox
+品牌/命名	src/ml/simulation/__init__.py	6	  2. SmartOps Core (The Brain) — predicts, plans, reacts
+品牌/命名	src/ml/simulation/inventory_sim.py	6	  Day T+1: SmartOps forecasts → calculates risk → decides PO (purchase order)
+品牌/命名	src/ml/simulation/orchestrator.py	5	  ChaosEngine (Environment) ↔ SmartOps (Brain) ↔ InventorySimulator (Body)
+品牌/命名	src/ml/simulation/orchestrator.py	11	  4. SmartOps forecaster predicts future demand
+品牌/命名	src/ml/simulation/orchestrator.py	194	                "method": "smartops_forecaster" if self.use_forecaster else "naive_mean",
+品牌/命名	src/ml/simulation/orchestrator.py	292	        """呼叫 SmartOps 預測引擎"""
+品牌/命名	src/utils/router.js	2	 * Lightweight view ↔ URL path mapping for SmartOps SPA.
+品牌/命名	src/views/DecisionSupportView/index.jsx	66	const STORAGE_KEY = 'smartops_conversations';
+品牌/命名	src/views/DecisionSupportView/index.jsx	67	const TABLE_UNAVAILABLE_KEY = 'smartops_conversations_table_unavailable';
+品牌/命名	src/views/DecisionSupportView/index.jsx	748	      return localStorage.getItem(`smartops_sidebar_collapsed_${userStorageSuffix}`) === '1';
+品牌/命名	src/views/DecisionSupportView/index.jsx	755	      return clampSplitRatio(localStorage.getItem(`smartops_canvas_split_ratio_${userStorageSuffix}`) ?? 0.5);
+品牌/命名	src/views/DecisionSupportView/index.jsx	765	    () => `smartops_sidebar_collapsed_${user?.id || 'anon'}`,
+品牌/命名	src/views/DecisionSupportView/index.jsx	769	    () => `smartops_canvas_split_ratio_${user?.id || 'anon'}`,
+品牌/命名	start_services.ps1	2	$venvPath = "C:\Users\a8594\smartops-app\.venv\Scripts"
+外部依賴/第三方設定（Supabase project_id）	supabase/config.toml	5	project_id = "smartops-app"
+品牌/命名	supabase/functions/sync-materials-from-sap/README.md	3	Read-only sync from SAP OData V2 to SmartOps materials table.

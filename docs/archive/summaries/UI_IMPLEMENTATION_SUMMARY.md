@@ -292,7 +292,7 @@ Import History
 - 完整流程整合
 - 批次管理
 
-**🎉 SmartOps 資料上傳系統全面完成！**
+**🎉 Decision-Intelligence 資料上傳系統全面完成！**
 
 ---
 
@@ -458,4 +458,4 @@ try {
 **創建日期：** 2026-01-31  
 **最後更新：** 2026-01-31
 
-**作者：** SmartOps Development Team
+**作者：** Decision-Intelligence Development Team

@@ -85,7 +85,7 @@ function useVisibilitySync(setView, session) {
 }
 
 // --- Main App ---
-export default function SmartOpsApp() {
+export default function DecisionIntelligenceApp() {
   const [view, setView] = useState('login');
   const [session, setSession] = useState(null); 
   const [darkMode, setDarkMode] = useState(false);
@@ -1188,23 +1188,17 @@ const ExternalSystemsView = ({ addNotification, excelData, setExcelData, user })
 // DecisionSupportView is now imported from ./views/DecisionSupportView
 
 const SettingsView = ({ darkMode, setDarkMode, user, addNotification }) => {
-  const [apiKey, setApiKey] = useState(localStorage.getItem('gemini_api_key') || '');
-  const [showApiKey, setShowApiKey] = useState(false);
-
-  const handleSaveApiKey = () => {
-    if (apiKey.trim()) {
-      localStorage.setItem('gemini_api_key', apiKey.trim());
-      addNotification("API key saved!", "success");
-    } else {
-      localStorage.removeItem('gemini_api_key');
-      addNotification("API key cleared", "info");
-    }
+  const handleShowAiSecretSetup = () => {
+    addNotification(
+      'Set Supabase Edge Function secrets: GEMINI_API_KEY and DEEPSEEK_API_KEY.',
+      'info'
+    );
   };
 
-  const handleClearApiKey = () => {
-    setApiKey('');
+  const handleClearLegacyApiKeys = () => {
     localStorage.removeItem('gemini_api_key');
-    addNotification("API key cleared", "info");
+    localStorage.removeItem('deepseek_api_key');
+    addNotification('Legacy browser API keys cleared.', 'success');
   };
 
   return (
@@ -1224,41 +1218,25 @@ const SettingsView = ({ darkMode, setDarkMode, user, addNotification }) => {
       <Card>
         <h3 className="font-semibold mb-4 flex items-center gap-2">
           <Bot className="w-5 h-5 text-purple-500" />
-          AI API Configuration
+          AI Configuration (Edge Functions)
         </h3>
         <div className="space-y-4">
           <div>
             <label className="block text-sm font-medium mb-2">
-              Google Gemini API Key
+              Server-side AI Secrets
             </label>
-            <div className="flex gap-2">
-              <div className="relative flex-1">
-                <input
-                  type={showApiKey ? "text" : "password"}
-                  value={apiKey}
-                  onChange={(e) => setApiKey(e.target.value)}
-                  placeholder="Enter your API key"
-                  className="w-full px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-transparent focus:ring-2 focus:ring-blue-500 outline-none"
-                />
-                <button
-                  onClick={() => setShowApiKey(!showApiKey)}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-                >
-                  {showApiKey ? "Hide" : "Show"}
-                </button>
-              </div>
-            </div>
             <p className="text-xs text-slate-500 mt-2">
-              Get a free API key: <a href="https://ai.google.dev/" target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">https://ai.google.dev/</a>
+              AI keys are no longer stored in browser localStorage.
+              Configure `GEMINI_API_KEY` and `DEEPSEEK_API_KEY` in Supabase Edge Function secrets.
             </p>
           </div>
 
           <div className="flex gap-2">
-            <Button onClick={handleSaveApiKey} variant="primary">
-              Save key
+            <Button onClick={handleShowAiSecretSetup} variant="primary">
+              Show setup hint
             </Button>
-            <Button onClick={handleClearApiKey} variant="secondary">
-              Clear key
+            <Button onClick={handleClearLegacyApiKeys} variant="secondary">
+              Clear legacy local keys
             </Button>
           </div>
 
@@ -1269,11 +1247,11 @@ const SettingsView = ({ darkMode, setDarkMode, user, addNotification }) => {
               <div className="text-sm text-blue-900 dark:text-blue-200">
                 <p className="font-medium mb-1">Usage notes:</p>
                 <ul className="list-disc list-inside space-y-1 text-xs">
-                  <li>Free API tiers have daily quotas</li>
-                  <li>If the quota is exhausted, wait for reset or use a new key</li>
-                  <li>API keys are stored locally in your browser, never uploaded</li>
-                  <li>Prompt 1-3: Gemini Pro (`gemini-3-pro`)</li>
-                  <li>Prompt 4-5 + chat priority: DeepSeek V3.2 (`deepseek-chat`)</li>
+                  <li>All AI requests are routed via Supabase Edge Function `ai-proxy`</li>
+                  <li>Provider keys are server-managed (not exposed to browser)</li>
+                  <li>Set secrets with: `supabase secrets set GEMINI_API_KEY=... DEEPSEEK_API_KEY=...`</li>
+                  <li>Prompt 1-3: Gemini 3.1 Pro (`gemini-3.1-pro-preview`) via Edge Function</li>
+                  <li>Prompt 4-5 + chat priority: DeepSeek V3.2 (`deepseek-chat`) via Edge Function</li>
                 </ul>
               </div>
             </div>

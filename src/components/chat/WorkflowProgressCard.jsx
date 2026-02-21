@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Loader2, RefreshCw, PlayCircle } from 'lucide-react';
+import { Loader2, RefreshCw, PlayCircle, HelpCircle } from 'lucide-react';
 import { Card, Button, Badge } from '../ui';
 
 const STEP_LABELS = {
@@ -7,9 +7,13 @@ const STEP_LABELS = {
   contract: 'Contract',
   validate: 'Validate',
   forecast: 'Forecast',
+  risk_scan: 'Risk Scan',
+  bom_explosion: 'BOM Explosion',
   optimize: 'Optimize',
   compute_risk: 'Compute Risk',
   exceptions: 'Exceptions',
+  topology: 'Topology',
+  verify_replay: 'Verify/Replay',
   verify: 'Verify',
   report: 'Report'
 };
@@ -19,6 +23,7 @@ const statusBadgeType = (status) => {
   if (normalized === 'succeeded' || normalized === 'skipped') return 'success';
   if (normalized === 'failed') return 'warning';
   if (normalized === 'running') return 'info';
+  if (normalized === 'blocked' || normalized === 'waiting_user') return 'warning';
   return 'default';
 };
 
@@ -26,7 +31,8 @@ export default function WorkflowProgressCard({
   payload,
   snapshot,
   onResume,
-  onReplay
+  onReplay,
+  onCancel
 }) {
   const safePayload = payload || {};
 
@@ -44,6 +50,8 @@ export default function WorkflowProgressCard({
   const running = String(run?.status || '').toLowerCase() === 'running';
   const failed = String(run?.status || '').toLowerCase() === 'failed';
   const succeeded = String(run?.status || '').toLowerCase() === 'succeeded';
+  const paused = String(run?.status || '').toLowerCase() === 'waiting_user';
+  const hasAsyncJob = Boolean(safePayload?.job_id);
   const workflowName = String(run?.workflow || payload?.workflow || '').toLowerCase();
   const workflowLabel = workflowName.includes('workflow_b')
     ? 'Workflow B Progress'
@@ -62,8 +70,8 @@ export default function WorkflowProgressCard({
           </div>
           <div className="flex items-center gap-2">
             {running && <Loader2 className="w-4 h-4 animate-spin text-indigo-600" />}
-            <Badge type={running ? 'info' : (succeeded ? 'success' : failed ? 'warning' : 'default')}>
-              {(run?.status || payload?.status || 'unknown').toUpperCase()}
+            <Badge type={running ? 'info' : (paused ? 'warning' : (succeeded ? 'success' : failed ? 'warning' : 'default'))}>
+              {paused ? 'PAUSED' : (run?.status || payload?.status || 'unknown').toUpperCase()}
             </Badge>
           </div>
         </div>
@@ -105,6 +113,13 @@ export default function WorkflowProgressCard({
           </div>
         )}
 
+        {paused && (
+          <div className="flex items-center gap-2 rounded border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 px-3 py-2 text-xs text-amber-800 dark:text-amber-200">
+            <HelpCircle className="w-3.5 h-3.5 shrink-0" />
+            <span>Paused — waiting for user confirmation. Answer the questions above to resume.</span>
+          </div>
+        )}
+
         <div className="flex flex-wrap gap-2">
           <Button
             variant="secondary"
@@ -113,7 +128,7 @@ export default function WorkflowProgressCard({
             disabled={running || succeeded}
           >
             <PlayCircle className="w-3 h-3 mr-1" />
-            Resume
+            {paused ? 'Resume after answering' : 'Resume'}
           </Button>
           <Button
             variant="secondary"
@@ -122,11 +137,20 @@ export default function WorkflowProgressCard({
               use_cached_forecast: supportsCacheReuse ? reuseCachedForecast : false,
               use_cached_plan: supportsCacheReuse ? reuseCachedPlan : false
             })}
-            disabled={!run?.id}
+            disabled={!run?.id || hasAsyncJob}
           >
             <RefreshCw className="w-3 h-3 mr-1" />
             Replay
           </Button>
+          {running && hasAsyncJob && onCancel && (
+            <Button
+              variant="secondary"
+              className="text-xs"
+              onClick={() => onCancel?.(payload?.run_id || run?.id, payload?.job_id)}
+            >
+              Cancel
+            </Button>
+          )}
         </div>
       </div>
     </Card>

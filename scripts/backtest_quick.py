@@ -57,7 +57,7 @@ def run_backtest(name, history, test_days=7):
 
 # 測試情境
 print("\n" + "="*60)
-print("📊 SmartOps 回測驗證 — AI 誠實度測試")
+print("📊 Decision-Intelligence 回測驗證 — AI 誠實度測試")
 print("="*60)
 
 # 1. 穩定增長

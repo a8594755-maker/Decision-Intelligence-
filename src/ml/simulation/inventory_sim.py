@@ -3,7 +3,7 @@ Week 1C: InventorySimulator — 庫存模擬引擎
 ============================================
 Day-by-day supply chain loop:
   Day T:   ChaosEngine generates demand → deplete inventory → check stockout
-  Day T+1: SmartOps forecasts → calculates risk → decides PO (purchase order)
+  Day T+1: Decision-Intelligence forecasts → calculates risk → decides PO (purchase order)
   Day T+L: Supplier delivers (with possible delays) → inventory replenished
 """
 import numpy as np

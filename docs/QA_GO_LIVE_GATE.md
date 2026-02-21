@@ -1,6 +1,6 @@
 # Go-live Gate 回歸測試矩陣
 
-本文件為 **SmartOps 上線前回歸測試** 的完整矩陣，涵蓋：10 種 Upload Type、One-shot、Strict/Best-effort、Error Report、權限與效能。  
+本文件為 **Decision-Intelligence 上線前回歸測試** 的完整矩陣，涵蓋：10 種 Upload Type、One-shot、Strict/Best-effort、Error Report、權限與效能。  
 **交付對象**：可直接交給非開發人員照步驟執行。
 
 ---

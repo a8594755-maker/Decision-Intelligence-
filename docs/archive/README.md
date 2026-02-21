@@ -171,4 +171,4 @@ ls docs/archive/MATERIAL_COST*.md
 ---
 
 **歸檔日期**: 2026-02-04  
-**維護者**: SmartOps Team
+**維護者**: Decision-Intelligence Team

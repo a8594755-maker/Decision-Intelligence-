@@ -1,5 +1,5 @@
 /**
- * Decision Intelligence strict JSON-contract prompt builders.
+ * Decision-Intelligence strict JSON-contract prompt builders.
  * All prompts enforce a single JSON object response with no markdown/text wrappers.
  */
 
@@ -14,7 +14,7 @@ const clampJsonPayload = (payload, maxChars = 32000) => {
 export const buildSystemBrainPrompt = (sheetsInput) => {
   const compact = clampJsonPayload(sheetsInput);
 
-  return `You are the System Brain for a supply-chain Decision Intelligence app.
+  return `You are the System Brain for a supply-chain Decision-Intelligence app.
 
 You MUST return a single valid JSON object, and NOTHING else.
 No markdown. No code fences. No commentary. No extra keys.
@@ -174,7 +174,7 @@ ${compact}`;
 export const buildDecisionIntelligenceReportPrompt = (evidenceInput) => {
   const compact = clampJsonPayload(evidenceInput);
 
-  return `You are a Decision Intelligence Report Writer.
+  return `You are a Decision-Intelligence Report Writer.
 
 You MUST output a single valid JSON object only.
 No markdown. No code fences. No extra text.

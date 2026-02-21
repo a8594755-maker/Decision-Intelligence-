@@ -1,4 +1,4 @@
-# SmartOps Cursor Rules
+# Decision-Intelligence Cursor Rules
 
 ## 📂 文件系統規範
 
@@ -73,7 +73,7 @@ last_reviewed: YYYY-MM-DD
 ## 🗂️ 目錄結構規範
 
 ```
-smartops-app/
+decision-intelligence/
 ├── docs/
 │   ├── README.md                 # 📌 文件總索引（必須維護）
 │   ├── guides/                   # ✅ 當前有效文件（≤ 12 份）

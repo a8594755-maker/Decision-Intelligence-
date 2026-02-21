@@ -6,7 +6,7 @@ import {
   buildWorkflowAReadinessPrompt
 } from '../prompts/diJsonContracts';
 import { extractAiJson } from '../utils/aiMappingHelper';
-import { getApiKey as getGeminiApiKey } from './geminiAPI';
+import { invokeAiProxy } from './aiProxyService';
 
 export const DI_PROMPT_IDS = Object.freeze({
   DATA_PROFILER: 'prompt_1_data_profiler',
@@ -16,32 +16,38 @@ export const DI_PROMPT_IDS = Object.freeze({
   BLOCKING_QUESTIONS: 'prompt_5_blocking_questions'
 });
 
-const DEFAULT_DI_GEMINI_MODEL = 'gemini-3-pro';
-const DI_GEMINI_MODEL = import.meta.env.VITE_DI_GEMINI_MODEL || import.meta.env.VITE_GEMINI_MODEL || DEFAULT_DI_GEMINI_MODEL;
+const DEFAULT_DI_GEMINI_MODEL = 'gemini-3.1-pro-preview';
+const DI_GEMINI_MODEL_ALIASES = Object.freeze({
+  'gemini-3-pro': 'gemini-3-pro-preview',
+  'gemini-3.1-pro': 'gemini-3.1-pro-preview'
+});
+const normalizeGeminiModelName = (model) => {
+  const normalized = String(model || '').trim().replace(/^models\//i, '');
+  if (!normalized) return '';
+  return DI_GEMINI_MODEL_ALIASES[normalized] || normalized;
+};
+const isGeminiModelName = (model) => /^gemini-/i.test(String(model || '').trim());
+const resolveGeminiModel = (model, fallback = DEFAULT_DI_GEMINI_MODEL) => {
+  const normalized = normalizeGeminiModelName(model);
+  return isGeminiModelName(normalized) ? normalized : fallback;
+};
+const DI_GEMINI_MODEL = resolveGeminiModel(
+  import.meta.env.VITE_DI_GEMINI_MODEL || import.meta.env.VITE_GEMINI_MODEL || DEFAULT_DI_GEMINI_MODEL
+);
 const DI_GEMINI_MODEL_CANDIDATES = Array.from(new Set(
   [
     DI_GEMINI_MODEL,
     import.meta.env.VITE_DI_GEMINI_MODEL,
     import.meta.env.VITE_GEMINI_MODEL,
     DEFAULT_DI_GEMINI_MODEL,
-    'gemini-3.1-pro',
-    'gemini-3-pro',
+    'gemini-3.1-pro-preview',
     'gemini-3-pro-preview'
   ]
-    .map((model) => String(model || '').trim())
-    .filter(Boolean)
+    .map(normalizeGeminiModelName)
+    .filter((model) => Boolean(model) && isGeminiModelName(model))
 ));
+
 const DEFAULT_DI_DEEPSEEK_MODEL = import.meta.env.VITE_DI_DEEPSEEK_MODEL || 'deepseek-chat';
-const DI_DEEPSEEK_MODEL_CANDIDATES = Array.from(new Set(
-  [
-    DEFAULT_DI_DEEPSEEK_MODEL,
-    import.meta.env.VITE_DI_DEEPSEEK_MODEL,
-    'deepseek-v3.2-exp',
-    'deepseek-chat'
-  ]
-    .map((model) => String(model || '').trim())
-    .filter(Boolean)
-));
 
 const PROMPT_PROVIDER = Object.freeze({
   [DI_PROMPT_IDS.DATA_PROFILER]: 'gemini',
@@ -58,17 +64,48 @@ const PROMPT_DEFAULT_MODEL = Object.freeze({
   [DI_PROMPT_IDS.REPORT_SUMMARY]: DEFAULT_DI_DEEPSEEK_MODEL,
   [DI_PROMPT_IDS.BLOCKING_QUESTIONS]: DEFAULT_DI_DEEPSEEK_MODEL
 });
+const STRICT_JSON_PROMPTS = new Set([
+  DI_PROMPT_IDS.DATA_PROFILER,
+  DI_PROMPT_IDS.SCHEMA_MAPPING,
+  DI_PROMPT_IDS.WORKFLOW_A_READINESS
+]);
 
-const GEMINI_API_VERSION = import.meta.env.VITE_DI_GEMINI_API_VERSION || 'v1beta';
-const DEEPSEEK_BASE_URL = String(import.meta.env.VITE_DI_DEEPSEEK_BASE_URL || 'https://api.deepseek.com').replace(/\/+$/, '');
-const DEEPSEEK_LOCAL_STORAGE_KEY = 'deepseek_api_key';
+const isPlainObject = (value) => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+const hasArrayField = (value, field) => Array.isArray(value?.[field]);
+const hasBooleanField = (value, field) => typeof value?.[field] === 'boolean';
 
-const getDeepSeekApiKey = () => {
-  if (import.meta.env.VITE_DEEPSEEK_API_KEY) return import.meta.env.VITE_DEEPSEEK_API_KEY;
-  if (typeof localStorage === 'undefined') return '';
-  const stored = localStorage.getItem(DEEPSEEK_LOCAL_STORAGE_KEY);
-  return stored || '';
+const validatePromptContract = (promptId, parsed) => {
+  if (!isPlainObject(parsed)) return false;
+
+  if (promptId === DI_PROMPT_IDS.DATA_PROFILER) {
+    return isPlainObject(parsed.global) && hasArrayField(parsed, 'sheets');
+  }
+
+  if (promptId === DI_PROMPT_IDS.SCHEMA_MAPPING) {
+    return (
+      typeof parsed.upload_type === 'string'
+      && hasArrayField(parsed, 'mapping')
+      && hasArrayField(parsed, 'missing_required_fields')
+      && hasArrayField(parsed, 'unmapped_input_columns')
+      && hasArrayField(parsed, 'assumptions')
+      && hasArrayField(parsed, 'minimal_questions')
+    );
+  }
+
+  if (promptId === DI_PROMPT_IDS.WORKFLOW_A_READINESS) {
+    return (
+      hasBooleanField(parsed, 'can_run_forecast')
+      && hasBooleanField(parsed, 'can_run_optimization')
+      && hasArrayField(parsed, 'blocking_items')
+      && hasArrayField(parsed, 'recommended_next_actions')
+      && hasArrayField(parsed, 'minimal_questions')
+    );
+  }
+
+  return true;
 };
+
+const DEEPSEEK_LOCAL_STORAGE_KEY = 'deepseek_api_key';
 
 export const saveDeepSeekApiKey = (apiKey) => {
   if (typeof localStorage === 'undefined') return false;
@@ -82,11 +119,6 @@ export const clearDeepSeekApiKey = () => {
   localStorage.removeItem(DEEPSEEK_LOCAL_STORAGE_KEY);
 };
 
-const isModelLookupError = (status, message = '') => {
-  if (status === 404) return true;
-  return /(model|models).*(not found|unsupported|unknown|invalid|not supported)/i.test(message);
-};
-
 const toPromptText = (promptId, input) => {
   if (promptId === DI_PROMPT_IDS.DATA_PROFILER) return buildSystemBrainPrompt(input);
   if (promptId === DI_PROMPT_IDS.SCHEMA_MAPPING) return buildSchemaContractMappingPrompt(input);
@@ -97,111 +129,35 @@ const toPromptText = (promptId, input) => {
 };
 
 const callGeminiPrompt = async ({ prompt, model, temperature = 0.15, maxOutputTokens = 4096 }) => {
-  const apiKey = getGeminiApiKey();
-  if (!apiKey) {
-    throw new Error('Gemini API key is missing for DI prompt execution.');
+  const response = await invokeAiProxy('di_prompt', {
+    provider: 'gemini',
+    prompt,
+    model,
+    modelCandidates: DI_GEMINI_MODEL_CANDIDATES,
+    temperature,
+    maxOutputTokens,
+    responseMimeType: 'application/json'
+  });
+  const text = typeof response?.text === 'string' ? response.text : '';
+  if (!text) {
+    throw new Error('AI proxy returned empty Gemini content.');
   }
-
-  const modelCandidates = Array.from(new Set(
-    [model, ...DI_GEMINI_MODEL_CANDIDATES]
-      .map((item) => String(item || '').trim())
-      .filter(Boolean)
-  ));
-
-  let retryableError = null;
-
-  for (const modelName of modelCandidates) {
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/${GEMINI_API_VERSION}/models/${modelName}:generateContent?key=${encodeURIComponent(apiKey)}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: {
-            temperature,
-            maxOutputTokens
-          }
-        })
-      }
-    );
-
-    if (!response.ok) {
-      const errorBody = await response.json().catch(() => ({}));
-      const message = errorBody?.error?.message || `Gemini request failed (${response.status})`;
-      if (!isModelLookupError(response.status, message)) {
-        throw new Error(message);
-      }
-      retryableError = new Error(message);
-      continue;
-    }
-
-    const body = await response.json();
-    const text = body?.candidates?.[0]?.content?.parts?.map((part) => part?.text || '').join('') || '';
-    if (!text) {
-      const finishReason = body?.candidates?.[0]?.finishReason || 'unknown';
-      throw new Error(`Gemini returned empty content (finish_reason=${finishReason}).`);
-    }
-    if (modelName !== model) {
-      console.warn(`DI Gemini model fallback: "${model}" -> "${modelName}"`);
-    }
-    return { text, model: modelName };
-  }
-
-  throw retryableError || new Error(`Gemini request failed: no valid model candidate resolved (configured="${model}")`);
+  return { text, model: response?.model || model };
 };
 
 const callDeepSeekPrompt = async ({ prompt, model, temperature = 0.15, maxOutputTokens = 4096 }) => {
-  const apiKey = getDeepSeekApiKey();
-  if (!apiKey) {
-    throw new Error('DeepSeek API key is missing for DI prompt execution.');
+  const response = await invokeAiProxy('di_prompt', {
+    provider: 'deepseek',
+    prompt,
+    model,
+    temperature,
+    maxOutputTokens
+  });
+  const text = typeof response?.text === 'string' ? response.text : '';
+  if (!text) {
+    throw new Error('AI proxy returned empty DeepSeek content.');
   }
-
-  const modelCandidates = Array.from(new Set(
-    [model, ...DI_DEEPSEEK_MODEL_CANDIDATES]
-      .map((item) => String(item || '').trim())
-      .filter(Boolean)
-  ));
-
-  let retryableError = null;
-
-  for (const modelName of modelCandidates) {
-    const response = await fetch(`${DEEPSEEK_BASE_URL}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey}`
-      },
-      body: JSON.stringify({
-        model: modelName,
-        messages: [{ role: 'user', content: prompt }],
-        temperature,
-        max_tokens: maxOutputTokens
-      })
-    });
-
-    if (!response.ok) {
-      const errorBody = await response.json().catch(() => ({}));
-      const message = errorBody?.error?.message || `DeepSeek request failed (${response.status})`;
-      if (!isModelLookupError(response.status, message)) {
-        throw new Error(message);
-      }
-      retryableError = new Error(message);
-      continue;
-    }
-
-    const body = await response.json();
-    const text = body?.choices?.[0]?.message?.content || '';
-    if (!text) {
-      throw new Error('DeepSeek returned empty content.');
-    }
-    if (modelName !== model) {
-      console.warn(`DI DeepSeek model fallback: "${model}" -> "${modelName}"`);
-    }
-    return { text, model: modelName };
-  }
-
-  throw retryableError || new Error(`DeepSeek request failed: no valid model candidate resolved (configured="${model}")`);
+  return { text, model: response?.model || model };
 };
 
 export const runDiPrompt = async ({
@@ -215,36 +171,35 @@ export const runDiPrompt = async ({
     throw new Error(`No DI provider route configured for prompt: ${promptId}`);
   }
 
-  const model = PROMPT_DEFAULT_MODEL[promptId];
+  const model = PROMPT_DEFAULT_MODEL[promptId] || (provider === 'gemini' ? DI_GEMINI_MODEL : DEFAULT_DI_DEEPSEEK_MODEL);
   const promptText = toPromptText(promptId, input);
-  let resolvedModel = model;
-  let rawText = '';
-  if (provider === 'gemini') {
-    const geminiResult = await callGeminiPrompt({
-      prompt: promptText,
-      model,
-      temperature,
-      maxOutputTokens
-    });
-    rawText = geminiResult.text;
-    resolvedModel = geminiResult.model;
-  } else {
-    const deepSeekResult = await callDeepSeekPrompt({
-      prompt: promptText,
-      model,
-      temperature,
-      maxOutputTokens
-    });
-    rawText = deepSeekResult.text;
-    resolvedModel = deepSeekResult.model;
+
+  const result = provider === 'gemini'
+    ? await callGeminiPrompt({
+        prompt: promptText,
+        model,
+        temperature,
+        maxOutputTokens
+      })
+    : await callDeepSeekPrompt({
+        prompt: promptText,
+        model,
+        temperature,
+        maxOutputTokens
+      });
+
+  const strictJson = STRICT_JSON_PROMPTS.has(promptId);
+  const parsed = extractAiJson(result.text, { strict: strictJson });
+  if (strictJson && !validatePromptContract(promptId, parsed)) {
+    throw new Error(`Prompt ${promptId} returned JSON outside the required contract.`);
   }
 
   return {
     provider,
-    model: resolvedModel,
+    model: result.model,
     prompt_id: promptId,
-    raw: rawText,
-    parsed: extractAiJson(rawText)
+    raw: result.text,
+    parsed
   };
 };
 

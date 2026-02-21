@@ -82,7 +82,7 @@
 
 ```sql
 -- 在 Supabase SQL Editor 執行
--- c:\Users\a8594\smartops-app\database\fix_suppliers_status.sql
+-- c:\Users\a8594\decision-intelligence\database\fix_suppliers_status.sql
 ```
 
 複製檔案內容並在 Supabase Dashboard → SQL Editor 執行。
@@ -91,7 +91,7 @@
 
 ### 步驟 1：啟動開發伺服器
 ```powershell
-cd c:\Users\a8594\smartops-app
+cd c:\Users\a8594\decision-intelligence
 npm run dev
 ```
 

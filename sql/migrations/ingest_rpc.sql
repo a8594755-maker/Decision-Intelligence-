@@ -1,5 +1,5 @@
 -- ============================================
--- SmartOps Ingest RPC Functions
+-- Decision-Intelligence Ingest RPC Functions
 -- ============================================
 -- 目的：提供高效能、交易性的批次資料寫入 API
 -- 版本：v1

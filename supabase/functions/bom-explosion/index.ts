@@ -70,6 +70,12 @@ Deno.serve(async (req) => {
         autoRefreshToken: false,
         persistSession: false,
       },
+      global: {
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+      },
     });
 
     // Verify JWT and get user

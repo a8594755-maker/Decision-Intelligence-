@@ -1,5 +1,5 @@
 """
-📊 SmartOps 回測驗證器 (Backtesting Validator)
+📊 Decision-Intelligence 回測驗證器 (Backtesting Validator)
 ==============================================
 驗證雙模型系統的「誠實度」— 用真實數據檢驗 AI 預測準確度。
 
@@ -273,7 +273,7 @@ def get_test_scenarios() -> List[tuple]:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 def main():
     print("\n" + "━" * 72)
-    print("  📊 SmartOps 回測驗證器 — AI 誠實度測試")
+    print("  📊 Decision-Intelligence 回測驗證器 — AI 誠實度測試")
     print(f"  ⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"  🔧 模式: {'HTTP API' if USE_API else '本地離線'}")
     print("━" * 72)

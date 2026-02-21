@@ -13,7 +13,8 @@ export default function SplitShell({
   canvasOpen,
   onCanvasToggle,
   initialSplitRatio = 0.5,
-  onSplitRatioCommit
+  onSplitRatioCommit,
+  canvasDetached = false
 }) {
   const workRef = useRef(null);
   const frameRef = useRef(null);
@@ -107,14 +108,14 @@ export default function SplitShell({
   }, [onPointerMove]);
 
   const chatWidth = useMemo(() => {
-    if (!canvasOpen) return '100%';
+    if (!canvasOpen || canvasDetached) return '100%';
     return `${splitRatio * 100}%`;
-  }, [canvasOpen, splitRatio]);
+  }, [canvasOpen, canvasDetached, splitRatio]);
 
   const canvasWidth = useMemo(() => {
-    if (!canvasOpen) return '0%';
+    if (!canvasOpen || canvasDetached) return '0%';
     return `${(1 - splitRatio) * 100}%`;
-  }, [canvasOpen, splitRatio]);
+  }, [canvasOpen, canvasDetached, splitRatio]);
 
   return (
     <div className="h-full w-full flex gap-2 md:gap-3 overflow-hidden">
@@ -151,25 +152,31 @@ export default function SplitShell({
           {chat}
         </div>
 
-        {/* Resizable divider - only visible when canvas is open */}
-        {canvasOpen ? (
+        {/* Resizable divider - only visible when canvas is open and not detached */}
+        {canvasOpen && !canvasDetached ? (
           <ResizableDivider
             onPointerDown={onDividerPointerDown}
             onDoubleClick={() => commitRatio(0.5)}
           />
         ) : null}
 
-        {/* Canvas panel - slides in/out with transform */}
-        <div
-          style={{ width: canvasWidth }}
-          className={`h-full min-w-0 overflow-hidden motion-safe:transition-all motion-safe:duration-200 ease-out motion-reduce:transition-none ${
-            canvasOpen
-              ? 'opacity-100 translate-x-0'
-              : 'opacity-0 translate-x-4 pointer-events-none'
-          }`}
-        >
-          {canvas}
-        </div>
+        {/* Canvas panel - floating overlay when detached, slides in/out otherwise */}
+        {canvasDetached ? (
+          <div className="fixed inset-4 z-40 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-700 overflow-hidden">
+            {canvas}
+          </div>
+        ) : (
+          <div
+            style={{ width: canvasWidth }}
+            className={`h-full min-w-0 overflow-hidden motion-safe:transition-all motion-safe:duration-200 ease-out motion-reduce:transition-none ${
+              canvasOpen
+                ? 'opacity-100 translate-x-0'
+                : 'opacity-0 translate-x-4 pointer-events-none'
+            }`}
+          >
+            {canvas}
+          </div>
+        )}
 
         {/* Open Canvas button - shown when canvas is closed */}
         {!canvasOpen ? (

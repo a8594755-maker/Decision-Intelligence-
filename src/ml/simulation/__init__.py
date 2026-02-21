@@ -1,9 +1,9 @@
 """
-SmartOps Supply Chain Digital Twin — Self-Generating Sandbox
+Decision-Intelligence Supply Chain Digital Twin — Self-Generating Sandbox
 ============================================================
 Two AI agents compete:
   1. ChaosEngine (The Environment) — creates problems
-  2. SmartOps Core (The Brain) — predicts, plans, reacts
+  2. Decision-Intelligence Core (The Brain) — predicts, plans, reacts
 
 The simulation loop accelerates time (1 tick = 1 day) and measures
 whether the Brain can keep inventory healthy under chaos.

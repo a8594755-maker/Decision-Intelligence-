@@ -4,10 +4,19 @@ import { reuseMemoryService } from './reuseMemoryService';
 import forecastApiClient from './forecastApiClient';
 import { validateFieldType } from '../utils/uploadSchemas';
 import { saveJsonArtifact, saveCsvArtifact } from '../utils/artifactStore';
+import {
+  CALIBRATION_METHOD,
+  DEFAULT_MIN_SERIES_SAMPLES,
+  buildQuantileCalibration,
+  applyCalibratedQuantiles,
+  computeCalibrationMetrics
+} from './forecasting/calibrateQuantiles';
+import { toCanonicalForecastPoint } from './forecasting/forecastPointMapper';
 
 const MAX_GROUPS_IN_ARTIFACT = 25;
 const MAX_HISTORY_POINTS = 24;
 const MAX_BLOCKING_QUESTIONS = 2;
+const MIN_SERIES_CALIBRATION_SAMPLES = DEFAULT_MIN_SERIES_SAMPLES;
 const ARTIFACT_SIZE_THRESHOLD = 200 * 1024;
 const ENABLE_API_MODEL = String(import.meta.env.VITE_ENABLE_FORECAST_API_AUTOML || '0') === '1';
 
@@ -136,18 +145,12 @@ const computeHoldoutSize = (n) => {
 
 const mean = (values) => values.length ? values.reduce((sum, v) => sum + v, 0) / values.length : 0;
 
-const stddev = (values) => {
-  if (!values.length) return 0;
-  if (values.length === 1) return 0;
-  const avg = mean(values);
-  const variance = values.reduce((sum, v) => sum + ((v - avg) ** 2), 0) / (values.length - 1);
-  return Math.sqrt(Math.max(0, variance));
-};
-
 const toNumber = (value) => {
   const num = Number(value);
   return Number.isFinite(num) ? num : null;
 };
+
+const round4 = (value) => (Number.isFinite(Number(value)) ? Number(Number(value).toFixed(4)) : null);
 
 const normalizeTargetMapping = (mapping = {}) => {
   if (!mapping || typeof mapping !== 'object' || Array.isArray(mapping)) return {};
@@ -380,18 +383,21 @@ const addPeriods = (lastBucket, index, granularity) => {
 };
 
 const toCsv = (groups = []) => {
-  const header = 'material_code,plant_id,time_bucket,actual,forecast,lower,upper,is_forecast';
+  const header = 'sku,plant_id,date,p50,p90,actual,forecast,upper,is_forecast';
   const lines = [header];
   groups.forEach((group) => {
     group.points.forEach((point) => {
+      const p50 = point.p50 ?? point.forecast ?? '';
+      const p90 = point.p90 ?? point.upper ?? '';
       lines.push([
-        group.material_code,
+        group.material_code || group.sku || '',
         group.plant_id,
-        point.time_bucket,
+        point.time_bucket || point.date || '',
+        p50,
+        p90,
         point.actual ?? '',
-        point.forecast ?? '',
-        point.lower ?? '',
-        point.upper ?? '',
+        point.forecast ?? p50,
+        point.upper ?? p90,
         point.is_forecast ? '1' : '0'
       ].join(','));
     });
@@ -412,10 +418,11 @@ const buildRuleBasedSummary = (metrics, series) => {
   const model = metrics?.selected_model_global || 'naive_last';
   const mape = Number.isFinite(metrics?.mape) ? `${metrics.mape.toFixed(2)}%` : 'N/A';
   const mae = Number.isFinite(metrics?.mae) ? metrics.mae.toFixed(2) : 'N/A';
+  const p90Coverage = Number.isFinite(metrics?.p90_coverage) ? metrics.p90_coverage.toFixed(3) : 'N/A';
   const groups = series?.total_groups || 0;
   const horizon = metrics?.horizon_periods || 0;
 
-  return `Forecast completed: ${groups} SKU/plant series, ${horizon}-period horizon, model=${model}, MAPE=${mape}, MAE=${mae}.`;
+  return `Forecast completed: ${groups} SKU/plant series, ${horizon}-period horizon, model=${model}, MAPE=${mape}, MAE=${mae}, P90 coverage=${p90Coverage}.`;
 };
 
 const getForecastTemplateQualityDelta = (metrics = {}) => {
@@ -616,6 +623,7 @@ export async function runForecastFromDatasetProfile({
       : defaultHorizonByGranularity(inferredGranularity);
 
     const forecastGroups = [];
+    const backtestRowsForCalibration = [];
     for (const group of selectedGroups) {
       const buckets = group.series.map((point) => point.time_bucket).sort(compareBuckets);
       const valuesByBucket = new Map(group.series.map((point) => [point.time_bucket, Number(point.value) || 0]));
@@ -646,36 +654,47 @@ export async function runForecastFromDatasetProfile({
         futurePredictions = predictNaiveLast(historyValues, horizon);
       }
 
-      const residualErrors = (bestEval?.predictions || []).map((pred, idx) => {
-        const actual = historyValues[historyValues.length - holdout + idx];
-        return Number(actual || 0) - Number(pred || 0);
-      });
-      const residualStd = residualErrors.length > 1 ? stddev(residualErrors) : stddev(historyValues);
-      const interval = Number.isFinite(residualStd) ? residualStd * 1.28 : 0;
+      const holdoutStartIndex = historyValues.length - holdout;
+      const p50BacktestByBucket = new Map();
+      if (Array.isArray(bestEval?.predictions)) {
+        bestEval.predictions.slice(0, holdout).forEach((prediction, idx) => {
+          const p50Pred = toNumber(prediction);
+          const bucketIndex = holdoutStartIndex + idx;
+          const bucket = buckets[bucketIndex];
+          if (p50Pred === null || !bucket) return;
+
+          const safeP50Pred = Math.max(0, p50Pred);
+          p50BacktestByBucket.set(bucket, safeP50Pred);
+
+          const actual = toNumber(valuesByBucket.get(bucket));
+          if (actual === null) return;
+          backtestRowsForCalibration.push({
+            series_key: group.key,
+            actual,
+            p50_pred: safeP50Pred
+          });
+        });
+      }
 
       const historyTail = buckets.slice(-MAX_HISTORY_POINTS);
-      const historyPoints = historyTail.map((bucket) => ({
+      const historyPoints = historyTail.map((bucket) => toCanonicalForecastPoint({
         time_bucket: bucket,
         actual: Number(valuesByBucket.get(bucket) || 0),
-        forecast: null,
-        lower: null,
-        upper: null,
-        is_forecast: false
+        p50: p50BacktestByBucket.has(bucket) ? p50BacktestByBucket.get(bucket) : null,
+        p90: null,
+        p10: null,
+        is_forecast: p50BacktestByBucket.has(bucket)
       }));
 
       const lastBucket = buckets[buckets.length - 1];
-      const futurePoints = futurePredictions.map((prediction, idx) => {
-        const rawValue = Number(prediction) || 0;
-        const forecastValue = Math.max(0, rawValue);
-        return {
-          time_bucket: addPeriods(lastBucket, idx + 1, inferredGranularity),
-          actual: null,
-          forecast: Number(forecastValue.toFixed(4)),
-          lower: Number(Math.max(0, forecastValue - interval).toFixed(4)),
-          upper: Number((forecastValue + interval).toFixed(4)),
-          is_forecast: true
-        };
-      });
+      const futurePoints = futurePredictions.map((prediction, idx) => toCanonicalForecastPoint({
+        time_bucket: addPeriods(lastBucket, idx + 1, inferredGranularity),
+        actual: null,
+        p50: Math.max(0, Number(prediction) || 0),
+        p90: null,
+        p10: null,
+        is_forecast: true
+      }));
 
       forecastGroups.push({
         key: group.key,
@@ -695,10 +714,53 @@ export async function runForecastFromDatasetProfile({
       });
     }
 
-    const usage = summarizeModels(forecastGroups);
+    const calibration = buildQuantileCalibration({
+      backtestRows: backtestRowsForCalibration,
+      minSeriesSamples: MIN_SERIES_CALIBRATION_SAMPLES
+    });
+    const coverageMetrics = computeCalibrationMetrics({
+      backtestRows: backtestRowsForCalibration,
+      calibration
+    });
+
+    const calibratedForecastGroups = forecastGroups.map((group) => ({
+      ...group,
+      points: (Array.isArray(group.points) ? group.points : []).map((point) => {
+        const pointP50 = toNumber(point?.p50 ?? point?.forecast);
+        if (pointP50 === null) {
+          return {
+            ...point,
+            p50: null,
+            p90: null,
+            forecast: null,
+            upper: null,
+            p10: null,
+            lower: null
+          };
+        }
+
+        const calibratedPoint = applyCalibratedQuantiles({
+          p50: pointP50,
+          seriesKey: group.key,
+          calibration
+        });
+
+        return {
+          ...point,
+          p50: round4(calibratedPoint.p50),
+          p90: round4(calibratedPoint.p90),
+          forecast: round4(calibratedPoint.forecast),
+          upper: round4(calibratedPoint.upper),
+          p10: round4(calibratedPoint.p10),
+          lower: round4(calibratedPoint.lower)
+        };
+      })
+    }));
+
+    const usage = summarizeModels(calibratedForecastGroups);
     const selectedModelGlobal = Object.entries(usage).sort((a, b) => b[1] - a[1])[0]?.[0] || 'naive_last';
-    const mapeValues = forecastGroups.map((group) => group.mape).filter((v) => Number.isFinite(v));
-    const maeValues = forecastGroups.map((group) => group.mae).filter((v) => Number.isFinite(v));
+    const mapeValues = calibratedForecastGroups.map((group) => group.mape).filter((v) => Number.isFinite(v));
+    const maeValues = calibratedForecastGroups.map((group) => group.mae).filter((v) => Number.isFinite(v));
     const metricName = mapeValues.length > 0 ? 'mape' : 'mae';
 
     const forecastSeriesArtifact = {
@@ -706,7 +768,7 @@ export async function runForecastFromDatasetProfile({
       horizon_periods: horizon,
       granularity: inferredGranularity,
       total_groups: groupedSeries.length,
-      groups: forecastGroups,
+      groups: calibratedForecastGroups,
       truncated_groups: truncated
     };
 
@@ -714,9 +776,17 @@ export async function runForecastFromDatasetProfile({
       metric_name: metricName,
       mape: mapeValues.length > 0 ? Number(mean(mapeValues).toFixed(4)) : null,
       mae: maeValues.length > 0 ? Number(mean(maeValues).toFixed(4)) : null,
+      p50_mape: mapeValues.length > 0 ? Number(mean(mapeValues).toFixed(4)) : null,
+      p50_mae: maeValues.length > 0 ? Number(mean(maeValues).toFixed(4)) : null,
+      p90_coverage: coverageMetrics.p90_coverage,
+      p90_pinball_loss: coverageMetrics.p90_pinball_loss,
+      calibration_method: CALIBRATION_METHOD,
+      calibration_scope: calibration.calibration_scope,
+      calibration_sample_size: coverageMetrics.coverage_samples,
+      calibration_min_series_samples: MIN_SERIES_CALIBRATION_SAMPLES,
       selected_model_global: selectedModelGlobal,
       model_usage: usage,
-      groups_processed: forecastGroups.length,
+      groups_processed: calibratedForecastGroups.length,
       rows_used: mappedRows.length,
       dropped_rows: droppedRows,
       horizon_periods: horizon,
@@ -728,14 +798,27 @@ export async function runForecastFromDatasetProfile({
       workflow,
       stage: 'forecast',
       demand_sheet_name: demandDataset.sheet_name,
+      probabilistic_forecasting: {
+        p50_field: 'p50',
+        p90_field: 'p90',
+        forecast_alias: 'forecast=p50',
+        calibration_method: metricsArtifact.calibration_method,
+        calibration_scope: metricsArtifact.calibration_scope,
+        min_series_samples: MIN_SERIES_CALIBRATION_SAMPLES,
+        p90_coverage: metricsArtifact.p90_coverage,
+        coverage_samples: metricsArtifact.calibration_sample_size
+      },
       evidence: {
-        groups_processed: forecastGroups.length,
+        groups_processed: calibratedForecastGroups.length,
         rows_used: mappedRows.length,
         dropped_rows: droppedRows,
         horizon_periods: horizon,
         metric_name: metricsArtifact.metric_name,
         mape: metricsArtifact.mape,
         mae: metricsArtifact.mae,
+        p90_coverage: metricsArtifact.p90_coverage,
+        calibration_method: metricsArtifact.calibration_method,
+        calibration_scope: metricsArtifact.calibration_scope,
         selected_model_global: metricsArtifact.selected_model_global,
         model_usage: metricsArtifact.model_usage
       }
@@ -760,10 +843,10 @@ export async function runForecastFromDatasetProfile({
     });
     artifactRefs.report_json = reportSaved.ref;
 
-    const csvContent = toCsv(forecastGroups);
+    const csvContent = toCsv(calibratedForecastGroups);
     const inlineCsv = csvContent.length <= 100000 ? csvContent : '';
     if (csvContent) {
-      const csvSaved = await saveCsvArtifact(run.id, 'csv', csvContent, `forecast_run_${run.id}.csv`, ARTIFACT_SIZE_THRESHOLD, {
+      const csvSaved = await saveCsvArtifact(run.id, 'forecast_csv', csvContent, `forecast_run_${run.id}.csv`, ARTIFACT_SIZE_THRESHOLD, {
         user_id: userId
       });
       artifactRefs.forecast_csv = csvSaved.ref;

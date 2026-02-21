@@ -1,5 +1,5 @@
 # 设置虚拟环境路径
-$venvPath = "C:\Users\a8594\smartops-app\.venv\Scripts"
+$venvPath = "C:\Users\a8594\decision-intelligence\.venv\Scripts"
 
 # 添加到当前会话PATH
 $env:Path += ";$venvPath"
