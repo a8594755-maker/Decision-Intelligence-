@@ -633,6 +633,29 @@ export const UPLOAD_SCHEMAS = {
         description: 'Open quantity (not yet received, must be >= 0)',
         min: 0
       },
+
+      // === Risk/Delay Fields (optional but recommended for Workflow B) ===
+      {
+        key: 'supplier_name',
+        label: 'Supplier Name',
+        type: 'string',
+        required: false,
+        description: 'Supplier name (recommended for risk scoring)'
+      },
+      {
+        key: 'order_date',
+        label: 'Order Date',
+        type: 'date',
+        required: false,
+        description: 'PO creation date (recommended for lead-time trend)'
+      },
+      {
+        key: 'promised_date',
+        label: 'Promised Date',
+        type: 'date',
+        required: false,
+        description: 'Supplier promised delivery date (recommended for delay metrics)'
+      },
       
       // === Time Bucket Fields (at least one required) ===
       {
@@ -995,22 +1018,24 @@ export const validateFieldType = (value, type) => {
     case 'string':
       return { valid: true, value: String(value) };
     
-    case 'number':
+    case 'number': {
       const num = Number(value);
       if (isNaN(num)) {
         return { valid: false, error: 'Must be a number' };
       }
       return { valid: true, value: num };
+    }
     
-    case 'date':
+    case 'date': {
       // Try to parse date
       const date = new Date(value);
       if (isNaN(date.getTime())) {
         return { valid: false, error: 'Invalid date format' };
       }
       return { valid: true, value: date.toISOString().split('T')[0] };
+    }
     
-    case 'boolean':
+    case 'boolean': {
       if (typeof value === 'boolean') {
         return { valid: true, value };
       }
@@ -1022,6 +1047,7 @@ export const validateFieldType = (value, type) => {
         return { valid: true, value: false };
       }
       return { valid: false, error: 'Must be a boolean value (true/false)' };
+    }
     
     default:
       return { valid: true, value };
@@ -1029,4 +1055,3 @@ export const validateFieldType = (value, type) => {
 };
 
 export default UPLOAD_SCHEMAS;
-

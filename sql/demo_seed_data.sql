@@ -40,6 +40,8 @@ DELETE FROM materials                WHERE user_id = '291075be-3bee-43ff-a296-17
 DELETE FROM suppliers                WHERE user_id = '291075be-3bee-43ff-a296-17c8eecd26a1';
 DELETE FROM forecast_runs            WHERE user_id = '291075be-3bee-43ff-a296-17c8eecd26a1';
 DELETE FROM forecast_runs            WHERE id IN ('a0000001-0000-0000-0000-000000000001','a0000001-0000-0000-0000-000000000002','a0000001-0000-0000-0000-000000000003');
+DELETE FROM import_batches           WHERE user_id = '291075be-3bee-43ff-a296-17c8eecd26a1';
+DELETE FROM import_batches           WHERE id IN ('a0000001-0000-0000-0000-000000000009');
 
 -- ============================================================
 -- 1. Forecast Runs (baseline BOM run + demand forecast run)
@@ -177,7 +179,18 @@ INSERT INTO demand_forecast (user_id, forecast_run_id, material_code, plant_id, 
 -- 6.5 Import Batches (Backfill for Seed Data Visibility)
 -- ============================================================
 INSERT INTO import_batches (id, user_id, upload_type, target_table, filename, status, progress, total_rows, success_rows, error_rows, created_at) VALUES
-  ('a0000001-0000-0000-0000-000000000009', '291075be-3bee-43ff-a296-17c8eecd26a1', 'bom_explosion', 'bom_explosion', 'Seed_Data_BOM_Explosion', 'completed', 100, 72, 72, 0, NOW() - INTERVAL '2 hours');
+  ('a0000001-0000-0000-0000-000000000009', '291075be-3bee-43ff-a296-17c8eecd26a1', 'bom_explosion', 'bom_explosion', 'Seed_Data_BOM_Explosion', 'completed', 100, 72, 72, 0, NOW() - INTERVAL '2 hours')
+ON CONFLICT (id) DO UPDATE SET
+  user_id = EXCLUDED.user_id,
+  upload_type = EXCLUDED.upload_type,
+  target_table = EXCLUDED.target_table,
+  filename = EXCLUDED.filename,
+  status = EXCLUDED.status,
+  progress = EXCLUDED.progress,
+  total_rows = EXCLUDED.total_rows,
+  success_rows = EXCLUDED.success_rows,
+  error_rows = EXCLUDED.error_rows,
+  created_at = EXCLUDED.created_at;
 
 -- ============================================================
 -- 7. Component Demand (BOM explosion 結果，掛在 baseline run)

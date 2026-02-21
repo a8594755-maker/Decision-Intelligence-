@@ -1,4 +1,4 @@
-# SmartOps Supply Chain Operations Platform
+# Decision Intelligence
 
 An intelligent supplier performance and cost operations dashboard built with React + Vite, integrating Supabase cloud database, Google Gemini AI decision assistant, Excel/CSV import, KPI visualization, anomaly analysis, and automated workflows.
 
@@ -368,4 +368,4 @@ This project is licensed under the MIT License.
 
 ---
 
-**SmartOps** - Making supply chain management smarter and more efficient 🚀
+**Decision Intelligence** - Making supply chain management smarter and more efficient 🚀

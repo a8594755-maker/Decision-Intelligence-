@@ -99,18 +99,22 @@ ON public.cost_forecast_results(action_type);
 -- cost_rule_sets RLS
 alter table public.cost_rule_sets enable row level security;
 
+DROP POLICY IF EXISTS "Users can view own cost_rule_sets" ON public.cost_rule_sets;
 CREATE POLICY "Users can view own cost_rule_sets"
   ON public.cost_rule_sets FOR SELECT
   USING (auth.uid() = user_id);
 
+DROP POLICY IF EXISTS "Users can insert own cost_rule_sets" ON public.cost_rule_sets;
 CREATE POLICY "Users can insert own cost_rule_sets"
   ON public.cost_rule_sets FOR INSERT
   WITH CHECK (auth.uid() = user_id);
 
+DROP POLICY IF EXISTS "Users can update own cost_rule_sets" ON public.cost_rule_sets;
 CREATE POLICY "Users can update own cost_rule_sets"
   ON public.cost_rule_sets FOR UPDATE
   USING (auth.uid() = user_id);
 
+DROP POLICY IF EXISTS "Users can delete own cost_rule_sets" ON public.cost_rule_sets;
 CREATE POLICY "Users can delete own cost_rule_sets"
   ON public.cost_rule_sets FOR DELETE
   USING (auth.uid() = user_id);
@@ -118,18 +122,22 @@ CREATE POLICY "Users can delete own cost_rule_sets"
 -- cost_forecast_results RLS
 alter table public.cost_forecast_results enable row level security;
 
+DROP POLICY IF EXISTS "Users can view own cost_forecast_results" ON public.cost_forecast_results;
 CREATE POLICY "Users can view own cost_forecast_results"
   ON public.cost_forecast_results FOR SELECT
   USING (auth.uid() = user_id);
 
+DROP POLICY IF EXISTS "Users can insert own cost_forecast_results" ON public.cost_forecast_results;
 CREATE POLICY "Users can insert own cost_forecast_results"
   ON public.cost_forecast_results FOR INSERT
   WITH CHECK (auth.uid() = user_id);
 
+DROP POLICY IF EXISTS "Users can update own cost_forecast_results" ON public.cost_forecast_results;
 CREATE POLICY "Users can update own cost_forecast_results"
   ON public.cost_forecast_results FOR UPDATE
   USING (auth.uid() = user_id);
 
+DROP POLICY IF EXISTS "Users can delete own cost_forecast_results" ON public.cost_forecast_results;
 CREATE POLICY "Users can delete own cost_forecast_results"
   ON public.cost_forecast_results FOR DELETE
   USING (auth.uid() = user_id);

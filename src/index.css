@@ -1,5 +1,16 @@
 @import "tailwindcss";
 
+:root {
+  --chat-bg: #f8fafc;
+  --chat-surface: rgba(255, 255, 255, 0.92);
+  --chat-border: rgba(15, 23, 42, 0.1);
+  --chat-shadow-soft: 0 10px 30px -18px rgba(15, 23, 42, 0.22);
+}
+
+html {
+  height: 100%;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -7,13 +18,13 @@
 body {
   margin: 0;
   min-width: 320px;
-  min-height: 100vh;
+  min-height: 100%;
   width: 100%;
-  height: 100vh;
   overflow-x: hidden;
   font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  background: radial-gradient(circle at 10% 10%, #f8fafc 0%, #f1f5f9 45%, #eef2ff 100%);
 }
 
 /* Animations for UI Components */
@@ -54,6 +65,62 @@ body {
 
 .animate-slide-in-left {
   animation: slide-in-left 0.3s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-fade-in,
+  .animate-slide-in-right,
+  .animate-slide-in-left {
+    animation: none !important;
+  }
+}
+
+.chat-scrollbar,
+.scrollbar-thin {
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 transparent;
+}
+
+.scrollbar-thin::-webkit-scrollbar {
+  width: 6px;
+}
+
+.scrollbar-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background-color: #cbd5e1;
+  border-radius: 6px;
+}
+
+.dark .scrollbar-thin {
+  scrollbar-color: #475569 transparent;
+}
+
+.dark .scrollbar-thin::-webkit-scrollbar-thumb {
+  background-color: #475569;
+}
+
+.chat-scrollbar::-webkit-scrollbar {
+  width: 8px;
+}
+
+.chat-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.chat-scrollbar::-webkit-scrollbar-thumb {
+  background-color: #cbd5e1;
+  border-radius: 8px;
+}
+
+.dark .chat-scrollbar {
+  scrollbar-color: #475569 transparent;
+}
+
+.dark .chat-scrollbar::-webkit-scrollbar-thumb {
+  background-color: #475569;
 }
 
 /* Risk Table Custom Scrollbar Styling */

@@ -391,7 +391,7 @@ confidence >= 0.75 && requiredCoverage >= 1.0
 
 2. **AI 模型選擇**：
    - 允許使用者在 Settings 中選擇 AI 模型：
-     - gemini-2.5-flash（快速、便宜）
+     - gemini-3.1-pro（預設）
      - gemini-1.5-pro（準確、較貴）
    - 顯示預估成本
 

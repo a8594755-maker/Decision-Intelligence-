@@ -4,21 +4,25 @@
  */
 
 const VIEW_PATH_MAP = {
-  home: '/home',
-  dashboard: '/operations/dashboard',
-  alerts: '/operations/alerts',
-  forecasts: '/planning/forecasts',
-  'risk-dashboard': '/planning/risk-dashboard',
-  'cost-analysis': '/analysis/cost-analysis',
-  analytics: '/analysis/analytics',
-  'bom-data': '/data/bom-data',
-  external: '/data/upload',
-  'import-history': '/data/import-history',
-  integration: '/data/integration',
-  suppliers: '/data/suppliers',
-  decision: '/ai/decision',
-  settings: '/settings'
+  decision: '/'
 };
+
+const LEGACY_PATHS = new Set([
+  '/home',
+  '/operations/dashboard',
+  '/operations/alerts',
+  '/planning/forecasts',
+  '/planning/risk-dashboard',
+  '/analysis/cost-analysis',
+  '/analysis/analytics',
+  '/data/bom-data',
+  '/data/upload',
+  '/data/import-history',
+  '/data/integration',
+  '/data/suppliers',
+  '/ai/decision',
+  '/settings'
+]);
 
 /** Path → view lookup (inverse map) */
 const PATH_VIEW_MAP = Object.fromEntries(
@@ -41,7 +45,9 @@ export function pathToView(pathname) {
   const normalized = pathname.endsWith('/') && pathname.length > 1
     ? pathname.slice(0, -1)
     : pathname;
-  return PATH_VIEW_MAP[normalized] ?? null;
+  if (PATH_VIEW_MAP[normalized]) return PATH_VIEW_MAP[normalized];
+  if (LEGACY_PATHS.has(normalized)) return 'decision';
+  return normalized === '/' ? 'decision' : null;
 }
 
 /**

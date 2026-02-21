@@ -722,6 +722,7 @@ async function importSingleSheet({
       status: 'IMPORTED',
       savedCount: ingestResult.savedCount,
       batchId,
+      userFileId: uploadFileId,
       errorCount: validationResult.errorRows?.length || 0,
       totalRows,
       chunks: ingestResult.chunks,

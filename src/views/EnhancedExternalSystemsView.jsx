@@ -31,6 +31,7 @@ import { suggestSheetMapping } from '../services/oneShotAiSuggestService';
 import { runWithConcurrencyAbortable } from '../utils/concurrency';
 import { getRequiredMappingStatus, formatMissingRequiredMessage } from '../utils/requiredMappingStatus';
 import { getSearchParams, updateUrlSearch } from '../utils/router';
+import { createDatasetProfileFromSheets } from '../services/datasetProfilingService';
 
 // Note: Upload type configuration has been moved to src/utils/uploadSchemas.js
 // Kept here for compatibility, but UPLOAD_SCHEMAS should be used
@@ -271,6 +272,39 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
             `Analyzed ${sheets.length} sheets: ${enabledCount} auto-enabled, ${sheets.length - enabledCount} need review`,
             "success"
           );
+
+          // Save an initial dataset profile snapshot from one-shot classification (best-effort)
+          if (user?.id) {
+            const sheetsRawForProfile = plans.map((plan) => {
+              const sheet = workbookData?.Sheets?.[plan.sheetName];
+              const rows = sheet ? XLSX.utils.sheet_to_json(sheet, { defval: '' }) : [];
+              const headers = plan.headers?.length > 0 ? plan.headers : Object.keys(rows[0] || {});
+
+              return {
+                sheet_name: plan.sheetName,
+                columns: headers,
+                rows,
+                row_count_estimate: plan.rowCount || rows.length
+              };
+            });
+
+            const mappingPlans = plans.map((plan) => ({
+              sheet_name: plan.sheetName,
+              upload_type: plan.uploadType || plan.suggestedType || 'unknown',
+              confidence: plan.confidence || 0,
+              mapping: plan.mappingFinal || plan.mappingDraft || {}
+            }));
+
+            createDatasetProfileFromSheets({
+              userId: user.id,
+              userFileId: null,
+              fileName: selectedFile.name,
+              sheetsRaw: sheetsRawForProfile,
+              mappingPlans
+            }).catch((profileError) => {
+              console.error('[dataset profile] initial one-shot profile generation failed:', profileError);
+            });
+          }
           
           // Enter One-shot preparation screen (uses step 3, but conditionally shows different content)
           workflowActions.setStep(3);
@@ -771,6 +805,31 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
         console.error('Failed to save mapping template:', mappingError);
       }
 
+      // 5.5 Save dataset profile (non-blocking, do not interrupt upload success)
+      createDatasetProfileFromSheets({
+        userId,
+        userFileId: uploadFileId,
+        fileName,
+        sheetsRaw: [
+          {
+            sheet_name: selectedSheet || fileName || 'Sheet1',
+            columns,
+            rows: rawRows,
+            row_count_estimate: rawRows.length
+          }
+        ],
+        mappingPlans: [
+          {
+            sheet_name: selectedSheet || fileName || 'Sheet1',
+            upload_type: uploadType,
+            mapping: columnMapping,
+            confidence: 1
+          }
+        ]
+      }).catch((profileError) => {
+        console.error('[dataset profile] single-file profile generation failed:', profileError);
+      });
+
       // 6. Show success message
       const details = [];
       if (mergedCount > 0) details.push(`${mergedCount} duplicates merged`);
@@ -909,6 +968,38 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
           'warning'
         );
       }
+
+      // Save dataset profile for one-shot import (non-blocking)
+      const userFileIdFromReport = result.sheetReports?.find((sheetReport) => sheetReport.userFileId)?.userFileId || null;
+      const sheetsRawForProfile = sheetPlans.map((plan) => {
+        const sheet = workbook?.Sheets?.[plan.sheetName];
+        const rows = sheet ? XLSX.utils.sheet_to_json(sheet, { defval: '' }) : [];
+        const headers = plan.headers?.length > 0 ? plan.headers : Object.keys(rows[0] || {});
+
+        return {
+          sheet_name: plan.sheetName,
+          columns: headers,
+          rows,
+          row_count_estimate: plan.rowCount || rows.length
+        };
+      });
+
+      const mappingPlans = sheetPlans.map((plan) => ({
+        sheet_name: plan.sheetName,
+        upload_type: plan.uploadType || plan.suggestedType || 'unknown',
+        confidence: plan.confidence || 0,
+        mapping: plan.mappingFinal || plan.mappingDraft || {}
+      }));
+
+      createDatasetProfileFromSheets({
+        userId: user.id,
+        userFileId: userFileIdFromReport,
+        fileName: fileName || 'Workbook',
+        sheetsRaw: sheetsRawForProfile,
+        mappingPlans
+      }).catch((profileError) => {
+        console.error('[dataset profile] one-shot profile generation failed:', profileError);
+      });
       
     } catch (error) {
       console.error('[OneShotStep] Import error:', error);
@@ -1224,6 +1315,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
         uploadType: plan.uploadType,
         headers,
         sampleRows,
+        schemaFields: schema.fields,
         requiredFields: schema.fields.filter(f => f.required).map(f => f.key),
         optionalFields: schema.fields.filter(f => !f.required).map(f => f.key)
       });

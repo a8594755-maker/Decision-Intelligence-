@@ -42,9 +42,19 @@ select
   created_at,
   scenario_name,
   parameters->>'demand_source' as demand_source,
-  parameters->>'input_demand_forecast_run_id' as input_demand_forecast_run_id,
-  jsonb_array_length(input_batch_ids) as input_batch_count
-from forecast_runs
+  coalesce(
+    parameters->>'input_demand_forecast_run_id',
+    parameters->>'demand_forecast_run_id'
+  ) as input_demand_forecast_run_id,
+  jsonb_array_length(
+    case
+      when jsonb_typeof(to_jsonb(fr)->'input_batch_ids') = 'array' then to_jsonb(fr)->'input_batch_ids'
+      when jsonb_typeof((to_jsonb(fr)->'parameters')->'input_batch_ids') = 'array' then (to_jsonb(fr)->'parameters')->'input_batch_ids'
+      when jsonb_typeof((to_jsonb(fr)->'metadata')->'input_batch_ids') = 'array' then (to_jsonb(fr)->'metadata')->'input_batch_ids'
+      else '[]'::jsonb
+    end
+  ) as input_batch_count
+from forecast_runs fr
 where parameters->>'demand_source' is not null
 order by created_at desc
 limit 5;

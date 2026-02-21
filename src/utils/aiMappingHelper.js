@@ -3,6 +3,8 @@
  * Used for generating AI prompts and parsing AI responses
  */
 
+import { buildSchemaContractMappingPrompt } from '../prompts/diJsonContracts';
+
 /**
  * Extract JSON from AI response text (enhanced version)
  * @param {string} text - Raw AI response text
@@ -21,7 +23,7 @@ export const extractAiJson = (text) => {
     const parsed = JSON.parse(text);
     console.log('Strategy 1 (direct parse) succeeded');
     return parsed;
-  } catch (_) {
+  } catch {
     // Continue trying other strategies
   }
   
@@ -36,7 +38,7 @@ export const extractAiJson = (text) => {
     const parsed = JSON.parse(cleaned);
     console.log('Strategy 2 (remove markdown) succeeded');
     return parsed;
-  } catch (_) {
+  } catch {
     // Continue trying
   }
   
@@ -80,7 +82,6 @@ export const extractAiJson = (text) => {
     const mappingsIdx = text.toLowerCase().indexOf('"mappings"');
     if (mappingsIdx !== -1) {
       // Find { before mappings
-      let searchStart = Math.max(0, mappingsIdx - 50);
       const startIdx = text.lastIndexOf('{', mappingsIdx);
       
       if (startIdx !== -1) {
@@ -122,7 +123,7 @@ export const extractAiJson = (text) => {
  * @param {Array} schemaFields - Schema field definitions
  * @returns {Array} Mapping suggestions
  */
-export const ruleBasedMapping = (originalColumns, uploadType, schemaFields) => {
+export const ruleBasedMapping = (originalColumns, uploadType) => {
   const mappings = [];
   
   // Define rules: Excel column pattern -> system field key
@@ -263,6 +264,110 @@ export const ruleBasedMapping = (originalColumns, uploadType, schemaFields) => {
         /^status$/i, /^state$/i, /^active$/i,
         /^狀態$/i
       ]
+    },
+    demand_fg: {
+      material_code: [
+        /^material$/i, /^material[-_ ]?code$/i, /^item[-_ ]?code$/i, /^sku$/i, /^part[-_ ]?(no|number)$/i,
+        /^料號$/i, /^物料(編碼|代碼|编码|代码)$/i, /^品號$/i, /^品号$/i
+      ],
+      plant_id: [
+        /^plant$/i, /^plant[-_ ]?id$/i, /^site$/i, /^site[-_ ]?id$/i, /^factory$/i,
+        /^工廠$/i, /^工厂$/i, /^廠別$/i, /^厂别$/i
+      ],
+      demand_qty: [
+        /^demand$/i, /^demand[-_ ]?qty$/i, /^demand[-_ ]?quantity$/i, /^qty$/i, /^quantity$/i, /^forecast$/i,
+        /^需求(量|數量|数量)$/i
+      ],
+      time_bucket: [
+        /^time[-_ ]?bucket$/i, /^bucket$/i, /^period$/i,
+        /^時間桶$/i, /^时间桶$/i, /^期間$/i
+      ],
+      week_bucket: [
+        /^week$/i, /^week[-_ ]?bucket$/i, /^iso[-_ ]?week$/i,
+        /^週次$/i, /^周次$/i, /^週桶$/i, /^周桶$/i
+      ],
+      date: [
+        /^date$/i, /^demand[-_ ]?date$/i, /^posting[-_ ]?date$/i,
+        /^日期$/i
+      ]
+    },
+    po_open_lines: {
+      po_number: [
+        /^po$/i, /^po[-_ ]?(no|number)$/i, /^purchase[-_ ]?order$/i,
+        /^採購單號$/i, /^采购单号$/i, /^訂單號$/i, /^订单号$/i
+      ],
+      po_line: [
+        /^po[-_ ]?line$/i, /^line$/i, /^line[-_ ]?number$/i, /^item$/i,
+        /^行號$/i, /^行号$/i, /^項次$/i, /^项次$/i
+      ],
+      material_code: [
+        /^material$/i, /^material[-_ ]?code$/i, /^item[-_ ]?code$/i, /^sku$/i, /^part[-_ ]?(no|number)$/i,
+        /^料號$/i, /^物料(編碼|代碼|编码|代码)$/i
+      ],
+      plant_id: [
+        /^plant$/i, /^plant[-_ ]?id$/i, /^site$/i, /^factory$/i,
+        /^工廠$/i, /^工厂$/i, /^廠別$/i, /^厂别$/i
+      ],
+      open_qty: [
+        /^open[-_ ]?qty$/i, /^open[-_ ]?quantity$/i, /^remaining[-_ ]?qty$/i, /^qty$/i, /^quantity$/i,
+        /^未交(量|數量|数量)$/i, /^未收(量|數量|数量)$/i
+      ],
+      time_bucket: [
+        /^time[-_ ]?bucket$/i, /^bucket$/i, /^period$/i,
+        /^時間桶$/i, /^时间桶$/i, /^期間$/i
+      ],
+      week_bucket: [
+        /^week$/i, /^week[-_ ]?bucket$/i, /^iso[-_ ]?week$/i,
+        /^週次$/i, /^周次$/i
+      ],
+      date: [
+        /^date$/i, /^po[-_ ]?date$/i, /^delivery[-_ ]?date$/i, /^promised[-_ ]?date$/i,
+        /^日期$/i, /^交期$/i
+      ]
+    },
+    inventory_snapshots: {
+      material_code: [
+        /^material$/i, /^material[-_ ]?code$/i, /^item[-_ ]?code$/i, /^sku$/i, /^part[-_ ]?(no|number)$/i,
+        /^料號$/i, /^物料(編碼|代碼|编码|代码)$/i
+      ],
+      plant_id: [
+        /^plant$/i, /^plant[-_ ]?id$/i, /^site$/i, /^factory$/i,
+        /^工廠$/i, /^工厂$/i, /^廠別$/i, /^厂别$/i
+      ],
+      snapshot_date: [
+        /^snapshot[-_ ]?date$/i, /^as[-_ ]?of[-_ ]?date$/i, /^date$/i,
+        /^快照日期$/i, /^盤點日期$/i, /^盘点日期$/i, /^日期$/i
+      ],
+      onhand_qty: [
+        /^on[-_ ]?hand$/i, /^on[-_ ]?hand[-_ ]?qty$/i, /^on[-_ ]?hand[-_ ]?quantity$/i, /^stock$/i, /^stock[-_ ]?qty$/i, /^inventory$/i, /^qty$/i,
+        /^現有庫存$/i, /^现有库存$/i, /^在手庫存$/i, /^在手库存$/i
+      ],
+      allocated_qty: [
+        /^allocated[-_ ]?qty$/i, /^allocated[-_ ]?quantity$/i, /^reserved[-_ ]?qty$/i,
+        /^已分配(量|數量|数量)$/i, /^預留(量|數量|数量)$/i, /^预留(量|数量)$/i
+      ],
+      safety_stock: [
+        /^safety[-_ ]?stock$/i, /^safety[-_ ]?qty$/i, /^min[-_ ]?stock$/i,
+        /^安全庫存$/i, /^安全库存$/i
+      ]
+    },
+    bom_edge: {
+      parent_material: [
+        /^parent$/i, /^parent[-_ ]?material$/i, /^parent[-_ ]?item$/i, /^fg$/i, /^assembly$/i,
+        /^父件$/i, /^上階料號$/i, /^上阶料号$/i
+      ],
+      child_material: [
+        /^child$/i, /^child[-_ ]?material$/i, /^child[-_ ]?item$/i, /^component$/i, /^item$/i,
+        /^子件$/i, /^下階料號$/i, /^下阶料号$/i, /^零件$/i
+      ],
+      qty_per: [
+        /^qty[-_ ]?per$/i, /^quantity[-_ ]?per$/i, /^usage$/i, /^usage[-_ ]?qty$/i, /^bom[-_ ]?qty$/i, /^qty$/i,
+        /^用量$/i, /^單位用量$/i, /^单位用量$/i
+      ],
+      plant_id: [
+        /^plant$/i, /^plant[-_ ]?id$/i, /^site$/i, /^factory$/i,
+        /^工廠$/i, /^工厂$/i
+      ]
     }
   };
 
@@ -299,58 +404,35 @@ export const ruleBasedMapping = (originalColumns, uploadType, schemaFields) => {
 };
 
 
-/**
- * Generate AI field mapping suggestion prompt (minimal version)
- * @param {string} uploadType - Upload type
- * @param {Array} schemaFields - Schema field definitions
- * @param {Array} originalColumns - Original Excel columns
- * @param {Array} sampleRows - Sample data (first 20 rows)
- * @returns {string} Composed prompt
- */
-/**
- * Simplify sample data - only show first few characters to avoid overly long prompt
- */
-const simplifyFirstRow = (row) => {
-  if (!row || typeof row !== 'object') return {};
-  
-  const simplified = {};
-  Object.keys(row).forEach(key => {
-    const value = row[key];
-    if (!value) {
-      simplified[key] = '';
-    } else {
-      const strValue = String(value);
-      // Keep only first 20 characters
-      simplified[key] = strValue.length > 20 ? strValue.substring(0, 20) + '...' : strValue;
-    }
-  });
-  
-  return simplified;
-};
-
 export const generateMappingPrompt = (uploadType, schemaFields, originalColumns, sampleRows) => {
-  const systemKeys = schemaFields.map(f => f.key);
-  
-  // Single-line ultra-minimal Prompt - avoid AI returning explanatory text
-  
-  // Supplier Master - single-line version
-  if (uploadType === 'supplier_master') {
-    return `Match columns: EXCEL=${JSON.stringify(originalColumns)} to SYSTEM=${JSON.stringify(systemKeys)}. Rules: supplier_code/vendor_code/code→supplier_code, supplier_name/company_name/company/name→supplier_name, contact/rep→contact_person, phone/tel→phone, email/mail→email. Output JSON only: {"mappings":[{"source":"excel_col","target":"system_key","confidence":0.9}]}`;
-  }
-  
-  // Price History - single-line version
-  if (uploadType === 'price_history') {
-    return `Match columns: EXCEL=${JSON.stringify(originalColumns)} to SYSTEM=${JSON.stringify(systemKeys)}. Rules: supplier/vendor→supplier_name, material_code/part_no→material_code, order_date/quote_date→order_date, price/unit_price→unit_price, currency/curr→currency. Output JSON only: {"mappings":[{"source":"excel_col","target":"system_key","confidence":0.9}]}`;
-  }
-  
-  // Goods Receipt - single-line version
-  if (uploadType === 'goods_receipt') {
-    return `Match columns: EXCEL=${JSON.stringify(originalColumns)} to SYSTEM=${JSON.stringify(systemKeys)}. Rules: supplier/vendor→supplier_name, material_code/part_no→material_code, delivery_date/received_date→actual_delivery_date, qty/quantity→received_qty. Output JSON only: {"mappings":[{"source":"excel_col","target":"system_key","confidence":0.9}]}`;
-  }
-  
-  // Other types - single-line generic version
-  const firstRow = simplifyFirstRow(sampleRows[0] || {});
-  return `Match columns: EXCEL=${JSON.stringify(originalColumns)} to SYSTEM=${JSON.stringify(systemKeys)}. Sample=${JSON.stringify(firstRow)}. Output JSON only: {"mappings":[{"source":"excel_col","target":"system_key","confidence":0.9}]}`;
+  const fields = Array.isArray(schemaFields) ? schemaFields : [];
+  const requiredFields = fields
+    .filter((field) => field?.required)
+    .map((field) => ({
+      name: String(field?.key || ''),
+      type: ['string', 'number', 'date', 'boolean'].includes(field?.type) ? field.type : 'string',
+      description: String(field?.description || field?.label || field?.key || '')
+    }))
+    .filter((field) => field.name);
+
+  const optionalFields = fields
+    .filter((field) => !field?.required)
+    .map((field) => ({
+      name: String(field?.key || ''),
+      type: ['string', 'number', 'date', 'boolean'].includes(field?.type) ? field.type : 'string',
+      description: String(field?.description || field?.label || field?.key || '')
+    }))
+    .filter((field) => field.name);
+
+  return buildSchemaContractMappingPrompt({
+    upload_type: uploadType,
+    target_schema: {
+      required_fields: requiredFields,
+      optional_fields: optionalFields
+    },
+    input_columns: Array.isArray(originalColumns) ? originalColumns : [],
+    sample_rows: Array.isArray(sampleRows) ? sampleRows.slice(0, 8) : []
+  });
 };
 
 /**
@@ -364,23 +446,27 @@ export const validateMappingResponse = (aiResponse) => {
     return false;
   }
 
-  if (!Array.isArray(aiResponse.mappings)) {
-    console.error('❌ AI response missing "mappings" array. Keys:', Object.keys(aiResponse));
+  const mappingArray = Array.isArray(aiResponse.mappings)
+    ? aiResponse.mappings
+    : (Array.isArray(aiResponse.mapping) ? aiResponse.mapping : null);
+
+  if (!Array.isArray(mappingArray)) {
+    console.error('❌ AI response missing "mapping/mappings" array. Keys:', Object.keys(aiResponse));
     return false;
   }
 
-  if (aiResponse.mappings.length === 0) {
-    console.error('❌ AI response has empty mappings array');
+  if (mappingArray.length === 0) {
+    console.error('❌ AI response has empty mapping array');
     return false;
   }
 
-  console.log(`Validating ${aiResponse.mappings.length} mappings...`);
+  console.log(`Validating ${mappingArray.length} mappings...`);
 
   // Check each mapping (using lenient validation)
   let validCount = 0;
   let invalidCount = 0;
 
-  const cleanedMappings = aiResponse.mappings
+  const cleanedMappings = mappingArray
     .map((m, index) => {
       // Must be an object
       if (!m || typeof m !== 'object') {
@@ -389,16 +475,19 @@ export const validateMappingResponse = (aiResponse) => {
         return null;
       }
 
+      const source = m.source ?? m.source_column;
+      const target = m.target ?? m.target_field;
+
       // Must have source
-      if (!m.source || typeof m.source !== 'string') {
+      if (!source || typeof source !== 'string') {
         console.warn(`⚠️ Mapping ${index} missing valid source:`, m);
         invalidCount++;
         return null;
       }
 
       // target can be null or string
-      if (m.target !== null && typeof m.target !== 'string') {
-        console.warn(`⚠️ Mapping ${index} has invalid target:`, m.target);
+      if (target !== null && typeof target !== 'string') {
+        console.warn(`⚠️ Mapping ${index} has invalid target:`, target);
         invalidCount++;
         return null;
       }
@@ -415,8 +504,8 @@ export const validateMappingResponse = (aiResponse) => {
 
       validCount++;
       return {
-        source: m.source,
-        target: m.target,
+        source: source,
+        target: target,
         confidence: confidence,
         reason: reason
       };
@@ -427,8 +516,9 @@ export const validateMappingResponse = (aiResponse) => {
 
   // As long as there's at least one valid mapping, consider it successful
   if (cleanedMappings.length > 0) {
-    // Replace original mappings with cleaned version
+    // Normalize to canonical "mappings" so downstream mergeMappings always works.
     aiResponse.mappings = cleanedMappings;
+    aiResponse.mapping = cleanedMappings;
     return true;
   }
 
@@ -475,6 +565,3 @@ export default {
   validateMappingResponse,
   mergeMappings
 };
-
-
-

@@ -43,6 +43,49 @@ ${Object.entries(typeDescriptions).map(([k, v]) => `- ${k}: ${v}`).join('\n')}
 Output JSON ONLY: {"suggestedType":"type_name","confidence":0.9,"reasons":["reason1","reason2"]}`;
 };
 
+const normalizeConfidence = (value, fallback = 0.5) => {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.max(0, Math.min(1, numeric));
+};
+
+const normalizeMappingItem = (item) => {
+  if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
+
+  const sourceCandidate = item.source_column ?? item.source ?? item.column ?? null;
+  const targetCandidate = item.target_field ?? item.target ?? item.field ?? null;
+
+  const source = typeof sourceCandidate === 'string' ? sourceCandidate.trim() : '';
+  const target = typeof targetCandidate === 'string' ? targetCandidate.trim() : '';
+
+  if (!source || !target) return null;
+
+  return {
+    source,
+    target,
+    confidence: normalizeConfidence(item.confidence, 0.5),
+    reason: typeof item.reason === 'string' ? item.reason.trim() : ''
+  };
+};
+
+const extractMappingsArray = (parsed) => {
+  if (Array.isArray(parsed)) return parsed;
+  if (!parsed || typeof parsed !== 'object') return null;
+
+  if (Array.isArray(parsed.mapping)) return parsed.mapping;
+  if (Array.isArray(parsed.mappings)) return parsed.mappings;
+  if (Array.isArray(parsed.columnMappings)) return parsed.columnMappings;
+  if (Array.isArray(parsed.columnMapping)) return parsed.columnMapping;
+  if (Array.isArray(parsed.fields)) return parsed.fields;
+
+  const keys = Object.keys(parsed);
+  if (keys.length === 1 && Array.isArray(parsed[keys[0]])) {
+    return parsed[keys[0]];
+  }
+
+  return null;
+};
+
 /**
  * Robust parser for AI mapping response
  * Supports multiple response formats to avoid entire flow failing due to format issues
@@ -71,58 +114,24 @@ const parseAiMappingResponse = (aiResponse) => {
     }
   }
 
-  // Strategy 3: If directly an array → treat as mappings
-  if (Array.isArray(parsed)) {
-    console.log('[Robust Parser] Direct array format (length:', parsed.length, ')');
-    return { ok: true, mappings: parsed };
-  }
-
-  // Strategy 4: If object, check multiple possible keys
-  if (typeof parsed === 'object' && parsed !== null) {
-    // 4a) mappings (standard format)
-    if (Array.isArray(parsed.mappings)) {
-      console.log('[Robust Parser] Found "mappings" array (length:', parsed.mappings.length, ')');
-      return { ok: true, mappings: parsed.mappings };
-    }
-
-    // 4b) mapping (singular form)
-    if (Array.isArray(parsed.mapping)) {
-      console.log('[Robust Parser] Found "mapping" array (length:', parsed.mapping.length, ')');
-      return { ok: true, mappings: parsed.mapping };
-    }
-
-    // 4c) columnMappings
-    if (Array.isArray(parsed.columnMappings)) {
-      console.log('[Robust Parser] Found "columnMappings" array (length:', parsed.columnMappings.length, ')');
-      return { ok: true, mappings: parsed.columnMappings };
-    }
-
-    // 4d) columnMapping
-    if (Array.isArray(parsed.columnMapping)) {
-      console.log('[Robust Parser] Found "columnMapping" array (length:', parsed.columnMapping.length, ')');
-      return { ok: true, mappings: parsed.columnMapping };
-    }
-
-    // 4e) fields (some AI may use this key)
-    if (Array.isArray(parsed.fields)) {
-      console.log('[Robust Parser] Found "fields" array (length:', parsed.fields.length, ')');
-      return { ok: true, mappings: parsed.fields };
-    }
-
-    // 4f) If object has only one key and that key is an array
-    const keys = Object.keys(parsed);
-    if (keys.length === 1 && Array.isArray(parsed[keys[0]])) {
-      console.log('[Robust Parser] Single key with array (key:', keys[0], ', length:', parsed[keys[0]].length, ')');
-      return { ok: true, mappings: parsed[keys[0]] };
-    }
-
+  const rawMappings = extractMappingsArray(parsed);
+  if (!Array.isArray(rawMappings)) {
+    const keys = parsed && typeof parsed === 'object' ? Object.keys(parsed) : [];
     console.error('[Robust Parser] Object format but no recognizable mappings array. Keys:', keys);
     return { ok: false, mappings: [], error: `Unrecognized object keys: ${keys.join(', ')}` };
   }
 
-  // Strategy 5: Other types (cannot parse)
-  console.error('[Robust Parser] Unrecognized type:', typeof parsed);
-  return { ok: false, mappings: [], error: 'Unrecognized response type' };
+  const normalizedMappings = rawMappings
+    .map(normalizeMappingItem)
+    .filter(Boolean);
+
+  console.log('[Robust Parser] Parsed mappings:', rawMappings.length, 'normalized:', normalizedMappings.length);
+
+  if (normalizedMappings.length === 0) {
+    return { ok: false, mappings: [], error: 'No valid mapping entries found' };
+  }
+
+  return { ok: true, mappings: normalizedMappings };
 };
 
 /**
@@ -135,9 +144,9 @@ const validateMappings = (mappings) => {
     return false;
   }
 
-  // At least one mapping must have source or target
+  // At least one mapping must have both source and target after normalization
   const hasValidMapping = mappings.some(m => 
-    m && typeof m === 'object' && (m.source || m.target || m.column || m.field)
+    m && typeof m === 'object' && m.source && m.target
   );
 
   return hasValidMapping;
@@ -190,61 +199,34 @@ export async function suggestSheetType({ headers, sampleRows }) {
  * @param {Array<object>} params.sampleRows - Sample data (first N rows)
  * @param {Array<string>} params.requiredFields - Canonical required fields
  * @param {Array<string>} params.optionalFields - Canonical optional fields
+ * @param {Array<object>} params.schemaFields - Optional full schema field definitions
  * @returns {Promise<object>} { mappings, mappingConfidence, reasons }
  */
 export async function suggestMappingWithLLM({
   uploadType,
   headers,
   sampleRows,
-  requiredFields,
-  optionalFields
+  requiredFields = [],
+  optionalFields = [],
+  schemaFields = null
 }) {
   console.log(`[suggestMappingWithLLM] Starting for uploadType: ${uploadType}`);
   console.log(`[suggestMappingWithLLM] Headers:`, headers);
   console.log(`[suggestMappingWithLLM] Required fields:`, requiredFields);
 
   try {
-    // Build prompt
-    const targetFields = [...requiredFields, ...optionalFields];
-    const sampleData = sampleRows.slice(0, 5).map(row => {
-      const sample = {};
-      headers.forEach(h => {
-        sample[h] = row[h];
-      });
-      return sample;
-    });
+    const schemaFieldList = Array.isArray(schemaFields) && schemaFields.length > 0
+      ? schemaFields
+      : [
+          ...((requiredFields || []).map((name) => ({ key: name, type: 'string', required: true, description: '' }))),
+          ...((optionalFields || []).map((name) => ({ key: name, type: 'string', required: false, description: '' })))
+        ];
 
-    const prompt = `You are a data mapping expert. Map Excel column headers to target database fields.
+    const targetFields = schemaFieldList
+      .map((field) => field?.key)
+      .filter(Boolean);
 
-TASK: Map the source headers to target fields for uploadType: "${uploadType}"
-
-SOURCE HEADERS:
-${headers.map((h, i) => `${i + 1}. "${h}"`).join('\n')}
-
-TARGET FIELDS:
-Required: ${requiredFields.join(', ')}
-Optional: ${optionalFields.join(', ')}
-
-SAMPLE DATA (first 5 rows):
-${JSON.stringify(sampleData, null, 2)}
-
-RULES:
-1. Each source header can map to at most ONE target field
-2. Target fields must be from the list above (required or optional)
-3. Use sample data to understand the semantic meaning
-4. Confidence: 0.0-1.0 (1.0 = very confident, 0.0 = no match)
-5. Prioritize mapping ALL required fields first
-
-OUTPUT FORMAT (JSON only, no markdown):
-{
-  "mappings": [
-    { "source": "original header", "target": "target_field", "confidence": 0.95 }
-  ],
-  "mappingConfidence": 0.85,
-  "reasons": ["Mapped X to Y based on...", "..."]
-}
-
-Return JSON only. No explanation outside JSON.`;
+    const prompt = generateMappingPrompt(uploadType, schemaFieldList, headers, sampleRows.slice(0, 8));
 
     console.log(`[suggestMappingWithLLM] Calling AI...`);
     const aiResponse = await callGeminiAPI(prompt, '', { temperature: 0.2, maxOutputTokens: 2000 });
@@ -326,11 +308,29 @@ Return JSON only. No explanation outside JSON.`;
 
     const mappingConfidence = (requiredCoverage + avgConfidence) / 2;
 
-    const reasons = extracted.reasons || [
-      `Mapped ${deduplicatedMappings.length} fields`,
-      `Required coverage: ${Math.round(requiredCoverage * 100)}%`,
-      `Average confidence: ${Math.round(avgConfidence * 100)}%`
-    ];
+    const reasons = [];
+    if (Array.isArray(extracted?.reasons)) {
+      extracted.reasons.forEach((reason) => reasons.push(String(reason)));
+    }
+    if (Array.isArray(extracted?.assumptions)) {
+      extracted.assumptions.slice(0, 2).forEach((item) => reasons.push(`Assumption: ${String(item)}`));
+    }
+    if (Array.isArray(extracted?.missing_required_fields) && extracted.missing_required_fields.length > 0) {
+      reasons.push(`Missing required fields: ${extracted.missing_required_fields.join(', ')}`);
+    }
+    if (Array.isArray(extracted?.minimal_questions) && extracted.minimal_questions.length > 0) {
+      const q = extracted.minimal_questions[0];
+      if (q?.question) {
+        reasons.push(`Question: ${String(q.question)}`);
+      }
+    }
+    if (reasons.length === 0) {
+      reasons.push(
+        `Mapped ${deduplicatedMappings.length} fields`,
+        `Required coverage: ${Math.round(requiredCoverage * 100)}%`,
+        `Average confidence: ${Math.round(avgConfidence * 100)}%`
+      );
+    }
 
     return {
       mappings: deduplicatedMappings,

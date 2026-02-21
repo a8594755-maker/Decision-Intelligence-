@@ -245,19 +245,23 @@ COMMENT ON COLUMN component_demand_trace.qty_multiplier IS '数量乘数（用�
 -- bom_edges 表的 RLS
 ALTER TABLE bom_edges ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Users can view their own bom_edges" ON bom_edges;
 CREATE POLICY "Users can view their own bom_edges"
   ON bom_edges FOR SELECT
   USING (auth.uid() = user_id);
 
+DROP POLICY IF EXISTS "Users can insert their own bom_edges" ON bom_edges;
 CREATE POLICY "Users can insert their own bom_edges"
   ON bom_edges FOR INSERT
   WITH CHECK (auth.uid() = user_id);
 
+DROP POLICY IF EXISTS "Users can update their own bom_edges" ON bom_edges;
 CREATE POLICY "Users can update their own bom_edges"
   ON bom_edges FOR UPDATE
   USING (auth.uid() = user_id)
   WITH CHECK (auth.uid() = user_id);
 
+DROP POLICY IF EXISTS "Users can delete their own bom_edges" ON bom_edges;
 CREATE POLICY "Users can delete their own bom_edges"
   ON bom_edges FOR DELETE
   USING (auth.uid() = user_id);
@@ -265,19 +269,23 @@ CREATE POLICY "Users can delete their own bom_edges"
 -- demand_fg 表的 RLS
 ALTER TABLE demand_fg ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Users can view their own demand_fg" ON demand_fg;
 CREATE POLICY "Users can view their own demand_fg"
   ON demand_fg FOR SELECT
   USING (auth.uid() = user_id);
 
+DROP POLICY IF EXISTS "Users can insert their own demand_fg" ON demand_fg;
 CREATE POLICY "Users can insert their own demand_fg"
   ON demand_fg FOR INSERT
   WITH CHECK (auth.uid() = user_id);
 
+DROP POLICY IF EXISTS "Users can update their own demand_fg" ON demand_fg;
 CREATE POLICY "Users can update their own demand_fg"
   ON demand_fg FOR UPDATE
   USING (auth.uid() = user_id)
   WITH CHECK (auth.uid() = user_id);
 
+DROP POLICY IF EXISTS "Users can delete their own demand_fg" ON demand_fg;
 CREATE POLICY "Users can delete their own demand_fg"
   ON demand_fg FOR DELETE
   USING (auth.uid() = user_id);
@@ -285,19 +293,23 @@ CREATE POLICY "Users can delete their own demand_fg"
 -- component_demand 表的 RLS
 ALTER TABLE component_demand ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Users can view their own component_demand" ON component_demand;
 CREATE POLICY "Users can view their own component_demand"
   ON component_demand FOR SELECT
   USING (auth.uid() = user_id);
 
+DROP POLICY IF EXISTS "Users can insert their own component_demand" ON component_demand;
 CREATE POLICY "Users can insert their own component_demand"
   ON component_demand FOR INSERT
   WITH CHECK (auth.uid() = user_id);
 
+DROP POLICY IF EXISTS "Users can update their own component_demand" ON component_demand;
 CREATE POLICY "Users can update their own component_demand"
   ON component_demand FOR UPDATE
   USING (auth.uid() = user_id)
   WITH CHECK (auth.uid() = user_id);
 
+DROP POLICY IF EXISTS "Users can delete their own component_demand" ON component_demand;
 CREATE POLICY "Users can delete their own component_demand"
   ON component_demand FOR DELETE
   USING (auth.uid() = user_id);
@@ -305,19 +317,23 @@ CREATE POLICY "Users can delete their own component_demand"
 -- component_demand_trace 表的 RLS
 ALTER TABLE component_demand_trace ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Users can view their own component_demand_trace" ON component_demand_trace;
 CREATE POLICY "Users can view their own component_demand_trace"
   ON component_demand_trace FOR SELECT
   USING (auth.uid() = user_id);
 
+DROP POLICY IF EXISTS "Users can insert their own component_demand_trace" ON component_demand_trace;
 CREATE POLICY "Users can insert their own component_demand_trace"
   ON component_demand_trace FOR INSERT
   WITH CHECK (auth.uid() = user_id);
 
+DROP POLICY IF EXISTS "Users can update their own component_demand_trace" ON component_demand_trace;
 CREATE POLICY "Users can update their own component_demand_trace"
   ON component_demand_trace FOR UPDATE
   USING (auth.uid() = user_id)
   WITH CHECK (auth.uid() = user_id);
 
+DROP POLICY IF EXISTS "Users can delete their own component_demand_trace" ON component_demand_trace;
 CREATE POLICY "Users can delete their own component_demand_trace"
   ON component_demand_trace FOR DELETE
   USING (auth.uid() = user_id);

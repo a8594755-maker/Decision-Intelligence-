@@ -1,17 +1,54 @@
 import { createClient } from '@supabase/supabase-js';
+import { ASSISTANT_NAME } from '../config/branding';
 
 // Supabase configuration - using environment variables
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+const missingSupabaseError = new Error('Supabase configuration error: Missing environment variables');
 
-// Validate environment variables
-if (!supabaseUrl || !supabaseKey) {
+const createDisabledQueryBuilder = () => {
+  const terminalPromise = Promise.resolve({ data: null, error: missingSupabaseError, count: 0 });
+  let proxy = null;
+
+  const handler = {
+    get(_target, property) {
+      if (property === 'then') return terminalPromise.then.bind(terminalPromise);
+      if (property === 'catch') return terminalPromise.catch.bind(terminalPromise);
+      if (property === 'finally') return terminalPromise.finally.bind(terminalPromise);
+      if (property === 'single' || property === 'maybeSingle') {
+        return async () => ({ data: null, error: missingSupabaseError });
+      }
+      if (property === 'csv') {
+        return async () => ({ data: '', error: missingSupabaseError });
+      }
+      return () => proxy;
+    }
+  };
+
+  proxy = new Proxy({}, handler);
+  return proxy;
+};
+
+const createDisabledSupabaseClient = () => ({
+  from: () => createDisabledQueryBuilder(),
+  auth: {
+    getSession: async () => ({ data: { session: null }, error: missingSupabaseError }),
+    onAuthStateChange: () => ({ data: { subscription: { unsubscribe: () => {} } } }),
+    signInWithPassword: async () => ({ data: { user: null, session: null }, error: missingSupabaseError }),
+    signUp: async () => ({ data: null, error: missingSupabaseError }),
+    signOut: async () => ({ error: missingSupabaseError })
+  }
+});
+
+export const isSupabaseConfigured = Boolean(supabaseUrl && supabaseKey);
+if (!isSupabaseConfigured) {
   console.error('❌ Missing Supabase environment variables!');
   console.error('Please ensure .env file exists with VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY');
-  throw new Error('Supabase configuration error: Missing environment variables');
 }
 
-export const supabase = createClient(supabaseUrl, supabaseKey);
+export const supabase = isSupabaseConfigured
+  ? createClient(supabaseUrl, supabaseKey)
+  : createDisabledSupabaseClient();
 
 /**
  * User Files Operations
@@ -28,6 +65,19 @@ export const userFilesService = {
 
     if (error) throw error;
     return data && data.length > 0 ? data[0] : null;
+  },
+
+  // Get a specific file by id (scoped by user)
+  async getFileById(userId, fileId) {
+    const { data, error } = await supabase
+      .from('user_files')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('id', fileId)
+      .maybeSingle();
+
+    if (error) throw error;
+    return data || null;
   },
 
   // Save file to cloud
@@ -876,7 +926,7 @@ export const conversationsService = {
       title,
       messages: [{
         role: 'ai',
-        content: 'Hello! I am your SmartOps Decision Assistant. How can I help you today?'
+        content: `Hello! I am your ${ASSISTANT_NAME}. How can I help you today?`
       }],
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString()

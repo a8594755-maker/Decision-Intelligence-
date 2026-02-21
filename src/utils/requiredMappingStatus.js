@@ -5,6 +5,7 @@
  */
 
 import UPLOAD_SCHEMAS from './uploadSchemas';
+import { normalizeToSourceToTargetMapping } from './deterministicMapping';
 
 /**
  * Check required fields mapping status
@@ -50,24 +51,13 @@ export function getRequiredMappingStatus({
     };
   }
 
-  // Parse columnMapping (supports two formats)
-  let mappedTargets = new Set();
-  
-  if (Array.isArray(columnMapping)) {
-    // Format 2: array of { source, target }
-    columnMapping.forEach(m => {
-      if (m.target) {
-        mappedTargets.add(m.target);
-      }
-    });
-  } else if (columnMapping && typeof columnMapping === 'object') {
-    // Format 1: { [source]: target }
-    Object.values(columnMapping).forEach(target => {
-      if (target && target !== '' && target !== null && target !== undefined) {
-        mappedTargets.add(target);
-      }
-    });
-  }
+  const normalizedMapping = normalizeToSourceToTargetMapping({
+    uploadType,
+    mapping: columnMapping || {},
+    columns: Array.isArray(columns) ? columns : [],
+    schemas
+  });
+  const mappedTargets = new Set(Object.values(normalizedMapping));
 
   // Check which required fields have been mapped
   const mappedRequired = requiredFields.filter(rf => mappedTargets.has(rf));
@@ -82,7 +72,8 @@ export function getRequiredMappingStatus({
     missingRequired,
     isComplete,
     coverage,
-    mappedRequired
+    mappedRequired,
+    mappingPairs: Object.entries(normalizedMapping).map(([source, target]) => ({ source, target }))
   };
 }
 

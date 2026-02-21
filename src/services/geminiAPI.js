@@ -3,10 +3,12 @@
  * Handles all interactions with Google Gemini AI
  */
 
+import { buildDataProfilerPrompt } from '../prompts/dataProfilerPrompt';
+
 // Using environment variable for API key (falls back to empty string)
 const DEFAULT_API_KEY = import.meta.env.VITE_GEMINI_API_KEY || "";
-// Using user-specified model gemini-2.5-flash
-const GEMINI_MODEL = "gemini-2.5-flash";
+// Model is env-driven; default to Gemini 3.1 Pro.
+const GEMINI_MODEL = import.meta.env.VITE_GEMINI_MODEL || import.meta.env.VITE_DI_GEMINI_MODEL || "gemini-3.1-pro";
 const API_VERSION = "v1beta"; // Use v1beta for experimental models
 
 /**
@@ -170,7 +172,7 @@ export const analyzeData = async (data, analysisType = "general") => {
 
   switch (analysisType) {
     case "profile":
-      prompt = `You are a data profiler. Given JSON rows, infer field names, data quality issues, and errors. Return JSON {"fields": ["field1", ...], "quality": "quality summary", "summary": "content summary"}. Sample rows: ${JSON.stringify(sample).slice(0, 12000)}`;
+      prompt = buildDataProfilerPrompt(sample);
       break;
 
     case "quality":
@@ -231,12 +233,12 @@ export const extractJsonFromResponse = (text) => {
 
   try {
     return JSON.parse(text);
-  } catch (_) {
+  } catch {
     const match = text.match(/\{[\s\S]*\}/);
     if (match) {
       try {
         return JSON.parse(match[0]);
-      } catch (_err) {
+      } catch {
         return {};
       }
     }

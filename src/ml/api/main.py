@@ -9,7 +9,7 @@ if root_dir not in sys.path:
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from ml.demand_forecasting.prophet_trainer import ProphetTrainer
 from ml.demand_forecasting.lightgbm_trainer import LightGBMTrainer
 from ml.demand_forecasting.chronos_trainer import ChronosTrainer
@@ -19,8 +19,9 @@ from ml.utils.supabase_rest_client import SupabaseRESTClient
 import os
 import json
 import numpy as np
-from datetime import datetime
-from typing import Optional, List
+from datetime import datetime, timedelta
+from typing import Optional, List, Dict, Any, Tuple
+import math
 
 def sanitize_numpy(obj):
     """Recursively convert numpy types to native Python types for JSON serialization."""
@@ -380,6 +381,451 @@ async def backtest(request: ForecastRequest):
         
     except Exception as e:
         return {"error": str(e)}
+
+
+class ForecastSeriesPoint(BaseModel):
+    sku: str
+    plant_id: Optional[str] = None
+    date: str
+    p50: float
+    p90: Optional[float] = None
+
+
+class DemandForecastInput(BaseModel):
+    series: List[ForecastSeriesPoint] = Field(default_factory=list)
+    granularity: str = "daily"
+
+
+class InventoryPoint(BaseModel):
+    sku: str
+    plant_id: Optional[str] = None
+    as_of_date: str
+    on_hand: float
+    safety_stock: Optional[float] = None
+    lead_time_days: Optional[float] = None
+
+
+class OpenPOPoint(BaseModel):
+    sku: str
+    plant_id: Optional[str] = None
+    eta_date: str
+    qty: float
+
+
+class SkuQtyConstraint(BaseModel):
+    sku: str
+    min_qty: Optional[float] = None
+    pack_qty: Optional[float] = None
+    max_qty: Optional[float] = None
+
+
+class ConstraintsInput(BaseModel):
+    moq: List[SkuQtyConstraint] = Field(default_factory=list)
+    pack_size: List[SkuQtyConstraint] = Field(default_factory=list)
+    budget_cap: Optional[float] = None
+    max_order_qty: List[SkuQtyConstraint] = Field(default_factory=list)
+
+
+class ObjectiveInput(BaseModel):
+    optimize_for: str = "balanced"
+    stockout_penalty: Optional[float] = None
+    holding_cost: Optional[float] = None
+    service_level_target: Optional[float] = None
+
+
+class ReplenishmentPlanRequest(BaseModel):
+    dataset_profile_id: int
+    planning_horizon_days: int = 30
+    demand_forecast: DemandForecastInput
+    inventory: List[InventoryPoint] = Field(default_factory=list)
+    open_pos: List[OpenPOPoint] = Field(default_factory=list)
+    constraints: ConstraintsInput = Field(default_factory=ConstraintsInput)
+    objective: ObjectiveInput = Field(default_factory=ObjectiveInput)
+
+
+def _parse_iso_day(value: str):
+    if value is None:
+        return None
+    raw = str(value).strip()
+    if not raw:
+        return None
+    try:
+        return datetime.strptime(raw[:10], "%Y-%m-%d").date()
+    except Exception:
+        return None
+
+
+def _key_of(sku, plant_id):
+    return (str(sku or "").strip(), str(plant_id or "").strip())
+
+
+def _to_float(value, default=0.0):
+    try:
+        num = float(value)
+    except Exception:
+        return default
+    if np.isnan(num) or np.isinf(num):
+        return default
+    return float(num)
+
+
+def _build_sku_lookup(rows: List[SkuQtyConstraint], value_key: str) -> Dict[str, float]:
+    lookup = {}
+    for row in rows or []:
+        sku = str(row.sku or "").strip()
+        if not sku:
+            continue
+        value = getattr(row, value_key, None)
+        if value is None:
+            continue
+        lookup[sku] = max(0.0, _to_float(value, 0.0))
+    return lookup
+
+
+def _format_plan_row(sku: str, plant_id: str, order_date, arrival_date, order_qty: float):
+    return {
+        "sku": sku,
+        "plant_id": plant_id or None,
+        "order_date": order_date.isoformat(),
+        "arrival_date": arrival_date.isoformat(),
+        "order_qty": float(round(max(0.0, order_qty), 6))
+    }
+
+
+def _deterministic_replenishment_plan(payload: ReplenishmentPlanRequest) -> Dict[str, Any]:
+    t0 = datetime.utcnow()
+    infeasible_reasons: List[str] = []
+
+    # 1) Group forecast demand by SKU/plant with stable ordering.
+    forecast_by_key: Dict[Tuple[str, str], List[Tuple[Any, float, Optional[float]]]] = {}
+    for point in payload.demand_forecast.series or []:
+        sku = str(point.sku or "").strip()
+        if not sku:
+            continue
+        date_val = _parse_iso_day(point.date)
+        if not date_val:
+            continue
+        key = _key_of(point.sku, point.plant_id)
+        if key not in forecast_by_key:
+            forecast_by_key[key] = []
+        forecast_by_key[key].append((
+            date_val,
+            max(0.0, _to_float(point.p50, 0.0)),
+            None if point.p90 is None else max(0.0, _to_float(point.p90, 0.0))
+        ))
+
+    if not forecast_by_key:
+        return {
+            "status": "infeasible",
+            "plan": [],
+            "kpis": {
+                "estimated_service_level": None,
+                "estimated_stockout_units": None,
+                "estimated_holding_units": None,
+                "estimated_total_cost": None
+            },
+            "solver_meta": {
+                "solver": "heuristic",
+                "solve_time_ms": int((datetime.utcnow() - t0).total_seconds() * 1000),
+                "objective_value": None,
+                "gap": None
+            },
+            "infeasible_reasons": ["No valid demand_forecast.series rows with SKU/date/p50 were provided."],
+            "proof": {
+                "objective_terms": [],
+                "constraints_checked": []
+            }
+        }
+
+    for key in list(forecast_by_key.keys()):
+        forecast_by_key[key] = sorted(forecast_by_key[key], key=lambda row: row[0])
+
+    # 2) Build inventory seed state (latest snapshot per SKU/plant).
+    inventory_state: Dict[Tuple[str, str], Dict[str, float]] = {}
+    for row in payload.inventory or []:
+        key = _key_of(row.sku, row.plant_id)
+        snapshot_date = _parse_iso_day(row.as_of_date)
+        if not snapshot_date:
+            continue
+        prev = inventory_state.get(key)
+        if (not prev) or (snapshot_date > prev["as_of_date"]):
+            inventory_state[key] = {
+                "as_of_date": snapshot_date,
+                "on_hand": _to_float(row.on_hand, 0.0),
+                "safety_stock": max(0.0, _to_float(row.safety_stock, 0.0)) if row.safety_stock is not None else 0.0,
+                "lead_time_days": max(0.0, _to_float(row.lead_time_days, 0.0)) if row.lead_time_days is not None else 0.0
+            }
+
+    # 3) Inbound map from open POs.
+    inbound_by_key_day: Dict[Tuple[str, str], Dict[Any, float]] = {}
+    for po in payload.open_pos or []:
+        eta_date = _parse_iso_day(po.eta_date)
+        if not eta_date:
+            continue
+        key = _key_of(po.sku, po.plant_id)
+        if key not in inbound_by_key_day:
+            inbound_by_key_day[key] = {}
+        inbound_by_key_day[key][eta_date] = inbound_by_key_day[key].get(eta_date, 0.0) + max(0.0, _to_float(po.qty, 0.0))
+
+    # 4) Constraint lookup maps.
+    moq_map = _build_sku_lookup(payload.constraints.moq, "min_qty")
+    pack_map = _build_sku_lookup(payload.constraints.pack_size, "pack_qty")
+    max_map = _build_sku_lookup(payload.constraints.max_order_qty, "max_qty")
+    budget_cap = None if payload.constraints.budget_cap is None else max(0.0, _to_float(payload.constraints.budget_cap, 0.0))
+
+    # 5) Main deterministic heuristic loop.
+    horizon_days = max(1, int(payload.planning_horizon_days or 1))
+    ordered_keys = sorted(forecast_by_key.keys(), key=lambda item: (item[0], item[1]))
+    plan_rows: List[Dict[str, Any]] = []
+    rounding_events: List[str] = []
+
+    total_order_qty = 0.0
+    total_demand = 0.0
+    stockout_units = 0.0
+    holding_units = 0.0
+
+    for key in ordered_keys:
+        sku, plant_id = key
+        series_rows = forecast_by_key[key]
+        if not series_rows:
+            continue
+
+        first_day = series_rows[0][0]
+        last_day_allowed = first_day + timedelta(days=horizon_days - 1)
+        filtered_rows = [row for row in series_rows if row[0] <= last_day_allowed]
+        if not filtered_rows:
+            continue
+
+        inv = inventory_state.get(key, {
+            "on_hand": 0.0,
+            "safety_stock": 0.0,
+            "lead_time_days": 0.0
+        })
+        on_hand = _to_float(inv.get("on_hand"), 0.0)
+        safety_stock = max(0.0, _to_float(inv.get("safety_stock"), 0.0))
+        lead_time_days = int(round(max(0.0, _to_float(inv.get("lead_time_days"), 0.0))))
+        inbound_calendar = inbound_by_key_day.get(key, {})
+
+        sku_moq = moq_map.get(sku, 0.0)
+        sku_pack = pack_map.get(sku, 0.0)
+        sku_max = max_map.get(sku, 0.0)
+
+        for demand_day, demand_p50, _demand_p90 in filtered_rows:
+            inbound_today = _to_float(inbound_calendar.get(demand_day, 0.0), 0.0)
+            on_hand += inbound_today
+            demand = max(0.0, _to_float(demand_p50, 0.0))
+            total_demand += demand
+
+            projected_after_demand = on_hand - demand
+            needed_qty = max(0.0, safety_stock - projected_after_demand)
+            raw_order_qty = needed_qty
+            order_qty = raw_order_qty
+            row_rounding_notes = []
+
+            if order_qty > 0.0:
+                if sku_max > 0.0 and order_qty > sku_max:
+                    order_qty = sku_max
+                    row_rounding_notes.append("max_order_qty_cap")
+
+                if sku_moq > 0.0 and order_qty > 0.0 and order_qty < sku_moq:
+                    order_qty = sku_moq
+                    row_rounding_notes.append("moq_floor")
+
+                if sku_pack > 1.0 and order_qty > 0.0:
+                    rounded = math.ceil(order_qty / sku_pack) * sku_pack
+                    if abs(rounded - order_qty) > 1e-9:
+                        row_rounding_notes.append("pack_round_up")
+                    order_qty = rounded
+
+                if budget_cap is not None and order_qty > 0.0:
+                    remaining_budget = budget_cap - total_order_qty
+                    if remaining_budget <= 0.0:
+                        order_qty = 0.0
+                        infeasible_reasons.append(f"Budget cap exhausted before covering demand for {sku} ({demand_day.isoformat()}).")
+                    elif order_qty > remaining_budget:
+                        clipped = remaining_budget
+                        if sku_pack > 1.0:
+                            clipped = math.floor(clipped / sku_pack) * sku_pack
+                        if sku_moq > 0.0 and 0.0 < clipped < sku_moq:
+                            clipped = 0.0
+                        if clipped < order_qty:
+                            row_rounding_notes.append("budget_cap_clipped")
+                        order_qty = max(0.0, clipped)
+                        if order_qty == 0.0:
+                            infeasible_reasons.append(f"Budget cap prevented ordering MOQ/pack for {sku} ({demand_day.isoformat()}).")
+
+            if order_qty > 0.0:
+                order_date = demand_day - timedelta(days=lead_time_days)
+                arrival_date = demand_day
+                plan_rows.append(_format_plan_row(
+                    sku=sku,
+                    plant_id=plant_id,
+                    order_date=order_date,
+                    arrival_date=arrival_date,
+                    order_qty=order_qty
+                ))
+                total_order_qty += order_qty
+                projected_after_demand += order_qty
+
+                if row_rounding_notes:
+                    rounding_events.append(
+                        f"{sku}@{plant_id or 'NA'} {demand_day.isoformat()}: {', '.join(sorted(set(row_rounding_notes)))}"
+                    )
+
+            on_hand = projected_after_demand
+            if on_hand < 0:
+                stockout_units += abs(on_hand)
+            holding_units += max(0.0, on_hand)
+
+    stockout_penalty = _to_float(payload.objective.stockout_penalty, 1.0) if payload.objective.stockout_penalty is not None else 1.0
+    holding_cost = _to_float(payload.objective.holding_cost, 0.0) if payload.objective.holding_cost is not None else 0.0
+    estimated_total_cost = (total_order_qty + (stockout_penalty * stockout_units) + (holding_cost * holding_units))
+
+    service_level = None
+    if total_demand > 0.0:
+        service_level = max(0.0, min(1.0, 1.0 - (stockout_units / total_demand)))
+
+    # 6) Deterministic proof + constraint checks.
+    moq_failed = 0
+    pack_failed = 0
+    max_failed = 0
+    non_negative_failed = 0
+    for row in plan_rows:
+        sku = row["sku"]
+        qty = _to_float(row["order_qty"], 0.0)
+        if qty < -1e-9:
+            non_negative_failed += 1
+        sku_moq = moq_map.get(sku, 0.0)
+        if sku_moq > 0.0 and qty > 0.0 and qty + 1e-9 < sku_moq:
+            moq_failed += 1
+        sku_pack = pack_map.get(sku, 0.0)
+        if sku_pack > 1.0 and qty > 0.0:
+            ratio = qty / sku_pack
+            if abs(ratio - round(ratio)) > 1e-6:
+                pack_failed += 1
+        sku_max = max_map.get(sku, 0.0)
+        if sku_max > 0.0 and qty - sku_max > 1e-9:
+            max_failed += 1
+
+    budget_passed = True
+    budget_details = "No budget cap provided."
+    if budget_cap is not None:
+        budget_passed = total_order_qty <= budget_cap + 1e-9
+        budget_details = f"Total ordered qty {round(total_order_qty, 6)} vs cap {round(budget_cap, 6)}."
+        if not budget_passed:
+            infeasible_reasons.append("Total planned quantity exceeds configured budget cap.")
+
+    constraints_checked = [
+        {
+            "name": "order_qty_non_negative",
+            "passed": non_negative_failed == 0,
+            "details": f"Negative quantity rows: {non_negative_failed}."
+        },
+        {
+            "name": "moq",
+            "passed": moq_failed == 0,
+            "details": f"Rows violating MOQ: {moq_failed}."
+        },
+        {
+            "name": "pack_size_multiple",
+            "passed": pack_failed == 0,
+            "details": f"Rows violating pack-size multiple: {pack_failed}."
+        },
+        {
+            "name": "budget_cap",
+            "passed": budget_passed,
+            "details": budget_details
+        },
+        {
+            "name": "max_order_qty",
+            "passed": max_failed == 0,
+            "details": f"Rows violating max_order_qty: {max_failed}."
+        }
+    ]
+
+    if not plan_rows and total_demand > 0.0:
+        infeasible_reasons.append("No replenishment orders were generated for non-zero demand horizon.")
+
+    if rounding_events:
+        infeasible_reasons.append(f"Rounding adjustments applied: {len(rounding_events)} events.")
+
+    unique_reasons = sorted(set(reason for reason in infeasible_reasons if reason))
+    all_constraints_passed = all(item["passed"] for item in constraints_checked)
+    if not plan_rows and total_demand > 0.0:
+        status = "infeasible"
+    elif all_constraints_passed and len(unique_reasons) == 0:
+        status = "optimal"
+    else:
+        status = "feasible"
+
+    solve_time_ms = int((datetime.utcnow() - t0).total_seconds() * 1000)
+
+    response = {
+        "status": status,
+        "plan": plan_rows,
+        "kpis": {
+            "estimated_service_level": None if service_level is None else float(round(service_level, 6)),
+            "estimated_stockout_units": float(round(stockout_units, 6)),
+            "estimated_holding_units": float(round(holding_units, 6)),
+            "estimated_total_cost": float(round(estimated_total_cost, 6))
+        },
+        "solver_meta": {
+            "solver": "heuristic",
+            "solve_time_ms": solve_time_ms,
+            "objective_value": float(round(estimated_total_cost, 6)),
+            "gap": 0.0
+        },
+        "infeasible_reasons": unique_reasons,
+        "proof": {
+            "objective_terms": [
+                {"name": "ordered_units", "value": float(round(total_order_qty, 6)), "note": "Total planned replenishment quantity."},
+                {"name": "stockout_units", "value": float(round(stockout_units, 6)), "note": "Projected unmet demand units."},
+                {"name": "holding_units", "value": float(round(holding_units, 6)), "note": "Projected positive inventory accumulation."},
+                {"name": "estimated_total_cost", "value": float(round(estimated_total_cost, 6)), "note": "Heuristic cost proxy from order + penalties."}
+            ],
+            "constraints_checked": constraints_checked
+        }
+    }
+    if rounding_events:
+        response["proof"]["constraints_checked"].append({
+            "name": "rounding_adjustments",
+            "passed": True,
+            "details": "; ".join(rounding_events[:25])
+        })
+    return response
+
+
+@app.post("/replenishment-plan")
+async def replenishment_plan(request: ReplenishmentPlanRequest):
+    """
+    Deterministic replenishment planner (heuristic baseline).
+    Returns a stable response schema for chat workflow integration.
+    """
+    try:
+        result = _deterministic_replenishment_plan(request)
+        return sanitize_numpy(result)
+    except Exception as e:
+        return {
+            "status": "error",
+            "plan": [],
+            "kpis": {
+                "estimated_service_level": None,
+                "estimated_stockout_units": None,
+                "estimated_holding_units": None,
+                "estimated_total_cost": None
+            },
+            "solver_meta": {
+                "solver": "heuristic",
+                "solve_time_ms": 0,
+                "objective_value": None,
+                "gap": None
+            },
+            "infeasible_reasons": [str(e)],
+            "proof": {
+                "objective_terms": [],
+                "constraints_checked": []
+            }
+        }
 
 
 class TrainRequest(BaseModel):

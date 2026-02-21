@@ -31,6 +31,7 @@ import AdminLogicControlCenter from './views/AdminLogicControlCenter';
 import AdminJobControlCenter from './views/AdminJobControlCenter';
 import DecisionSupportView from './views/DecisionSupportView';
 import DashboardView from './views/DashboardView';
+import { APP_NAME, APP_TAGLINE } from './config/branding';
 
 
 /** Sync view state with URL (pushState) and handle Back/Forward (popstate). Only active when session exists. */
@@ -94,9 +95,6 @@ export default function SmartOpsApp() {
   const [role, setRole] = useState('viewer'); // Role selection: viewer/editor/approver/publisher/admin
   const [loading, setLoading] = useState(false);
   const [excelData, setExcelData] = useState(null);
-  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false); // Mobile Menu State
-  const [openDropdowns, setOpenDropdowns] = useState({}); // Track which dropdowns are open
-  const dropdownRefs = useRef({}); // Multiple dropdown refs
   
   // Global data source state for all views
   const [globalDataSource, setGlobalDataSource] = useState('local'); // 'local' | 'sap'
@@ -118,7 +116,7 @@ export default function SmartOpsApp() {
         } else {
           const lastPath = sessionStorage.getItem('lastVisitedPath');
           const fallbackView = lastPath ? pathToView(lastPath) : null;
-          setView(fallbackView || 'home');
+          setView(fallbackView || 'decision');
         }
         fetchUserData(session.user.id);
       }
@@ -128,18 +126,9 @@ export default function SmartOpsApp() {
       setSession(session);
       if (session) {
         if (event === 'SIGNED_IN') {
-          const returnUrl = sessionStorage.getItem('returnUrl');
-          if (returnUrl) {
-            const returnView = pathToView(returnUrl);
-            if (returnView) {
-              setView(returnView);
-              window.history.replaceState({ view: returnView }, '', returnUrl);
-            }
-            sessionStorage.removeItem('returnUrl');
-          } else {
-            setView('home');
-            window.history.replaceState({ view: 'home' }, '', '/home');
-          }
+          setView('decision');
+          window.history.replaceState({ view: 'decision' }, '', '/');
+          sessionStorage.removeItem('returnUrl');
         }
         fetchUserData(session.user.id);
       } else {
@@ -157,20 +146,6 @@ export default function SmartOpsApp() {
     if (darkMode) document.documentElement.classList.add('dark');
     else document.documentElement.classList.remove('dark');
   }, [darkMode]);
-
-  // Close dropdowns when clicking outside
-  useEffect(() => {
-    const handleClickOutside = (event) => {
-      const clickedOutsideAll = Object.keys(dropdownRefs.current).every(
-        key => !dropdownRefs.current[key]?.contains(event.target)
-      );
-      if (clickedOutsideAll) {
-        setOpenDropdowns({});
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
 
   useSyncViewWithHistory(view, setView, session);
   useVisibilitySync(setView, session);
@@ -247,21 +222,7 @@ export default function SmartOpsApp() {
   };
 
   const renderView = () => {
-    switch (view) {
-      case 'home': return <DashboardView setView={setView} user={session?.user} globalDataSource={globalDataSource} setGlobalDataSource={setGlobalDataSource} />;
-      case 'forecasts': return <ForecastsView addNotification={addNotification} user={session?.user} />;
-      case 'risk-dashboard': return <RiskDashboardView addNotification={addNotification} user={session?.user} setView={setView} globalDataSource={globalDataSource} setGlobalDataSource={setGlobalDataSource} />;
-      case 'external': return <EnhancedExternalSystemsView addNotification={addNotification} user={session?.user} setView={setView} />;
-      case 'import-history': return <ImportHistoryView addNotification={addNotification} user={session?.user} setView={setView} />;
-      case 'bom-data': return <BOMDataView addNotification={addNotification} user={session?.user} globalDataSource={globalDataSource} />;
-      case 'suppliers': return <SupplierManagementView addNotification={addNotification} />;
-      case 'cost-analysis': return <CostAnalysisView addNotification={addNotification} user={session?.user} setView={setView} />;
-      case 'decision': return <DecisionSupportView excelData={excelData} user={session?.user} addNotification={addNotification} />;
-      case 'settings': return <SettingsView darkMode={darkMode} setDarkMode={setDarkMode} user={session?.user} addNotification={addNotification} />;
-      case 'admin-logic': return <AdminLogicControlCenter setView={setView} />;
-      case 'admin-jobs': return <AdminJobControlCenter setView={setView} />;
-      default: return <HomeView setView={setView} />;
-    }
+    return <DecisionSupportView excelData={excelData} user={session?.user} addNotification={addNotification} />;
   };
 
   if (!session) {
@@ -272,8 +233,8 @@ export default function SmartOpsApp() {
         </div>
         <div className="max-w-md w-full bg-white dark:bg-slate-800 rounded-2xl shadow-xl p-8 border border-slate-200 dark:border-slate-700">
           <div className="flex justify-center mb-8"><div className="bg-blue-600 p-3 rounded-lg"><Activity className="w-8 h-8 text-white" /></div></div>
-          <h1 className="text-3xl font-bold text-center mb-2">SmartOps</h1>
-          <p className="text-center text-slate-500 dark:text-slate-400 mb-8">Supply Chain Operations Platform</p>
+          <h1 className="text-3xl font-bold text-center mb-2">{APP_NAME}</h1>
+          <p className="text-center text-slate-500 dark:text-slate-400 mb-8">{APP_TAGLINE}</p>
           <form onSubmit={handleLogin} className="space-y-4">
             <div><label className="block text-sm font-medium mb-1">Email</label><input type="email" required className="w-full px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-transparent focus:ring-2 focus:ring-blue-500 outline-none" value={email} onChange={(e) => setEmail(e.target.value)} /></div>
             <div><label className="block text-sm font-medium mb-1">Password</label><input type="password" required className="w-full px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-transparent focus:ring-2 focus:ring-blue-500 outline-none" value={password} onChange={(e) => setPassword(e.target.value)} /></div>
@@ -299,231 +260,31 @@ export default function SmartOpsApp() {
     );
   }
 
-  // Navigation configuration - OODA Task-Oriented Structure
-  const navigationConfig = [
-    {
-      key: 'command',
-      label: 'Command',
-      labelZh: 'Center',
-      icon: Target,
-      color: 'text-red-500',
-      taskQuestion: 'What should I manage today?',
-      children: [
-        { key: 'home', label: 'Dashboard', labelZh: 'Overview', icon: LayoutDashboard, view: 'home' }
-      ]
-    },
-    {
-      key: 'detect',
-      label: 'Detect',
-      labelZh: 'Risk Detection',
-      icon: Search,
-      color: 'text-amber-500',
-      taskQuestion: 'Where are the problems?',
-      children: [
-        { key: 'risk-dashboard', label: 'Risk Dashboard', labelZh: 'Risk View', icon: AlertTriangle, view: 'risk-dashboard' },
-        { key: 'forecasts', label: 'Forecasts', labelZh: 'Forecast', icon: TrendingUp, view: 'forecasts' },
-        { key: 'bom-data', label: 'BOM Health', labelZh: 'BOM Status', icon: Database, view: 'bom-data' }
-      ]
-    },
-    {
-      key: 'simulate',
-      label: 'Simulate',
-      labelZh: 'Decision Sim',
-      icon: Calculator,
-      color: 'text-blue-500',
-      taskQuestion: 'What is the best approach?',
-      children: [
-        { key: 'cost-analysis', label: 'Cost Optimizer', labelZh: 'Cost Opt', icon: DollarSign, view: 'cost-analysis' },
-        { key: 'decision', label: 'What-if AI', labelZh: 'Scenario AI', icon: Bot, view: 'decision' }
-      ]
-    },
-    {
-      key: 'execute',
-      label: 'Execute',
-      labelZh: 'Action Hub',
-      icon: Zap,
-      color: 'text-purple-500',
-      taskQuestion: 'Execute and track',
-      children: [
-        { key: 'suppliers', label: 'Supplier Portal', labelZh: 'Suppliers', icon: Building2, view: 'suppliers' },
-        { key: 'external', label: 'Data Upload', labelZh: 'Upload', icon: Upload, view: 'external' }
-      ]
-    },
-    {
-      key: 'govern',
-      label: 'Govern',
-      labelZh: 'Governance',
-      icon: BarChart3,
-      color: 'text-emerald-500',
-      taskQuestion: 'Are our decisions correct?',
-      children: [
-        { key: 'import-history', label: 'Audit Trail', labelZh: 'Audit', icon: History, view: 'import-history' },
-        { key: 'admin-logic', label: 'Logic Control', labelZh: 'Logic Control', icon: Settings, view: 'admin-logic' },
-        { key: 'admin-jobs', label: 'Job Control', labelZh: 'Job Control', icon: Activity, view: 'admin-jobs' }
-      ]
-    }
-  ];
-
-  // Helper function: Check if current view is under a nav item
-  const isNavItemActive = (navItem) => {
-    if (navItem.view) {
-      return view === navItem.view;
-    }
-    if (navItem.children) {
-      return navItem.children.some(child => child.view === view);
-    }
-    return false;
-  };
-
-  // Helper function: Toggle dropdown - only one open at a time
-  const toggleDropdown = (key) => {
-    setOpenDropdowns(prev => {
-      // If clicking the same key, close it; otherwise open new one and close others
-      const isCurrentlyOpen = prev[key];
-      if (isCurrentlyOpen) {
-        return {};
-      }
-      return { [key]: true };
-    });
-  };
+  // Chat-first mode: keep only DecisionSupportView exposed in UI.
 
   return (
-    <div className={`min-h-screen flex flex-col transition-colors duration-300 ${darkMode ? 'bg-slate-900 text-slate-100' : 'bg-slate-50 text-slate-900'}`}>
+    <div className={`h-screen overflow-hidden flex flex-col transition-colors duration-300 ${darkMode ? 'bg-slate-900 text-slate-100' : 'bg-slate-50 text-slate-900'}`}>
       <div className="fixed top-4 right-4 z-50 space-y-2">{notifications.map(n => (<div key={n.id} className={`flex items-center p-4 rounded-lg shadow-lg text-white ${n.type === 'error' ? 'bg-red-600' : n.type === 'success' ? 'bg-emerald-600' : 'bg-blue-600'}`}>{n.msg}</div>))}</div>
-      
-      {/* Responsive Header */}
-      <header className="sticky top-0 z-40 bg-white/80 dark:bg-slate-800/80 backdrop-blur-md border-b border-slate-200 dark:border-slate-700">
-        <div className="max-w-7xl mx-auto px-4 md:px-6 h-16 flex items-center justify-between">
-          <div className="flex items-center space-x-3 cursor-pointer" onClick={() => setView('home')}>
-            <div className="bg-blue-600 p-1.5 rounded-lg"><Activity className="w-6 h-6 text-white" /></div>
-            <span className="text-xl font-bold">SmartOps</span>
-          </div>
-          
-          {/* Desktop Nav - OODA Task-Oriented Navigation */}
-          <nav className="hidden md:flex items-center space-x-1">
-            {navigationConfig.map(navItem => {
-              const isActive = isNavItemActive(navItem);
-              
-              // All nav items now have children in the new structure
-              return (
-                <div 
-                  key={navItem.key} 
-                  className="relative" 
-                  ref={el => dropdownRefs.current[navItem.key] = el}
-                >
-                  <button
-                    onClick={() => toggleDropdown(navItem.key)}
-                    className={`flex items-center px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                      isActive
-                        ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400'
-                        : 'hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300'
-                    }`}
-                    title={navItem.taskQuestion}
-                  >
-                    <navItem.icon className={`w-4 h-4 mr-2 ${navItem.color || ''}`} />
-                    <span>{navItem.label}</span>
-                    <ChevronDown className={`w-4 h-4 ml-1 transition-transform ${openDropdowns[navItem.key] ? 'rotate-180' : ''}`} />
-                  </button>
 
-                  {openDropdowns[navItem.key] && (
-                    <div className="absolute top-full mt-1 left-0 bg-white dark:bg-slate-800 rounded-lg shadow-lg border border-slate-200 dark:border-slate-700 py-1 min-w-[220px] z-50">
-                      {navItem.children.map(child => (
-                        <button
-                          key={child.key}
-                          onClick={() => {
-                            setView(child.view);
-                            setOpenDropdowns({});
-                          }}
-                          className={`w-full flex items-center px-4 py-2 text-sm font-medium transition-colors ${
-                            view === child.view
-                              ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400'
-                              : 'hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300'
-                          }`}
-                        >
-                          <child.icon className="w-4 h-4 mr-2" />
-                          <span>{child.label}</span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </nav>
+      {/* Responsive Header */}
+      <header className="flex-shrink-0 z-40 bg-white/80 dark:bg-slate-800/80 backdrop-blur-md border-b border-slate-200 dark:border-slate-700">
+        <div className="w-full px-4 md:px-6 h-16 flex items-center justify-between">
+          <div className="flex items-center space-x-3 cursor-pointer" onClick={() => setView('decision')}>
+            <div className="bg-blue-600 p-1.5 rounded-lg"><Activity className="w-6 h-6 text-white" /></div>
+            <span className="text-xl font-bold">{APP_NAME}</span>
+          </div>
 
           <div className="flex items-center space-x-2 md:space-x-4">
             <button onClick={() => setDarkMode(!darkMode)} className="p-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full">{darkMode ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}</button>
-            <div className="hidden md:flex items-center space-x-3">
+            <div className="flex items-center space-x-3">
               <div className="text-right"><div className="text-sm font-medium">{session.user.email.split('@')[0]}</div></div>
               <button onClick={handleLogout} className="p-2 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-full"><LogOut className="w-5 h-5" /></button>
             </div>
-            {/* Mobile Menu Button */}
-            <button onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)} className="md:hidden p-2 text-slate-500"><Menu className="w-6 h-6" /></button>
           </div>
         </div>
       </header>
 
-      {/* Mobile Menu Dropdown - OODA Task-Oriented Navigation */}
-      {isMobileMenuOpen && (
-        <div className="md:hidden bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 p-4">
-          <div className="space-y-3">
-            {navigationConfig.map(navItem => (
-              <div key={navItem.key} className="space-y-1">
-                <div className="flex items-center gap-2 px-3 py-2 bg-slate-100 dark:bg-slate-700/50 rounded-lg">
-                  <navItem.icon className={`w-4 h-4 ${navItem.color || ''}`} />
-                  <span className="text-sm font-semibold">{navItem.label}</span>
-                </div>
-                {navItem.children.map(child => (
-                  <button 
-                    key={child.key}
-                    onClick={() => { 
-                      setView(child.view); 
-                      setIsMobileMenuOpen(false); 
-                    }} 
-                    className={`w-full flex items-center p-3 pl-6 rounded-lg text-sm font-medium ${
-                      view === child.view 
-                        ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400' 
-                        : 'bg-slate-50 dark:bg-slate-700 text-slate-600 dark:text-slate-300'
-                    }`}
-                  >
-                    <child.icon className="w-4 h-4 mr-2" />
-                    <span>{child.label}</span>
-                  </button>
-                ))}
-              </div>
-            ))}
-            <button 
-              onClick={handleLogout} 
-              className="w-full flex items-center p-3 rounded-lg text-sm font-medium bg-red-50 dark:bg-red-900/20 text-red-600 justify-center mt-4"
-            >
-              <LogOut className="w-4 h-4 mr-2" />
-              Logout
-            </button>
-          </div>
-        </div>
-      )}
-
-      <main className={`flex-1 w-full min-h-screen bg-gray-50 dark:bg-slate-900 ${
-        view === 'risk-dashboard' ? '' : 'max-w-7xl mx-auto px-4 sm:px-6 lg:px-8'
-      }`}>
-        {view !== 'home' && (
-          <div className="mb-4">
-            <button
-              type="button"
-              onClick={() => {
-                if (window.history.length > 1) {
-                  window.history.back();
-                } else {
-                  setView('home');
-                }
-              }}
-              className="flex items-center gap-1.5 text-sm font-medium text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200"
-            >
-              <ChevronLeft className="w-4 h-4" />
-              Back
-            </button>
-          </div>
-        )}
+      <main className="flex-1 min-h-0 h-full overflow-hidden bg-gray-50 dark:bg-slate-900">
         {renderView()}
       </main>
     </div>
@@ -1511,7 +1272,7 @@ const SettingsView = ({ darkMode, setDarkMode, user, addNotification }) => {
                   <li>Free API tiers have daily quotas</li>
                   <li>If the quota is exhausted, wait for reset or use a new key</li>
                   <li>API keys are stored locally in your browser, never uploaded</li>
-                  <li>Recommended model: gemini-2.5-flash</li>
+                  <li>Recommended model: gemini-3.1-pro</li>
                 </ul>
               </div>
             </div>
@@ -1538,9 +1299,3 @@ const SettingsView = ({ darkMode, setDarkMode, user, addNotification }) => {
     </div>
   );
 };
-
-
-
-
-
-

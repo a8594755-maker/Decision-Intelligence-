@@ -167,7 +167,7 @@ const ConfidenceOverlayChart = ({
   if (compact) {
     return (
       <div className="h-48">
-        <ResponsiveContainer width="100%" height={192}>
+        <ResponsiveContainer width="100%" height={192} minWidth={1} minHeight={1}>
           <LineChart data={chartData}>
             <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
             <XAxis 
@@ -257,7 +257,7 @@ const ConfidenceOverlayChart = ({
 
       {/* Chart */}
       <div style={{ width: '100%' }}>
-        <ResponsiveContainer width="100%" height={height}>
+        <ResponsiveContainer width="100%" height={height} minWidth={1} minHeight={1}>
           <ComposedChart data={chartData}>
             <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
             <XAxis 

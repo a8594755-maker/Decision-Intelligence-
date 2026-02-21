@@ -139,22 +139,26 @@ COMMENT ON COLUMN cost_anomalies.ai_analysis IS 'AI 分析结果';
 ALTER TABLE operational_costs ENABLE ROW LEVEL SECURITY;
 
 -- 用户只能查看自己的成本记录
+DROP POLICY IF EXISTS "Users can view their own costs" ON operational_costs;
 CREATE POLICY "Users can view their own costs"
   ON operational_costs FOR SELECT
   USING (auth.uid() = user_id);
 
 -- 用户只能插入自己的成本记录
+DROP POLICY IF EXISTS "Users can insert their own costs" ON operational_costs;
 CREATE POLICY "Users can insert their own costs"
   ON operational_costs FOR INSERT
   WITH CHECK (auth.uid() = user_id);
 
 -- 用户只能更新自己的成本记录
+DROP POLICY IF EXISTS "Users can update their own costs" ON operational_costs;
 CREATE POLICY "Users can update their own costs"
   ON operational_costs FOR UPDATE
   USING (auth.uid() = user_id)
   WITH CHECK (auth.uid() = user_id);
 
 -- 用户只能删除自己的成本记录
+DROP POLICY IF EXISTS "Users can delete their own costs" ON operational_costs;
 CREATE POLICY "Users can delete their own costs"
   ON operational_costs FOR DELETE
   USING (auth.uid() = user_id);
@@ -163,22 +167,26 @@ CREATE POLICY "Users can delete their own costs"
 ALTER TABLE cost_anomalies ENABLE ROW LEVEL SECURITY;
 
 -- 用户只能查看自己的异常记录
+DROP POLICY IF EXISTS "Users can view their own anomalies" ON cost_anomalies;
 CREATE POLICY "Users can view their own anomalies"
   ON cost_anomalies FOR SELECT
   USING (auth.uid() = user_id);
 
 -- 用户只能插入自己的异常记录
+DROP POLICY IF EXISTS "Users can insert their own anomalies" ON cost_anomalies;
 CREATE POLICY "Users can insert their own anomalies"
   ON cost_anomalies FOR INSERT
   WITH CHECK (auth.uid() = user_id);
 
 -- 用户只能更新自己的异常记录
+DROP POLICY IF EXISTS "Users can update their own anomalies" ON cost_anomalies;
 CREATE POLICY "Users can update their own anomalies"
   ON cost_anomalies FOR UPDATE
   USING (auth.uid() = user_id)
   WITH CHECK (auth.uid() = user_id);
 
 -- 用户只能删除自己的异常记录
+DROP POLICY IF EXISTS "Users can delete their own anomalies" ON cost_anomalies;
 CREATE POLICY "Users can delete their own anomalies"
   ON cost_anomalies FOR DELETE
   USING (auth.uid() = user_id);

@@ -423,7 +423,7 @@ const DashboardView = ({ setView, user, globalDataSource, setGlobalDataSource })
           <Card className="!p-5">
             <SectionHeader title="Import Activity" subtitle="Rows imported over time" icon={BarChart3} color={COLORS.blue} />
             {importTrendData.length > 0 ? (
-              <ResponsiveContainer width="100%" height={240}>
+              <ResponsiveContainer width="100%" height={240} minWidth={1} minHeight={1}>
                 <AreaChart data={importTrendData}>
                   <defs>
                     <linearGradient id="gradSuccess" x1="0" y1="0" x2="0" y2="1">
@@ -449,7 +449,7 @@ const DashboardView = ({ setView, user, globalDataSource, setGlobalDataSource })
             <SectionHeader title="Risk Distribution" subtitle={`${stats.risk.totalScored} items scored`} icon={ShieldAlert} color={COLORS.red} />
             {riskDistData.length > 0 ? (
               <div className="flex items-center gap-6">
-                <ResponsiveContainer width="50%" height={220}>
+                <ResponsiveContainer width="50%" height={220} minWidth={1} minHeight={1}>
                   <PieChart>
                     <Pie
                       data={riskDistData}
@@ -500,7 +500,7 @@ const DashboardView = ({ setView, user, globalDataSource, setGlobalDataSource })
           <Card className="!p-5">
             <SectionHeader title="Imports by Type" subtitle="Distribution of uploaded data" icon={FileText} color={COLORS.cyan} />
             {importTypeData.length > 0 ? (
-              <ResponsiveContainer width="100%" height={200}>
+              <ResponsiveContainer width="100%" height={200} minWidth={1} minHeight={1}>
                 <BarChart data={importTypeData} layout="vertical">
                   <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" horizontal={false} />
                   <XAxis type="number" tick={{ fontSize: 11 }} />
