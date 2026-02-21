@@ -46,3 +46,6 @@ __pycache__/
 
 # Files with hardcoded API keys
 src/App.jsx.backup
+
+# Local Netlify folder
+.netlify
