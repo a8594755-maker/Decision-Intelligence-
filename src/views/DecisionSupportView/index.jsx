@@ -921,6 +921,23 @@ export default function DecisionSupportView({ user, addNotification }) {
     [currentConversation?.messages]
   );
 
+  // Directly extract series groups from the latest forecast card in messages.
+  // This bypasses canvas state persistence and works even after hot-reload.
+  const forecastSeriesGroups = useMemo(() => {
+    const msgs = currentMessages;
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      const m = msgs[i];
+      if (m?.type !== 'forecast_result_card') continue;
+      const p = m.payload || {};
+      const fromDirect = Array.isArray(p.series_groups) && p.series_groups.length > 0 ? p.series_groups : null;
+      const fromJson = Array.isArray(p.forecast_series_json?.groups) && p.forecast_series_json.groups.length > 0
+        ? p.forecast_series_json.groups : null;
+      const groups = fromDirect || fromJson || [];
+      if (groups.length > 0) return groups;
+    }
+    return [];
+  }, [currentMessages]);
+
   const persistConversation = useCallback((conversationId, payload) => {
     if (!conversationsDb || !user?.id || !conversationId || !payload) return;
     conversationsDb
@@ -4020,6 +4037,7 @@ export default function DecisionSupportView({ user, addNotification }) {
             stepStatuses={activeCanvasState.stepStatuses}
             codeText={activeCanvasState.codeText}
             chartPayload={effectiveCanvasChartPayload}
+            forecastSeriesGroups={forecastSeriesGroups}
             downloads={activeCanvasState.downloads}
             topologyGraph={effectiveCanvasChartPayload.topology_graph || null}
             topologyRunId={topologyRunId}

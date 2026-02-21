@@ -9,6 +9,7 @@ import { fetchLogicVersionById, type LogicConfig } from '../bom-explosion/logicC
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+const FRONTEND_ORIGIN = (Deno.env.get('FRONTEND_ORIGIN') || 'http://localhost:5173').trim();
 
 interface TestRunRequest {
   testRunId: string;
@@ -29,7 +30,7 @@ interface DiffResult {
 
 Deno.serve(async (req) => {
   const corsHeaders = {
-    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Origin': FRONTEND_ORIGIN,
     'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
   };
 

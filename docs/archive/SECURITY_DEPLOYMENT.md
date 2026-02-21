@@ -47,7 +47,7 @@
 
 1. 前往 [Google AI Studio](https://aistudio.google.com/app/apikey)
 2. 登入您的 Google 帳號
-3. 找到現有的 API Key：`AIzaSyBiPV68i9HR_D6a_PQ3lwSEJSIYZ0eF3j4`
+3. 找到現有的 API Key：`[REDACTED]`
 4. 點擊 **刪除** 或 **撤銷** 該 Key
 5. 點擊 **Create API Key** 創建新的 Key
 6. 複製新的 API Key
@@ -67,11 +67,11 @@
 
    ```env
    # Supabase Configuration
-   VITE_SUPABASE_URL=https://cbxvqqqulwytdblivtoe.supabase.co
-   VITE_SUPABASE_ANON_KEY=<您的新 Supabase Key>
+   VITE_SUPABASE_URL=https://your-project-id.supabase.co
+   VITE_SUPABASE_ANON_KEY=your_supabase_anon_key_here
 
    # Google Gemini AI API
-   VITE_GEMINI_API_KEY=<您的新 Gemini Key>
+   VITE_GEMINI_API_KEY=your_gemini_api_key_here
    ```
 
 3. **重新啟動開發伺服器**
@@ -222,7 +222,6 @@ A: 檢查：
 - ✅ 可以安全地公開到 GitHub
 
 **現在可以放心地將代碼推送到公開的 GitHub 倉庫了！** 🎉
-
 
 
 

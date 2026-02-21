@@ -14,6 +14,7 @@ const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const SAP_API_KEY = Deno.env.get('SAP_API_KEY')!;
 const INTEGRATION_USER_ID = Deno.env.get('INTEGRATION_USER_ID')!;
+const FRONTEND_ORIGIN = (Deno.env.get('FRONTEND_ORIGIN') || 'http://localhost:5173').trim();
 
 // Read demand-specific base URL or fall back to generic SAP_BASE_URL
 const SAP_BASE_URL_INPUT = Deno.env.get('SAP_DEMAND_BASE_URL') || Deno.env.get('SAP_BASE_URL') || 'https://sandbox.api.sap.com/s4hanacloud';
@@ -304,22 +305,20 @@ async function batchUpsertDemandFG(
 // ============================================
 
 Deno.serve(async (req) => {
-  // Handle CORS
+  const corsHeaders = {
+    'Access-Control-Allow-Origin': FRONTEND_ORIGIN,
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  };
+
   if (req.method === 'OPTIONS') {
-    return new Response(null, { 
-      status: 200, 
-      headers: { 
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'POST, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type, Authorization'
-      } 
-    });
+    return new Response('ok', { headers: corsHeaders });
   }
 
   if (req.method !== 'POST') {
     return new Response(JSON.stringify({ error: 'Method not allowed' }), {
       status: 405,
-      headers: { 'Content-Type': 'application/json' }
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' }
     });
   }
 
@@ -372,7 +371,7 @@ Deno.serve(async (req) => {
       }),
       {
         status: 200,
-        headers: { 'Content-Type': 'application/json' }
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       }
     );
 
@@ -385,7 +384,7 @@ Deno.serve(async (req) => {
       }),
       {
         status: 500,
-        headers: { 'Content-Type': 'application/json' }
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       }
     );
   }

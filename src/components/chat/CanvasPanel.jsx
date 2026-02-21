@@ -1,12 +1,15 @@
-import React, { useState } from 'react';
-import { CheckCircle2, AlertTriangle, Loader2, Download, Code2, BarChart3, Terminal, ChevronRight, X, ShieldAlert, Share2, FlaskConical, ExternalLink, PanelRightClose } from 'lucide-react';
+import React, { useState, useCallback } from 'react';
+import { CheckCircle2, AlertTriangle, Loader2, Download, Code2, BarChart3, Terminal, ChevronRight, X, ShieldAlert, Share2, FlaskConical, ExternalLink, PanelRightClose, TableProperties } from 'lucide-react';
+import { exportWorkbook } from '../../utils/exportWorkbook';
 import { Card, Button, Badge } from '../ui';
-import { SimpleLineChart, SimpleBarChart } from '../charts';
 import TopologyTab from './TopologyTab';
 import WhatIfPanel from '../whatif/WhatIfPanel';
 import {
   LineChart,
   Line,
+  BarChart,
+  Bar,
+  Cell,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -35,9 +38,18 @@ const statusChip = (status) => {
 
 const downloadFile = (download) => {
   if (!download) return;
-  const payload = typeof download.content === 'string'
-    ? download.content
-    : JSON.stringify(download.content ?? {}, null, 2);
+  let payload;
+  if (typeof download.content === 'string') {
+    payload = download.content;
+  } else if (
+    download.content instanceof ArrayBuffer ||
+    ArrayBuffer.isView(download.content)
+  ) {
+    // Binary content (e.g. xlsx Uint8Array) — pass directly to Blob
+    payload = download.content;
+  } else {
+    payload = JSON.stringify(download.content ?? {}, null, 2);
+  }
   const blob = new Blob([payload], { type: download.mimeType || 'application/json;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
@@ -163,6 +175,7 @@ export default function CanvasPanel({
   stepStatuses = {},
   codeText = '',
   chartPayload = {},
+  forecastSeriesGroups = [],
   downloads = [],
   topologyGraph = null,
   topologyRunId = null,
@@ -191,7 +204,77 @@ export default function CanvasPanel({
 
   // Series selector: use series_groups if available (50 SKUs), else fall back to flat rows
   const [selectedSeriesKey, setSelectedSeriesKey] = useState(null);
-  const seriesGroups = Array.isArray(chartPayload.series_groups) ? chartPayload.series_groups : [];
+
+  // Legend click-to-toggle: tracks which dataKeys are hidden
+  const [hiddenSeries, setHiddenSeries] = useState({});
+  const handleLegendClick = useCallback((entry) => {
+    const key = entry?.dataKey;
+    if (!key) return;
+    setHiddenSeries((prev) => ({ ...prev, [key]: !prev[key] }));
+  }, []);
+  const legendFormatter = useCallback(
+    (value, entry) => (
+      <span style={{ opacity: hiddenSeries[entry?.dataKey] ? 0.35 : 1, cursor: 'pointer', userSelect: 'none' }}>
+        {value}
+      </span>
+    ),
+    [hiddenSeries]
+  );
+
+  // Inventory Projection legend toggle
+  const [hiddenInvSeries, setHiddenInvSeries] = useState({});
+  const handleInvLegendClick = useCallback((entry) => {
+    const key = entry?.dataKey;
+    if (!key) return;
+    setHiddenInvSeries((prev) => ({ ...prev, [key]: !prev[key] }));
+  }, []);
+  const invLegendFormatter = useCallback(
+    (value, entry) => (
+      <span style={{ opacity: hiddenInvSeries[entry?.dataKey] ? 0.35 : 1, cursor: 'pointer', userSelect: 'none' }}>
+        {value}
+      </span>
+    ),
+    [hiddenInvSeries]
+  );
+
+  // Export workbook state
+  const [isExporting, setIsExporting] = useState(false);
+  const [workbookArtifact, setWorkbookArtifact] = useState(null);
+
+  const handleExportWorkbook = useCallback(async () => {
+    setIsExporting(true);
+    try {
+      const bytes = exportWorkbook({
+        chartPayload,
+        downloads,
+        runMeta: {
+          run_id: run?.id,
+          status: run?.status,
+          workflow: run?.workflow
+        }
+      });
+      const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      const artifact = {
+        label: 'Export Workbook',
+        fileName: `SmartOps_Export_${ts}.xlsx`,
+        mimeType:
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        content: bytes
+      };
+      setWorkbookArtifact(artifact);
+      downloadFile(artifact);
+    } catch (err) {
+      console.error('[CanvasPanel] exportWorkbook failed:', err);
+    } finally {
+      setIsExporting(false);
+    }
+  }, [chartPayload, downloads, run]);
+  // Priority: direct prop from parent (most reliable) > chartPayload store > empty
+  const seriesGroups = (
+    (Array.isArray(forecastSeriesGroups) && forecastSeriesGroups.length > 0 ? forecastSeriesGroups : null) ||
+    (Array.isArray(chartPayload.series_groups) && chartPayload.series_groups.length > 0 ? chartPayload.series_groups : null) ||
+    []
+  );
   const effectiveGroupKey = selectedSeriesKey || seriesGroups[0]?.key || null;
 
   const actualVsForecast = seriesGroups.length > 0
@@ -383,22 +466,32 @@ export default function CanvasPanel({
             <div className="rounded-xl border border-slate-200 dark:border-slate-700 p-4">
               <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
                 <p className="text-xs font-semibold text-slate-700 dark:text-slate-300">Actual vs Forecast</p>
-                {seriesGroups.length > 1 && (
+                {seriesGroups.length > 0 && (
                   <div className="flex items-center gap-2">
                     <label className="text-[11px] text-slate-500 dark:text-slate-400 whitespace-nowrap">
-                      Series ({seriesGroups.length} total):
+                      SKU{seriesGroups.length > 1 ? ` (${seriesGroups.length})` : ''}:
                     </label>
-                    <select
-                      value={effectiveGroupKey || ''}
-                      onChange={(e) => setSelectedSeriesKey(e.target.value)}
-                      className="text-[11px] border border-slate-200 dark:border-slate-600 rounded-md px-2 py-1 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 max-w-[200px]"
-                    >
-                      {seriesGroups.map((g) => (
-                        <option key={g.key} value={g.key}>
-                          {g.material_code || g.key}{g.plant_id ? ` / ${g.plant_id}` : ''}
-                        </option>
-                      ))}
-                    </select>
+                    {seriesGroups.length > 1 ? (
+                      <select
+                        value={effectiveGroupKey || ''}
+                        onChange={(e) => {
+                          setSelectedSeriesKey(e.target.value);
+                          setHiddenSeries({});
+                        }}
+                        className="text-[11px] border border-slate-200 dark:border-slate-600 rounded-md px-2 py-1 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 max-w-[200px]"
+                      >
+                        {seriesGroups.map((g) => (
+                          <option key={g.key} value={g.key}>
+                            {g.material_code || g.key}{g.plant_id ? ` / ${g.plant_id}` : ''}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <span className="text-[11px] font-medium text-slate-700 dark:text-slate-300 truncate max-w-[160px]">
+                        {seriesGroups[0]?.material_code || seriesGroups[0]?.key || '—'}
+                        {seriesGroups[0]?.plant_id ? ` / ${seriesGroups[0].plant_id}` : ''}
+                      </span>
+                    )}
                   </div>
                 )}
               </div>
@@ -414,7 +507,11 @@ export default function CanvasPanel({
                       <XAxis dataKey={actualVsForecast.xKey} tickFormatter={chartTick} fontSize={11} />
                       <YAxis fontSize={11} />
                       <Tooltip />
-                      <Legend />
+                      <Legend
+                        onClick={handleLegendClick}
+                        formatter={legendFormatter}
+                        wrapperStyle={{ cursor: 'pointer', fontSize: 11 }}
+                      />
                       {showActual && (
                         <Line
                           type="monotone"
@@ -424,6 +521,7 @@ export default function CanvasPanel({
                           strokeWidth={2}
                           dot={false}
                           connectNulls={false}
+                          hide={Boolean(hiddenSeries['actual'])}
                         />
                       )}
                       {showP50 && (
@@ -435,6 +533,7 @@ export default function CanvasPanel({
                           strokeWidth={2}
                           dot={false}
                           connectNulls={false}
+                          hide={Boolean(hiddenSeries['p50'])}
                         />
                       )}
                       {showP90 && (
@@ -446,6 +545,7 @@ export default function CanvasPanel({
                           strokeDasharray="4 4"
                           dot={false}
                           connectNulls={false}
+                          hide={Boolean(hiddenSeries['p90'])}
                         />
                       )}
                       {showLower && (
@@ -457,6 +557,7 @@ export default function CanvasPanel({
                           strokeDasharray="4 4"
                           dot={false}
                           connectNulls={false}
+                          hide={Boolean(hiddenSeries['lower'])}
                         />
                       )}
                       {showUpper && (
@@ -468,6 +569,7 @@ export default function CanvasPanel({
                           strokeDasharray="4 4"
                           dot={false}
                           connectNulls={false}
+                          hide={Boolean(hiddenSeries['upper'])}
                         />
                       )}
                     </LineChart>
@@ -476,22 +578,101 @@ export default function CanvasPanel({
               )}
             </div>
 
-            <div className="rounded-xl border border-slate-200 dark:border-slate-700 p-4">
-              <p className="text-xs font-semibold text-slate-700 dark:text-slate-300 mb-3">Inventory Projection</p>
-              <SimpleLineChart
-                data={(chartPayload.inventory_projection || []).map((row) => row.with_plan ?? 0)}
-                color="#059669"
-              />
-            </div>
+            {/* Inventory Projection — Recharts LineChart with with_plan + without_plan toggle */}
+            {(() => {
+              const rawInv = chartPayload.inventory_projection || [];
+              const invRows = rawInv.map((row, i) => {
+                if (row !== null && typeof row === 'object') {
+                  return {
+                    period: row.period ?? row.date ?? `T${i + 1}`,
+                    with_plan: typeof row.with_plan === 'number' ? row.with_plan : null,
+                    without_plan: typeof row.without_plan === 'number' ? row.without_plan : null
+                  };
+                }
+                return { period: `T${i + 1}`, with_plan: typeof row === 'number' ? row : null, without_plan: null };
+              });
+              const hasWithoutPlan = invRows.some((r) => r.without_plan !== null && r.without_plan !== undefined);
+              return (
+                <div className="rounded-xl border border-slate-200 dark:border-slate-700 p-4">
+                  <p className="text-xs font-semibold text-slate-700 dark:text-slate-300 mb-3">Inventory Projection</p>
+                  {invRows.length === 0 ? (
+                    <div className="h-48 md:h-64 w-full flex items-center justify-center text-slate-400 text-sm">No data available</div>
+                  ) : (
+                    <div className="h-48 md:h-64 w-full">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart data={invRows}>
+                          <CartesianGrid strokeDasharray="3 3" />
+                          <XAxis dataKey="period" tickFormatter={chartTick} fontSize={11} />
+                          <YAxis fontSize={11} />
+                          <Tooltip />
+                          <Legend
+                            onClick={handleInvLegendClick}
+                            formatter={invLegendFormatter}
+                            wrapperStyle={{ cursor: 'pointer', fontSize: 11 }}
+                          />
+                          <Line
+                            type="monotone"
+                            dataKey="with_plan"
+                            name="With Plan"
+                            stroke="#059669"
+                            strokeWidth={2}
+                            dot={false}
+                            connectNulls={false}
+                            hide={Boolean(hiddenInvSeries['with_plan'])}
+                          />
+                          {hasWithoutPlan && (
+                            <Line
+                              type="monotone"
+                              dataKey="without_plan"
+                              name="Without Plan"
+                              stroke="#94a3b8"
+                              strokeDasharray="4 4"
+                              strokeWidth={1.5}
+                              dot={false}
+                              connectNulls={false}
+                              hide={Boolean(hiddenInvSeries['without_plan'])}
+                            />
+                          )}
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
 
-            <div className="rounded-xl border border-slate-200 dark:border-slate-700 p-4">
-              <p className="text-xs font-semibold text-slate-700 dark:text-slate-300 mb-3">Cost Breakdown</p>
-              <SimpleBarChart
-                data={(chartPayload.cost_breakdown || []).map((row) => Math.max(0, Number(row.value || 0)))}
-                labels={(chartPayload.cost_breakdown || []).map((row) => row.label)}
-                colorClass="bg-emerald-500"
-              />
-            </div>
+            {/* Cost Breakdown — Recharts BarChart */}
+            {(() => {
+              const costRows = (chartPayload.cost_breakdown || []).map((row) => ({
+                label: String(row.label ?? ''),
+                value: Math.max(0, Number(row.value || 0))
+              }));
+              const BAR_COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4'];
+              return (
+                <div className="rounded-xl border border-slate-200 dark:border-slate-700 p-4">
+                  <p className="text-xs font-semibold text-slate-700 dark:text-slate-300 mb-3">Cost Breakdown</p>
+                  {costRows.length === 0 ? (
+                    <div className="h-48 md:h-64 w-full flex items-center justify-center text-slate-400 text-sm">No data available</div>
+                  ) : (
+                    <div className="h-48 md:h-64 w-full">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={costRows} margin={{ top: 4, right: 4, left: 0, bottom: 24 }}>
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                          <XAxis dataKey="label" fontSize={11} tick={{ fill: '#64748b' }} interval={0} angle={-20} textAnchor="end" />
+                          <YAxis fontSize={11} />
+                          <Tooltip formatter={(v) => [v, 'Value']} />
+                          <Bar dataKey="value" name="Cost" radius={[3, 3, 0, 0]}>
+                            {costRows.map((_, i) => (
+                              <Cell key={i} fill={BAR_COLORS[i % BAR_COLORS.length]} />
+                            ))}
+                          </Bar>
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
 
             {/* Risk-aware plan comparison card — only shown when risk_mode='on' */}
             {chartPayload.plan_comparison && (
@@ -520,15 +701,41 @@ export default function CanvasPanel({
 
         {activeTab === 'downloads' && (
           <div className="space-y-2">
-            {downloads.length === 0 ? (
-              <div className="text-center py-8 text-slate-500">
+            {/* Export Workbook action */}
+            <div className="rounded-xl border border-blue-200 dark:border-blue-800/60 bg-blue-50/40 dark:bg-blue-900/10 p-3 flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-xs font-semibold text-blue-800 dark:text-blue-300">
+                  Export Workbook (.xlsx)
+                </p>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                  Summary · Report · Forecast · Plan · Charts
+                </p>
+              </div>
+              <Button
+                variant="primary"
+                className="text-xs flex-shrink-0"
+                onClick={handleExportWorkbook}
+                disabled={isExporting}
+              >
+                {isExporting ? (
+                  <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                ) : (
+                  <TableProperties className="w-3 h-3 mr-1" />
+                )}
+                {isExporting ? 'Building…' : 'Export'}
+              </Button>
+            </div>
+
+            {/* Individual artifact downloads */}
+            {[...downloads, ...(workbookArtifact ? [workbookArtifact] : [])].length === 0 ? (
+              <div className="text-center py-6 text-slate-500">
                 <Download className="w-8 h-8 mx-auto mb-2 opacity-50" />
                 <p className="text-xs">No downloadable artifacts yet.</p>
               </div>
             ) : (
-              downloads.map((download) => (
-                <div 
-                  key={`${download.fileName}-${download.label}`} 
+              [...downloads, ...(workbookArtifact ? [workbookArtifact] : [])].map((download) => (
+                <div
+                  key={`${download.fileName}-${download.label}`}
                   className="flex items-center justify-between rounded-xl border border-slate-200 dark:border-slate-700 p-3 hover:border-slate-300 dark:hover:border-slate-600 transition-colors"
                 >
                   <div className="min-w-0 mr-3">

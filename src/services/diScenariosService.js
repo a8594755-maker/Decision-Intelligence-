@@ -42,8 +42,16 @@ export async function createScenario({ user_id, base_run_id, name, overrides = {
     .eq('scenario_key', scenario_key)
     .maybeSingle();
 
-  if (lookupError && !lookupError.message?.includes('Results contain 0 rows')) {
-    throw new Error(`Scenario lookup failed: ${lookupError.message}`);
+  if (lookupError) {
+    // Table not yet migrated — degrade gracefully so the UI doesn't crash
+    const msg = lookupError.message || '';
+    if (msg.includes('schema cache') || msg.includes('does not exist') || msg.includes('relation') || msg.includes('42P01')) {
+      console.warn('[diScenariosService] di_scenarios table not found. Run database/di_scenarios.sql migration.');
+      return { scenario: null, isNew: false, cached: false, tableNotFound: true };
+    }
+    if (!msg.includes('Results contain 0 rows')) {
+      throw new Error(`Scenario lookup failed: ${msg}`);
+    }
   }
 
   if (existing) {
@@ -103,7 +111,11 @@ export async function getScenario(user_id, scenario_id) {
     .eq('user_id', user_id)
     .maybeSingle();
 
-  if (error) throw new Error(`getScenario failed: ${error.message}`);
+  if (error) {
+    const msg = error.message || '';
+    if (msg.includes('schema cache') || msg.includes('does not exist') || msg.includes('42P01')) return null;
+    throw new Error(`getScenario failed: ${msg}`);
+  }
   return data || null;
 }
 
@@ -121,7 +133,11 @@ export async function listScenariosForBaseRun(user_id, base_run_id, limit = 20) 
     .order('created_at', { ascending: false })
     .limit(limit);
 
-  if (error) throw new Error(`listScenariosForBaseRun failed: ${error.message}`);
+  if (error) {
+    const msg = error.message || '';
+    if (msg.includes('schema cache') || msg.includes('does not exist') || msg.includes('42P01')) return [];
+    throw new Error(`listScenariosForBaseRun failed: ${msg}`);
+  }
   return data || [];
 }
 
@@ -138,7 +154,11 @@ export async function listRecentScenarios(user_id, limit = 30) {
     .order('created_at', { ascending: false })
     .limit(limit);
 
-  if (error) throw new Error(`listRecentScenarios failed: ${error.message}`);
+  if (error) {
+    const msg = error.message || '';
+    if (msg.includes('schema cache') || msg.includes('does not exist') || msg.includes('42P01')) return [];
+    throw new Error(`listRecentScenarios failed: ${msg}`);
+  }
   return data || [];
 }
 

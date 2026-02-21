@@ -79,7 +79,7 @@ upload_mappings:1 Failed to load resource: the server responded with a status of
 
 ```javascript
 // 找到這一行
-const GEMINI_API_KEY = 'AIzaSyBiPV68i9HR_D6a_PQ3lwSEJSIYZ0eF3j4'; // 舊的
+const GEMINI_API_KEY = '[REDACTED]'; // 舊的
 
 // 替換為新的 Key
 const GEMINI_API_KEY = 'YOUR_NEW_API_KEY_HERE';
@@ -342,7 +342,6 @@ try {
 **您的欄位名稱非常標準，規則式映射應該 100% 自動成功！** 🚀
 
 **請立即刷新瀏覽器並測試！** ✅
-
 
 
 

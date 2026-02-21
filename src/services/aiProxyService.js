@@ -1,6 +1,18 @@
 import { supabase } from './supabaseClient';
 
 const AI_PROXY_FUNCTION_NAME = 'ai-proxy';
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || '';
+
+const buildFunctionHint = () => {
+  const endpoint = SUPABASE_URL
+    ? `${String(SUPABASE_URL).replace(/\/+$/, '')}/functions/v1/${AI_PROXY_FUNCTION_NAME}`
+    : `(missing VITE_SUPABASE_URL)/functions/v1/${AI_PROXY_FUNCTION_NAME}`;
+  return [
+    `Edge Function "${AI_PROXY_FUNCTION_NAME}" is unreachable.`,
+    `Endpoint: ${endpoint}`,
+    'Check that the function is deployed to the same Supabase project and that Edge Functions are enabled.'
+  ].join(' ');
+};
 
 const readFunctionErrorMessage = async (error) => {
   if (!error) return 'Unknown Edge Function error';
@@ -15,6 +27,14 @@ const readFunctionErrorMessage = async (error) => {
     }
   }
   if (typeof error?.message === 'string' && error.message) {
+    const lower = error.message.toLowerCase();
+    if (
+      lower.includes('failed to send a request to the edge function')
+      || lower.includes('failed to fetch')
+      || lower.includes('networkerror')
+    ) {
+      return buildFunctionHint();
+    }
     return error.message;
   }
   return 'Unknown Edge Function error';

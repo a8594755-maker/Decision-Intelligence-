@@ -485,28 +485,24 @@ export const chatWithAI = async (message, conversationHistory = [], dataContext 
 
   if (USE_EDGE_AI_PROXY) {
     try {
-      const result = await invokeAiProxy('ai_chat', {
+      const result = await invokeAiProxy('deepseek_chat', {
         message,
         conversationHistory,
         systemPrompt: baseSystemContext,
         temperature: 0.7,
-        maxOutputTokens: 8192
+        maxOutputTokens: 8192,
+        model: 'deepseek-chat'
       });
       const text = typeof result?.text === 'string' ? result.text : '';
       if (text) return text;
       throw new Error('AI proxy returned empty content.');
     } catch (error) {
-      console.warn('[chatWithAI] AI proxy failed, retrying via DeepSeek prompt route:', error.message);
-      const geminiSystemContext = buildChatSystemContext({
-        systemPrompt: baseSystemContext,
-        conversationHistory,
-        historyLimit: 5
-      });
-      return await callGeminiAPI(message, geminiSystemContext);
+      console.warn('[chatWithAI] DeepSeek chat failed:', error.message);
+      return `❌ DeepSeek 對話服務請求失敗\n\nError: ${error.message}`;
     }
   }
 
-  // Legacy local path: prefer DeepSeek chat (V3.2 via deepseek-chat alias).
+  // Legacy local path: DeepSeek only (no Gemini fallback).
   const deepSeekApiKey = getDeepSeekApiKey();
   if (deepSeekApiKey) {
     try {
@@ -539,16 +535,12 @@ export const chatWithAI = async (message, conversationHistory = [], dataContext 
       if (text) return text;
       throw new Error('DeepSeek returned empty content.');
     } catch (error) {
-      console.warn('[chatWithAI] DeepSeek failed, falling back to Gemini:', error.message);
+      console.warn('[chatWithAI] DeepSeek failed:', error.message);
+      return `❌ DeepSeek 對話服務請求失敗\n\nError: ${error.message}`;
     }
   }
 
-  const geminiSystemContext = buildChatSystemContext({
-    systemPrompt: baseSystemContext,
-    conversationHistory,
-    historyLimit: 5
-  });
-  return await callGeminiAPI(message, geminiSystemContext);
+  return '❌ 未設定 DeepSeek API Key，無法進行對話。\n\n請在設定中加入 DeepSeek API Key。';
 };
 
 /**
@@ -844,12 +836,13 @@ const streamDeepSeekChat = async ({
 export const streamChatWithAI = async (message, conversationHistory = [], systemPrompt = '', onChunk = null) => {
   if (USE_EDGE_AI_PROXY) {
     try {
-      const result = await invokeAiProxy('ai_chat', {
+      const result = await invokeAiProxy('deepseek_chat', {
         message,
         conversationHistory,
         systemPrompt,
         temperature: 0.7,
-        maxOutputTokens: 8192
+        maxOutputTokens: 8192,
+        model: 'deepseek-chat'
       });
       const text = typeof result?.text === 'string' ? result.text : 'No response generated.';
       streamTextToChunks(text, onChunk, 48);
@@ -881,35 +874,16 @@ export const streamChatWithAI = async (message, conversationHistory = [], system
         onChunk
       });
     } catch (error) {
-      console.warn('[streamChatWithAI] DeepSeek streaming failed, falling back to Gemini:', error.message);
+      console.warn('[streamChatWithAI] DeepSeek streaming failed:', error.message);
+      const fallback = `❌ DeepSeek 串流對話請求失敗\n\nError: ${error.message}`;
+      onChunk?.(fallback);
+      return fallback;
     }
   }
 
-  if (!geminiApiKey) {
-    const fallback = `${noKeyWarning}\n\nDeepSeek request failed and no Gemini API key is configured.`;
-    onChunk?.(fallback);
-    return fallback;
-  }
-
-  const geminiContext = buildChatSystemContext({
-    systemPrompt,
-    conversationHistory,
-    historyLimit: 10
-  });
-
-  try {
-    return await streamGeminiChat({
-      apiKey: geminiApiKey,
-      message,
-      fullContext: geminiContext,
-      onChunk
-    });
-  } catch (error) {
-    console.warn('[streamChatWithAI] Gemini streaming failed, falling back to non-streaming:', error.message);
-    const result = await callGeminiAPI(message, geminiContext);
-    onChunk?.(result);
-    return result;
-  }
+  const fallback = '❌ 未設定 DeepSeek API Key，無法進行對話。\n\n請在設定中加入 DeepSeek API Key。';
+  onChunk?.(fallback);
+  return fallback;
 };
 
 export default {

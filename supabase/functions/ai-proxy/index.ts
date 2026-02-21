@@ -7,9 +7,13 @@ interface ProxyRequestBody {
   payload?: Record<string, unknown>;
 }
 
+const FRONTEND_ORIGIN = (Deno.env.get('FRONTEND_ORIGIN') || 'http://localhost:5173').trim();
+
 const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Origin': FRONTEND_ORIGIN,
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Max-Age': '86400',
 };
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
@@ -209,6 +213,37 @@ const normalizeChatRole = (role: unknown): 'assistant' | 'user' => {
   const normalized = String(role || '').trim().toLowerCase();
   if (normalized === 'assistant' || normalized === 'ai') return 'assistant';
   return 'user';
+};
+
+const buildHistoryLines = (conversationHistory: unknown[] = [], limit = 10): string => (
+  conversationHistory
+    .slice(-limit)
+    .map((entry) => {
+      const row = entry as { role?: unknown; content?: unknown };
+      const content = typeof row?.content === 'string' ? row.content.trim() : '';
+      if (!content) return null;
+      const speaker = normalizeChatRole(row.role) === 'assistant' ? 'Assistant' : 'User';
+      return `${speaker}: ${content}`;
+    })
+    .filter(Boolean)
+    .join('\n')
+);
+
+const buildChatSystemContext = ({
+  systemPrompt = '',
+  conversationHistory = [],
+  historyLimit = 10,
+}: {
+  systemPrompt?: string;
+  conversationHistory?: unknown[];
+  historyLimit?: number;
+}) => {
+  let fullContext = String(systemPrompt || '');
+  const historyText = buildHistoryLines(conversationHistory, historyLimit);
+  if (historyText) {
+    fullContext += `${fullContext ? '\n\n' : ''}Conversation History:\n${historyText}`;
+  }
+  return fullContext;
 };
 
 const buildDeepSeekMessages = ({
@@ -420,30 +455,71 @@ const handleDeepSeekChat = async (payload: Record<string, unknown>) => {
 const handleAiChat = async (payload: Record<string, unknown>) => {
   const message = String(payload?.message || '').trim();
   if (!message) return jsonResponse({ error: 'Missing required field: message' }, 400);
+  const conversationHistory = Array.isArray(payload?.conversationHistory) ? payload.conversationHistory : [];
+  const systemPrompt = String(payload?.systemPrompt || '');
+  const temperature = toFiniteNumber(payload?.temperature, 0.7);
+  const maxOutputTokens = Math.max(64, Math.floor(toFiniteNumber(payload?.maxOutputTokens, 8192)));
+  const requestedModel = String(payload?.model || '').trim();
 
-  if (!DEEPSEEK_API_KEY) {
+  if (DEEPSEEK_API_KEY) {
+    try {
+      const result = await callDeepSeekChat({
+        message,
+        conversationHistory,
+        systemPrompt,
+        temperature,
+        maxOutputTokens,
+        model: requestedModel || DEFAULT_DEEPSEEK_MODEL,
+      });
+      return jsonResponse({
+        ok: true,
+        ...result,
+      });
+    } catch (error) {
+      if (!GEMINI_API_KEY) {
+        const status = Number((error as Error & { status?: number })?.status || 500);
+        const messageText = error instanceof Error ? error.message : String(error);
+        return jsonResponse(
+          {
+            error: messageText,
+            code: 'deepseek_chat_failed',
+            details: 'DeepSeek request failed and GEMINI_API_KEY fallback is unavailable.',
+          },
+          status >= 400 && status < 600 ? status : 500,
+        );
+      }
+    }
+  }
+
+  if (!GEMINI_API_KEY) {
     return jsonResponse(
       {
         error: 'AI provider key is not configured on server.',
         code: 'missing_server_keys',
-        details: 'DEEPSEEK_API_KEY is required.',
+        details: 'Set DEEPSEEK_API_KEY or GEMINI_API_KEY in Edge Function secrets.',
       },
       500,
     );
   }
 
-  const result = await callDeepSeekChat({
-    message,
-    conversationHistory: Array.isArray(payload?.conversationHistory) ? payload.conversationHistory : [],
-    systemPrompt: String(payload?.systemPrompt || ''),
-    temperature: toFiniteNumber(payload?.temperature, 0.7),
-    maxOutputTokens: Math.max(64, Math.floor(toFiniteNumber(payload?.maxOutputTokens, 8192))),
-    model: String(payload?.model || DEFAULT_DEEPSEEK_MODEL),
+  const geminiResult = await callGeminiGenerate({
+    prompt: message,
+    systemContext: buildChatSystemContext({
+      systemPrompt,
+      conversationHistory,
+      historyLimit: 5,
+    }),
+    options: {
+      temperature,
+      maxOutputTokens,
+      model: isGeminiModelName(requestedModel) ? normalizeGeminiModelName(requestedModel) : DEFAULT_GEMINI_MODEL,
+    },
   });
-
   return jsonResponse({
     ok: true,
-    ...result,
+    provider: 'gemini',
+    model: geminiResult.model,
+    text: geminiResult.text,
   });
 };
 
@@ -559,7 +635,11 @@ Deno.serve(async (req) => {
 
     return jsonResponse({ error: `Unsupported mode: ${mode}` }, 400);
   } catch (error) {
+    const status = Number((error as Error & { status?: number })?.status || 500);
     const message = error instanceof Error ? error.message : String(error);
-    return jsonResponse({ error: message }, 500);
+    return jsonResponse(
+      { error: message, code: 'runtime_error' },
+      status >= 400 && status < 600 ? status : 500,
+    );
   }
 });

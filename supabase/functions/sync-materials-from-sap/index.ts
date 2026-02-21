@@ -12,6 +12,7 @@ const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const SAP_API_KEY = Deno.env.get('SAP_API_KEY')!;
 const INTEGRATION_USER_ID = Deno.env.get('INTEGRATION_USER_ID')!;
+const FRONTEND_ORIGIN = (Deno.env.get('FRONTEND_ORIGIN') || 'http://localhost:5173').trim();
 const SAP_BASE_URL_INPUT = Deno.env.get('SAP_BASE_URL') || 'https://sandbox.api.sap.com/s4hanacloud';
 
 // Fix SAP_BASE_URL: auto-append service path if not present
@@ -73,7 +74,7 @@ interface DebugInfo {
 // ============================================
 Deno.serve(async (req) => {
   const corsHeaders = {
-    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Origin': FRONTEND_ORIGIN,
     'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
   };
 

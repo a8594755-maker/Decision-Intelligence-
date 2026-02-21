@@ -5,8 +5,13 @@
 import { createClient } from '@supabase/supabase-js';
 
 // Supabase credentials
-const SUPABASE_URL = 'https://cbvxqqqulwytdblivtoe.supabase.co';
-const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNieHZxcXF1bHd5dGRibGl2dG9lIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQ0NjQzNjUsImV4cCI6MjA4MDA0MDM2NX0.3PeFtqJAkoxrosFeAiXbOklRCDxaQjH2VjXWwEiFyYI';
+const SUPABASE_URL = process.env.VITE_SUPABASE_URL || 'https://your-project-id.supabase.co';
+const SUPABASE_KEY = process.env.VITE_SUPABASE_SERVICE_KEY || process.env.VITE_SUPABASE_ANON_KEY || '';
+
+if (!SUPABASE_KEY || SUPABASE_URL.includes('your-project-id')) {
+  console.error('Missing Supabase credentials. Please set VITE_SUPABASE_URL and VITE_SUPABASE_SERVICE_KEY (or VITE_SUPABASE_ANON_KEY).');
+  process.exit(1);
+}
 
 const JSON_HEADERS = {
   'Content-Type': 'application/json',
