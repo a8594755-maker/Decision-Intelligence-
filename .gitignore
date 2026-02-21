@@ -15,6 +15,7 @@ dist-ssr
 # Python virtual environment
 .venv/
 venv/
+venv312/
 __pycache__/
 *.pyc
 *.pyo
