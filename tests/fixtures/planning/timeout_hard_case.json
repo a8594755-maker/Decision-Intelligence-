@@ -1,0 +1,63 @@
+{
+  "id": "timeout_hard_case",
+  "description": "Deterministic timeout semantics via explicit solver force-timeout setting.",
+  "engines": ["heuristic", "ortools"],
+  "request": {
+    "dataset_profile_id": 104,
+    "planning_horizon_days": 4,
+    "demand_forecast": {
+      "granularity": "daily",
+      "series": [
+        { "sku": "SKU-Z", "plant_id": "P1", "date": "2026-01-01", "p50": 20.0, "p90": null },
+        { "sku": "SKU-Z", "plant_id": "P1", "date": "2026-01-02", "p50": 20.0, "p90": null },
+        { "sku": "SKU-Z", "plant_id": "P1", "date": "2026-01-03", "p50": 20.0, "p90": null },
+        { "sku": "SKU-Z", "plant_id": "P1", "date": "2026-01-04", "p50": 20.0, "p90": null }
+      ]
+    },
+    "inventory": [
+      {
+        "sku": "SKU-Z",
+        "plant_id": "P1",
+        "as_of_date": "2025-12-31",
+        "on_hand": 0.0,
+        "safety_stock": 0.0,
+        "lead_time_days": 0.0
+      }
+    ],
+    "open_pos": [],
+    "constraints": {
+      "moq": [],
+      "pack_size": [],
+      "max_order_qty": [],
+      "budget_cap": null,
+      "unit_costs": []
+    },
+    "objective": {
+      "optimize_for": "balanced",
+      "stockout_penalty": 1.0,
+      "holding_cost": 0.0,
+      "service_level_target": null
+    },
+    "multi_echelon": {
+      "mode": "off"
+    },
+    "bom_usage": [],
+    "settings": {
+      "solver": {
+        "deterministic_mode": true,
+        "random_seed": 0,
+        "num_search_workers": 1,
+        "time_limit_seconds": 0.05,
+        "force_timeout": true
+      }
+    }
+  },
+  "expectations": {
+    "status_any": ["TIMEOUT"],
+    "plan_rows": { "max": 0 },
+    "kpi_allow_null": true,
+    "reasons_any_substrings": [
+      "timeout"
+    ]
+  }
+}

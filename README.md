@@ -142,6 +142,25 @@ Execute database/cost_analysis_schema.sql
 - Or use the registration function on the login page
 - After login, you can start using all features
 
+## 🧪 Regression Suite (Planning + Forecast)
+
+Run the curated deterministic regression gate locally:
+
+```bash
+./venv312/bin/python -m pytest -q tests/regression
+```
+
+Or through npm:
+
+```bash
+npm run test:regression
+```
+
+What this gate verifies:
+- Planning fixtures: feasible, tight capacity, infeasible, timeout, and multi-echelon
+- Forecast fixtures: synthetic series with contract checks, quantile invariants, and KPI bounds
+- Determinism and runtime budgets suitable for PR CI
+
 ## ⚙️ Environment Configuration
 
 ### Network Permissions
@@ -317,6 +336,9 @@ decision-intelligence/
 ```bash
 npm run dev          # Start development server (hot reload)
 npm run lint         # Run ESLint check
+npm run test:run     # Run frontend unit tests (vitest)
+pytest -q tests/test_planning_regression_suite.py tests/test_planning_engine_parity.py  # Phase 1 solver regression suite
+npm run test:solver-regression  # Same solver suite via package script
 ```
 
 ### Build & Deploy
@@ -337,6 +359,8 @@ npm run preview      # Preview production build
 
 ### 核心技術文件
 - **[docs/SETUP.md](docs/SETUP.md)** - 環境設定指南 (從零開始)
+- **[docs/planning_api_contract.md](docs/planning_api_contract.md)** - Planning API 合約（Phase 1）
+- **[docs/phase1_runbook.md](docs/phase1_runbook.md)** - Planning Phase 1 執行/除錯 Runbook
 - **[docs/BOM_EXPLOSION.md](docs/BOM_EXPLOSION.md)** - BOM 展開功能文件
 - **[docs/GLOSSARY.md](docs/GLOSSARY.md)** - 術語表 (統一專案用語)
 - **[DATABASE_SCHEMA_GUIDE.md](DATABASE_SCHEMA_GUIDE.md)** - 資料庫結構說明

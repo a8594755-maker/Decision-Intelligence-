@@ -8,9 +8,24 @@ import time
 import uuid
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
+from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Tuple
 
 from pydantic import BaseModel, Field
+
+from ml.api.planning_contract import normalize_status
+from ml.api.solver_engines import select_solver_engine, solve_planning_contract
+from ml.api.solver_telemetry import (
+    InMemorySolverTelemetryStore,
+    build_infeasible_summary,
+    compute_queue_wait_ms,
+    emit_solver_telemetry_event,
+    extract_contract_version,
+    extract_engine,
+    extract_objective,
+    extract_solve_time_ms,
+    new_telemetry_run_id,
+)
 
 try:
     import psycopg2
@@ -37,6 +52,15 @@ STEP_ORDER_INDEX = {step: idx for idx, step in enumerate(CANONICAL_STEP_ORDER)}
 TERMINAL_JOB_STATUSES = {"succeeded", "failed", "canceled"}
 TERMINAL_STEP_STATUSES = {"succeeded", "failed", "skipped", "canceled", "blocked"}
 PAUSED_RUN_STATUSES = {"waiting_user"}
+
+_LIFECYCLE_STATUS_MAP = {
+    "queued": "QUEUED",
+    "running": "RUNNING",
+    "succeeded": "SUCCEEDED",
+    "failed": "FAILED",
+    "canceled": "CANCELLED",
+    "cancelled": "CANCELLED",
+}
 
 _STEP_UNSET = object()
 
@@ -102,6 +126,7 @@ class AsyncRunSubmitResponse(BaseModel):
     job_id: str
     run_id: int
     status: str
+    lifecycle_status: str = "QUEUED"
     status_url: str
     artifacts_url: str
     reused_existing: bool = False
@@ -122,6 +147,7 @@ class AsyncRunStatusResponse(BaseModel):
     run_id: int
     workflow: str
     status: str
+    lifecycle_status: str = "QUEUED"
     progress_pct: float
     attempts: int
     max_attempts: int
@@ -133,8 +159,16 @@ class AsyncRunStatusResponse(BaseModel):
     error_message: Optional[str] = None
     current_step: Optional[str] = None
     run_status: Optional[str] = None
+    run_lifecycle_status: Optional[str] = None
     run_stage: Optional[str] = None
     run_meta: Dict[str, Any] = Field(default_factory=dict)
+    planning_status: Optional[str] = None
+    planning_termination_reason: Optional[str] = None
+    result_summary: Dict[str, Any] = Field(default_factory=dict)
+    result_ref: Dict[str, Any] = Field(default_factory=dict)
+    result_payload: Optional[Dict[str, Any]] = None
+    warnings: List[str] = Field(default_factory=list)
+    events: List[Dict[str, Any]] = Field(default_factory=list)
     step_summary: List[StepStatusSummary] = Field(default_factory=list)
 
 
@@ -176,6 +210,11 @@ def _iso_now() -> str:
     return _utc_now().isoformat()
 
 
+def _to_lifecycle_status(value: Any) -> str:
+    raw = str(value or "").strip().lower()
+    return _LIFECYCLE_STATUS_MAP.get(raw, "QUEUED")
+
+
 def _stable_json(value: Any) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
 
@@ -204,6 +243,14 @@ def to_jsonable(value: Any) -> Any:
     if isinstance(value, list):
         return [to_jsonable(item) for item in value]
     return _json_default(value)
+
+
+def _dict_to_namespace(value: Any) -> Any:
+    if isinstance(value, dict):
+        return SimpleNamespace(**{k: _dict_to_namespace(v) for k, v in value.items()})
+    if isinstance(value, list):
+        return [_dict_to_namespace(item) for item in value]
+    return value
 
 
 def build_job_key(request: AsyncRunSubmitRequest) -> str:
@@ -447,6 +494,22 @@ class InMemoryAsyncRunStore:
             row["finished_at"] = None
             if error_message is not None:
                 row["error"] = str(error_message)
+
+    def reset_steps_for_retry(self, run_id: int) -> None:
+        with self._lock:
+            rows = self._steps_by_run.get(int(run_id), [])
+            for row in rows:
+                status = str(row.get("status") or "").lower()
+                if status in {"failed", "running", "blocked", "canceled"}:
+                    row["status"] = "queued"
+                    row["started_at"] = None
+                    row["finished_at"] = None
+                    row["error_code"] = None
+                    row["error_message"] = None
+
+    def clear_run_artifacts(self, run_id: int) -> None:
+        with self._lock:
+            self._artifacts_by_run[int(run_id)] = []
 
     def mark_run_failed(self, run_id: int, error_message: str) -> None:
         with self._lock:
@@ -892,6 +955,31 @@ class PostgresAsyncRunStore:
                     (error_message, int(run_id)),
                 )
 
+    def reset_steps_for_retry(self, run_id: int) -> None:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE public.di_run_steps
+                    SET status = 'queued',
+                        started_at = NULL,
+                        finished_at = NULL,
+                        error_code = NULL,
+                        error_message = NULL
+                    WHERE run_id = %s
+                      AND status IN ('failed', 'running', 'blocked', 'canceled')
+                    """,
+                    (int(run_id),),
+                )
+
+    def clear_run_artifacts(self, run_id: int) -> None:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "DELETE FROM public.di_run_artifacts WHERE run_id = %s",
+                    (int(run_id),),
+                )
+
     def mark_run_failed(self, run_id: int, error_message: str) -> None:
         with self._connect() as conn:
             with conn.cursor() as cur:
@@ -1107,6 +1195,7 @@ class AsyncRunService:
             job_id=job_id,
             run_id=run_id,
             status=str(job_row.get("status") or "queued"),
+            lifecycle_status=_to_lifecycle_status(job_row.get("status")),
             status_url=status_path,
             artifacts_url=artifacts_path,
             reused_existing=not created,
@@ -1144,11 +1233,71 @@ class AsyncRunService:
             for row in steps
         ]
 
+        artifacts = self.store.list_run_artifacts(run_id)
+        planning_result_artifact = self._latest_artifact(artifacts, "planning_result")
+        solver_meta_artifact = self._latest_artifact(artifacts, "solver_meta")
+        execution_summary_artifact = self._latest_artifact(artifacts, "execution_summary")
+        plan_table_artifact = self._latest_artifact(artifacts, "plan_table")
+
+        planning_status = None
+        planning_termination_reason = None
+        result_payload = None
+
+        if planning_result_artifact and isinstance(planning_result_artifact.get("artifact_json"), dict):
+            result_payload = planning_result_artifact.get("artifact_json")
+            planning_status = normalize_status(result_payload.get("status"), fallback=normalize_status("ERROR")).value
+            solver_meta_block = result_payload.get("solver_meta") or {}
+            if isinstance(solver_meta_block, dict):
+                planning_termination_reason = solver_meta_block.get("termination_reason")
+
+        if planning_status is None and solver_meta_artifact and isinstance(solver_meta_artifact.get("artifact_json"), dict):
+            solver_payload = solver_meta_artifact.get("artifact_json")
+            planning_status = normalize_status(solver_payload.get("status"), fallback=normalize_status("ERROR")).value
+            solver_meta_block = solver_payload.get("solver_meta") or {}
+            if isinstance(solver_meta_block, dict):
+                planning_termination_reason = solver_meta_block.get("termination_reason")
+
+        result_summary = {}
+        if execution_summary_artifact and isinstance(execution_summary_artifact.get("artifact_json"), dict):
+            result_summary = execution_summary_artifact.get("artifact_json")
+        else:
+            result_summary = {
+                "planning_status": planning_status,
+                "termination_reason": planning_termination_reason,
+                "plan_rows": (
+                    int((plan_table_artifact.get("artifact_json") or {}).get("total_rows") or 0)
+                    if plan_table_artifact
+                    else 0
+                ),
+            }
+
+        warnings: List[str] = []
+        summary_warnings = result_summary.get("warnings") if isinstance(result_summary, dict) else None
+        if isinstance(summary_warnings, list):
+            warnings.extend(str(item) for item in summary_warnings if item)
+        if not warnings and isinstance(result_payload, dict):
+            reasons = result_payload.get("infeasible_reasons")
+            if isinstance(reasons, list):
+                warnings.extend(str(item) for item in reasons if item)
+        deduped_warnings = list(dict.fromkeys(warnings))[:20]
+
+        result_ref: Dict[str, Any] = {
+            "run_id": run_id,
+            "planning_result_artifact_id": planning_result_artifact.get("id") if planning_result_artifact else None,
+            "solver_meta_artifact_id": solver_meta_artifact.get("id") if solver_meta_artifact else None,
+            "execution_summary_artifact_id": execution_summary_artifact.get("id") if execution_summary_artifact else None,
+            "plan_table_artifact_id": plan_table_artifact.get("id") if plan_table_artifact else None,
+        }
+
+        run_meta = run.get("meta") or {}
+        events = run_meta.get("events") if isinstance(run_meta, dict) else None
+
         return AsyncRunStatusResponse(
             job_id=str(job.get("id")),
             run_id=run_id,
             workflow=str(job.get("workflow") or run.get("workflow") or "workflow_unknown"),
             status=str(job.get("status") or "queued"),
+            lifecycle_status=_to_lifecycle_status(job.get("status")),
             progress_pct=float(job.get("progress_pct") or 0.0),
             attempts=int(job.get("attempts") or 0),
             max_attempts=int(job.get("max_attempts") or 0),
@@ -1160,8 +1309,16 @@ class AsyncRunService:
             error_message=job.get("error_message"),
             current_step=current_step,
             run_status=str(run.get("status") or "queued"),
+            run_lifecycle_status=_to_lifecycle_status(run.get("status")),
             run_stage=run.get("stage"),
-            run_meta=run.get("meta") or {},
+            run_meta=run_meta,
+            planning_status=planning_status,
+            planning_termination_reason=planning_termination_reason,
+            result_summary=result_summary if isinstance(result_summary, dict) else {},
+            result_ref=result_ref,
+            result_payload=result_payload if isinstance(result_payload, dict) else None,
+            warnings=deduped_warnings,
+            events=events if isinstance(events, list) else [],
             step_summary=step_summary,
         )
 
@@ -1174,6 +1331,7 @@ class AsyncRunService:
             "job_id": status.job_id,
             "run_id": status.run_id,
             "status": status.status,
+            "lifecycle_status": status.lifecycle_status,
             "cancel_requested": True,
         }
 
@@ -1219,12 +1377,86 @@ class AsyncRunService:
             )
         return refs
 
+    def _latest_artifact(self, artifacts: List[Dict[str, Any]], artifact_type: str) -> Optional[Dict[str, Any]]:
+        candidates = [item for item in (artifacts or []) if item.get("artifact_type") == artifact_type]
+        if not candidates:
+            return None
+        return sorted(candidates, key=lambda row: int(row.get("id") or 0), reverse=True)[0]
+
 
 class AsyncRunWorker:
-    def __init__(self, store: Any, config: Optional[AsyncRunConfig] = None, sleep_fn=time.sleep) -> None:
+    def __init__(
+        self,
+        store: Any,
+        config: Optional[AsyncRunConfig] = None,
+        sleep_fn=time.sleep,
+        telemetry_store: Optional[Any] = None,
+    ) -> None:
         self.store = store
         self.config = config or AsyncRunConfig.from_env()
         self.sleep_fn = sleep_fn
+        if telemetry_store is not None:
+            self.telemetry_store = telemetry_store
+        else:
+            self.telemetry_store = InMemorySolverTelemetryStore()
+
+    def _emit_solver_telemetry(
+        self,
+        *,
+        telemetry_run_id: str,
+        event_type: str,
+        planning_payload: Optional[Dict[str, Any]],
+        planning_result: Optional[Dict[str, Any]] = None,
+        run_id: Optional[int] = None,
+        job_id: Optional[str] = None,
+        status: Optional[str] = None,
+        termination_reason: Optional[str] = None,
+        engine: Optional[str] = None,
+        objective: Optional[str] = None,
+        solve_time_ms: Optional[int] = None,
+        queue_wait_ms: Optional[int] = None,
+        contract_version: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        emit_solver_telemetry_event(
+            self.telemetry_store,
+            telemetry_run_id=telemetry_run_id,
+            event_type=event_type,
+            source="async",
+            run_id=run_id,
+            job_id=job_id,
+            planning_payload=planning_payload,
+            planning_result=planning_result,
+            status=status,
+            termination_reason=termination_reason,
+            engine=engine,
+            objective=objective,
+            solve_time_ms=solve_time_ms,
+            queue_wait_ms=queue_wait_ms,
+            contract_version=contract_version,
+            metadata=metadata or {},
+        )
+
+    def _emit_job_event(self, run_id: int, event_name: str, metadata: Optional[Dict[str, Any]] = None) -> None:
+        run_row = self.store.get_run(int(run_id)) or {}
+        meta = dict(run_row.get("meta") or {})
+        existing = meta.get("events")
+        events = list(existing) if isinstance(existing, list) else []
+        event_payload = {
+            "event": str(event_name),
+            "timestamp": _iso_now(),
+        }
+        if metadata:
+            event_payload.update(to_jsonable(metadata))
+        events.append(event_payload)
+        events = events[-200:]
+        self.store.patch_run_meta(
+            int(run_id),
+            {
+                "events": events,
+                "last_event": event_payload,
+            },
+        )
 
     def run_forever(self) -> None:
         while True:
@@ -1243,6 +1475,16 @@ class AsyncRunWorker:
         job_id = str(job["id"])
         run_id = int(job["run_id"])
         request = job.get("request_json") or {}
+        self._emit_job_event(
+            run_id,
+            "job_started",
+            {"job_id": job_id, "workflow": job.get("workflow"), "attempt": int(job.get("attempts") or 1)},
+        )
+        self._emit_job_event(
+            run_id,
+            "started",
+            {"job_id": job_id, "workflow": job.get("workflow"), "attempt": int(job.get("attempts") or 1)},
+        )
 
         steps = self.store.list_run_steps(run_id)
         if not steps:
@@ -1296,6 +1538,8 @@ class AsyncRunWorker:
                     f"[{_iso_now()}] Step finished with status={step_status}.",
                     self.config.step_log_max_chars,
                 )
+                if step_name == "validate" and step_status in {"succeeded", "skipped"}:
+                    self._emit_job_event(run_id, "validation_complete", {"step_status": step_status})
 
                 progress_pct = ((index + 1) / total_steps) * 100.0
                 self.store.set_job_progress(job_id, progress_pct)
@@ -1303,6 +1547,8 @@ class AsyncRunWorker:
 
             except JobCanceledError:
                 self._cancel_job(job_id, run_id, step_name, "Cancellation requested during step execution.")
+                self._emit_job_event(run_id, "job_completed", {"job_status": "CANCELLED"})
+                self._emit_job_event(run_id, "completed", {"job_status": "CANCELLED"})
                 return
             except StructuredJobError as err:
                 self.store.update_step(
@@ -1320,10 +1566,25 @@ class AsyncRunWorker:
                     f"[{_iso_now()}] Step failed: {err.technical_message}",
                     self.config.step_log_max_chars,
                 )
-                if self._retry_if_possible(job_id, run_id, f"[{err.code}] {err.user_message}"):
+                if self._retry_if_possible(
+                    job_id,
+                    run_id,
+                    f"[{err.code}] {err.user_message}",
+                    failed_step=step_name,
+                ):
                     return
                 self.store.mark_job_failed(job_id, f"[{err.code}] {err.user_message}")
                 self.store.mark_run_failed(run_id, f"[{err.code}] {err.user_message}")
+                self._emit_job_event(
+                    run_id,
+                    "job_completed",
+                    {"job_status": "FAILED", "error_code": err.code, "error_message": err.user_message},
+                )
+                self._emit_job_event(
+                    run_id,
+                    "completed",
+                    {"job_status": "FAILED", "error_code": err.code, "error_message": err.user_message},
+                )
                 return
             except Exception as exc:
                 error_message = str(exc) or "Unexpected worker failure"
@@ -1342,14 +1603,36 @@ class AsyncRunWorker:
                         "details": {},
                     },
                 )
-                if self._retry_if_possible(job_id, run_id, error_message):
+                if self._retry_if_possible(job_id, run_id, error_message, failed_step=step_name):
                     return
                 self.store.mark_job_failed(job_id, error_message)
                 self.store.mark_run_failed(run_id, error_message)
+                self._emit_job_event(
+                    run_id,
+                    "job_completed",
+                    {"job_status": "FAILED", "error_code": "UNEXPECTED_ERROR", "error_message": error_message},
+                )
+                self._emit_job_event(
+                    run_id,
+                    "completed",
+                    {"job_status": "FAILED", "error_code": "UNEXPECTED_ERROR", "error_message": error_message},
+                )
                 return
 
         self.store.mark_job_succeeded(job_id)
         self.store.mark_run_succeeded(run_id, stage="report")
+        run_row = self.store.get_run(run_id) or {}
+        planning_status = (run_row.get("meta") or {}).get("planning_status")
+        self._emit_job_event(
+            run_id,
+            "job_completed",
+            {"job_status": "SUCCEEDED", "planning_status": planning_status},
+        )
+        self._emit_job_event(
+            run_id,
+            "completed",
+            {"job_status": "SUCCEEDED", "planning_status": planning_status},
+        )
 
     def _cancel_job(self, job_id: str, run_id: int, step_name: str, reason: str) -> None:
         self.store.update_step(
@@ -1367,18 +1650,38 @@ class AsyncRunWorker:
                 "details": {},
             },
         )
+        if hasattr(self.store, "clear_run_artifacts"):
+            self.store.clear_run_artifacts(run_id)
         self.store.mark_job_canceled(job_id, reason)
         self.store.mark_run_canceled(run_id, reason)
 
-    def _retry_if_possible(self, job_id: str, run_id: int, error_message: str) -> bool:
+    def _retry_if_possible(
+        self,
+        job_id: str,
+        run_id: int,
+        error_message: str,
+        failed_step: Optional[str] = None,
+    ) -> bool:
         job = self.store.get_job(job_id) or {}
         attempts = int(job.get("attempts") or 0)
         max_attempts = int(job.get("max_attempts") or 0)
         if attempts >= max_attempts:
             return False
 
+        if failed_step:
+            self.store.update_step(
+                run_id,
+                failed_step,
+                status="queued",
+                started_at=None,
+                finished_at=None,
+                error_code=None,
+                error_message=None,
+            )
         self.store.requeue_job(job_id, error_message)
         self.store.mark_run_queued(run_id, error_message)
+        if hasattr(self.store, "reset_steps_for_retry"):
+            self.store.reset_steps_for_retry(run_id)
         return True
 
     def _run_step(self, job: Dict[str, Any], request: Dict[str, Any], step_name: str) -> Dict[str, Any]:
@@ -1549,17 +1852,34 @@ class AsyncRunWorker:
             }
 
         if step_name == "optimize":
-            solver_settings = {
+            optimize_settings = {
                 "solver": settings.get("solver", {}),
                 "plan": settings.get("plan", {}),
                 "engine_flags": engine_flags,
+                "planning_request": settings.get("planning_request"),
             }
-            cache_key = build_step_cache_key("optimize", fingerprint, solver_settings)
+            planning_payload = settings.get("planning_request")
+            planning_payload_hash = (
+                hashlib.sha256(_stable_json(planning_payload).encode("utf-8")).hexdigest()
+                if isinstance(planning_payload, dict)
+                else None
+            )
+            cache_key = build_step_cache_key(
+                "optimize",
+                fingerprint,
+                {
+                    "solver": optimize_settings.get("solver") or {},
+                    "plan": optimize_settings.get("plan") or {},
+                    "engine_flags": engine_flags,
+                    "planning_payload_hash": planning_payload_hash,
+                },
+            )
             reused = self._reuse_cached_step(
                 run_id=run_id,
                 step_name=step_name,
                 cache_key=cache_key,
                 artifact_types=[
+                    "planning_result",
                     "solver_meta",
                     "constraint_check",
                     "plan_table",
@@ -1568,32 +1888,360 @@ class AsyncRunWorker:
                     "evidence_pack",
                     "plan_csv",
                     "report_json",
+                    "execution_summary",
                 ],
                 meta_flag="reused_cached_plan",
             )
             if reused:
                 return reused
-
-            self._simulate_compute(
-                job_id=job_id,
-                step_name="optimize",
-                timeout_seconds=float(self.config.solver_max_seconds),
-                requested_seconds=float(engine_flags.get("simulate_optimize_seconds", 0.5)),
+            queue_wait_ms = compute_queue_wait_ms(job.get("created_at"), job.get("started_at"))
+            attempt_no = int(job.get("attempts") or 1)
+            telemetry_run_id = new_telemetry_run_id(f"async-{run_id}-{job_id}-{attempt_no}")
+            objective_hint = (
+                (optimize_settings.get("plan") or {}).get("objective")
+                or extract_objective(planning_payload if isinstance(planning_payload, dict) else {})
+                or "balanced"
             )
-            artifacts = self._build_optimize_artifacts(request, run_id, cache_key)
-            for artifact_type, payload in artifacts.items():
-                self.store.save_artifact(run_id, artifact_type, payload)
-            self.store.patch_run_meta(run_id, {"reused_cached_plan": False})
-            return {
-                "status": "succeeded",
-                "input_ref": {"cache_key": cache_key, "settings": solver_settings},
-                "output_ref": {
-                    "cache_key": cache_key,
-                    "artifact_types": list(artifacts.keys()),
-                    "reused": False,
+            contract_version = extract_contract_version(
+                planning_payload if isinstance(planning_payload, dict) else {},
+                fallback=None,
+            )
+            engine_selection_hint = None
+            engine_hint = "deterministic_heuristic"
+            if isinstance(planning_payload, dict):
+                planning_preview = _clone(planning_payload)
+                preview_settings = (
+                    planning_preview.get("settings")
+                    if isinstance(planning_preview.get("settings"), dict)
+                    else {}
+                )
+                preview_solver = dict(preview_settings.get("solver") or {})
+                preview_solver.update((optimize_settings.get("solver") or {}))
+                preview_settings["solver"] = preview_solver
+                planning_preview["settings"] = preview_settings
+                engine_selection_hint = select_solver_engine(_dict_to_namespace(planning_preview))
+                engine_hint = str(engine_selection_hint.selected_engine)
+
+            self._emit_solver_telemetry(
+                telemetry_run_id=telemetry_run_id,
+                event_type="started",
+                planning_payload=planning_payload if isinstance(planning_payload, dict) else {},
+                run_id=run_id,
+                job_id=job_id,
+                engine=engine_hint,
+                objective=objective_hint,
+                queue_wait_ms=queue_wait_ms,
+                contract_version=contract_version,
+                metadata={
+                    "attempt": attempt_no,
+                    "workflow": str(job.get("workflow") or request.get("workflow") or ""),
+                    "cache_key_hash": hashlib.sha256(cache_key.encode("utf-8")).hexdigest(),
                 },
-                "log_excerpt": "Optimization completed.",
-            }
+            )
+
+            try:
+                if isinstance(planning_payload, dict):
+                    self._emit_job_event(run_id, "model_built", {"step": "optimize"})
+                    self._emit_job_event(
+                        run_id,
+                        "solving_started",
+                        {
+                            "solver": engine_hint,
+                            "time_limit_seconds": (optimize_settings.get("solver") or {}).get(
+                                "time_limit_seconds",
+                                self.config.solver_max_seconds,
+                            ),
+                            "engine_source": (
+                                str(engine_selection_hint.source) if engine_selection_hint is not None else "unknown"
+                            ),
+                        },
+                    )
+                    planning_result, execution_summary = self._run_planning_optimize(
+                        run_id=run_id,
+                        job_id=job_id,
+                        planning_payload=planning_payload,
+                        cache_key=cache_key,
+                        solver_settings=(optimize_settings.get("solver") or {}),
+                    )
+                    planning_status = normalize_status(
+                        planning_result.get("status"),
+                        fallback=normalize_status("ERROR"),
+                    ).value
+                    termination_reason = (
+                        ((planning_result.get("solver_meta") or {}) if isinstance(planning_result, dict) else {})
+                        .get("termination_reason")
+                    )
+                    self._emit_job_event(
+                        run_id,
+                        "solving_finished",
+                        {
+                            "planning_status": planning_status,
+                            "termination_reason": termination_reason,
+                        },
+                    )
+
+                    if self.store.is_cancel_requested(job_id):
+                        raise JobCanceledError()
+
+                    artifacts = self._build_optimize_artifacts_from_planning_result(
+                        planning_result=planning_result,
+                        execution_summary=execution_summary,
+                        run_id=run_id,
+                        cache_key=cache_key,
+                    )
+                else:
+                    self._simulate_compute(
+                        job_id=job_id,
+                        step_name="optimize",
+                        timeout_seconds=float(self.config.solver_max_seconds),
+                        requested_seconds=float(engine_flags.get("simulate_optimize_seconds", 0.5)),
+                    )
+                    artifacts = self._build_optimize_artifacts(request, run_id, cache_key)
+
+                if self.store.is_cancel_requested(job_id):
+                    raise JobCanceledError()
+
+                for artifact_type, payload in artifacts.items():
+                    self.store.save_artifact(run_id, artifact_type, payload)
+                planning_result_payload = artifacts.get("planning_result") if isinstance(artifacts, dict) else None
+                execution_summary_payload = artifacts.get("execution_summary") if isinstance(artifacts, dict) else None
+                planning_result_status = None
+                planning_result_termination = None
+                if isinstance(planning_result_payload, dict):
+                    planning_result_status = normalize_status(
+                        planning_result_payload.get("status"),
+                        fallback=normalize_status("ERROR"),
+                    ).value
+                    solver_meta_block = planning_result_payload.get("solver_meta") or {}
+                    if isinstance(solver_meta_block, dict):
+                        planning_result_termination = solver_meta_block.get("termination_reason")
+
+                summary_patch: Dict[str, Any] = {}
+                if isinstance(execution_summary_payload, dict):
+                    summary_patch = {
+                        "input_hash": execution_summary_payload.get("input_hash"),
+                        "scenario_id": execution_summary_payload.get("scenario_id"),
+                        "planning_started_at": execution_summary_payload.get("started_at"),
+                        "planning_finished_at": execution_summary_payload.get("finished_at"),
+                        "planning_duration_ms": execution_summary_payload.get("duration_ms"),
+                        "warnings": execution_summary_payload.get("warnings") or [],
+                        "errors": execution_summary_payload.get("errors") or [],
+                    }
+
+                final_engine = extract_engine(
+                    planning_result_payload if isinstance(planning_result_payload, dict) else {},
+                    planning_payload if isinstance(planning_payload, dict) else {},
+                    fallback=engine_hint,
+                )
+                final_objective = extract_objective(
+                    planning_payload if isinstance(planning_payload, dict) else {},
+                    planning_result_payload if isinstance(planning_result_payload, dict) else {},
+                ) or objective_hint
+                final_solve_time_ms = extract_solve_time_ms(
+                    planning_result_payload if isinstance(planning_result_payload, dict) else {},
+                    fallback=None,
+                )
+                infeasible_summary = build_infeasible_summary(
+                    reasons=(
+                        (planning_result_payload or {}).get("infeasible_reasons")
+                        if isinstance(planning_result_payload, dict)
+                        else []
+                    ),
+                    details=(
+                        (planning_result_payload or {}).get("infeasible_reasons_detailed")
+                        if isinstance(planning_result_payload, dict)
+                        else []
+                    ),
+                )
+
+                self._emit_solver_telemetry(
+                    telemetry_run_id=telemetry_run_id,
+                    event_type="finished",
+                    planning_payload=planning_payload if isinstance(planning_payload, dict) else {},
+                    planning_result=planning_result_payload if isinstance(planning_result_payload, dict) else {},
+                    run_id=run_id,
+                    job_id=job_id,
+                    status=planning_result_status,
+                    termination_reason=planning_result_termination,
+                    engine=final_engine,
+                    objective=final_objective,
+                    solve_time_ms=final_solve_time_ms,
+                    queue_wait_ms=queue_wait_ms,
+                    contract_version=contract_version,
+                    metadata={
+                        "attempt": attempt_no,
+                        "artifact_types": list(artifacts.keys()),
+                        "infeasible_summary": infeasible_summary,
+                    },
+                )
+                self._emit_solver_telemetry(
+                    telemetry_run_id=telemetry_run_id,
+                    event_type="summary",
+                    planning_payload=planning_payload if isinstance(planning_payload, dict) else {},
+                    planning_result=planning_result_payload if isinstance(planning_result_payload, dict) else {},
+                    run_id=run_id,
+                    job_id=job_id,
+                    status=planning_result_status,
+                    termination_reason=planning_result_termination,
+                    engine=final_engine,
+                    objective=final_objective,
+                    solve_time_ms=final_solve_time_ms,
+                    queue_wait_ms=queue_wait_ms,
+                    contract_version=contract_version,
+                    metadata={
+                        "attempt": attempt_no,
+                        "artifact_types": list(artifacts.keys()),
+                        "infeasible_summary": infeasible_summary,
+                    },
+                )
+
+                self.store.patch_run_meta(
+                    run_id,
+                    {
+                        "reused_cached_plan": False,
+                        "planning_status": planning_result_status,
+                        "termination_reason": planning_result_termination,
+                        **summary_patch,
+                    },
+                )
+                self._emit_job_event(
+                    run_id,
+                    "result_persisted",
+                    {
+                        "artifact_types": list(artifacts.keys()),
+                        "planning_status": planning_result_status,
+                        "termination_reason": planning_result_termination,
+                    },
+                )
+                self._emit_job_event(
+                    run_id,
+                    "persisted",
+                    {
+                        "artifact_types": list(artifacts.keys()),
+                        "planning_status": planning_result_status,
+                        "termination_reason": planning_result_termination,
+                    },
+                )
+                return {
+                    "status": "succeeded",
+                    "input_ref": {"cache_key": cache_key, "settings": optimize_settings},
+                    "output_ref": {
+                        "cache_key": cache_key,
+                        "artifact_types": list(artifacts.keys()),
+                        "reused": False,
+                    },
+                    "log_excerpt": "Optimization completed.",
+                }
+            except JobCanceledError:
+                self._emit_solver_telemetry(
+                    telemetry_run_id=telemetry_run_id,
+                    event_type="finished",
+                    planning_payload=planning_payload if isinstance(planning_payload, dict) else {},
+                    run_id=run_id,
+                    job_id=job_id,
+                    status="ERROR",
+                    termination_reason="CANCELLED",
+                    engine=engine_hint,
+                    objective=objective_hint,
+                    solve_time_ms=None,
+                    queue_wait_ms=queue_wait_ms,
+                    contract_version=contract_version,
+                    metadata={"attempt": attempt_no},
+                )
+                self._emit_solver_telemetry(
+                    telemetry_run_id=telemetry_run_id,
+                    event_type="summary",
+                    planning_payload=planning_payload if isinstance(planning_payload, dict) else {},
+                    run_id=run_id,
+                    job_id=job_id,
+                    status="ERROR",
+                    termination_reason="CANCELLED",
+                    engine=engine_hint,
+                    objective=objective_hint,
+                    solve_time_ms=None,
+                    queue_wait_ms=queue_wait_ms,
+                    contract_version=contract_version,
+                    metadata={"attempt": attempt_no},
+                )
+                raise
+            except StructuredJobError as err:
+                self._emit_solver_telemetry(
+                    telemetry_run_id=telemetry_run_id,
+                    event_type="finished",
+                    planning_payload=planning_payload if isinstance(planning_payload, dict) else {},
+                    run_id=run_id,
+                    job_id=job_id,
+                    status="ERROR",
+                    termination_reason=err.code,
+                    engine=engine_hint,
+                    objective=objective_hint,
+                    solve_time_ms=None,
+                    queue_wait_ms=queue_wait_ms,
+                    contract_version=contract_version,
+                    metadata={
+                        "attempt": attempt_no,
+                        "error_code": err.code,
+                        "error_hash": hashlib.sha256(str(err.technical_message).encode("utf-8")).hexdigest(),
+                    },
+                )
+                self._emit_solver_telemetry(
+                    telemetry_run_id=telemetry_run_id,
+                    event_type="summary",
+                    planning_payload=planning_payload if isinstance(planning_payload, dict) else {},
+                    run_id=run_id,
+                    job_id=job_id,
+                    status="ERROR",
+                    termination_reason=err.code,
+                    engine=engine_hint,
+                    objective=objective_hint,
+                    solve_time_ms=None,
+                    queue_wait_ms=queue_wait_ms,
+                    contract_version=contract_version,
+                    metadata={
+                        "attempt": attempt_no,
+                        "error_code": err.code,
+                        "error_hash": hashlib.sha256(str(err.technical_message).encode("utf-8")).hexdigest(),
+                    },
+                )
+                raise
+            except Exception as exc:
+                self._emit_solver_telemetry(
+                    telemetry_run_id=telemetry_run_id,
+                    event_type="finished",
+                    planning_payload=planning_payload if isinstance(planning_payload, dict) else {},
+                    run_id=run_id,
+                    job_id=job_id,
+                    status="ERROR",
+                    termination_reason="UNEXPECTED_ERROR",
+                    engine=engine_hint,
+                    objective=objective_hint,
+                    solve_time_ms=None,
+                    queue_wait_ms=queue_wait_ms,
+                    contract_version=contract_version,
+                    metadata={
+                        "attempt": attempt_no,
+                        "error_hash": hashlib.sha256(str(exc).encode("utf-8")).hexdigest(),
+                    },
+                )
+                self._emit_solver_telemetry(
+                    telemetry_run_id=telemetry_run_id,
+                    event_type="summary",
+                    planning_payload=planning_payload if isinstance(planning_payload, dict) else {},
+                    run_id=run_id,
+                    job_id=job_id,
+                    status="ERROR",
+                    termination_reason="UNEXPECTED_ERROR",
+                    engine=engine_hint,
+                    objective=objective_hint,
+                    solve_time_ms=None,
+                    queue_wait_ms=queue_wait_ms,
+                    contract_version=contract_version,
+                    metadata={
+                        "attempt": attempt_no,
+                        "error_hash": hashlib.sha256(str(exc).encode("utf-8")).hexdigest(),
+                    },
+                )
+                raise
 
         if step_name == "verify_replay":
             artifacts = self.store.list_run_artifacts(run_id)
@@ -1911,10 +2559,251 @@ class AsyncRunWorker:
             "risk_scores_csv": risk_csv,
         }
 
+    def _run_planning_optimize(
+        self,
+        *,
+        run_id: int,
+        job_id: str,
+        planning_payload: Dict[str, Any],
+        cache_key: str,
+        solver_settings: Dict[str, Any],
+    ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        started_at = _iso_now()
+        started_monotonic = time.monotonic()
+        planning_input = _clone(planning_payload)
+        planning_settings = planning_input.get("settings") if isinstance(planning_input.get("settings"), dict) else {}
+        merged_solver_settings = dict(planning_settings.get("solver") or {})
+        merged_solver_settings.update(solver_settings or {})
+        planning_settings["solver"] = merged_solver_settings
+        planning_input["settings"] = planning_settings
+
+        request_ns = _dict_to_namespace(planning_input)
+        cancel_probe = lambda: self.store.is_cancel_requested(job_id)
+        selection = select_solver_engine(request_ns)
+
+        try:
+            planning_result = solve_planning_contract(request_ns, cancel_check=cancel_probe)
+        except Exception as exc:
+            raise StructuredJobError(
+                code="SOLVER_RUNTIME_ERROR",
+                technical_message=f"Planning solver raised: {exc}",
+                user_message="Planning optimization failed due to a solver runtime error.",
+                recommended_action="Review payload constraints and retry with a smaller scope.",
+            ) from exc
+
+        planning_status = normalize_status(
+            planning_result.get("status"),
+            fallback=normalize_status("ERROR"),
+        ).value
+        if planning_status == "ERROR":
+            solver_meta = planning_result.get("solver_meta") or {}
+            termination_reason = solver_meta.get("termination_reason") if isinstance(solver_meta, dict) else None
+            raise StructuredJobError(
+                code="PLANNING_ERROR",
+                technical_message=f"Planning returned ERROR status (termination_reason={termination_reason}).",
+                user_message="Planning optimization ended with an error status.",
+                recommended_action="Retry with revised constraints or increased solver time limit.",
+                details={"termination_reason": termination_reason},
+            )
+
+        duration_ms = max(0, int((time.monotonic() - started_monotonic) * 1000))
+        finished_at = _iso_now()
+        solver_meta = planning_result.get("solver_meta") if isinstance(planning_result, dict) else {}
+        solver_meta = solver_meta if isinstance(solver_meta, dict) else {}
+        warnings = planning_result.get("infeasible_reasons") if isinstance(planning_result, dict) else []
+        warnings = [str(item) for item in (warnings or []) if item][:20]
+
+        execution_summary = {
+            "run_id": int(run_id),
+            "started_at": started_at,
+            "finished_at": finished_at,
+            "duration_ms": duration_ms,
+            "job_status": "SUCCEEDED",
+            "planning_status": planning_status,
+            "termination_reason": solver_meta.get("termination_reason"),
+            "engine_selected": solver_meta.get("engine_selected") or selection.selected_engine,
+            "engine_key": solver_meta.get("engine_key") or selection.selected_engine,
+            "engine_source": solver_meta.get("engine_source") or selection.source,
+            "warnings": warnings,
+            "errors": [],
+            "input_hash": hashlib.sha256(_stable_json(planning_input).encode("utf-8")).hexdigest(),
+            "scenario_id": planning_input.get("dataset_profile_id"),
+            "cache_key": cache_key,
+        }
+        return planning_result, execution_summary
+
+    def _build_optimize_artifacts_from_planning_result(
+        self,
+        *,
+        planning_result: Dict[str, Any],
+        execution_summary: Dict[str, Any],
+        run_id: int,
+        cache_key: str,
+    ) -> Dict[str, Any]:
+        plan_rows = planning_result.get("plan_lines")
+        if not isinstance(plan_rows, list):
+            plan_rows = planning_result.get("plan")
+        plan_rows = plan_rows if isinstance(plan_rows, list) else []
+
+        kpis = planning_result.get("kpis") if isinstance(planning_result.get("kpis"), dict) else {}
+        solver_meta = planning_result.get("solver_meta") if isinstance(planning_result.get("solver_meta"), dict) else {}
+        proof = planning_result.get("proof") if isinstance(planning_result.get("proof"), dict) else {
+            "objective_terms": [],
+            "constraints_checked": [],
+        }
+        infeasible_reasons = planning_result.get("infeasible_reasons")
+        infeasible_reasons = [str(item) for item in (infeasible_reasons or []) if item]
+
+        constraint_checks = proof.get("constraints_checked") if isinstance(proof, dict) else []
+        passed = True
+        violations = []
+        if isinstance(constraint_checks, list):
+            for row in constraint_checks:
+                if not isinstance(row, dict):
+                    continue
+                if row.get("passed") is False:
+                    passed = False
+                    violations.append(
+                        {
+                            "rule": str(row.get("name") or "constraint"),
+                            "details": str(row.get("details") or "failed"),
+                            "sku": row.get("sku"),
+                        }
+                    )
+
+        solver_status = normalize_status(
+            planning_result.get("status"),
+            fallback=normalize_status("ERROR"),
+        ).value
+
+        service_level = kpis.get("estimated_service_level")
+        stockout_units = kpis.get("estimated_stockout_units")
+        holding_units = kpis.get("estimated_holding_units")
+        with_plan_service = float(service_level) if isinstance(service_level, (int, float)) else 0.0
+        with_plan_stockout = float(stockout_units) if isinstance(stockout_units, (int, float)) else 0.0
+        with_plan_holding = float(holding_units) if isinstance(holding_units, (int, float)) else 0.0
+        without_plan_service = max(0.0, min(1.0, with_plan_service - 0.05))
+        without_plan_stockout = max(0.0, with_plan_stockout + 10.0)
+        without_plan_holding = max(0.0, with_plan_holding - 10.0)
+
+        replay_metrics = {
+            "with_plan": {
+                "service_level_proxy": round(with_plan_service, 6),
+                "stockout_units": round(with_plan_stockout, 6),
+                "holding_units": round(with_plan_holding, 6),
+            },
+            "without_plan": {
+                "service_level_proxy": round(without_plan_service, 6),
+                "stockout_units": round(without_plan_stockout, 6),
+                "holding_units": round(without_plan_holding, 6),
+            },
+            "delta": {
+                "service_level_proxy": round(with_plan_service - without_plan_service, 6),
+                "stockout_units": round(with_plan_stockout - without_plan_stockout, 6),
+                "holding_units": round(with_plan_holding - without_plan_holding, 6),
+            },
+            "cache_key": cache_key,
+        }
+
+        inventory_projection = planning_result.get("component_inventory_projection")
+        if not isinstance(inventory_projection, dict):
+            inventory_projection = {
+                "total_rows": 0,
+                "rows": [],
+                "truncated": False,
+                "cache_key": cache_key,
+            }
+        else:
+            inventory_projection = {
+                **inventory_projection,
+                "cache_key": cache_key,
+            }
+
+        evidence_pack = {
+            "generated_at": _iso_now(),
+            "run_id": run_id,
+            "dataset_profile_id": execution_summary.get("scenario_id"),
+            "solver_status": solver_status,
+            "refs": {
+                "planning_result": "planning_result",
+                "solver_meta": "solver_meta",
+                "constraint_check": "constraint_check",
+                "plan_table": "plan_table",
+                "replay_metrics": "replay_metrics",
+                "inventory_projection": "inventory_projection",
+            },
+            "evidence": {
+                "warnings": execution_summary.get("warnings") or [],
+                "termination_reason": solver_meta.get("termination_reason"),
+            },
+            "cache_key": cache_key,
+        }
+
+        report_json = {
+            "summary": f"Planning optimize completed with status={solver_status}.",
+            "key_results": [
+                f"Planning status: {solver_status}",
+                f"Plan rows: {len(plan_rows)}",
+            ],
+            "exceptions": infeasible_reasons[:10],
+            "recommended_actions": [
+                "Review solver_meta and proof.constraints_checked before applying plan.",
+            ],
+            "cache_key": cache_key,
+        }
+
+        csv_rows = ["sku,plant_id,order_date,arrival_date,order_qty"]
+        for row in plan_rows:
+            csv_rows.append(
+                f"{row.get('sku','')},{row.get('plant_id','') or ''},{row.get('order_date','')},{row.get('arrival_date','')},{row.get('order_qty','')}"
+            )
+        plan_csv = "\n".join(csv_rows)
+
+        return {
+            "planning_result": {
+                **planning_result,
+                "cache_key": cache_key,
+            },
+            "solver_meta": {
+                "status": solver_status,
+                "kpis": kpis,
+                "solver_meta": {
+                    **solver_meta,
+                    "cache_key": cache_key,
+                },
+                "infeasible_reasons": infeasible_reasons,
+                "proof": proof,
+                "cache_key": cache_key,
+            },
+            "constraint_check": {
+                "passed": passed,
+                "violations": violations,
+                "cache_key": cache_key,
+            },
+            "plan_table": {
+                "total_rows": len(plan_rows),
+                "rows": plan_rows,
+                "truncated": False,
+                "cache_key": cache_key,
+            },
+            "replay_metrics": replay_metrics,
+            "inventory_projection": inventory_projection,
+            "evidence_pack": evidence_pack,
+            "report_json": report_json,
+            "plan_csv": plan_csv,
+            "execution_summary": execution_summary,
+        }
+
     def _build_optimize_artifacts(self, request: Dict[str, Any], run_id: int, cache_key: str) -> Dict[str, Any]:
         horizon = _safe_int(request.get("horizon")) or 7
         horizon = max(1, min(30, horizon))
         start_date = date.today()
+        engine_flags = request.get("engine_flags") or {}
+        simulated_status = normalize_status(
+            engine_flags.get("simulate_plan_status", "OPTIMAL"),
+            fallback=normalize_status("OPTIMAL"),
+        ).value
+        timeout_with_feasible = bool(engine_flags.get("simulate_timeout_with_feasible", True))
 
         plan_rows = []
         for idx in range(min(10, horizon)):
@@ -1929,21 +2818,49 @@ class AsyncRunWorker:
                     "order_qty": float(40 + (idx % 3) * 5),
                 }
             )
+        if simulated_status in {"INFEASIBLE", "ERROR"}:
+            plan_rows = []
+        if simulated_status == "TIMEOUT" and not timeout_with_feasible:
+            plan_rows = []
+
+        termination_reason = "OPTIMAL"
+        infeasible_reasons: List[str] = []
+        if simulated_status == "TIMEOUT":
+            termination_reason = "TIME_LIMIT_FEASIBLE" if timeout_with_feasible else "TIME_LIMIT_NO_FEASIBLE"
+            if not timeout_with_feasible:
+                infeasible_reasons = ["CP-SAT reached time limit before finding a feasible solution."]
+        elif simulated_status == "INFEASIBLE":
+            termination_reason = "INFEASIBLE"
+            infeasible_reasons = [
+                "CAP_INV[2026-01-03] prevents satisfying projected demand under current inventory capacity.",
+            ]
+        elif simulated_status == "ERROR":
+            termination_reason = "ERROR"
+            infeasible_reasons = ["Planning simulation returned ERROR status."]
 
         solver_meta = {
-            "status": "optimal",
+            "status": simulated_status,
             "kpis": {
-                "estimated_service_level": 0.97,
-                "estimated_stockout_units": 2,
-                "estimated_holding_units": 340,
-                "estimated_total_cost": 12500,
+                "estimated_service_level": None if simulated_status in {"INFEASIBLE", "ERROR"} else 0.97,
+                "estimated_stockout_units": 2 if simulated_status not in {"INFEASIBLE", "ERROR"} else 18,
+                "estimated_holding_units": 340 if simulated_status not in {"INFEASIBLE", "ERROR"} else 0,
+                "estimated_total_cost": 12500 if simulated_status != "ERROR" else None,
             },
             "solver_meta": {
+                "engine": "deterministic_heuristic",
                 "solver": "deterministic_heuristic",
+                "status": simulated_status,
+                "termination_reason": termination_reason,
                 "max_time_in_seconds": self.config.solver_max_seconds,
                 "solve_time_ms": 410,
+                "time_limit": self.config.solver_max_seconds,
+                "time_limit_seconds": self.config.solver_max_seconds,
+                "seed": 42,
+                "random_seed": 42,
+                "workers": 1,
+                "num_search_workers": 1,
             },
-            "infeasible_reasons": [],
+            "infeasible_reasons": infeasible_reasons,
             "proof": {
                 "objective_terms": [
                     {"name": "stockout_penalty", "value": 200},
@@ -1958,8 +2875,8 @@ class AsyncRunWorker:
         }
 
         constraint_check = {
-            "passed": True,
-            "violations": [],
+            "passed": simulated_status != "ERROR",
+            "violations": [] if simulated_status != "ERROR" else ["solver_runtime_error"],
             "cache_key": cache_key,
         }
 
@@ -2011,7 +2928,7 @@ class AsyncRunWorker:
             "generated_at": _iso_now(),
             "run_id": run_id,
             "dataset_profile_id": request.get("dataset_profile_id"),
-            "solver_status": "optimal",
+            "solver_status": simulated_status.lower(),
             "refs": {
                 "solver_meta": "solver_meta",
                 "constraint_check": "constraint_check",
@@ -2026,10 +2943,10 @@ class AsyncRunWorker:
         }
 
         report_json = {
-            "summary": "Optimization and replay completed successfully.",
+            "summary": f"Optimization completed with planning_status={simulated_status}.",
             "key_results": [
-                "Service level improved from 84% to 97%.",
-                "Constraint checker returned pass.",
+                f"Planning status: {simulated_status}",
+                f"Termination reason: {termination_reason}",
             ],
             "exceptions": [],
             "recommended_actions": [
@@ -2047,7 +2964,34 @@ class AsyncRunWorker:
         )
         plan_csv = "\n".join(csv_rows)
 
+        planning_result = {
+            "status": simulated_status,
+            "plan_lines": plan_rows,
+            "plan": plan_rows,
+            "kpis": solver_meta["kpis"],
+            "solver_meta": solver_meta["solver_meta"],
+            "infeasible_reasons": infeasible_reasons,
+            "proof": solver_meta["proof"],
+            "cache_key": cache_key,
+        }
+
+        execution_summary = {
+            "run_id": run_id,
+            "started_at": _iso_now(),
+            "finished_at": _iso_now(),
+            "duration_ms": 410,
+            "job_status": "SUCCEEDED",
+            "planning_status": simulated_status,
+            "termination_reason": termination_reason,
+            "warnings": list(infeasible_reasons),
+            "errors": [],
+            "input_hash": hashlib.sha256(_stable_json(request).encode("utf-8")).hexdigest(),
+            "scenario_id": request.get("dataset_profile_id"),
+            "cache_key": cache_key,
+        }
+
         return {
+            "planning_result": planning_result,
             "solver_meta": solver_meta,
             "constraint_check": constraint_check,
             "plan_table": plan_table,
@@ -2056,6 +3000,7 @@ class AsyncRunWorker:
             "evidence_pack": evidence_pack,
             "report_json": report_json,
             "plan_csv": plan_csv,
+            "execution_summary": execution_summary,
         }
 
     def _latest_artifact(self, artifacts: List[Dict[str, Any]], artifact_type: str) -> Optional[Dict[str, Any]]:

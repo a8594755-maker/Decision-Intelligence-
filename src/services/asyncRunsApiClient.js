@@ -1,9 +1,25 @@
 const ML_API_BASE = import.meta.env.VITE_ML_API_URL || '';
+const INVALID_BASE_URL_VALUES = new Set(['null', 'undefined']);
+const CONNECTIVITY_ERROR_MARKERS = [
+  'failed to fetch',
+  'networkerror',
+  'network request failed',
+  'cors',
+  'timeout'
+];
 
 function normalizeBaseUrl(url) {
   const raw = String(url || '').trim();
   if (!raw) return '';
+  if (INVALID_BASE_URL_VALUES.has(raw.toLowerCase())) return '';
   return raw.endsWith('/') ? raw.slice(0, -1) : raw;
+}
+
+export function isAsyncRunsConnectivityError(error) {
+  const message = String(error?.message || '').toLowerCase();
+  if (!message) return false;
+  if (message.includes('unable to reach async run api')) return true;
+  return CONNECTIVITY_ERROR_MARKERS.some((marker) => message.includes(marker));
 }
 
 function withTimeout(promise, timeoutMs) {
@@ -20,14 +36,30 @@ async function requestJson(path, method = 'GET', payload = null, timeoutMs = 150
     throw new Error('VITE_ML_API_URL is not configured');
   }
 
-  const response = await withTimeout(
-    fetch(`${baseUrl}${path}`, {
-      method,
-      headers: { 'Content-Type': 'application/json' },
-      body: payload === null ? undefined : JSON.stringify(payload)
-    }),
-    timeoutMs
-  );
+  const requestUrl = `${baseUrl}${path}`;
+  let response;
+  try {
+    response = await withTimeout(
+      fetch(requestUrl, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: payload === null ? undefined : JSON.stringify(payload)
+      }),
+      timeoutMs
+    );
+  } catch (error) {
+    if (isAsyncRunsConnectivityError(error)) {
+      const reason = String(error?.message || 'network request failed');
+      const wrapped = new Error(
+        `Unable to reach Async Run API (${requestUrl}). ${reason}. ` +
+        'Ensure ML API is running and ALLOWED_ORIGINS includes this frontend origin.'
+      );
+      wrapped.cause = error;
+      throw wrapped;
+    }
+    if (error instanceof Error) throw error;
+    throw new Error(String(error || 'Unknown async run API error'));
+  }
 
   const text = await response.text().catch(() => '');
   let parsed;

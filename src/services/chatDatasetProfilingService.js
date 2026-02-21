@@ -249,6 +249,46 @@ export async function prepareChatUploadFromFile(file) {
   };
 }
 
+/**
+ * Parse multiple chat-uploaded files and merge into a single combined result.
+ * Sheet names are prefixed with filename when multiple files to avoid collisions.
+ * @param {File[]} files
+ */
+export async function prepareChatUploadFromFiles(files) {
+  if (!Array.isArray(files) || files.length === 0) {
+    throw new Error('No files selected');
+  }
+  if (files.length === 1) return prepareChatUploadFromFile(files[0]);
+
+  const totalSize = files.reduce((sum, f) => sum + (Number(f.size) || 0), 0);
+  if (totalSize > MAX_UPLOAD_BYTES) {
+    throw new Error(`Total file size (${Math.round(totalSize / 1024 / 1024)}MB) exceeds 50MB limit.`);
+  }
+
+  const results = await Promise.all(files.map((f) => prepareChatUploadFromFile(f)));
+
+  const prefixSheet = (entry, fileName) => ({
+    ...entry,
+    sheet_name: `${fileName}::${entry.sheet_name}`
+  });
+
+  return {
+    sheetsRaw: results.flatMap((r, i) =>
+      r.sheetsRaw.map((s) => prefixSheet(s, files[i].name))
+    ),
+    mappingPlans: results.flatMap((r, i) =>
+      r.mappingPlans.map((p) => prefixSheet(p, files[i].name))
+    ),
+    rawRowsForStorage: results.flatMap((r, i) =>
+      r.rawRowsForStorage.map((row) => ({
+        ...row,
+        __sheet_name: `${files[i].name}::${row.__sheet_name || 'Sheet1'}`
+      }))
+    ),
+    blockingQuestions: [...new Set(results.flatMap((r) => r.blockingQuestions))]
+  };
+}
+
 export async function buildDatasetArtifactsFromFile(file) {
   assertUploadAllowed(file);
 

@@ -1,0 +1,54 @@
+{
+  "contract_version": "1.0",
+  "dataset_profile_id": 105,
+  "planning_horizon_days": 14,
+  "demand_forecast": {
+    "granularity": "daily",
+    "series": [
+      {"sku": "FG-1", "plant_id": "P1", "date": "2026-05-01", "p50": 10},
+      {"sku": "FG-1", "plant_id": "P1", "date": "2026-05-08", "p50": 10}
+    ]
+  },
+  "inventory": [
+    {"sku": "FG-1", "plant_id": "P1", "as_of_date": "2026-04-30", "on_hand": 0, "safety_stock": 0, "lead_time_days": 0},
+    {"sku": "RM-1", "plant_id": "P1", "as_of_date": "2026-04-30", "on_hand": 0, "safety_stock": 0, "lead_time_days": 30}
+  ],
+  "open_pos": [],
+  "constraints": {
+    "moq": [],
+    "pack_size": [],
+    "budget_cap": 1000,
+    "max_order_qty": [],
+    "unit_costs": []
+  },
+  "shared_constraints": {
+    "budget_cap": 1000,
+    "production_capacity_per_period": 100,
+    "inventory_capacity_per_period": 100
+  },
+  "objective": {
+    "optimize_for": "balanced",
+    "stockout_penalty": 5,
+    "holding_cost": 0.1,
+    "service_level_target": null
+  },
+  "solver": {
+    "time_limit_seconds": 5,
+    "seed": 0,
+    "workers": 1,
+    "deterministic_mode": true
+  },
+  "multi_echelon": {
+    "mode": "bom_v0",
+    "lot_sizing_mode": "moq_pack",
+    "max_bom_depth": 10,
+    "bom_explosion_used": true,
+    "bom_explosion_reused": false,
+    "production_capacity_per_period": 100,
+    "inventory_capacity_per_period": 100
+  },
+  "bom_usage": [
+    {"fg_sku": "FG-1", "component_sku": "RM-1", "plant_id": "P1", "usage_qty": 2, "level": 1, "path_count": 1}
+  ],
+  "items": []
+}

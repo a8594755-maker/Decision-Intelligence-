@@ -22,6 +22,43 @@ const ARTIFACT_SIZE_THRESHOLD = 200 * 1024;
 const nowIso = () => new Date().toISOString();
 
 // ---------------------------------------------------------------------------
+// Cooldown & dedupe — mirrors Python retrain_triggers pattern
+// ---------------------------------------------------------------------------
+
+/** Default cooldown: suppress re-trigger within this window (ms) */
+const NEGOTIATION_COOLDOWN_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+/**
+ * In-memory store of recent negotiation trigger events.
+ * Key = `${planRunId}::${trigger}`, value = ISO timestamp.
+ * Cleared on process restart (intentional — persistence via artifacts).
+ */
+const _recentTriggers = new Map();
+
+/**
+ * Returns true if this (planRunId, trigger) pair is within the cooldown window.
+ */
+function isCooldownActive(planRunId, trigger, cooldownMs = NEGOTIATION_COOLDOWN_MS) {
+  const key = `${planRunId}::${trigger}`;
+  const lastTs = _recentTriggers.get(key);
+  if (!lastTs) return false;
+  return Date.now() - new Date(lastTs).getTime() < cooldownMs;
+}
+
+/**
+ * Record that a negotiation was triggered for this (planRunId, trigger).
+ */
+function recordTriggerEvent(planRunId, trigger) {
+  const key = `${planRunId}::${trigger}`;
+  _recentTriggers.set(key, nowIso());
+}
+
+/** Exported for testing */
+export function _resetCooldownState() {
+  _recentTriggers.clear();
+}
+
+// ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
 
@@ -125,6 +162,24 @@ export async function runNegotiation({
   if (!userId) throw new Error('userId is required');
   if (!planRunId) throw new Error('planRunId is required');
 
+  // Feature flag: auto-rerun gated by env var (default OFF)
+  const autoRerunEnabled =
+    typeof import.meta?.env?.VITE_DI_ENABLE_AUTO_RERUN === 'string'
+      ? import.meta.env.VITE_DI_ENABLE_AUTO_RERUN === 'true'
+      : typeof process !== 'undefined' && process.env?.DI_ENABLE_AUTO_RERUN === 'true';
+
+  if (!autoRerunEnabled) {
+    return {
+      triggered: false,
+      trigger: null,
+      negotiation_options: null,
+      negotiation_evaluation: null,
+      negotiation_report: null,
+      artifact_refs: {},
+      suppressed_reason: 'feature_flag_off'
+    };
+  }
+
   const runId = Number(planRunId);
   const artifactRefs = {};
 
@@ -163,6 +218,19 @@ export async function runNegotiation({
       negotiation_evaluation: null,
       negotiation_report: null,
       artifact_refs: {}
+    };
+  }
+
+  // Cooldown guard: suppress re-trigger within the cooldown window
+  if (isCooldownActive(runId, trigger)) {
+    return {
+      triggered: false,
+      trigger,
+      negotiation_options: null,
+      negotiation_evaluation: null,
+      negotiation_report: null,
+      artifact_refs: {},
+      suppressed_reason: 'cooldown'
     };
   }
 
@@ -325,6 +393,9 @@ export async function runNegotiation({
   );
   artifactRefs.negotiation_report = reportSaved.ref;
 
+  // Record trigger for cooldown/dedupe
+  recordTriggerEvent(runId, trigger);
+
   return {
     triggered: true,
     trigger,
@@ -374,5 +445,6 @@ export async function loadNegotiationResults(planRunId) {
 export default {
   runNegotiation,
   loadNegotiationResults,
-  checkNegotiationTrigger
+  checkNegotiationTrigger,
+  _resetCooldownState
 };

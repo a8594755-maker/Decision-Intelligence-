@@ -1,0 +1,69 @@
+{
+  "id": "infeasible_capacity",
+  "description": "Budget cap is too low, so backlog remains and status must be INFEASIBLE.",
+  "engines": ["heuristic", "ortools"],
+  "request": {
+    "dataset_profile_id": 103,
+    "planning_horizon_days": 3,
+    "demand_forecast": {
+      "granularity": "daily",
+      "series": [
+        { "sku": "SKU-I", "plant_id": "P1", "date": "2026-01-01", "p50": 10.0, "p90": null },
+        { "sku": "SKU-I", "plant_id": "P1", "date": "2026-01-02", "p50": 10.0, "p90": null },
+        { "sku": "SKU-I", "plant_id": "P1", "date": "2026-01-03", "p50": 10.0, "p90": null }
+      ]
+    },
+    "inventory": [
+      {
+        "sku": "SKU-I",
+        "plant_id": "P1",
+        "as_of_date": "2025-12-31",
+        "on_hand": 0.0,
+        "safety_stock": 0.0,
+        "lead_time_days": 0.0
+      }
+    ],
+    "open_pos": [],
+    "constraints": {
+      "moq": [],
+      "pack_size": [],
+      "max_order_qty": [],
+      "budget_cap": 5.0,
+      "unit_costs": []
+    },
+    "objective": {
+      "optimize_for": "balanced",
+      "stockout_penalty": 50.0,
+      "holding_cost": 0.0,
+      "service_level_target": 1.0
+    },
+    "multi_echelon": {
+      "mode": "off"
+    },
+    "bom_usage": [],
+    "settings": {
+      "solver": {
+        "deterministic_mode": true,
+        "random_seed": 0,
+        "num_search_workers": 1,
+        "time_limit_seconds": 5.0
+      }
+    }
+  },
+  "expectations": {
+    "status_any": ["INFEASIBLE"],
+    "kpi_allow_null": true,
+    "kpi_bounds": {
+      "estimated_stockout_units": { "min": 1.0 }
+    },
+    "reasons_any_substrings": [
+      "budget",
+      "backlog",
+      "stockout",
+      "no replenishment"
+    ],
+    "proof_constraints_required": [
+      "budget_cap"
+    ]
+  }
+}

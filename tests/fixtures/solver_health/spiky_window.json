@@ -1,0 +1,122 @@
+{
+  "rows": [
+    {
+      "job_id": "s1",
+      "run_id": 101,
+      "job_status": "succeeded",
+      "created_at": "2026-02-20T10:00:00+00:00",
+      "started_at": "2026-02-20T10:00:02+00:00",
+      "finished_at": "2026-02-20T10:00:06+00:00",
+      "planning_status": "OPTIMAL",
+      "termination_reason": "OPTIMAL",
+      "solve_time_ms": 80
+    },
+    {
+      "job_id": "s2",
+      "run_id": 102,
+      "job_status": "succeeded",
+      "created_at": "2026-02-20T11:00:00+00:00",
+      "started_at": "2026-02-20T11:00:01+00:00",
+      "finished_at": "2026-02-20T11:00:06+00:00",
+      "planning_status": "FEASIBLE",
+      "termination_reason": "OPTIMAL",
+      "solve_time_ms": 100
+    },
+    {
+      "job_id": "s3",
+      "run_id": 103,
+      "job_status": "succeeded",
+      "created_at": "2026-02-20T12:00:00+00:00",
+      "started_at": "2026-02-20T12:00:01+00:00",
+      "finished_at": "2026-02-20T12:00:07+00:00",
+      "planning_status": "OPTIMAL",
+      "termination_reason": "OPTIMAL",
+      "solve_time_ms": 120
+    },
+    {
+      "job_id": "s4",
+      "run_id": 104,
+      "job_status": "succeeded",
+      "created_at": "2026-02-20T13:00:00+00:00",
+      "started_at": "2026-02-20T13:00:02+00:00",
+      "finished_at": "2026-02-20T13:00:08+00:00",
+      "planning_status": "OPTIMAL",
+      "termination_reason": "OPTIMAL",
+      "solve_time_ms": 140
+    },
+    {
+      "job_id": "s5",
+      "run_id": 105,
+      "job_status": "succeeded",
+      "created_at": "2026-02-20T14:00:00+00:00",
+      "started_at": "2026-02-20T14:00:05+00:00",
+      "finished_at": "2026-02-20T14:00:10+00:00",
+      "planning_status": "TIMEOUT",
+      "termination_reason": "FORCED_TIMEOUT",
+      "solve_time_ms": 160
+    },
+    {
+      "job_id": "s6",
+      "run_id": 106,
+      "job_status": "succeeded",
+      "created_at": "2026-02-20T15:00:00+00:00",
+      "started_at": "2026-02-20T15:00:06+00:00",
+      "finished_at": "2026-02-20T15:00:12+00:00",
+      "planning_status": "OPTIMAL",
+      "termination_reason": "TIME_LIMIT_FEASIBLE",
+      "solve_time_ms": 180
+    },
+    {
+      "job_id": "s7",
+      "run_id": 107,
+      "job_status": "succeeded",
+      "created_at": "2026-02-20T16:00:00+00:00",
+      "started_at": "2026-02-20T16:00:06+00:00",
+      "finished_at": "2026-02-20T16:00:12+00:00",
+      "planning_status": "TIMEOUT",
+      "termination_reason": "TIME_LIMIT_NO_FEASIBLE",
+      "solve_time_ms": 200
+    },
+    {
+      "job_id": "s8",
+      "run_id": 108,
+      "job_status": "succeeded",
+      "created_at": "2026-02-20T17:00:00+00:00",
+      "started_at": "2026-02-20T17:00:07+00:00",
+      "finished_at": "2026-02-20T17:00:13+00:00",
+      "planning_status": "FEASIBLE",
+      "termination_reason": "TIMEOUT_DETECTED",
+      "solve_time_ms": 220
+    },
+    {
+      "job_id": "s9",
+      "run_id": 109,
+      "job_status": "succeeded",
+      "created_at": "2026-02-20T18:00:00+00:00",
+      "started_at": "2026-02-20T18:00:08+00:00",
+      "finished_at": "2026-02-20T18:00:14+00:00",
+      "planning_status": "INFEASIBLE",
+      "termination_reason": "INFEASIBLE",
+      "solve_time_ms": 240
+    },
+    {
+      "job_id": "s10",
+      "run_id": 110,
+      "job_status": "succeeded",
+      "created_at": "2026-02-20T19:00:00+00:00",
+      "started_at": "2026-02-20T19:00:09+00:00",
+      "finished_at": "2026-02-20T19:00:15+00:00",
+      "planning_status": "OPTIMAL",
+      "termination_reason": "CAPACITY_INFEASIBLE",
+      "solve_time_ms": 260
+    }
+  ],
+  "queue_snapshot": {
+    "current_backlog_jobs": 12,
+    "current_running_jobs": 3,
+    "current_queue_wait_ms_p50": 120000,
+    "current_queue_wait_ms_p95": 180000,
+    "oldest_queued_job_wait_ms": 240000
+  }
+}
+

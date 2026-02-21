@@ -1,3 +1,8 @@
+import {
+  validatePlanningRequest,
+  validatePlanningResponse
+} from '../contracts/planningApiContractV1.js';
+
 const ML_API_BASE = import.meta.env.VITE_ML_API_URL || '';
 
 function normalizeBaseUrl(url) {
@@ -95,6 +100,14 @@ function inferPeriodDays(sortedDates = []) {
   return Math.max(1, deltas[Math.floor(deltas.length / 2)]);
 }
 
+function deterministicGeneratedAt(isoDates = []) {
+  if (Array.isArray(isoDates) && isoDates.length > 0) {
+    const first = String(isoDates[0] || '').slice(0, 10);
+    if (first) return `${first}T00:00:00.000Z`;
+  }
+  return '1970-01-01T00:00:00.000Z';
+}
+
 function applyLotSizing({ sku, qty, moqBySku, packBySku, maxBySku }) {
   let next = Math.max(0, toNumber(qty, 0));
   const moq = moqBySku.get(sku) || 0;
@@ -120,7 +133,7 @@ function buildComponentFallbackArtifacts({
     return {
       component_plan: [],
       component_inventory_projection: { total_rows: 0, rows: [], truncated: false },
-      bottlenecks: { generated_at: new Date().toISOString(), total_rows: 0, rows: [] }
+      bottlenecks: { generated_at: deterministicGeneratedAt([]), total_rows: 0, rows: [] }
     };
   }
 
@@ -134,7 +147,7 @@ function buildComponentFallbackArtifacts({
     return {
       component_plan: [],
       component_inventory_projection: { total_rows: 0, rows: [], truncated: false },
-      bottlenecks: { generated_at: new Date().toISOString(), total_rows: 0, rows: [] }
+      bottlenecks: { generated_at: deterministicGeneratedAt([]), total_rows: 0, rows: [] }
     };
   }
 
@@ -334,7 +347,7 @@ function buildComponentFallbackArtifacts({
       truncated: false
     },
     bottlenecks: {
-      generated_at: new Date().toISOString(),
+      generated_at: deterministicGeneratedAt(horizonDates),
       total_rows: bottlenecksRows.length,
       rows: bottlenecksRows
     }
@@ -342,8 +355,6 @@ function buildComponentFallbackArtifacts({
 }
 
 function runLocalHeuristic(payload = {}) {
-  const started = Date.now();
-
   const demandSeries = Array.isArray(payload?.demand_forecast?.series)
     ? payload.demand_forecast.series
     : [];
@@ -675,7 +686,7 @@ function runLocalHeuristic(payload = {}) {
     },
     solver_meta: {
       solver: 'heuristic',
-      solve_time_ms: Date.now() - started,
+      solve_time_ms: 0,
       objective_value: Number(estimatedTotalCost.toFixed(6)),
       gap: 0,
       multi_echelon_mode: multiEchelonMode,
@@ -724,25 +735,27 @@ export const optimizationApiClient = {
     const timeoutMs = options.timeoutMs || 20000;
     const allowFallback = options.allowFallback !== false;
     const forceLocal = options.forceLocal === true;
+    const normalizedPayload = validatePlanningRequest(payload || {});
 
     if (!forceLocal && this.isConfigured()) {
       try {
-        return await postJson('/replenishment-plan', payload, timeoutMs);
+        const remoteResult = await postJson('/replenishment-plan', normalizedPayload, timeoutMs);
+        return validatePlanningResponse(remoteResult, { defaultEngine: 'cp_sat' });
       } catch (error) {
         if (!allowFallback) {
           throw error;
         }
-        const local = runLocalHeuristic(payload);
+        const local = runLocalHeuristic(normalizedPayload);
         local.solver_meta = {
           ...(local.solver_meta || {}),
           solver: 'heuristic',
           fallback_reason: error.message
         };
-        return local;
+        return validatePlanningResponse(local, { defaultEngine: 'heuristic' });
       }
     }
 
-    return runLocalHeuristic(payload);
+    return validatePlanningResponse(runLocalHeuristic(normalizedPayload), { defaultEngine: 'heuristic' });
   }
 };
 

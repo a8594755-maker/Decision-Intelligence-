@@ -42,6 +42,8 @@ docs/
 | 10 | [UPLOAD_WORKFLOW_GUIDE.md](guides/UPLOAD_WORKFLOW_GUIDE.md) | 資料上傳完整工作流程 | 🟢 Active | 2026-02 |
 | 11 | [INGEST_RPC_QUICKSTART.md](guides/INGEST_RPC_QUICKSTART.md) | RPC 匯入快速開始 | 🟢 Active | 2026-02 |
 | 12 | [STEP1_SCHEMA_DEPLOYMENT_GUIDE.md](guides/STEP1_SCHEMA_DEPLOYMENT_GUIDE.md) | Schema 部署指南 | 🟢 Active | 2026-02 |
+| 13 | [training_pipeline.md](training_pipeline.md) | ML Training Pipeline, AutoML, Champion Selection | 🟢 Active | 2026-02 |
+| 14 | [planning_api_contract.md](planning_api_contract.md) | Planning API Contract v1.0 | 🟢 Active | 2026-02 |
 
 ---
 
@@ -116,6 +118,9 @@ docs/
 
 ### 情境 7：我想了解某功能的演進歷史
 → 搜尋 `archive/summaries/` 目錄
+
+### 情境 8：我要跑規劃器回歸測試或查 API 合約
+→ 閱讀 `planning_api_contract.md` + `phase1_runbook.md`
 
 ---
 

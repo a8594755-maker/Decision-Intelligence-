@@ -9,7 +9,7 @@ if root_dir not in sys.path:
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from ml.demand_forecasting.prophet_trainer import ProphetTrainer
 from ml.demand_forecasting.lightgbm_trainer import LightGBMTrainer
 from ml.demand_forecasting.chronos_trainer import ChronosTrainer
@@ -18,28 +18,24 @@ from ml.demand_forecasting.erp_connector import ERPConnector
 from ml.utils.supabase_rest_client import SupabaseRESTClient
 import os
 import json
+import logging
+import hashlib
 import numpy as np
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any, Tuple
 import math
 
-try:
-    from ortools.sat.python import cp_model
-    ORTOOLS_AVAILABLE = True
-except Exception:
-    cp_model = None
-    ORTOOLS_AVAILABLE = False
-
-# Solver engine selection: "heuristic" (default) or "ortools" (CP-SAT MILP v0).
-# Set environment variable DI_SOLVER_ENGINE=ortools to activate the CP-SAT solver.
-DI_SOLVER_ENGINE: str = os.getenv("DI_SOLVER_ENGINE", "heuristic").lower()
-
-if ORTOOLS_AVAILABLE:
-    from ml.api.replenishment_solver import solve_replenishment as _cp_sat_solve
-    from ml.api.replenishment_solver import solve_replenishment_multi_echelon as _cp_sat_me_solve
-else:
-    _cp_sat_solve = None      # type: ignore[assignment]
-    _cp_sat_me_solve = None   # type: ignore[assignment]
+from ml.api.planning_contract import (
+    PLANNING_API_CONTRACT_VERSION,
+    PlanningStatus,
+    build_contract_error_response,
+)
+from ml.api.forecast_contract import (
+    FORECAST_API_CONTRACT_VERSION,
+    finalize_forecast_response,
+    finalize_backtest_response,
+)
+from ml.api.solver_engines import select_solver_engine, solve_planning_contract
 
 import asyncio
 
@@ -52,6 +48,65 @@ from ml.api.async_runs import (
     PostgresAsyncRunStore,
     TERMINAL_JOB_STATUSES,
 )
+from ml.api.excel_export import excel_export_router
+from ml.api.registry_router import router as registry_router
+from ml.governance import (
+    ActorContext,
+    ApprovalError,
+    GovernanceAction,
+    GovernanceStore,
+    canonical_payload_hash,
+    ensure_role_allowed,
+    normalize_role,
+)
+from ml.monitoring.solver_health import (
+    SolverHealthThresholds,
+    collect_solver_health,
+)
+from ml.api.solver_telemetry import (
+    InMemorySolverTelemetryStore,
+    PostgresSolverTelemetryStore,
+    emit_solver_telemetry_event,
+    extract_contract_version,
+    extract_engine,
+    extract_objective,
+    extract_solve_time_ms,
+    extract_status,
+    extract_termination_reason,
+    new_telemetry_run_id,
+)
+
+logger = logging.getLogger(__name__)
+
+_governance_store: Optional[GovernanceStore] = None
+
+
+def _get_governance_store() -> GovernanceStore:
+    global _governance_store
+    if _governance_store is None:
+        _governance_store = GovernanceStore()
+    return _governance_store
+
+
+def _actor_from_request(request: Request) -> ActorContext:
+    actor_id = (
+        request.headers.get("x-actor-id")
+        or request.headers.get("x-user-id")
+        or request.headers.get("x-user")
+        or "anonymous"
+    )
+    role = normalize_role(request.headers.get("x-role"))
+    return ActorContext(actor_id=str(actor_id), role=role)
+
+
+def _require_action_role(request: Request, action: GovernanceAction) -> ActorContext:
+    actor = _actor_from_request(request)
+    try:
+        ensure_role_allowed(actor.role, action)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    return actor
+
 
 def sanitize_numpy(obj):
     """Recursively convert numpy types to native Python types for JSON serialization."""
@@ -80,7 +135,7 @@ def _parse_allowed_origins(raw_value: str) -> List[str]:
 
 
 ALLOWED_ORIGINS = _parse_allowed_origins(
-    os.getenv("ALLOWED_ORIGINS", "http://localhost:5173")
+    os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173")
 )
 
 
@@ -99,6 +154,9 @@ app.add_middleware(
     allow_methods=["GET", "POST"],
     allow_headers=["Content-Type", "Authorization"],
 )
+
+app.include_router(excel_export_router)
+app.include_router(registry_router)
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
@@ -128,6 +186,7 @@ chronos_trainer = ChronosTrainer()
 forecaster_factory = ForecasterFactory()
 supabase_client = SupabaseRESTClient()
 _async_run_service: Optional[AsyncRunService] = None
+_solver_telemetry_store: Optional[Any] = None
 
 
 def get_async_run_service() -> AsyncRunService:
@@ -136,6 +195,17 @@ def get_async_run_service() -> AsyncRunService:
         store = PostgresAsyncRunStore()
         _async_run_service = AsyncRunService(store=store, config=AsyncRunConfig.from_env())
     return _async_run_service
+
+
+def get_solver_telemetry_store() -> Any:
+    global _solver_telemetry_store
+    if _solver_telemetry_store is None:
+        try:
+            _solver_telemetry_store = PostgresSolverTelemetryStore()
+        except Exception as exc:
+            logger.info("Solver telemetry store fallback to in-memory: %s", exc)
+            _solver_telemetry_store = InMemorySolverTelemetryStore()
+    return _solver_telemetry_store
 
 class ForecastRequest(BaseModel):
     model_config = {"populate_by_name": True}
@@ -220,6 +290,74 @@ async def get_run_artifacts(run_id: int):
     }
 
 
+@app.get("/ops/solver-health")
+async def get_solver_health(
+    last: str = Query("24h,7d", description="Comma-separated lookback windows (e.g., 24h,7d)."),
+    timeout_rate_threshold: Optional[float] = Query(None, ge=0.0, le=1.0),
+    infeasible_rate_threshold: Optional[float] = Query(None, ge=0.0, le=1.0),
+    backlog_jobs_threshold: Optional[int] = Query(None, ge=0),
+    queue_wait_p95_ms_threshold: Optional[float] = Query(None, ge=0.0),
+    emit_alert_logs: bool = Query(True, description="When true, emitted alerts are also logged as ALERT events."),
+):
+    thresholds = SolverHealthThresholds.from_env().with_overrides(
+        timeout_rate=timeout_rate_threshold,
+        infeasible_rate=infeasible_rate_threshold,
+        backlog_jobs=backlog_jobs_threshold,
+        queue_wait_p95_ms=queue_wait_p95_ms_threshold,
+    )
+    try:
+        return collect_solver_health(
+            last=last,
+            thresholds=thresholds,
+            emit_alert_logs=emit_alert_logs,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/ops/solver-telemetry")
+async def get_solver_telemetry(
+    days: int = Query(7, ge=1, le=365),
+    engine: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
+    event_type: str = Query("summary", pattern="^(started|finished|summary)$"),
+    limit: int = Query(200, ge=1, le=5000),
+):
+    store = get_solver_telemetry_store()
+    end_time = datetime.now(timezone.utc)
+    start_time = end_time - timedelta(days=int(days))
+    rows = store.list_events(
+        start_time=start_time,
+        end_time=end_time,
+        engine=engine,
+        status=status,
+        event_type=event_type,
+        limit=limit,
+    )
+    metrics = store.summary_metrics(
+        start_time=start_time,
+        end_time=end_time,
+        engine=engine,
+        status=status,
+    )
+    return {
+        "window": {
+            "days": int(days),
+            "start": start_time.isoformat(),
+            "end": end_time.isoformat(),
+        },
+        "filters": {
+            "engine": engine,
+            "status": status,
+            "event_type": event_type,
+        },
+        "metrics": metrics,
+        "rows": rows,
+    }
+
+
 @app.get("/jobs/{job_id}/events")
 async def stream_job_events(
     job_id: str,
@@ -229,12 +367,32 @@ async def stream_job_events(
 
     async def event_stream():
         previous_payload = None
+        emitted_event_count = 0
+        legacy_to_contract_event = {
+            "job_started": "started",
+            "result_persisted": "persisted",
+            "job_completed": "completed",
+        }
         while True:
             try:
                 status = service.get_job_status(job_id)
             except KeyError:
                 yield "event: error\\ndata: {\"error\":\"job_not_found\"}\\n\\n"
                 break
+
+            run_events = status.events if isinstance(status.events, list) else []
+            if emitted_event_count < len(run_events):
+                for event_payload in run_events[emitted_event_count:]:
+                    event_name = str(event_payload.get("event") or "status")
+                    mapped_event = legacy_to_contract_event.get(event_name)
+                    if mapped_event:
+                        mapped_payload = dict(event_payload)
+                        mapped_payload["event"] = mapped_event
+                        mapped_json = json.dumps(mapped_payload, ensure_ascii=False)
+                        yield f"event: {mapped_event}\\ndata: {mapped_json}\\n\\n"
+                    event_json = json.dumps(event_payload, ensure_ascii=False)
+                    yield f"event: {event_name}\\ndata: {event_json}\\n\\n"
+                emitted_event_count = len(run_events)
 
             payload = status.model_dump(mode="json")
             payload_json = json.dumps(payload, ensure_ascii=False)
@@ -312,18 +470,35 @@ async def demand_forecast(request: ForecastRequest):
                         "risk_score": cached_result["prediction"].get("riskScore", 50.0)
                     },
                     "cached": True,
-                    "cacheTime": cached_result["created_at"]
+                    "cacheTime": cached_result["created_at"],
+                    "forecast_contract_version": FORECAST_API_CONTRACT_VERSION,
                 }
         
-        # 2. 执行预测（带回退机制）
-        result = forecaster_factory.predict_with_fallback(
+        # 2. PR-E: Try PROD pointer first, then PR-B champion, then fallback
+        result = forecaster_factory.predict_with_prod_pointer(
             request.materialCode,
             erp_connector if inline_history is None else None,
             request.horizonDays,
-            request.modelType or request.userPreference,
-            inline_history=inline_history
+            inline_history=inline_history,
         )
-        
+
+        if result is None:
+            result = forecaster_factory.predict_with_champion(
+                request.materialCode,
+                erp_connector if inline_history is None else None,
+                request.horizonDays,
+                inline_history=inline_history,
+            )
+
+        if result is None:
+            result = forecaster_factory.predict_with_fallback(
+                request.materialCode,
+                erp_connector if inline_history is None else None,
+                request.horizonDays,
+                request.modelType or request.userPreference,
+                inline_history=inline_history
+            )
+
         if not result["success"]:
             return {
                 "error": result["error"],
@@ -333,25 +508,62 @@ async def demand_forecast(request: ForecastRequest):
         
         # 3. 格式化响应
         prediction_data = result["prediction"]
+        point_predictions = prediction_data["predictions"]
+
+        # PR-C: Generate p10/p50/p90 via QuantileEngine
+        quantile_result = forecaster_factory.generate_quantiles_for_inference(
+            point_forecasts=point_predictions,
+            series_id=request.materialCode,
+        )
+
         forecast = {
             "model": result["model_type"].upper(),
-            "median": float(np.mean(prediction_data["predictions"])),
+            "median": float(np.mean(point_predictions)),
             "confidence_interval": [
                 float(np.mean([ci[0] for ci in prediction_data["confidence_interval"]])),
                 float(np.mean([ci[1] for ci in prediction_data["confidence_interval"]]))
             ],
             "risk_score": float(prediction_data.get("risk_score", 50.0)),
             "model_version": prediction_data.get("model_version", "unknown"),
-            "predictions": prediction_data["predictions"]  # 详细预测数据
+            "predictions": point_predictions,
+            # PR-C: probabilistic quantiles
+            "p10": quantile_result.p10,
+            "p50": quantile_result.p50,
+            "p90": quantile_result.p90,
         }
-        
+
+        # PR-C: uncertainty metadata (additive, non-breaking)
+        uncertainty_metadata = {
+            "uncertainty_method": quantile_result.uncertainty_method,
+            "calibration_scope_used": quantile_result.calibration_scope,
+            "calibration_passed": True,  # default; updated when gates are evaluated
+            "monotonicity_fixes_applied": quantile_result.monotonicity_fixes,
+        }
+
+        base_metadata = result.get("metadata", {})
+        base_metadata["uncertainty"] = uncertainty_metadata
+
+        # PR-E: Add registry state metadata (additive, non-breaking)
+        if "registry_state" in result:
+            base_metadata["registry_state"] = result["registry_state"]
+        else:
+            inference_mode = base_metadata.get("inference_mode", "")
+            if "champion" in inference_mode:
+                base_metadata["registry_state"] = {"source": "champion"}
+            else:
+                base_metadata["registry_state"] = {"source": "fallback"}
+        if "model_version_id" in result:
+            base_metadata["model_version_id"] = result["model_version_id"]
+        if "promotion_note" in result:
+            base_metadata["promotion_note"] = result["promotion_note"]
+
         response = {
             "materialCode": request.materialCode,
             "forecast": forecast,
-            "metadata": result.get("metadata", {}),
+            "metadata": base_metadata,
             "cached": False
         }
-        
+
         # 4. 添加模型比较信息
         if request.includeComparison and "comparison" in result:
             comparison = result["comparison"]
@@ -386,8 +598,16 @@ async def demand_forecast(request: ForecastRequest):
                 f"models/{result['model_type']}/{request.materialCode}/v{forecast['model_version']}.pkl"
             )
         
+        # 8. Wrap in forecast contract v1.0 envelope
+        response["_prediction_data"] = prediction_data
+        response = finalize_forecast_response(
+            response,
+            material_code=request.materialCode,
+            horizon=request.horizonDays,
+        )
+
         return sanitize_numpy(response)
-        
+
     except Exception as e:
         return {"error": str(e)}
 
@@ -548,23 +768,27 @@ async def backtest(request: ForecastRequest):
     """
     回測驗證端點：盲測模式驗證模型準確度
     保留最後 N 天數據不給模型看，計算預測與實際的 MAPE
+    PR-C: Now also returns calibration metrics (coverage, pinball, bias) and quality gates.
     """
     try:
         if not request.history or len(request.history) < 17:
             return {"error": "回測需要至少 17 個數據點 (10 訓練 + 7 測試)"}
-        
+
         test_days = request.horizonDays if request.horizonDays <= 14 else 7
-        
-        # 使用 ForecasterFactory 進行回測
-        result = forecaster_factory.backtest(
+
+        # PR-C: Use enhanced backtest with calibration metrics
+        result = forecaster_factory.backtest_with_calibration(
             sku=request.materialCode,
             full_history=request.history,
             test_days=test_days,
-            models=None  # 測試所有可用模型
+            models=None,
         )
-        
-        return result
-        
+
+        # Wrap in forecast contract v1.0 envelope
+        result = finalize_backtest_response(result)
+
+        return sanitize_numpy(result)
+
     except Exception as e:
         return {"error": str(e)}
 
@@ -619,6 +843,11 @@ class BomUsagePoint(BaseModel):
     path_count: Optional[int] = None
 
 
+class PeriodCapacityPoint(BaseModel):
+    date: str
+    capacity: float
+
+
 class MultiEchelonInput(BaseModel):
     mode: str = "off"
     max_bom_depth: Optional[int] = None
@@ -627,8 +856,8 @@ class MultiEchelonInput(BaseModel):
     mapping_rules: Dict[str, Any] = Field(default_factory=dict)
     bom_explosion_used: Optional[bool] = None
     bom_explosion_reused: Optional[bool] = None
-    production_capacity_per_period: Optional[float] = None
-    inventory_capacity_per_period: Optional[float] = None
+    production_capacity_per_period: Optional[float | List[PeriodCapacityPoint]] = None
+    inventory_capacity_per_period: Optional[float | List[PeriodCapacityPoint]] = None
     component_stockout_penalty: Optional[float] = None
 
 
@@ -638,6 +867,54 @@ class ConstraintsInput(BaseModel):
     budget_cap: Optional[float] = None
     max_order_qty: List[SkuQtyConstraint] = Field(default_factory=list)
     unit_costs: List[SkuUnitCostConstraint] = Field(default_factory=list)
+    inventory_capacity_per_period: Optional[float | List[PeriodCapacityPoint]] = None
+    production_capacity_per_period: Optional[float | List[PeriodCapacityPoint]] = None
+
+
+class SharedConstraintsInput(BaseModel):
+    budget_cap: Optional[float] = None
+    budget_mode: Optional[str] = None
+    production_capacity_per_period: Optional[float | List[PeriodCapacityPoint] | Dict[str, float]] = None
+    inventory_capacity_per_period: Optional[float | List[PeriodCapacityPoint] | Dict[str, float]] = None
+    priority_weights: Dict[str, float] = Field(default_factory=dict)
+
+
+class ItemDemandPoint(BaseModel):
+    date: str
+    p50: float
+    p90: Optional[float] = None
+
+
+class PlanningItemInput(BaseModel):
+    sku: str
+    plant_id: Optional[str] = None
+    priority_weight: Optional[float] = None
+    service_level_weight: Optional[float] = None
+    on_hand: Optional[float] = None
+    safety_stock: Optional[float] = None
+    lead_time_days: Optional[float] = None
+    as_of_date: Optional[str] = None
+    unit_cost: Optional[float] = None
+    moq: Optional[float] = None
+    pack_size: Optional[float] = None
+    pack_qty: Optional[float] = None
+    max_order_qty: Optional[float] = None
+    constraints: Optional[Dict[str, Any]] = None
+    costs: Optional[Dict[str, Any]] = None
+    demand: List[ItemDemandPoint] = Field(default_factory=list)
+    demand_series: List[ItemDemandPoint] = Field(default_factory=list)
+
+
+class SolverSettingsInput(BaseModel):
+    time_limit: Optional[float] = None
+    time_limit_seconds: Optional[float] = None
+    seed: Optional[int] = None
+    random_seed: Optional[int] = None
+    workers: Optional[int] = None
+    num_search_workers: Optional[int] = None
+    deterministic_mode: Optional[bool] = None
+    force_timeout: Optional[bool] = None
+    stop_after_first_solution: Optional[bool] = None
 
 
 class ObjectiveInput(BaseModel):
@@ -649,14 +926,19 @@ class ObjectiveInput(BaseModel):
 
 class ReplenishmentPlanRequest(BaseModel):
     model_config = {"populate_by_name": True}
+    contract_version: str = PLANNING_API_CONTRACT_VERSION
     dataset_profile_id: int
     planning_horizon_days: int = 30
     demand_forecast: DemandForecastInput
     inventory: List[InventoryPoint] = Field(default_factory=list)
     open_pos: List[OpenPOPoint] = Field(default_factory=list)
     constraints: ConstraintsInput = Field(default_factory=ConstraintsInput)
+    shared_constraints: SharedConstraintsInput = Field(default_factory=SharedConstraintsInput)
     objective: ObjectiveInput = Field(default_factory=ObjectiveInput)
+    solver: SolverSettingsInput = Field(default_factory=SolverSettingsInput)
     multi_echelon: MultiEchelonInput = Field(default_factory=MultiEchelonInput)
+    items: List[PlanningItemInput] = Field(default_factory=list)
+    diagnose_mode: bool = False
     bom_usage: List[BomUsagePoint] = Field(default_factory=list)
     bom_explosion: Optional[Dict[str, Any]] = None
     async_mode: bool = Field(default=False, alias="async")
@@ -668,6 +950,23 @@ class ReplenishmentPlanRequest(BaseModel):
     settings: Dict[str, Any] = Field(default_factory=dict)
     max_attempts: Optional[int] = None
     workload: Dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("contract_version")
+    @classmethod
+    def _validate_contract_version(cls, value: str) -> str:
+        text = str(value or "").strip() or PLANNING_API_CONTRACT_VERSION
+        if not text.startswith("1."):
+            raise ValueError(
+                f"Unsupported planning contract version '{text}'. Expected 1.x."
+            )
+        return text
+
+
+class PlanCommitRequest(BaseModel):
+    entity_id: str
+    request_payload: Dict[str, Any] = Field(default_factory=dict)
+    approval_id: str
+    note: str = ""
 
 
 def _parse_iso_day(value: str):
@@ -763,7 +1062,7 @@ def _format_plan_row(sku: str, plant_id: str, order_date, arrival_date, order_qt
 
 
 def _deterministic_replenishment_plan(payload: ReplenishmentPlanRequest) -> Dict[str, Any]:
-    t0 = datetime.utcnow()
+    t0 = datetime.now(timezone.utc)
     infeasible_reasons: List[str] = []
 
     # 1) Group forecast demand by SKU/plant with stable ordering.
@@ -796,7 +1095,7 @@ def _deterministic_replenishment_plan(payload: ReplenishmentPlanRequest) -> Dict
             },
             "solver_meta": {
                 "solver": "heuristic",
-                "solve_time_ms": int((datetime.utcnow() - t0).total_seconds() * 1000),
+                "solve_time_ms": int((datetime.now(timezone.utc) - t0).total_seconds() * 1000),
                 "objective_value": None,
                 "gap": None
             },
@@ -1028,7 +1327,7 @@ def _deterministic_replenishment_plan(payload: ReplenishmentPlanRequest) -> Dict
     else:
         status = "feasible"
 
-    solve_time_ms = int((datetime.utcnow() - t0).total_seconds() * 1000)
+    solve_time_ms = int((datetime.now(timezone.utc) - t0).total_seconds() * 1000)
 
     response = {
         "status": status,
@@ -1064,23 +1363,40 @@ def _deterministic_replenishment_plan(payload: ReplenishmentPlanRequest) -> Dict
         })
     return response
 
-
-def _cp_sat_multi_echelon_plan(payload: ReplenishmentPlanRequest) -> Dict[str, Any]:
-    """Thin wrapper — logic lives in replenishment_solver.solve_replenishment_multi_echelon."""
-    return sanitize_numpy(_cp_sat_me_solve(payload))
-
-
 @app.post("/replenishment-plan")
 async def replenishment_plan(request: ReplenishmentPlanRequest):
     """
     Deterministic replenishment planner (heuristic baseline).
     Returns a stable response schema for chat workflow integration.
     """
+    telemetry_run_id: Optional[str] = None
+    planning_payload: Dict[str, Any] = {}
     try:
         if _request_async_enabled(request):
             if not request.user_id:
                 raise HTTPException(status_code=400, detail="user_id is required when async mode is enabled")
             dataset_fingerprint = request.dataset_fingerprint or f"profile:{request.dataset_profile_id}"
+            planning_request_payload = request.model_dump(mode="json", by_alias=True)
+            planning_request_payload["async"] = False
+            planning_request_payload["async_mode"] = False
+            merged_settings = dict(request.settings or {})
+            merged_settings.setdefault("solver", request.objective.model_dump(mode="json"))
+            merged_settings.setdefault("constraints", request.constraints.model_dump(mode="json"))
+            merged_settings["planning_request"] = planning_request_payload
+            item_skus = {
+                str(item.sku)
+                for item in (request.items or [])
+                if getattr(item, "sku", None)
+            }
+            demand_skus = {
+                str(point.sku)
+                for point in (request.demand_forecast.series or [])
+                if point.sku
+            }
+            forecast_series_count = len(request.demand_forecast.series or []) + sum(
+                len(item.demand_series or [])
+                for item in (request.items or [])
+            )
             service = get_async_run_service()
             submit_response = service.submit(
                 AsyncRunSubmitRequest(
@@ -1089,81 +1405,182 @@ async def replenishment_plan(request: ReplenishmentPlanRequest):
                     dataset_fingerprint=dataset_fingerprint,
                     contract_template_id=request.contract_template_id,
                     workflow=request.workflow or "workflow_A_replenishment",
-                    engine_flags=request.engine_flags or {},
-                    settings=request.settings or {
-                        "solver": request.objective.model_dump(mode="json"),
-                        "constraints": request.constraints.model_dump(mode="json"),
+                    engine_flags={
+                        **(request.engine_flags or {}),
+                        "planning_async": True,
                     },
+                    settings=merged_settings,
                     horizon=request.planning_horizon_days,
                     granularity=request.demand_forecast.granularity,
                     max_attempts=request.max_attempts,
                     workload={
-                        "forecast_series": len(request.demand_forecast.series or []),
-                        "skus": len({str(point.sku) for point in (request.demand_forecast.series or []) if point.sku}),
+                        "forecast_series": forecast_series_count,
+                        "skus": len(demand_skus | item_skus),
                         **(request.workload or {}),
                     },
                 ),
             )
             return submit_response.model_dump(mode="json")
 
-        requested_mode = str(request.multi_echelon.mode or "").strip().lower()
-        env_multi_echelon = _parse_env_bool("DI_MULTI_ECHELON", False)
-        use_multi_echelon = (requested_mode == "bom_v0") or (requested_mode in {"", "off"} and env_multi_echelon)
+        planning_payload = request.model_dump(mode="json", by_alias=True)
+        request_payload_hash = canonical_payload_hash(planning_payload)
+        telemetry_store = get_solver_telemetry_store()
+        telemetry_run_id = new_telemetry_run_id("sync")
+        engine_hint = select_solver_engine(request).selected_engine
+        objective_hint = extract_objective(planning_payload) or str(request.objective.optimize_for or "balanced")
+        contract_version = extract_contract_version(planning_payload, fallback=request.contract_version)
 
-        if use_multi_echelon and ORTOOLS_AVAILABLE:
-            result = _cp_sat_multi_echelon_plan(request)
-        elif use_multi_echelon:
-            result = _deterministic_replenishment_plan(request)
-            result["component_plan"] = []
-            result["component_inventory_projection"] = {"total_rows": 0, "rows": [], "truncated": False}
-            result["bottlenecks"] = {"generated_at": datetime.utcnow().isoformat(), "items": [], "rows": [], "total_rows": 0}
-            result["solver_meta"] = {
-                **(result.get("solver_meta") or {}),
-                "solver": "heuristic",
-                "multi_echelon_mode": "bom_v0",
-                "max_bom_depth": request.multi_echelon.max_bom_depth if request.multi_echelon.max_bom_depth is not None else 50,
-                "bom_explosion_used": bool(request.multi_echelon.bom_explosion_used),
-                "bom_explosion_reused": bool(request.multi_echelon.bom_explosion_reused),
-                "fallback_reason": "OR-Tools is unavailable; multi-echelon fallback ran with single-echelon heuristic."
+        emit_solver_telemetry_event(
+            telemetry_store,
+            telemetry_run_id=telemetry_run_id,
+            event_type="started",
+            source="sync",
+            planning_payload=planning_payload,
+            status=None,
+            termination_reason=None,
+            engine=engine_hint,
+            objective=objective_hint,
+            solve_time_ms=None,
+            queue_wait_ms=0,
+            contract_version=contract_version,
+            metadata={},
+        )
+
+        result = solve_planning_contract(request)
+        normalized_result = sanitize_numpy(result)
+        if isinstance(normalized_result, dict):
+            normalized_result["governance"] = {
+                "plan_request_hash": request_payload_hash,
+                "commit_requires_approved_plan": True,
+                "approval_action_type": "APPROVE_PLAN",
             }
-        else:
-            # Single-echelon path: dispatch to CP-SAT MILP v0 or heuristic baseline.
-            if DI_SOLVER_ENGINE == "ortools" and _cp_sat_solve is not None:
-                result = _cp_sat_solve(request)
-            elif DI_SOLVER_ENGINE == "ortools":
-                # ortools requested but not installed; fall back to heuristic silently.
-                result = _deterministic_replenishment_plan(request)
-                result.setdefault("solver_meta", {})["note"] = (
-                    "DI_SOLVER_ENGINE=ortools requested but ortools is not installed; used heuristic fallback."
-                )
-            else:
-                result = _deterministic_replenishment_plan(request)
-        return sanitize_numpy(result)
+        status_value = extract_status(normalized_result, fallback="ERROR")
+        termination_reason = extract_termination_reason(normalized_result, fallback="UNKNOWN")
+        final_engine = extract_engine(normalized_result, planning_payload, fallback=engine_hint)
+        final_objective = extract_objective(planning_payload, normalized_result) or objective_hint
+        solve_time_ms = extract_solve_time_ms(normalized_result, fallback=None)
+
+        emit_solver_telemetry_event(
+            telemetry_store,
+            telemetry_run_id=telemetry_run_id,
+            event_type="finished",
+            source="sync",
+            planning_payload=planning_payload,
+            planning_result=normalized_result if isinstance(normalized_result, dict) else {},
+            status=status_value,
+            termination_reason=termination_reason,
+            engine=final_engine,
+            objective=final_objective,
+            solve_time_ms=solve_time_ms,
+            queue_wait_ms=0,
+            contract_version=contract_version,
+            metadata={},
+        )
+        emit_solver_telemetry_event(
+            telemetry_store,
+            telemetry_run_id=telemetry_run_id,
+            event_type="summary",
+            source="sync",
+            planning_payload=planning_payload,
+            planning_result=normalized_result if isinstance(normalized_result, dict) else {},
+            status=status_value,
+            termination_reason=termination_reason,
+            engine=final_engine,
+            objective=final_objective,
+            solve_time_ms=solve_time_ms,
+            queue_wait_ms=0,
+            contract_version=contract_version,
+            metadata={},
+        )
+        return normalized_result
     except Exception as e:
-        return {
-            "status": "error",
-            "plan": [],
-            "component_plan": [],
-            "component_inventory_projection": {"total_rows": 0, "rows": [], "truncated": False},
-            "bottlenecks": {"generated_at": datetime.utcnow().isoformat(), "items": [], "rows": [], "total_rows": 0},
-            "kpis": {
-                "estimated_service_level": None,
-                "estimated_stockout_units": None,
-                "estimated_holding_units": None,
-                "estimated_total_cost": None
-            },
-            "solver_meta": {
-                "solver": "heuristic",
-                "solve_time_ms": 0,
-                "objective_value": None,
-                "gap": None
-            },
-            "infeasible_reasons": [str(e)],
-            "proof": {
-                "objective_terms": [],
-                "constraints_checked": []
-            }
-        }
+        fallback_engine = select_solver_engine(request).selected_engine
+        safe_hash = hashlib.sha256(str(e).encode("utf-8")).hexdigest()
+        if telemetry_run_id is not None:
+            telemetry_store = get_solver_telemetry_store()
+            emit_solver_telemetry_event(
+                telemetry_store,
+                telemetry_run_id=telemetry_run_id,
+                event_type="finished",
+                source="sync",
+                planning_payload=planning_payload,
+                status="ERROR",
+                termination_reason="EXCEPTION",
+                engine=fallback_engine,
+                objective=extract_objective(planning_payload) if isinstance(planning_payload, dict) else None,
+                solve_time_ms=0,
+                queue_wait_ms=0,
+                contract_version=extract_contract_version(planning_payload, fallback=None)
+                if isinstance(planning_payload, dict)
+                else None,
+                metadata={"error_hash": safe_hash},
+            )
+            emit_solver_telemetry_event(
+                telemetry_store,
+                telemetry_run_id=telemetry_run_id,
+                event_type="summary",
+                source="sync",
+                planning_payload=planning_payload,
+                status="ERROR",
+                termination_reason="EXCEPTION",
+                engine=fallback_engine,
+                objective=extract_objective(planning_payload) if isinstance(planning_payload, dict) else None,
+                solve_time_ms=0,
+                queue_wait_ms=0,
+                contract_version=extract_contract_version(planning_payload, fallback=None)
+                if isinstance(planning_payload, dict)
+                else None,
+                metadata={"error_hash": safe_hash},
+            )
+        return build_contract_error_response(
+            engine=fallback_engine,
+            reason=str(e),
+            solve_time_ms=0,
+        )
+
+
+@app.post("/replenishment-plan/commit")
+async def commit_replenishment_plan(payload: PlanCommitRequest, raw_request: Request):
+    actor = _require_action_role(raw_request, GovernanceAction.COMMIT_PLAN)
+    store = _get_governance_store()
+    request_payload_hash = canonical_payload_hash(payload.request_payload or {})
+
+    try:
+        store.assert_approved(
+            approval_id=payload.approval_id,
+            action_type="APPROVE_PLAN",
+            payload_hash=request_payload_hash,
+        )
+    except ApprovalError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    commit_record = store.record_plan_commit(
+        entity_id=payload.entity_id,
+        payload_hash=request_payload_hash,
+        committed_by=actor.actor_id,
+        approval_id=payload.approval_id,
+        note=payload.note,
+    )
+
+    audit_event = store.append_audit_event(
+        action_type="APPROVE_PLAN",
+        actor=actor.actor_id,
+        entity_id=payload.entity_id,
+        before_pointer={"commit": None},
+        after_pointer={"commit_id": commit_record.get("commit_id")},
+        note=payload.note,
+        metadata={
+            "stage": "commit",
+            "approval_id": payload.approval_id,
+            "payload_hash": request_payload_hash,
+        },
+    )
+
+    return {
+        "committed": True,
+        "commit": commit_record,
+        "audit_event_id": audit_event.get("event_id"),
+    }
 
 
 class TrainRequest(BaseModel):
@@ -2024,3 +2441,308 @@ async def auto_model_switch(request: ForecastRequest):
 
     except Exception as e:
         return {"error": str(e)}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Closed-Loop Forecast → Planning Re-Parameterization (PR-D)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class ClosedLoopEvaluateRequest(BaseModel):
+    """Request for closed-loop trigger evaluation."""
+    dataset_id: int
+    forecast_run_id: int
+    forecast_series: List[Dict[str, Any]] = Field(default_factory=list)
+    forecast_metrics: Dict[str, Any] = Field(default_factory=dict)
+    calibration_meta: Optional[Dict[str, Any]] = None
+    previous_forecast_series: Optional[List[Dict[str, Any]]] = None
+    risk_scores: List[Dict[str, Any]] = Field(default_factory=list)
+    config_overrides: Dict[str, Any] = Field(default_factory=dict)
+
+
+class ClosedLoopRunRequest(BaseModel):
+    """Request for closed-loop run (evaluate + optionally execute)."""
+    user_id: str
+    dataset_profile_id: int
+    forecast_run_id: int
+    forecast_series: List[Dict[str, Any]] = Field(default_factory=list)
+    forecast_metrics: Dict[str, Any] = Field(default_factory=dict)
+    calibration_meta: Optional[Dict[str, Any]] = None
+    previous_forecast_series: Optional[List[Dict[str, Any]]] = None
+    risk_scores: List[Dict[str, Any]] = Field(default_factory=list)
+    mode: str = "dry_run"
+    config_overrides: Dict[str, Any] = Field(default_factory=dict)
+
+
+# ── Closed-loop pure functions (Python-side, stateless) ──────────────────────
+
+def _cl_safe_float(v, fallback=float("nan")):
+    try:
+        f = float(v)
+        return f if math.isfinite(f) else fallback
+    except (TypeError, ValueError):
+        return fallback
+
+
+def _cl_aggregate_width(series: List[Dict]) -> float:
+    return sum(
+        max(0, _cl_safe_float(p.get("p90", p.get("p50", 0)))
+            - _cl_safe_float(p.get("p10", p.get("p50", 0))))
+        for p in series
+    )
+
+
+def _cl_aggregate_p50(series: List[Dict]) -> float:
+    return sum(_cl_safe_float(p.get("p50", 0)) for p in series)
+
+
+# Default config (mirrors CLOSED_LOOP_CONFIG in closedLoopConfig.js)
+_CL_DEFAULTS: Dict[str, Any] = {
+    "coverage_lower_band": 0.70,
+    "coverage_upper_band": 0.95,
+    "uncertainty_width_change_pct": 0.20,
+    "p50_shift_pct": 0.15,
+    "risk_severity_trigger": 60,
+    "safety_stock_alpha_calibrated": 0.5,
+    "safety_stock_alpha_uncalibrated": 0.8,
+    "safety_stock_alpha_wide_uncertainty": 1.0,
+    "stockout_penalty_base": 10.0,
+    "stockout_penalty_uncertainty_uplift": 0.3,
+    "lead_time_buffer_high_risk_days": 3,
+}
+
+
+def _cl_evaluate_triggers(
+    dataset_id: int,
+    forecast_run_id: int,
+    series: List[Dict],
+    calibration_meta: Optional[Dict],
+    previous_series: Optional[List[Dict]],
+    risk_scores: List[Dict],
+    cfg: Dict,
+) -> Dict:
+    """Evaluate trigger rules. Returns trigger decision dict."""
+    reasons: List[Dict] = []
+
+    # T-COVER
+    coverage = _cl_safe_float((calibration_meta or {}).get("coverage_10_90"))
+    if math.isfinite(coverage):
+        if coverage < cfg["coverage_lower_band"]:
+            reasons.append({
+                "trigger_type": "coverage_outside_band", "severity": "high",
+                "detail": f"coverage_10_90={coverage:.4f} < lower_band={cfg['coverage_lower_band']}",
+                "evidence": {"coverage_10_90": coverage, "threshold": cfg["coverage_lower_band"], "direction": "below"},
+            })
+        elif coverage > cfg["coverage_upper_band"]:
+            reasons.append({
+                "trigger_type": "coverage_outside_band", "severity": "medium",
+                "detail": f"coverage_10_90={coverage:.4f} > upper_band={cfg['coverage_upper_band']}",
+                "evidence": {"coverage_10_90": coverage, "threshold": cfg["coverage_upper_band"], "direction": "above"},
+            })
+
+    # T-UNCERT
+    if previous_series and len(previous_series) > 0 and len(series) > 0:
+        cur_w = _cl_aggregate_width(series)
+        prev_w = _cl_aggregate_width(previous_series)
+        if prev_w > 0:
+            delta = (cur_w - prev_w) / prev_w
+            if abs(delta) > cfg["uncertainty_width_change_pct"]:
+                reasons.append({
+                    "trigger_type": "uncertainty_widens",
+                    "severity": "high" if abs(delta) > 2 * cfg["uncertainty_width_change_pct"] else "medium",
+                    "detail": f"Uncertainty width changed {delta * 100:.1f}% (threshold: {cfg['uncertainty_width_change_pct'] * 100:.1f}%)",
+                    "evidence": {"delta_pct": round(delta, 6), "threshold": cfg["uncertainty_width_change_pct"]},
+                })
+
+    # T-P50
+    if previous_series and len(previous_series) > 0 and len(series) > 0:
+        cur_p50 = _cl_aggregate_p50(series)
+        prev_p50 = _cl_aggregate_p50(previous_series)
+        if prev_p50 > 0:
+            shift = (cur_p50 - prev_p50) / prev_p50
+            if abs(shift) > cfg["p50_shift_pct"]:
+                reasons.append({
+                    "trigger_type": "p50_shift",
+                    "severity": "high" if abs(shift) > 2 * cfg["p50_shift_pct"] else "medium",
+                    "detail": f"P50 shifted {shift * 100:.1f}% (threshold: {cfg['p50_shift_pct'] * 100:.1f}%)",
+                    "evidence": {"shift_pct": round(shift, 6), "threshold": cfg["p50_shift_pct"]},
+                })
+
+    # T-RISK
+    above = [r for r in risk_scores if _cl_safe_float(r.get("risk_score", 0)) > cfg["risk_severity_trigger"]]
+    if above:
+        max_score = max(_cl_safe_float(r.get("risk_score", 0)) for r in above)
+        reasons.append({
+            "trigger_type": "risk_severity_crossed",
+            "severity": "high" if max_score > 2 * cfg["risk_severity_trigger"] else "medium",
+            "detail": f"{len(above)} entity(ies) with risk_score > {cfg['risk_severity_trigger']} (max: {max_score:.2f})",
+            "evidence": {"entities_above_threshold": len(above), "max_risk_score": max_score, "threshold": cfg["risk_severity_trigger"]},
+        })
+
+    return {
+        "should_trigger": len(reasons) > 0,
+        "reasons": reasons,
+        "evaluated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def _cl_derive_params(
+    series: List[Dict],
+    calibration_meta: Optional[Dict],
+    previous_series: Optional[List[Dict]],
+    risk_scores: List[Dict],
+    cfg: Dict,
+) -> Dict:
+    """Derive planning parameter patch from forecast data."""
+    explanation: List[str] = []
+    cal = calibration_meta or {}
+    cal_passed = cal.get("calibration_passed")
+    coverage = _cl_safe_float(cal.get("coverage_10_90"))
+
+    # R-CL1: alpha selection
+    if math.isfinite(coverage) and coverage > cfg["coverage_upper_band"]:
+        alpha = cfg["safety_stock_alpha_wide_uncertainty"]
+        explanation.append(f"R-CL1: coverage_10_90={coverage:.4f} > upper_band; alpha={alpha}")
+    elif cal_passed is True and math.isfinite(coverage) and coverage >= cfg["coverage_lower_band"]:
+        alpha = cfg["safety_stock_alpha_calibrated"]
+        explanation.append(f"R-CL1: Calibration passed, coverage in band; alpha={alpha}")
+    else:
+        alpha = cfg["safety_stock_alpha_uncalibrated"]
+        explanation.append(f"R-CL1: Calibration not passed or absent; alpha={alpha}")
+
+    # R-CL2: stockout penalty
+    penalty = cfg["stockout_penalty_base"]
+    uw_delta = None
+    if previous_series and len(previous_series) > 0 and len(series) > 0:
+        cur_w = _cl_aggregate_width(series)
+        prev_w = _cl_aggregate_width(previous_series)
+        if prev_w > 0:
+            uw_delta = (cur_w - prev_w) / prev_w
+            if uw_delta > cfg["uncertainty_width_change_pct"]:
+                penalty = round(penalty * (1 + cfg["stockout_penalty_uncertainty_uplift"]), 6)
+                explanation.append(f"R-CL2: Uncertainty widened {uw_delta * 100:.1f}%; penalty raised to {penalty}")
+
+    # R-CL3: lead time buffer from risk
+    lt_buffer: Dict[str, int] = {}
+    risk_above = 0
+    for r in risk_scores:
+        if _cl_safe_float(r.get("risk_score", 0)) > cfg["risk_severity_trigger"]:
+            key = f"{r.get('material_code', r.get('entity_id', ''))}|{r.get('plant_id', '')}"
+            lt_buffer[key] = cfg["lead_time_buffer_high_risk_days"]
+            risk_above += 1
+    if risk_above > 0:
+        explanation.append(f"R-CL3: {risk_above} high-risk entities; added {cfg['lead_time_buffer_high_risk_days']}-day buffer")
+
+    # R-CL4: per-SKU safety stock
+    agg: Dict[str, Dict] = {}
+    for pt in series:
+        key = f"{pt.get('sku', pt.get('material_code', ''))}|{pt.get('plant_id', '')}"
+        e = agg.setdefault(key, {"sum_p50": 0.0, "sum_p90": 0.0, "n": 0})
+        e["sum_p50"] += _cl_safe_float(pt.get("p50", 0))
+        e["sum_p90"] += _cl_safe_float(pt.get("p90", _cl_safe_float(pt.get("p50", 0))))
+        e["n"] += 1
+    ss: Dict[str, float] = {}
+    for key in sorted(agg):
+        e = agg[key]
+        avg_p50 = e["sum_p50"] / e["n"] if e["n"] > 0 else 0
+        avg_p90 = e["sum_p90"] / e["n"] if e["n"] > 0 else 0
+        ss[key] = round(avg_p50 + alpha * max(0, avg_p90 - avg_p50), 6)
+
+    return {
+        "version": "v0",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "patch": {
+            "safety_stock_by_key": ss,
+            "objective": {"stockout_penalty": penalty, "stockout_penalty_base": cfg["stockout_penalty_base"]},
+            "lead_time_buffer_by_key": dict(sorted(lt_buffer.items())),
+            "safety_stock_alpha": alpha,
+        },
+        "explanation": explanation,
+        "derived_values": {
+            "calibration_passed": cal_passed,
+            "coverage_10_90": round(coverage, 6) if math.isfinite(coverage) else None,
+            "effective_alpha": alpha,
+            "uncertainty_width_delta_pct": round(uw_delta, 6) if uw_delta is not None else None,
+            "risk_entities_above_threshold": risk_above,
+        },
+    }
+
+
+@app.post("/closed-loop/evaluate")
+async def closed_loop_evaluate(request: ClosedLoopEvaluateRequest):
+    """
+    Evaluate closed-loop triggers and derive a recommended parameter patch.
+    Stateless — no side effects, no re-run submitted.
+    """
+    cfg = {**_CL_DEFAULTS, **request.config_overrides}
+    trigger = _cl_evaluate_triggers(
+        dataset_id=request.dataset_id,
+        forecast_run_id=request.forecast_run_id,
+        series=request.forecast_series,
+        calibration_meta=request.calibration_meta,
+        previous_series=request.previous_forecast_series,
+        risk_scores=request.risk_scores,
+        cfg=cfg,
+    )
+    param_patch = None
+    if trigger["should_trigger"]:
+        param_patch = _cl_derive_params(
+            series=request.forecast_series,
+            calibration_meta=request.calibration_meta,
+            previous_series=request.previous_forecast_series,
+            risk_scores=request.risk_scores,
+            cfg=cfg,
+        )
+    status = "TRIGGERED_DRY_RUN" if trigger["should_trigger"] else "NO_TRIGGER"
+    return {
+        "closed_loop_status": status,
+        "trigger_decision": trigger,
+        "param_patch": param_patch,
+        "explanation": param_patch["explanation"] if param_patch else ["No trigger conditions met."],
+        "planning_run_id": None,
+    }
+
+
+@app.post("/closed-loop/run")
+async def closed_loop_run(request: ClosedLoopRunRequest):
+    """
+    Evaluate closed-loop triggers and optionally submit a planning re-run.
+    For dry_run mode, returns what would happen without executing.
+    For auto_run mode, currently returns TRIGGERED_DRY_RUN (server-side auto-run
+    is delegated to the JS orchestration layer).
+    """
+    cfg = {**_CL_DEFAULTS, **request.config_overrides}
+    trigger = _cl_evaluate_triggers(
+        dataset_id=request.dataset_profile_id,
+        forecast_run_id=request.forecast_run_id,
+        series=request.forecast_series,
+        calibration_meta=request.calibration_meta,
+        previous_series=request.previous_forecast_series,
+        risk_scores=request.risk_scores,
+        cfg=cfg,
+    )
+    if not trigger["should_trigger"]:
+        return {
+            "closed_loop_status": "NO_TRIGGER",
+            "trigger_decision": trigger,
+            "param_patch": None,
+            "explanation": ["No trigger conditions met."],
+            "planning_run_id": None,
+        }
+
+    param_patch = _cl_derive_params(
+        series=request.forecast_series,
+        calibration_meta=request.calibration_meta,
+        previous_series=request.previous_forecast_series,
+        risk_scores=request.risk_scores,
+        cfg=cfg,
+    )
+
+    # Server-side auto_run is not implemented here (delegated to JS orchestration).
+    return {
+        "closed_loop_status": "TRIGGERED_DRY_RUN",
+        "trigger_decision": trigger,
+        "param_patch": param_patch,
+        "explanation": param_patch["explanation"],
+        "planning_run_id": None,
+        "mode": request.mode,
+    }

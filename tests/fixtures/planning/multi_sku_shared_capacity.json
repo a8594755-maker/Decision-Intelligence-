@@ -1,0 +1,51 @@
+{
+  "contract_version": "1.0",
+  "dataset_profile_id": 106,
+  "planning_horizon_days": 3,
+  "demand_forecast": {
+    "granularity": "daily",
+    "series": [
+      {"sku": "SKU-HI", "plant_id": "P1", "date": "2026-06-01", "p50": 10},
+      {"sku": "SKU-HI", "plant_id": "P1", "date": "2026-06-02", "p50": 10},
+      {"sku": "SKU-HI", "plant_id": "P1", "date": "2026-06-03", "p50": 10},
+      {"sku": "SKU-LO", "plant_id": "P1", "date": "2026-06-01", "p50": 10},
+      {"sku": "SKU-LO", "plant_id": "P1", "date": "2026-06-02", "p50": 10},
+      {"sku": "SKU-LO", "plant_id": "P1", "date": "2026-06-03", "p50": 10}
+    ]
+  },
+  "inventory": [
+    {"sku": "SKU-HI", "plant_id": "P1", "as_of_date": "2026-05-31", "on_hand": 0, "safety_stock": 0, "lead_time_days": 0},
+    {"sku": "SKU-LO", "plant_id": "P1", "as_of_date": "2026-05-31", "on_hand": 0, "safety_stock": 0, "lead_time_days": 0}
+  ],
+  "open_pos": [],
+  "constraints": {
+    "moq": [],
+    "pack_size": [],
+    "budget_cap": 999,
+    "max_order_qty": [],
+    "unit_costs": []
+  },
+  "shared_constraints": {
+    "budget_cap": 999,
+    "production_capacity_per_period": 10,
+    "inventory_capacity_per_period": 100,
+    "priority_weights": {"SKU-HI": 3.0, "SKU-LO": 1.0}
+  },
+  "objective": {
+    "optimize_for": "balanced",
+    "stockout_penalty": 10,
+    "holding_cost": 0,
+    "service_level_target": null
+  },
+  "solver": {
+    "time_limit_seconds": 4,
+    "seed": 0,
+    "workers": 1,
+    "deterministic_mode": true
+  },
+  "multi_echelon": {"mode": "off"},
+  "items": [
+    {"sku": "SKU-HI", "plant_id": "P1", "priority_weight": 3.0, "demand_series": []},
+    {"sku": "SKU-LO", "plant_id": "P1", "priority_weight": 1.0, "demand_series": []}
+  ]
+}

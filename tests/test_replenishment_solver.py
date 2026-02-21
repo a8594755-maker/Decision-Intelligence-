@@ -18,7 +18,13 @@ from typing import List, Optional
 # Skip entire module if OR-Tools is not installed.
 ortools = pytest.importorskip("ortools", reason="ortools not installed")
 
-from ml.api.replenishment_solver import solve_replenishment, ortools_available, SCALE
+from ml.api.replenishment_solver import (
+    SCALE,
+    SolverRunSettings,
+    _status_from_cp,
+    solve_replenishment,
+    ortools_available,
+)
 
 
 # ── helpers ────────────────────────────────────────────────────────────────────
@@ -62,6 +68,10 @@ def _max_qty(sku: str, max_qty: float) -> SimpleNamespace:
     return SimpleNamespace(sku=sku, max_qty=max_qty)
 
 
+def _unit_cost(sku: str, unit_cost: float) -> SimpleNamespace:
+    return SimpleNamespace(sku=sku, unit_cost=unit_cost)
+
+
 def _request(
     series: List[SimpleNamespace],
     inventory: Optional[List[SimpleNamespace]] = None,
@@ -69,10 +79,19 @@ def _request(
     moq_list: Optional[List[SimpleNamespace]] = None,
     pack_list: Optional[List[SimpleNamespace]] = None,
     max_qty_list: Optional[List[SimpleNamespace]] = None,
+    unit_cost_list: Optional[List[SimpleNamespace]] = None,
     budget_cap: Optional[float] = None,
+    shared_budget_cap: Optional[float] = None,
+    shared_production_capacity: Optional[float] = None,
+    shared_inventory_capacity: Optional[float] = None,
     horizon_days: int = 7,
     stockout_penalty: float = 1.0,
     holding_cost: float = 0.0,
+    service_level_target: Optional[float] = None,
+    items: Optional[List[SimpleNamespace]] = None,
+    diagnose_mode: bool = False,
+    settings: Optional[dict] = None,
+    engine_flags: Optional[dict] = None,
 ) -> SimpleNamespace:
     """Build a minimal ReplenishmentPlanRequest-compatible namespace."""
     return SimpleNamespace(
@@ -85,16 +104,54 @@ def _request(
             pack_size=pack_list or [],
             max_order_qty=max_qty_list or [],
             budget_cap=budget_cap,
-            unit_costs=[],
+            unit_costs=unit_cost_list or [],
+            inventory_capacity_per_period=None,
+            production_capacity_per_period=None,
+        ),
+        shared_constraints=SimpleNamespace(
+            budget_cap=shared_budget_cap,
+            production_capacity_per_period=shared_production_capacity,
+            inventory_capacity_per_period=shared_inventory_capacity,
+            priority_weights={},
+            budget_mode=None,
         ),
         objective=SimpleNamespace(
             optimize_for="balanced",
             stockout_penalty=stockout_penalty,
             holding_cost=holding_cost,
-            service_level_target=None,
+            service_level_target=service_level_target,
         ),
         multi_echelon=SimpleNamespace(mode="off"),
+        items=items or [],
+        diagnose_mode=diagnose_mode,
         bom_usage=[],
+        settings=settings or {},
+        engine_flags=engine_flags or {},
+    )
+
+
+def _timeout_fixture_request(time_limit_seconds: float) -> SimpleNamespace:
+    """
+    Build a small but non-trivial case that frequently yields TIMEOUT behavior
+    under very small limits, while still allowing feasible incumbents.
+    """
+    series = _series("SKU-TIME", "P1", n_days=14, p50=10.0)
+    inv = [_inventory("SKU-TIME", "P1", on_hand=0.0, lead_time_days=0.0)]
+    return _request(
+        series=series,
+        inventory=inv,
+        horizon_days=14,
+        moq_list=[_moq("SKU-TIME", 17.0)],
+        pack_list=[_pack("SKU-TIME", 7.0)],
+        holding_cost=0.01,
+        stockout_penalty=1.0,
+        settings={
+            "solver": {
+                "time_limit_seconds": float(time_limit_seconds),
+                "random_seed": 42,
+                "num_search_workers": 1,
+            }
+        },
     )
 
 
@@ -111,7 +168,7 @@ class TestEmptyDemand:
     def test_no_series(self):
         req = _request(series=[])
         result = solve_replenishment(req)
-        assert result["status"] == "infeasible"
+        assert result["status"] == "INFEASIBLE"
         assert result["plan"] == []
         assert result["solver_meta"]["solver"] == "cp_sat"
         assert len(result["infeasible_reasons"]) > 0
@@ -124,7 +181,7 @@ class TestEmptyDemand:
         req = _request(series=series, horizon_days=3)
         result = solve_replenishment(req)
         # Should still produce a plan (just over 3 days, not 5).
-        assert result["status"] in ("optimal", "feasible", "infeasible")
+        assert result["status"] in ("OPTIMAL", "FEASIBLE", "INFEASIBLE")
         # Total demand visible to solver = 3 days × 10 = 30, so stockout ≤ 30.
         if result["kpis"]["estimated_stockout_units"] is not None:
             assert result["kpis"]["estimated_stockout_units"] <= 30.0 + 1e-6
@@ -139,7 +196,7 @@ class TestBasicNoConstraints:
         req = _request(series=series, horizon_days=5)
         result = solve_replenishment(req)
 
-        assert result["status"] in ("optimal", "feasible")
+        assert result["status"] in ("OPTIMAL", "FEASIBLE")
         assert result["solver_meta"]["solver"] == "cp_sat"
         assert isinstance(result["plan"], list)
         # With zero stock and zero lead time, demand must be covered by orders.
@@ -195,7 +252,7 @@ class TestAmpleStock:
                        holding_cost=0.01, stockout_penalty=1.0)
         result = solve_replenishment(req)
 
-        assert result["status"] in ("optimal", "feasible")
+        assert result["status"] in ("OPTIMAL", "FEASIBLE")
         # Service level should be perfect.
         sl = result["kpis"]["estimated_service_level"]
         if sl is not None:
@@ -380,7 +437,7 @@ class TestMultiSku:
 
         skus_in_plan = {row["sku"] for row in result["plan"]}
         # At least one SKU must appear (solver might defer if it's cost-optimal).
-        assert result["status"] in ("optimal", "feasible")
+        assert result["status"] in ("OPTIMAL", "FEASIBLE", "INFEASIBLE")
 
     def test_budget_cap_across_skus(self):
         """Budget cap must hold across all SKUs combined."""
@@ -515,3 +572,257 @@ class TestCombinedConstraints:
             "max_order_qty",
         }
         assert expected <= names
+
+
+# ── T13: solver run policy (determinism / timeout / taxonomy) ────────────────
+
+class TestSolverRunPolicy:
+    def test_deterministic_output_same_input_twice(self):
+        req = _request(
+            series=_series("SKU-DET", "P1", n_days=14, p50=11.0),
+            inventory=[_inventory("SKU-DET", "P1", on_hand=0.0, lead_time_days=0.0)],
+            horizon_days=14,
+            settings={"solver": {"random_seed": 42, "num_search_workers": 1}},
+        )
+        first = solve_replenishment(req)
+        second = solve_replenishment(req)
+
+        assert first["status"] == second["status"]
+        assert first["plan"] == second["plan"]
+        assert first["kpis"] == second["kpis"]
+
+    def test_timeout_with_feasible_solution_returns_plan(self):
+        req = _timeout_fixture_request(time_limit_seconds=0.02)
+        result = solve_replenishment(req)
+
+        assert result["status"] == "TIMEOUT"
+        assert result["solver_meta"]["termination_reason"] == "TIME_LIMIT_FEASIBLE"
+        assert isinstance(result["plan"], list)
+        assert len(result["plan"]) > 0
+
+    def test_timeout_with_no_feasible_solution_is_explicit(self):
+        req = _timeout_fixture_request(time_limit_seconds=0.00001)
+        req.settings.setdefault("solver", {})["force_timeout"] = True
+        result = solve_replenishment(req)
+
+        assert result["status"] == "TIMEOUT"
+        assert result["solver_meta"]["termination_reason"] == "FORCED_TIMEOUT"
+        assert result["plan"] == []
+
+    def test_status_taxonomy_mapping_stays_in_contract_enums(self):
+        allowed = {"OPTIMAL", "FEASIBLE", "TIMEOUT", "INFEASIBLE", "ERROR"}
+
+        class _FakeSolver:
+            def __init__(self, status_names, wall_time=0.0):
+                self._status_names = status_names
+                self._wall_time = wall_time
+
+            def StatusName(self, cp_status):
+                return self._status_names.get(cp_status, "UNKNOWN")
+
+            def WallTime(self):
+                return self._wall_time
+
+        settings = SolverRunSettings(
+            time_limit_seconds=0.02,
+            random_seed=42,
+            num_search_workers=1,
+            log_search_progress=False,
+            deterministic_mode=True,
+        )
+        cp = __import__("ml.api.replenishment_solver", fromlist=["_cp_model"])._cp_model
+        status_names = {
+            cp.OPTIMAL: "OPTIMAL",
+            cp.FEASIBLE: "FEASIBLE",
+            cp.INFEASIBLE: "INFEASIBLE",
+            cp.UNKNOWN: "UNKNOWN",
+        }
+        solver = _FakeSolver(status_names=status_names, wall_time=0.03)
+
+        mapped = [
+            _status_from_cp(cp.OPTIMAL, solver, settings, solve_time_ms=10),
+            _status_from_cp(cp.FEASIBLE, solver, settings, solve_time_ms=25),
+            _status_from_cp(cp.INFEASIBLE, solver, settings, solve_time_ms=10),
+            _status_from_cp(cp.UNKNOWN, solver, settings, solve_time_ms=25),
+            _status_from_cp(-999, solver, settings, solve_time_ms=10),
+        ]
+        assert all(item.status.value in allowed for item in mapped)
+
+    def test_solver_meta_contains_run_settings_and_bounds(self):
+        req = _request(
+            series=_series("SKU-META", "P1", n_days=8, p50=9.0),
+            inventory=[_inventory("SKU-META", "P1", on_hand=0.0, lead_time_days=0.0)],
+            horizon_days=8,
+            settings={"solver": {"time_limit_seconds": 0.2, "random_seed": 7, "num_search_workers": 1}},
+        )
+        result = solve_replenishment(req)
+        meta = result.get("solver_meta", {})
+
+        required = {
+            "engine",
+            "status",
+            "termination_reason",
+            "solve_time_ms",
+            "objective_value",
+            "best_bound",
+            "gap",
+            "time_limit_seconds",
+            "random_seed",
+            "num_search_workers",
+        }
+        assert required.issubset(set(meta.keys()))
+
+
+# ── T14: multi-SKU shared resources (Step 3) ─────────────────────────────────
+
+class TestSharedResources:
+    def test_items_contract_runs_end_to_end(self):
+        items = [
+            SimpleNamespace(
+                sku="SKU-I1",
+                plant_id="P1",
+                on_hand=0.0,
+                lead_time_days=0.0,
+                demand=[SimpleNamespace(date=_day(0), p50=6.0)],
+                constraints={"moq": 2.0},
+                costs={"unit_cost": 1.0},
+                service_level_weight=1.0,
+            ),
+            SimpleNamespace(
+                sku="SKU-I2",
+                plant_id="P1",
+                on_hand=0.0,
+                lead_time_days=0.0,
+                demand=[SimpleNamespace(date=_day(0), p50=6.0)],
+                constraints={"moq": 2.0},
+                costs={"unit_cost": 1.0},
+                service_level_weight=1.0,
+            ),
+        ]
+        req = _request(
+            series=[],
+            items=items,
+            horizon_days=1,
+            shared_production_capacity=8.0,
+        )
+        result = solve_replenishment(req)
+        assert result["status"] in {"OPTIMAL", "FEASIBLE", "INFEASIBLE", "TIMEOUT"}
+        assert "shared_kpis" in result
+        assert any(c.get("name") == "shared_production_cap" for c in result["proof"]["constraints_checked"])
+
+    def test_shared_production_cap_is_deterministic_under_scarcity(self):
+        series = (
+            _series("SKU-A", "P1", n_days=1, p50=10.0)
+            + _series("SKU-B", "P1", n_days=1, p50=10.0)
+        )
+        req = _request(
+            series=series,
+            horizon_days=1,
+            stockout_penalty=20.0,
+            shared_production_capacity=10.0,
+        )
+        r1 = solve_replenishment(req)
+        r2 = solve_replenishment(req)
+
+        assert r1["plan"] == r2["plan"], "Allocation under shared scarcity must be deterministic"
+        total = sum(row["order_qty"] for row in r1["plan"])
+        assert total <= 10.0 + 1e-6
+        by_sku = {}
+        for row in r1["plan"]:
+            by_sku[row["sku"]] = by_sku.get(row["sku"], 0.0) + row["order_qty"]
+        assert by_sku.get("SKU-A", 0.0) >= by_sku.get("SKU-B", 0.0)
+
+        cap_check = next((c for c in r1["proof"]["constraints_checked"] if c["name"] == "shared_production_cap"), None)
+        assert cap_check is not None
+        assert cap_check["passed"] is True
+
+    def test_shared_inventory_cap_binds_total_inventory(self):
+        series = (
+            _series("SKU-A", "P1", n_days=1, p50=5.0)
+            + _series("SKU-B", "P1", n_days=1, p50=5.0)
+        )
+        req = _request(
+            series=series,
+            horizon_days=1,
+            moq_list=[_moq("SKU-A", 20.0), _moq("SKU-B", 20.0)],
+            stockout_penalty=10.0,
+            shared_inventory_capacity=20.0,
+        )
+        result = solve_replenishment(req)
+
+        inv_kpi = (result.get("shared_kpis") or {}).get("inventory_capacity") or {}
+        periods = inv_kpi.get("periods") or []
+        assert len(periods) > 0
+        for row in periods:
+            assert row["used"] <= row["cap"] + 1e-6
+
+        cap_check = next((c for c in result["proof"]["constraints_checked"] if c["name"] == "shared_inventory_cap"), None)
+        assert cap_check is not None
+        assert cap_check["passed"] is True
+
+    def test_shared_budget_spend_prefers_lower_cost_sku(self):
+        series = (
+            _series("SKU-CHEAP", "P1", n_days=1, p50=10.0)
+            + _series("SKU-EXP", "P1", n_days=1, p50=10.0)
+        )
+        req = _request(
+            series=series,
+            horizon_days=1,
+            unit_cost_list=[_unit_cost("SKU-CHEAP", 1.0), _unit_cost("SKU-EXP", 5.0)],
+            shared_budget_cap=10.0,
+            stockout_penalty=30.0,
+        )
+        result = solve_replenishment(req)
+
+        by_sku = {}
+        for row in result["plan"]:
+            by_sku[row["sku"]] = by_sku.get(row["sku"], 0.0) + row["order_qty"]
+        assert by_sku.get("SKU-CHEAP", 0.0) >= by_sku.get("SKU-EXP", 0.0)
+
+        budget_kpi = (result.get("shared_kpis") or {}).get("budget") or {}
+        assert budget_kpi.get("mode") in {"spend", "quantity"}
+        assert budget_kpi.get("used", 0.0) <= budget_kpi.get("cap", 0.0) + 1e-6
+
+
+# ── T15: infeasibility diagnostics (Step 4) ──────────────────────────────────
+
+class TestInfeasibilityDiagnostics:
+    def test_infeasible_capacity_case_returns_structured_diagnostics(self):
+        series = _series("SKU-DIAG-A", "P1", n_days=3, p50=10.0)
+        req = _request(
+            series=series,
+            horizon_days=3,
+            shared_production_capacity=0.0,
+            service_level_target=1.0,
+            diagnose_mode=True,
+        )
+        result = solve_replenishment(req)
+
+        assert result["status"] == "INFEASIBLE"
+        assert len(result["infeasible_reasons"]) > 0
+        proof = result.get("proof", {})
+        analysis = proof.get("infeasibility_analysis", {})
+        assert len(analysis.get("categories", [])) > 0
+        assert len(analysis.get("top_offending_tags", [])) > 0
+        assert len(proof.get("relaxation_analysis", [])) > 0
+        assert any("CAP_PROD" in str(tag) for tag in analysis.get("top_offending_tags", []))
+
+    def test_infeasible_inventory_case_reports_capacity_tag(self):
+        series = _series("SKU-DIAG-B", "P1", n_days=1, p50=0.0)
+        inv = [_inventory("SKU-DIAG-B", "P1", on_hand=10.0, lead_time_days=0.0)]
+        req = _request(
+            series=series,
+            inventory=inv,
+            horizon_days=1,
+            shared_inventory_capacity=0.0,
+            diagnose_mode=True,
+        )
+        result = solve_replenishment(req)
+
+        assert result["status"] == "INFEASIBLE"
+        assert len(result["infeasible_reasons"]) > 0
+        proof = result.get("proof", {})
+        checks = proof.get("constraints_checked", [])
+        assert any(c.get("tag") in {"CAP_INV", "CP_FEASIBILITY"} for c in checks)
+        analysis = proof.get("infeasibility_analysis", {})
+        assert any("CAP_INV" in str(tag) for tag in analysis.get("top_offending_tags", []))

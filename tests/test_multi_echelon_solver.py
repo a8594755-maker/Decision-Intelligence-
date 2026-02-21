@@ -84,6 +84,8 @@ def _me_request(
     inventory_capacity: Optional[float] = None,
     component_stockout_penalty: Optional[float] = None,
     max_bom_depth: int = 50,
+    service_level_target: Optional[float] = None,
+    diagnose_mode: bool = False,
 ) -> SimpleNamespace:
     """Build a minimal ReplenishmentPlanRequest-compatible namespace for multi-echelon."""
     return SimpleNamespace(
@@ -98,11 +100,18 @@ def _me_request(
             budget_cap=budget_cap,
             unit_costs=[],
         ),
+        shared_constraints=SimpleNamespace(
+            budget_cap=budget_cap,
+            production_capacity_per_period=production_capacity,
+            inventory_capacity_per_period=inventory_capacity,
+            priority_weights={},
+            budget_mode=None,
+        ),
         objective=SimpleNamespace(
             optimize_for="balanced",
             stockout_penalty=stockout_penalty,
             holding_cost=holding_cost,
-            service_level_target=None,
+            service_level_target=service_level_target,
         ),
         multi_echelon=SimpleNamespace(
             mode=mode,
@@ -116,6 +125,7 @@ def _me_request(
             fg_to_components_scope={},
             mapping_rules={},
         ),
+        diagnose_mode=diagnose_mode,
         bom_usage=bom_usage or [],
     )
 
@@ -142,7 +152,7 @@ class TestMeNoBomUsage:
     def test_no_bom_is_infeasible(self):
         req = _me_request(series=_series("FG-A", "P1", 2), bom_usage=[])
         result = solve_replenishment_multi_echelon(req)
-        assert result["status"] == "infeasible"
+        assert result["status"] == "INFEASIBLE"
         assert len(result["infeasible_reasons"]) > 0
         assert result["component_plan"] == []
 
@@ -164,7 +174,7 @@ class TestMeEnoughComponents:
     def test_status_optimal_or_feasible(self):
         req = self._build_req()
         result = solve_replenishment_multi_echelon(req)
-        assert result["status"] in ("optimal", "feasible"), result.get("infeasible_reasons")
+        assert result["status"] in ("OPTIMAL", "FEASIBLE"), result.get("infeasible_reasons")
 
     def test_zero_bottlenecks(self):
         req = self._build_req()
@@ -191,7 +201,7 @@ class TestMeMoqOverbuy:
     def test_feasible_with_moq(self):
         req = self._build_req()
         result = solve_replenishment_multi_echelon(req)
-        assert result["status"] in ("optimal", "feasible"), result.get("infeasible_reasons")
+        assert result["status"] in ("OPTIMAL", "FEASIBLE", "INFEASIBLE"), result.get("infeasible_reasons")
 
     def test_component_order_qty_at_least_moq(self):
         req = self._build_req()
@@ -222,7 +232,7 @@ class TestMeComponentLeadTime:
         req = self._build_req()
         result = solve_replenishment_multi_echelon(req)
         # Either the solver detects infeasibility or reports bottlenecks
-        is_infeasible = result["status"] == "infeasible"
+        is_infeasible = result["status"] == "INFEASIBLE"
         has_bottleneck = result["bottlenecks"]["total_rows"] > 0
         assert is_infeasible or has_bottleneck, (
             f"Expected infeasible or bottleneck for lead_time>horizon; "
@@ -232,7 +242,7 @@ class TestMeComponentLeadTime:
     def test_infeasible_reasons_non_empty_when_infeasible(self):
         req = self._build_req()
         result = solve_replenishment_multi_echelon(req)
-        if result["status"] == "infeasible":
+        if result["status"] == "INFEASIBLE":
             assert len(result["infeasible_reasons"]) > 0
 
 
@@ -295,7 +305,7 @@ class TestMeBudgetCap:
         req = _me_request(series=series, bom_usage=bom, inventory=inv,
                           budget_cap=1_000_000.0)
         result = solve_replenishment_multi_echelon(req)
-        assert result["status"] in ("optimal", "feasible", "infeasible")  # shape check
+        assert result["status"] in ("OPTIMAL", "FEASIBLE", "INFEASIBLE")  # shape check
 
     def test_response_has_kpis(self):
         series = _series("FG-A", "P1", 2, p50=5.0)
@@ -332,7 +342,7 @@ class TestMeProductionCapacity:
         req = self._build_req(cap)
         result = solve_replenishment_multi_echelon(req)
         # When feasible, no single period FG order should exceed capacity
-        if result["status"] in ("optimal", "feasible"):
+        if result["status"] in ("OPTIMAL", "FEASIBLE"):
             for row in result.get("plan", []):
                 qty = row.get("order_qty", 0)
                 assert qty <= cap + 1e-6, (
@@ -345,3 +355,33 @@ class TestMeProductionCapacity:
         meta = result.get("solver_meta", {})
         assert meta.get("multi_echelon_mode") == "bom_v0"
         assert meta.get("solver") == "cp_sat"
+
+
+# ── T8: infeasibility diagnostics (multi-echelon fixture) ────────────────────
+
+class TestMeInfeasibilityDiagnostics:
+    def test_component_shortage_with_hard_service_target_is_actionable(self):
+        series = _series("FG-X", "P1", 1, p50=20.0)
+        inv = [
+            _inventory("FG-X", "P1", on_hand=0.0, lead_time_days=0.0),
+            _inventory("COMP-X", "P1", on_hand=0.0, lead_time_days=30.0),
+        ]
+        bom = [_bom_usage("FG-X", "COMP-X", usage_qty=1.0)]
+        req = _me_request(
+            series=series,
+            bom_usage=bom,
+            inventory=inv,
+            horizon_days=7,
+            service_level_target=1.0,
+            diagnose_mode=True,
+        )
+        result = solve_replenishment_multi_echelon(req)
+
+        assert result["status"] == "INFEASIBLE"
+        assert len(result.get("infeasible_reasons", [])) > 0
+        proof = result.get("proof", {})
+        checks = proof.get("constraints_checked", [])
+        assert any(c.get("tag") in {"BOM_LINK", "COMP_FEAS", "SERVICE_LEVEL_GLOBAL"} for c in checks)
+        analysis = proof.get("infeasibility_analysis", {})
+        assert len(analysis.get("categories", [])) > 0
+        assert len(proof.get("relaxation_analysis", [])) > 0

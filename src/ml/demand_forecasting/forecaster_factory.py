@@ -6,6 +6,14 @@ from datetime import datetime, timedelta
 import numpy as np
 import pandas as pd
 
+from ..uncertainty.quantile_engine import QuantileEngine, QuantileResult
+from ..uncertainty.calibration_metrics import compute_calibration_metrics
+from ..uncertainty.quality_gates import (
+    QualityGateConfig,
+    evaluate_candidate,
+    GateResult,
+)
+
 try:
     import joblib
 except ImportError:
@@ -23,6 +31,39 @@ class ModelType(Enum):
     PROPHET = "prophet"
     LIGHTGBM = "lightgbm"
     CHRONOS = "chronos"
+
+
+# ---------------------------------------------------------------------------
+# Quantile helpers — convert symmetric CI to canonical p10/p90
+# ---------------------------------------------------------------------------
+
+# z-scores: z(0.90) = 1.2816 (for p10/p90), z(0.95) = 1.6449 (for CI built with 1.645σ)
+_Z_P90 = 1.2816
+_Z_P95 = 1.6449
+_CI_TO_QUANTILE_RATIO = _Z_P90 / _Z_P95  # ≈ 0.779
+
+
+def _scale_ci_to_quantiles(
+    predictions: List[float],
+    ci: List[List[float]],
+) -> Tuple[List[float], List[float]]:
+    """Convert a 1.645σ-based confidence interval to approximate p10/p90.
+
+    Returns (p10_list, p90_list).
+    """
+    p10_list: List[float] = []
+    p90_list: List[float] = []
+    for i, pred in enumerate(predictions):
+        if i < len(ci):
+            lower, upper = ci[i][0], ci[i][1]
+            half_width = (upper - lower) / 2.0
+            scaled_hw = half_width * _CI_TO_QUANTILE_RATIO
+            p10_list.append(max(0.0, pred - scaled_hw))
+            p90_list.append(pred + scaled_hw)
+        else:
+            p10_list.append(max(0.0, pred))
+            p90_list.append(pred)
+    return p10_list, p90_list
 
 class ForecasterStrategy:
     """预测策略基类"""
@@ -157,12 +198,19 @@ class ProphetStrategy(ForecasterStrategy):
         mean_val = float(np.mean(arr))
         risk_score = min(100, max(0, float(residual_std / (mean_val + 1e-6) * 100)))
 
+        # p10/p90: Prophet posterior bounds are ~p10/p90 at default interval_width=0.80
+        p10 = [max(0.0, float(l)) for l in yhat_lower]
+        p90 = [float(u) for u in yhat_upper]
+
         return {
             "success": True,
             "model_type": ModelType.PROPHET.value,
             "prediction": {
                 "predictions": predictions,
                 "confidence_interval": ci,
+                "p10": p10,
+                "p50": list(predictions),
+                "p90": p90,
                 "risk_score": risk_score,
                 "model_version": "prophet-v2.0-real"
             },
@@ -191,6 +239,7 @@ class ProphetStrategy(ForecasterStrategy):
         # P0-1.5: 確定性 fallback（不加隨機噪聲）
         predictions = [max(0, mean_val + trend_per_day * i) for i in range(horizon_days)]
         ci = [[max(0, p - 1.645 * std_val), p + 1.645 * std_val] for p in predictions]
+        p10, p90 = _scale_ci_to_quantiles(predictions, ci)
         risk_score = min(100, max(0, float(std_val / (mean_val + 1e-6) * 100)))
 
         return {
@@ -199,6 +248,9 @@ class ProphetStrategy(ForecasterStrategy):
             "prediction": {
                 "predictions": predictions,
                 "confidence_interval": ci,
+                "p10": p10,
+                "p50": list(predictions),
+                "p90": p90,
                 "risk_score": risk_score,
                 "model_version": "prophet-v1.0-fallback"
             },
@@ -314,6 +366,7 @@ class LightGBMStrategy(ForecasterStrategy):
         arr = np.array(sales_sequence)
         residual_std = float(np.std(arr[-min(30, n):]))
         ci = [[max(0, p - 1.645 * residual_std), p + 1.645 * residual_std] for p in predictions]
+        p10, p90 = _scale_ci_to_quantiles(predictions, ci)
 
         # ── 風險分數 ──
         rolling_mean = float(np.mean(arr[-7:])) if n >= 7 else float(np.mean(arr))
@@ -325,6 +378,9 @@ class LightGBMStrategy(ForecasterStrategy):
             "prediction": {
                 "predictions": predictions,
                 "confidence_interval": ci,
+                "p10": p10,
+                "p50": list(predictions),
+                "p90": p90,
                 "risk_score": risk_score,
                 "model_version": "lightgbm-v2.0-recursive"
             },
@@ -353,6 +409,7 @@ class LightGBMStrategy(ForecasterStrategy):
         # P0-1.5: 確定性 fallback（不加隨機噪聲）
         predictions = [max(0, rolling_mean + trend * i) for i in range(horizon_days)]
         ci = [[max(0, p - 1.645 * rolling_std), p + 1.645 * rolling_std] for p in predictions]
+        p10, p90 = _scale_ci_to_quantiles(predictions, ci)
         risk_score = min(100, max(0, float(rolling_std / (rolling_mean + 1e-6) * 80)))
 
         return {
@@ -361,6 +418,9 @@ class LightGBMStrategy(ForecasterStrategy):
             "prediction": {
                 "predictions": predictions,
                 "confidence_interval": ci,
+                "p10": p10,
+                "p50": list(predictions),
+                "p90": p90,
                 "risk_score": risk_score,
                 "model_version": "lightgbm-v1.0-fallback"
             },
@@ -437,9 +497,18 @@ class ChronosStrategy(ForecasterStrategy):
             
             ci = [[lower_bound[i], upper_bound[i]] for i in range(horizon_days)]
             
+            # Enforce invariant: p10 <= p50 <= p90 (stochastic predictions may violate)
+            p10_raw = lower_bound if isinstance(lower_bound, list) else lower_bound.tolist()
+            p90_raw = upper_bound if isinstance(upper_bound, list) else upper_bound.tolist()
+            p10_clamped = [min(p10_raw[i], predictions[i]) for i in range(horizon_days)]
+            p90_clamped = [max(p90_raw[i], predictions[i]) for i in range(horizon_days)]
+
             prediction = {
                 "predictions": predictions,
                 "confidence_interval": ci,
+                "p10": p10_clamped,
+                "p50": list(predictions),
+                "p90": p90_clamped,
                 "risk_score": risk_score,
                 "model_version": "chronos-t5-tiny-v1.0",
                 "anomaly_detected": is_anomaly
@@ -467,21 +536,237 @@ class ChronosStrategy(ForecasterStrategy):
 
 class ForecasterFactory:
     """预测器工厂 - 实现策略模式"""
-    
+
     def __init__(self):
         # 初始化所有训练器
         self.prophet_trainer = ProphetTrainer()
         self.lightgbm_trainer = LightGBMTrainer()
         self.chronos_trainer = ChronosTrainer()
-        
+
         # 初始化策略
         self.strategies = {
             ModelType.PROPHET: ProphetStrategy(ModelType.PROPHET, self.prophet_trainer),
             ModelType.LIGHTGBM: LightGBMStrategy(ModelType.LIGHTGBM, self.lightgbm_trainer),
             ModelType.CHRONOS: ChronosStrategy(ModelType.CHRONOS, self.chronos_trainer)
         }
-        
+
+        # PR-B: Champion model cache {series_id -> (model_obj, meta, model_name)}
+        self._champion_cache: Dict = {}
+
+        # PR-E: Model lifecycle registry (lazy-init)
+        self._lifecycle_registry = None
+
         logging.info("ForecasterFactory initialized with all strategies")
+
+    # ── PR-E: Lifecycle Registry Integration ──
+
+    def _get_lifecycle_registry(self):
+        """Lazy-init the lifecycle registry."""
+        if self._lifecycle_registry is None:
+            try:
+                from ml.registry.model_registry import ModelLifecycleRegistry
+                self._lifecycle_registry = ModelLifecycleRegistry()
+            except Exception as e:
+                logging.warning(f"Could not init lifecycle registry: {e}")
+        return self._lifecycle_registry
+
+    def predict_with_prod_pointer(
+        self,
+        sku: str,
+        erp_connector: ERPConnector = None,
+        horizon_days: int = 30,
+        inline_history: Optional[List[float]] = None,
+    ) -> Optional[Dict]:
+        """
+        PR-E: Try to predict using the PROD pointer from the lifecycle registry.
+
+        Priority:
+          1. If registry has PROD pointer for sku -> load that artifact
+          2. Return None to let caller fall through to champion/fallback
+
+        Returns result dict with registry_state metadata, or None.
+        """
+        try:
+            registry = self._get_lifecycle_registry()
+            if registry is None:
+                return None
+
+            prod_record = registry.get_prod_artifact(sku)
+            if prod_record is None:
+                return None
+
+            artifact_path = prod_record.get("artifact_path", "")
+            model_name = prod_record.get("model_name", "")
+            artifact_id = prod_record.get("artifact_id", "")
+
+            if not artifact_path or not os.path.isdir(artifact_path):
+                logging.warning(
+                    f"PROD artifact path not found for {sku}: {artifact_path}"
+                )
+                return None
+
+            # Load model from artifact path using ArtifactManager
+            from ml.training.artifact_manager import ArtifactManager
+            am = ArtifactManager()
+            model_obj = am.load_model(artifact_path, model_name)
+
+            # Build history
+            if inline_history is not None:
+                sales_sequence = [float(v) for v in inline_history]
+            elif erp_connector is not None:
+                sales_data = erp_connector.fetch_sales_data(sku)
+                if not sales_data:
+                    return None
+                sales_sequence = [float(r.get("sales", 0)) for r in sales_data]
+            else:
+                return None
+
+            # Use training strategy to predict
+            from ml.training.strategies import get_strategy
+            strategy = get_strategy(model_name)
+            predictions = strategy.predict(model_obj, sales_sequence, horizon_days)
+            predictions = [max(0, float(p)) for p in predictions]
+
+            # Confidence interval
+            arr = np.array(sales_sequence)
+            residual_std = float(np.std(arr[-min(30, len(arr)):]))
+            ci = [
+                [max(0, p - 1.645 * residual_std), p + 1.645 * residual_std]
+                for p in predictions
+            ]
+            risk_score = min(
+                100, max(0, residual_std / (float(np.mean(arr)) + 1e-6) * 100)
+            )
+
+            # Find promoted_at from promotion history
+            promo_history = prod_record.get("promotion_history", [])
+            promoted_at = ""
+            promotion_note = ""
+            if promo_history:
+                last_promo = promo_history[-1]
+                promoted_at = last_promo.get("timestamp", "")
+                promotion_note = last_promo.get("note", "")
+
+            return {
+                "success": True,
+                "model_type": model_name,
+                "prediction": {
+                    "predictions": predictions,
+                    "confidence_interval": ci,
+                    "risk_score": risk_score,
+                    "model_version": f"prod-{model_name}-{artifact_id}",
+                },
+                "metadata": {
+                    "training_data_points": len(sales_sequence),
+                    "forecast_horizon": horizon_days,
+                    "inference_mode": "prod_registry",
+                    "model_used": "prod",
+                    "generated_at": datetime.now().isoformat(),
+                },
+                "registry_state": {
+                    "source": "prod",
+                    "artifact_id": artifact_id,
+                    "promoted_at": promoted_at,
+                },
+                "model_version_id": artifact_id,
+                "promotion_note": promotion_note,
+            }
+
+        except Exception as e:
+            logging.warning(f"PROD pointer prediction failed for {sku}: {e}")
+            return None
+
+    # ── PR-B: Champion-aware prediction ──
+
+    def predict_with_champion(
+        self,
+        sku: str,
+        erp_connector: ERPConnector = None,
+        horizon_days: int = 30,
+        inline_history: Optional[List[float]] = None,
+        champion_dir: str = "",
+    ) -> Optional[Dict]:
+        """
+        Try to predict using a trained champion artifact.
+
+        Returns None if no champion exists, letting the caller fall back
+        to predict_with_fallback().
+        """
+        try:
+            from ml.training.orchestrator import load_champion
+            from ml.training.artifact_manager import ArtifactManager
+
+            champion_data = load_champion(sku, champion_dir)
+            if champion_data is None:
+                return None
+
+            artifact_dir = champion_data.get("artifact_dir", "")
+            model_name = champion_data.get("model_name", "")
+            if not artifact_dir or not os.path.isdir(artifact_dir):
+                logging.warning(f"Champion artifact dir not found: {artifact_dir}")
+                return None
+
+            # Load from cache or disk
+            cache_key = f"{sku}:{artifact_dir}"
+            if cache_key not in self._champion_cache:
+                am = ArtifactManager()
+                model_obj = am.load_model(artifact_dir, model_name)
+                meta = am.load_metadata(artifact_dir)
+                self._champion_cache[cache_key] = (model_obj, meta, model_name)
+
+            model_obj, meta, model_name = self._champion_cache[cache_key]
+
+            # Build history for prediction
+            if inline_history is not None:
+                sales_sequence = [float(v) for v in inline_history]
+            elif erp_connector is not None:
+                sales_data = erp_connector.fetch_sales_data(sku)
+                if not sales_data:
+                    return None
+                sales_sequence = [float(r.get('sales', 0)) for r in sales_data]
+            else:
+                return None
+
+            # Use the appropriate training strategy to predict
+            from ml.training.strategies import get_strategy
+            strategy = get_strategy(model_name)
+            predictions = strategy.predict(model_obj, sales_sequence, horizon_days)
+            predictions = [max(0, float(p)) for p in predictions]
+
+            # Confidence interval from recent residual std
+            arr = np.array(sales_sequence)
+            residual_std = float(np.std(arr[-min(30, len(arr)):]))
+            ci = [[max(0, p - 1.645 * residual_std), p + 1.645 * residual_std]
+                  for p in predictions]
+
+            risk_score = min(100, max(0, residual_std / (float(np.mean(arr)) + 1e-6) * 100))
+
+            config_meta = meta.get("config", {})
+            return {
+                "success": True,
+                "model_type": model_name,
+                "prediction": {
+                    "predictions": predictions,
+                    "confidence_interval": ci,
+                    "risk_score": risk_score,
+                    "model_version": f"champion-{model_name}",
+                },
+                "metadata": {
+                    "training_data_points": len(sales_sequence),
+                    "forecast_horizon": horizon_days,
+                    "inference_mode": "champion_artifact",
+                    "model_used": "champion",
+                    "artifact_run_id": champion_data.get("run_id", ""),
+                    "dataset_fingerprint": champion_data.get("dataset_fingerprint", ""),
+                    "training_data_window": config_meta.get("series_id", sku),
+                    "champion_selected_at": champion_data.get("selected_at", ""),
+                    "generated_at": datetime.now().isoformat(),
+                },
+            }
+
+        except Exception as e:
+            logging.warning(f"Champion prediction failed for {sku}, falling back: {e}")
+            return None
     
     def get_strategy(self, model_type: ModelType) -> ForecasterStrategy:
         """获取指定的预测策略"""
@@ -998,3 +1283,210 @@ class ForecasterFactory:
             return "B (可接受，需複核)"
         else:
             return "F (垃圾進，垃圾出)"
+
+    # ══════════════════════════════════════════════════════════════
+    # PR-C: Probabilistic Uncertainty & Calibration
+    # ══════════════════════════════════════════════════════════════
+
+    def backtest_with_calibration(
+        self,
+        sku: str,
+        full_history: List[float],
+        test_days: int = 7,
+        models: Optional[List[str]] = None,
+        gate_config: Optional[QualityGateConfig] = None,
+    ) -> Dict:
+        """
+        Enhanced backtest that also computes residuals, quantile metrics,
+        and quality gate evaluations for each model.
+
+        Returns the standard backtest report PLUS:
+          - per-model: residuals, calibration_metrics, quantile_result, gate_result
+          - calibration_report: artifact-ready calibration data
+        """
+        if len(full_history) < test_days + 10:
+            return {
+                "error": f"需要至少 {test_days + 10} 個數據點進行回測，實際只有 {len(full_history)} 個"
+            }
+
+        train_data = full_history[:-test_days]
+        actual_values = full_history[-test_days:]
+        actual_mean = float(np.mean([abs(v) for v in actual_values])) if actual_values else 1.0
+
+        models_to_test = models or ["lightgbm", "chronos", "prophet"]
+        results = []
+        all_residuals = []  # Global residual pool
+
+        for model_name in models_to_test:
+            try:
+                model_type = ModelType(model_name.lower())
+                strategy = self.get_strategy(model_type)
+
+                prediction_result = strategy.predict(
+                    sku=sku,
+                    erp_connector=None,
+                    horizon_days=test_days,
+                    inline_history=train_data,
+                )
+
+                if not prediction_result.get("success"):
+                    results.append({
+                        "model": model_name,
+                        "success": False,
+                        "error": prediction_result.get("error", "Unknown"),
+                    })
+                    continue
+
+                forecast_values = prediction_result["prediction"]["predictions"][:test_days]
+
+                # Compute residuals: actual - predicted
+                residuals = [
+                    float(a - f)
+                    for a, f in zip(actual_values, forecast_values)
+                ]
+                all_residuals.extend(residuals)
+
+                # Fit per-model quantile engine on these residuals
+                engine = QuantileEngine()
+                engine.fit(residuals_global=residuals)
+
+                # Generate quantiles
+                quantile_result = engine.predict_quantiles(forecast_values)
+
+                # Compute calibration metrics
+                cal_metrics = compute_calibration_metrics(
+                    actuals=actual_values,
+                    p10=quantile_result.p10,
+                    p50=quantile_result.p50,
+                    p90=quantile_result.p90,
+                )
+
+                # Run quality gate
+                gate_result = evaluate_candidate(
+                    metrics=cal_metrics,
+                    config=gate_config,
+                    actuals_mean=actual_mean,
+                )
+
+                mape = self._calculate_mape(actual_values, forecast_values)
+                grade = self._grade_mape(mape)
+
+                results.append({
+                    "model": model_name,
+                    "success": True,
+                    "mape": float(mape),
+                    "grade": grade,
+                    "forecast": [float(v) for v in forecast_values],
+                    "actual": [float(v) for v in actual_values],
+                    "bias": float(np.mean(np.array(forecast_values) - np.array(actual_values))),
+                    "prediction": prediction_result["prediction"],
+                    # PR-C additions
+                    "residuals": residuals,
+                    "p10": quantile_result.p10,
+                    "p50": quantile_result.p50,
+                    "p90": quantile_result.p90,
+                    "calibration_metrics": cal_metrics,
+                    "gate_result": gate_result.to_dict(),
+                    "calibration_scope": quantile_result.calibration_scope,
+                    "uncertainty_method": quantile_result.uncertainty_method,
+                    "monotonicity_fixes": quantile_result.monotonicity_fixes,
+                })
+
+            except Exception as e:
+                results.append({
+                    "model": model_name,
+                    "success": False,
+                    "error": str(e),
+                })
+
+        # Generate report
+        successful = [r for r in results if r.get("success")]
+
+        if not successful:
+            return {
+                "error": "所有模型回測失敗",
+                "details": results,
+            }
+
+        best = min(successful, key=lambda x: x["mape"])
+
+        if len(successful) >= 2:
+            mapes = [r["mape"] for r in successful]
+            mape_variance = float(np.var(mapes))
+            consensus = "high" if mape_variance < 50 else "medium" if mape_variance < 200 else "low"
+        else:
+            consensus = "insufficient_data"
+            mape_variance = None
+
+        if best["mape"] < 20:
+            reliability = "trusted"
+            recommendation = "AI forecast is production-ready"
+        elif best["mape"] < 50:
+            reliability = "caution"
+            recommendation = "Forecast accuracy is moderate — consider safety stock buffer"
+        else:
+            reliability = "unreliable"
+            recommendation = "Model is unreliable for this SKU — review data or use manual judgement"
+
+        # Build calibration report artifact (global residual pool)
+        global_engine = QuantileEngine()
+        if all_residuals:
+            global_engine.fit(residuals_global=all_residuals)
+        calibration_report = global_engine.get_calibration_report()
+        calibration_report["achieved_coverage_10_90"] = best.get("calibration_metrics", {}).get("coverage_10_90")
+        calibration_report["pinball_losses"] = {
+            "p10": best.get("calibration_metrics", {}).get("pinball_loss_p10"),
+            "p50": best.get("calibration_metrics", {}).get("pinball_loss_p50"),
+            "p90": best.get("calibration_metrics", {}).get("pinball_loss_p90"),
+        }
+        calibration_report["monotonicity_fixes_total"] = sum(
+            r.get("monotonicity_fixes", 0) for r in successful
+        )
+
+        return {
+            "sku": sku,
+            "test_days": test_days,
+            "train_points": len(train_data),
+            "results": results,
+            "best_model": {
+                "name": best["model"],
+                "mape": best["mape"],
+                "grade": best["grade"],
+                "gate_passed": best.get("gate_result", {}).get("passed", False),
+            },
+            "consensus": {
+                "level": consensus,
+                "mape_variance": mape_variance,
+                "models_tested": len(successful),
+            },
+            "reliability": reliability,
+            "recommendation": recommendation,
+            "accuracy_score": max(0, 100 - best["mape"]),
+            # PR-C additions
+            "calibration_report": calibration_report,
+            "global_residuals_count": len(all_residuals),
+        }
+
+    def generate_quantiles_for_inference(
+        self,
+        point_forecasts: List[float],
+        backtest_residuals: Optional[List[float]] = None,
+        series_id: Optional[str] = None,
+        calibration_path: Optional[str] = None,
+    ) -> QuantileResult:
+        """
+        Generate p10/p50/p90 for inference output.
+
+        Priority:
+        1. If calibration_path is provided, load persisted calibration data.
+        2. If backtest_residuals are provided, fit a fresh engine.
+        3. Fall back to heuristic (±10%).
+        """
+        engine = QuantileEngine()
+
+        if calibration_path and os.path.exists(calibration_path):
+            engine.load(calibration_path)
+        elif backtest_residuals and len(backtest_residuals) > 0:
+            engine.fit(residuals_global=backtest_residuals)
+
+        return engine.predict_quantiles(point_forecasts, series_id=series_id)

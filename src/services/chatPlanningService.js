@@ -1648,7 +1648,7 @@ export async function runPlanFromDatasetProfile({
         promptId: DI_PROMPT_IDS.WORKFLOW_A_READINESS,
         input: readinessPromptInput,
         temperature: 0.1,
-        maxOutputTokens: 1400
+        maxOutputTokens: 2400
       });
 
       const normalizedReadiness = normalizeReadinessPayload(readinessPromptResult.parsed);
@@ -1919,6 +1919,11 @@ export async function runPlanFromDatasetProfile({
           userId, datasetProfileRow.id, riskRunId
         );
 
+        if (riskScoreRows.length === 0) {
+          console.info('[chatPlanningService] Risk-aware mode enabled but no risk scores found — skipping risk-adjusted plan.');
+        }
+
+        if (riskScoreRows.length > 0) {
         // 2. Compute deterministic risk adjustments
         const riskAdjustments = computeRiskAdjustments({
           riskScores: riskScoreRows,
@@ -2113,6 +2118,7 @@ export async function runPlanFromDatasetProfile({
         };
 
         console.info(`[chatPlanningService] Risk-aware plan produced: ${riskNormalizedPlan.length} rows, ${riskAdjustments.summary.num_impacted_skus} impacted SKUs.`);
+        } // end if (riskScoreRows.length > 0)
       } catch (riskErr) {
         // Risk-aware planning failure must NOT fail the base plan run.
         console.warn('[chatPlanningService] Risk-aware planning failed (base plan unaffected):', riskErr.message);

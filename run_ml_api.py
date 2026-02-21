@@ -7,12 +7,20 @@ src_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "src")
 sys.path.insert(0, src_path)
 os.environ["PYTHONPATH"] = src_path
 
-# 加载 .env 文件（确保 VITE_SUPABASE_URL 等变量可用）
+# 加载 .env / .env.local 文件（确保 VITE_SUPABASE_URL 等变量可用）
 try:
     from dotenv import load_dotenv
-    env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
-    load_dotenv(env_path)
-    print(f"✅ Loaded .env from {env_path}")
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    for env_file in (".env", ".env.local"):
+        env_path = os.path.join(base_dir, env_file)
+        if os.path.isfile(env_path):
+            load_dotenv(env_path, override=True)
+            print(f"✅ Loaded {env_file}")
+    # Bridge VITE_ prefixed keys to non-prefixed names for Python backend
+    if not os.getenv("DEEPSEEK_API_KEY") and os.getenv("VITE_DEEPSEEK_API_KEY"):
+        os.environ["DEEPSEEK_API_KEY"] = os.getenv("VITE_DEEPSEEK_API_KEY")
+    if not os.getenv("DEEPSEEK_BASE_URL") and os.getenv("VITE_DI_DEEPSEEK_BASE_URL"):
+        os.environ["DEEPSEEK_BASE_URL"] = os.getenv("VITE_DI_DEEPSEEK_BASE_URL")
 except ImportError:
     print("⚠️ python-dotenv not installed, reading env vars from system only")
 

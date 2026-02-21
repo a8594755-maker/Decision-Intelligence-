@@ -239,10 +239,13 @@ export default function CanvasPanel({
 
   // Export workbook state
   const [isExporting, setIsExporting] = useState(false);
+  const [isAIExporting, setIsAIExporting] = useState(false);
   const [workbookArtifact, setWorkbookArtifact] = useState(null);
+  const [exportStatus, setExportStatus] = useState(null); // { type: 'success'|'error'|'info', message: string }
 
   const handleExportWorkbook = useCallback(async () => {
     setIsExporting(true);
+    setExportStatus(null);
     try {
       const bytes = exportWorkbook({
         chartPayload,
@@ -263,12 +266,105 @@ export default function CanvasPanel({
       };
       setWorkbookArtifact(artifact);
       downloadFile(artifact);
+      setExportStatus({ type: 'success', message: 'Quick Export downloaded.' });
     } catch (err) {
       console.error('[CanvasPanel] exportWorkbook failed:', err);
+      setExportStatus({ type: 'error', message: `Quick Export failed: ${err.message}` });
     } finally {
       setIsExporting(false);
     }
   }, [chartPayload, downloads, run]);
+
+  const handleAIExportWorkbook = useCallback(async () => {
+    setExportStatus(null);
+    if (!run?.id) {
+      setExportStatus({ type: 'error', message: 'No run_id available. Run a planning workflow first.' });
+      return;
+    }
+    setIsAIExporting(true);
+    setExportStatus({ type: 'info', message: 'Connecting to ML API...' });
+    try {
+      // Determine currently selected focus series
+      const focusGroups = (
+        (Array.isArray(forecastSeriesGroups) && forecastSeriesGroups.length > 0 ? forecastSeriesGroups : null) ||
+        (Array.isArray(chartPayload?.series_groups) && chartPayload.series_groups.length > 0 ? chartPayload.series_groups : null) ||
+        []
+      );
+      const activeKey = selectedSeriesKey || focusGroups[0]?.key || null;
+      const activeGroup = focusGroups.find(g => g.key === activeKey) || focusGroups[0] || null;
+
+      // Primary: run_id (backend loads from DB). Fallback: inline data.
+      // Serialise downloads but skip binary blobs (xlsx bytes etc.)
+      const safeDownloads = (downloads || [])
+        .filter(d => typeof d.content === 'string' || (typeof d.content === 'object' && !ArrayBuffer.isView(d.content) && !(d.content instanceof ArrayBuffer)))
+        .map(d => ({
+          label: d.label || d.fileName || '',
+          fileName: d.fileName || d.label || '',
+          content: typeof d.content === 'string' ? d.content : JSON.stringify(d.content),
+          mimeType: d.mimeType || 'application/json',
+        }));
+
+      const payload = {
+        version: 'v1',
+        run_id: run.id,
+        ai_insights: true,
+        focus: activeGroup ? {
+          series_key: activeGroup.key || null,
+          sku: activeGroup.material_code || null,
+          plant: activeGroup.plant_id || null,
+          mode: 'selected',
+        } : null,
+        // Fallback data (used only when DB is unreachable)
+        run_meta: { run_id: run.id, status: run.status, workflow: run.workflow },
+        chart_payload: chartPayload || {},
+        downloads: safeDownloads,
+      };
+
+      const baseUrl = import.meta.env.VITE_ML_API_URL || 'http://127.0.0.1:8000';
+
+      setExportStatus({ type: 'info', message: 'Generating AI insights & building workbook...' });
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 120_000);
+
+      try {
+        const response = await fetch(`${baseUrl}/export-workbook`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+          signal: controller.signal,
+        });
+        clearTimeout(timeoutId);
+
+        if (!response.ok) {
+          throw new Error(`Export failed: ${response.status} ${response.statusText}`);
+        }
+
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+        link.href = url;
+        link.download = `SmartOps_AI_Export_${run.id}_${ts}.xlsx`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+        setExportStatus({ type: 'success', message: 'AI Export downloaded successfully!' });
+      } catch (fetchErr) {
+        clearTimeout(timeoutId);
+        throw fetchErr;
+      }
+    } catch (err) {
+      console.error('[CanvasPanel] AI export failed:', err);
+      const isMlDown = err.message?.includes('Failed to fetch') || err.message?.includes('NetworkError') || err.name === 'AbortError';
+      const hint = isMlDown
+        ? 'ML API unreachable — start it with: python run_ml_api.py'
+        : `AI Export failed: ${err.message}`;
+      setExportStatus({ type: 'error', message: hint });
+    } finally {
+      setIsAIExporting(false);
+    }
+  }, [run, selectedSeriesKey, forecastSeriesGroups, chartPayload, downloads]);
   // Priority: direct prop from parent (most reliable) > chartPayload store > empty
   const seriesGroups = (
     (Array.isArray(forecastSeriesGroups) && forecastSeriesGroups.length > 0 ? forecastSeriesGroups : null) ||
@@ -501,7 +597,7 @@ export default function CanvasPanel({
                 </div>
               ) : (
                 <div className="h-48 md:h-64 w-full">
-                  <ResponsiveContainer width="100%" height="100%">
+                  <ResponsiveContainer width="100%" height="100%" minWidth={0}>
                     <LineChart data={actualVsForecastRows}>
                       <CartesianGrid strokeDasharray="3 3" />
                       <XAxis dataKey={actualVsForecast.xKey} tickFormatter={chartTick} fontSize={11} />
@@ -599,7 +695,7 @@ export default function CanvasPanel({
                     <div className="h-48 md:h-64 w-full flex items-center justify-center text-slate-400 text-sm">No data available</div>
                   ) : (
                     <div className="h-48 md:h-64 w-full">
-                      <ResponsiveContainer width="100%" height="100%">
+                      <ResponsiveContainer width="100%" height="100%" minWidth={0}>
                         <LineChart data={invRows}>
                           <CartesianGrid strokeDasharray="3 3" />
                           <XAxis dataKey="period" tickFormatter={chartTick} fontSize={11} />
@@ -655,7 +751,7 @@ export default function CanvasPanel({
                     <div className="h-48 md:h-64 w-full flex items-center justify-center text-slate-400 text-sm">No data available</div>
                   ) : (
                     <div className="h-48 md:h-64 w-full">
-                      <ResponsiveContainer width="100%" height="100%">
+                      <ResponsiveContainer width="100%" height="100%" minWidth={0}>
                         <BarChart data={costRows} margin={{ top: 4, right: 4, left: 0, bottom: 24 }}>
                           <CartesianGrid strokeDasharray="3 3" vertical={false} />
                           <XAxis dataKey="label" fontSize={11} tick={{ fill: '#64748b' }} interval={0} angle={-20} textAnchor="end" />
@@ -701,30 +797,71 @@ export default function CanvasPanel({
 
         {activeTab === 'downloads' && (
           <div className="space-y-2">
-            {/* Export Workbook action */}
+            {/* AI-Enhanced Export Workbook */}
             <div className="rounded-xl border border-blue-200 dark:border-blue-800/60 bg-blue-50/40 dark:bg-blue-900/10 p-3 flex items-center justify-between gap-3">
               <div className="min-w-0">
                 <p className="text-xs font-semibold text-blue-800 dark:text-blue-300">
-                  Export Workbook (.xlsx)
+                  AI-Enhanced Export (.xlsx)
                 </p>
                 <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                  Summary · Report · Forecast · Plan · Charts
+                  {isAIExporting
+                    ? 'Generating AI insights & building workbook...'
+                    : 'Professional report with AI insights, charts & formatting'}
                 </p>
               </div>
               <Button
                 variant="primary"
                 className="text-xs flex-shrink-0"
-                onClick={handleExportWorkbook}
-                disabled={isExporting}
+                onClick={handleAIExportWorkbook}
+                disabled={isAIExporting || isExporting}
               >
-                {isExporting ? (
+                {isAIExporting ? (
                   <Loader2 className="w-3 h-3 mr-1 animate-spin" />
                 ) : (
                   <TableProperties className="w-3 h-3 mr-1" />
                 )}
-                {isExporting ? 'Building…' : 'Export'}
+                {isAIExporting ? 'Building…' : 'AI Export'}
               </Button>
             </div>
+
+            {/* Quick Export (existing SheetJS fallback) */}
+            <div className="rounded-xl border border-slate-200 dark:border-slate-700 p-3 flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-xs font-medium text-slate-700 dark:text-slate-300">
+                  Quick Export (.xlsx)
+                </p>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                  Basic data-only workbook (no AI, no formatting)
+                </p>
+              </div>
+              <Button
+                variant="secondary"
+                className="text-xs flex-shrink-0"
+                onClick={handleExportWorkbook}
+                disabled={isExporting || isAIExporting}
+              >
+                {isExporting ? (
+                  <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                ) : (
+                  <Download className="w-3 h-3 mr-1" />
+                )}
+                {isExporting ? 'Building…' : 'Quick'}
+              </Button>
+            </div>
+
+            {/* Export status feedback */}
+            {exportStatus && (
+              <div className={`rounded-lg px-3 py-2 text-xs flex items-start gap-2 ${
+                exportStatus.type === 'error'   ? 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-800/50' :
+                exportStatus.type === 'success' ? 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300 border border-green-200 dark:border-green-800/50' :
+                                                  'bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800/50'
+              }`}>
+                {exportStatus.type === 'error' && <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />}
+                {exportStatus.type === 'success' && <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />}
+                {exportStatus.type === 'info' && <Loader2 className="w-3.5 h-3.5 flex-shrink-0 mt-0.5 animate-spin" />}
+                <span>{exportStatus.message}</span>
+              </div>
+            )}
 
             {/* Individual artifact downloads */}
             {[...downloads, ...(workbookArtifact ? [workbookArtifact] : [])].length === 0 ? (

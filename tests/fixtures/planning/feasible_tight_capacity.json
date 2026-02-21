@@ -1,0 +1,65 @@
+{
+  "id": "feasible_tight_capacity",
+  "description": "Budget cap is binding but still allows a feasible full-service plan.",
+  "engines": ["heuristic", "ortools"],
+  "request": {
+    "dataset_profile_id": 102,
+    "planning_horizon_days": 3,
+    "demand_forecast": {
+      "granularity": "daily",
+      "series": [
+        { "sku": "SKU-T", "plant_id": "P1", "date": "2026-01-01", "p50": 10.0, "p90": null },
+        { "sku": "SKU-T", "plant_id": "P1", "date": "2026-01-02", "p50": 10.0, "p90": null },
+        { "sku": "SKU-T", "plant_id": "P1", "date": "2026-01-03", "p50": 10.0, "p90": null }
+      ]
+    },
+    "inventory": [
+      {
+        "sku": "SKU-T",
+        "plant_id": "P1",
+        "as_of_date": "2025-12-31",
+        "on_hand": 20.0,
+        "safety_stock": 0.0,
+        "lead_time_days": 0.0
+      }
+    ],
+    "open_pos": [],
+    "constraints": {
+      "moq": [],
+      "pack_size": [],
+      "max_order_qty": [],
+      "budget_cap": 10.0,
+      "unit_costs": []
+    },
+    "objective": {
+      "optimize_for": "balanced",
+      "stockout_penalty": 25.0,
+      "holding_cost": 0.0,
+      "service_level_target": null
+    },
+    "multi_echelon": {
+      "mode": "off"
+    },
+    "bom_usage": [],
+    "settings": {
+      "solver": {
+        "deterministic_mode": true,
+        "random_seed": 0,
+        "num_search_workers": 1,
+        "time_limit_seconds": 5.0
+      }
+    }
+  },
+  "expectations": {
+    "status_any": ["OPTIMAL", "FEASIBLE"],
+    "plan_rows": { "min": 1 },
+    "order_qty_total": { "min": 9.5, "max": 10.000001 },
+    "kpi_bounds": {
+      "estimated_service_level": { "min": 0.99, "max": 1.0 },
+      "estimated_stockout_units": { "max": 0.000001 }
+    },
+    "proof_constraints_required": [
+      "budget_cap"
+    ]
+  }
+}

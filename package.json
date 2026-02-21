@@ -12,7 +12,10 @@
     "test:ui": "vitest --ui",
     "test:run": "vitest run",
     "test:coverage": "vitest run --coverage",
-    "test:bom": "node test-bom-explosion.js"
+    "test:bom": "node test-bom-explosion.js",
+    "test:regression": "./venv312/bin/python -m pytest -q tests/regression",
+    "test:solver-regression": "./venv312/bin/python -m pytest -q tests/regression",
+    "test:phase4-guardrails": "python3 -m pytest -q tests/test_action_guardrails.py tests/test_registry_router_guardrails.py tests/test_retrain_triggers.py tests/test_model_lifecycle_registry.py tests/test_promotion_gates.py"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.86.0",

@@ -37,7 +37,7 @@ import {
   submitBlockingAnswers as submitWorkflowBlockingAnswers,
   WORKFLOW_NAMES
 } from '../../workflows/workflowRegistry';
-import asyncRunsApiClient from '../../services/asyncRunsApiClient';
+import asyncRunsApiClient, { isAsyncRunsConnectivityError } from '../../services/asyncRunsApiClient';
 import { buildDatasetFingerprint } from '../../utils/datasetFingerprint';
 import { buildSignature } from '../../utils/datasetSimilarity';
 import { buildReusePlan, applyContractTemplateToProfile } from '../../utils/reusePlanner';
@@ -2272,74 +2272,82 @@ export default function DecisionSupportView({ user, addNotification }) {
       const runtimeSettings = buildRuntimeWorkflowSettings(activeDatasetContext || {}, settings || {});
 
       if (asyncRunsApiClient.isConfigured()) {
-        const submitResponse = await asyncRunsApiClient.submitRun({
-          user_id: user.id,
-          dataset_profile_id: profileRow.id,
-          dataset_fingerprint: profileRow?.fingerprint || `profile_${profileRow.id}`,
-          contract_template_id: activeDatasetContext?.contract_template_id || null,
-          workflow: selectedWorkflow,
-          engine_flags: {
-            solver_engine: runtimeSettings?.plan?.solver_engine || 'heuristic',
-            risk_mode: runtimeSettings?.risk?.mode || null,
-            multi_echelon_mode: Boolean(runtimeSettings?.plan?.multi_echelon_mode)
-          },
-          settings: runtimeSettings,
-          horizon: Number(runtimeSettings?.forecast?.horizon_periods || runtimeSettings?.forecast_horizon_periods || null) || null,
-          granularity: profileRow?.profile_json?.global?.time_range_guess?.granularity || null,
-          workload: {
-            rows_per_sheet: Number(profileRow?.profile_json?.global?.rows_per_sheet || 0) || null,
-            skus: Number(profileRow?.profile_json?.global?.sku_count || 0) || null
-          },
-          async_mode: true
-        });
-
-        const runId = Number(submitResponse?.run_id);
-        const jobId = submitResponse?.job_id;
-        if (!Number.isFinite(runId) || !jobId) {
-          throw new Error('Async run submit did not return job_id/run_id');
-        }
-        asyncJobByRunRef.current[runId] = jobId;
-
-        markCanvasRunStarted(`${workflowLabel} run (profile #${profileRow.id})`);
-        updateCanvasState(currentConversationId, (prev) => ({
-          ...prev,
-          run: {
-            ...(prev.run || {}),
-            id: runId,
-            run_id: runId,
-            workflow: selectedWorkflow
-          }
-        }));
-        appendMessagesToCurrentConversation([
-          {
-            role: 'ai',
-            content: `${workflowLabel} started (run #${runId}, job ${jobId}).`,
-            timestamp: new Date().toISOString()
-          },
-          {
-            role: 'ai',
-            type: 'workflow_progress_card',
-            payload: {
-              run_id: runId,
-              job_id: jobId,
-              workflow: selectedWorkflow,
-              status: 'queued'
+        try {
+          const submitResponse = await asyncRunsApiClient.submitRun({
+            user_id: user.id,
+            dataset_profile_id: profileRow.id,
+            dataset_fingerprint: profileRow?.fingerprint || `profile_${profileRow.id}`,
+            contract_template_id: activeDatasetContext?.contract_template_id || null,
+            workflow: selectedWorkflow,
+            engine_flags: {
+              solver_engine: runtimeSettings?.plan?.solver_engine || 'heuristic',
+              risk_mode: runtimeSettings?.risk?.mode || null,
+              multi_echelon_mode: Boolean(runtimeSettings?.plan?.multi_echelon_mode)
             },
-            timestamp: new Date().toISOString()
-          }
-        ]);
+            settings: runtimeSettings,
+            horizon: Number(runtimeSettings?.forecast?.horizon_periods || runtimeSettings?.forecast_horizon_periods || null) || null,
+            granularity: profileRow?.profile_json?.global?.time_range_guess?.granularity || null,
+            workload: {
+              rows_per_sheet: Number(profileRow?.profile_json?.global?.rows_per_sheet || 0) || null,
+              skus: Number(profileRow?.profile_json?.global?.sku_count || 0) || null
+            },
+            async_mode: true
+          });
 
-        const finalSnapshot = await processAsyncWorkflowJob({ jobId, runId });
-        const finalStatus = String(finalSnapshot?.run?.status || '').toLowerCase();
-        if (finalStatus === 'succeeded') {
-          markCanvasRunFinished('succeeded', `✅ ${workflowLabel} run #${runId} completed.`, 'report');
-          addNotification?.(`${workflowLabel} run #${runId} completed.`, 'success');
-        } else if (finalStatus === 'failed' || finalStatus === 'canceled') {
-          const label = finalStatus === 'canceled' ? 'canceled' : 'failed';
-          markCanvasRunFinished('failed', `❌ ${workflowLabel} run #${runId} ${label}.`, 'report');
-          addNotification?.(`${workflowLabel} run #${runId} ${label}.`, 'error');
+          const runId = Number(submitResponse?.run_id);
+          const jobId = submitResponse?.job_id;
+          if (!Number.isFinite(runId) || !jobId) {
+            throw new Error('Async run submit did not return job_id/run_id');
+          }
+          asyncJobByRunRef.current[runId] = jobId;
+
+          markCanvasRunStarted(`${workflowLabel} run (profile #${profileRow.id})`);
+          updateCanvasState(currentConversationId, (prev) => ({
+            ...prev,
+            run: {
+              ...(prev.run || {}),
+              id: runId,
+              run_id: runId,
+              workflow: selectedWorkflow
+            }
+          }));
+          appendMessagesToCurrentConversation([
+            {
+              role: 'ai',
+              content: `${workflowLabel} started (run #${runId}, job ${jobId}).`,
+              timestamp: new Date().toISOString()
+            },
+            {
+              role: 'ai',
+              type: 'workflow_progress_card',
+              payload: {
+                run_id: runId,
+                job_id: jobId,
+                workflow: selectedWorkflow,
+                status: 'queued'
+              },
+              timestamp: new Date().toISOString()
+            }
+          ]);
+
+          const finalSnapshot = await processAsyncWorkflowJob({ jobId, runId });
+          const finalStatus = String(finalSnapshot?.run?.status || '').toLowerCase();
+          if (finalStatus === 'succeeded') {
+            markCanvasRunFinished('succeeded', `✅ ${workflowLabel} run #${runId} completed.`, 'report');
+            addNotification?.(`${workflowLabel} run #${runId} completed.`, 'success');
+          } else if (finalStatus === 'failed' || finalStatus === 'canceled') {
+            const label = finalStatus === 'canceled' ? 'canceled' : 'failed';
+            markCanvasRunFinished('failed', `❌ ${workflowLabel} run #${runId} ${label}.`, 'report');
+            addNotification?.(`${workflowLabel} run #${runId} ${label}.`, 'error');
+          }
+          return;
+        } catch (asyncError) {
+          if (!isAsyncRunsConnectivityError(asyncError)) {
+            throw asyncError;
+          }
+          console.warn('[DecisionSupportView] Async run API unavailable, fallback to in-app workflow engine.', asyncError);
+          addNotification?.('Async ML API unavailable. Falling back to local workflow engine.', 'warning');
         }
-        return;
       }
 
       const startSnapshot = await startWorkflow({

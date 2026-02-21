@@ -142,3 +142,53 @@ class TestBacktest:
     def test_insufficient_data(self, factory):
         result = factory.backtest('X', [1, 2, 3], test_days=7)
         assert 'error' in result
+
+
+class TestQuantileOutput:
+    """PR-A: Verify prediction dicts contain p10/p50/p90 arrays."""
+
+    def _assert_quantiles(self, pred: dict, horizon: int):
+        for key in ("p10", "p50", "p90"):
+            assert key in pred, f"Missing '{key}' in prediction dict"
+            assert len(pred[key]) == horizon, f"len({key})={len(pred[key])}, expected {horizon}"
+        for i in range(horizon):
+            assert pred["p10"][i] <= pred["p50"][i], f"p10[{i}] > p50[{i}]"
+            assert pred["p50"][i] <= pred["p90"][i], f"p50[{i}] > p90[{i}]"
+            assert pred["p10"][i] >= 0, f"p10[{i}] < 0"
+
+    def test_lightgbm_fallback_has_quantiles(self, factory):
+        history = [50 + i * 0.5 for i in range(60)]
+        strategy = factory.get_strategy(ModelType.LIGHTGBM)
+        r = strategy._predict_fallback(history, 7, len(history))
+        self._assert_quantiles(r["prediction"], 7)
+
+    def test_prophet_fallback_has_quantiles(self, factory):
+        history = [50 + i * 0.5 for i in range(60)]
+        strategy = factory.get_strategy(ModelType.PROPHET)
+        r = strategy._predict_fallback(history, 7, len(history))
+        self._assert_quantiles(r["prediction"], 7)
+
+    def test_chronos_has_quantiles(self, factory):
+        np.random.seed(42)
+        history = [50 + np.random.normal(0, 5) for _ in range(60)]
+        strategy = factory.get_strategy(ModelType.CHRONOS)
+        r = strategy.predict(sku="TEST", inline_history=history, horizon_days=7)
+        assert r["success"]
+        self._assert_quantiles(r["prediction"], 7)
+
+    def test_p50_matches_predictions(self, factory):
+        history = [50 + i * 0.5 for i in range(60)]
+        strategy = factory.get_strategy(ModelType.LIGHTGBM)
+        r = strategy._predict_fallback(history, 7, len(history))
+        pred = r["prediction"]
+        for i in range(7):
+            assert pred["p50"][i] == pytest.approx(pred["predictions"][i], abs=0.001)
+
+    def test_quantiles_present_in_predict_with_fallback(self, factory):
+        history = [50 + i for i in range(60)]
+        result = factory.predict_with_fallback(
+            sku="TEST", inline_history=history, horizon_days=7
+        )
+        assert result["success"]
+        pred = result["prediction"]
+        self._assert_quantiles(pred, 7)

@@ -200,12 +200,13 @@ export async function runAutoBaseline({ userId, datasetProfileRow, onProgress = 
     });
 
     const run = result?.run;
-    const solverStatus = result?.solver_result?.status;
+    const solverStatusRaw = result?.solver_result?.status;
+    const solverStatus = String(solverStatusRaw || '').trim().toUpperCase();
 
-    if (!run || (solverStatus && solverStatus === 'infeasible')) {
+    if (!run || solverStatus === 'INFEASIBLE') {
       return {
         success: false,
-        reason: solverStatus === 'infeasible'
+        reason: solverStatus === 'INFEASIBLE'
           ? 'infeasible'
           : 'no_run_returned'
       };

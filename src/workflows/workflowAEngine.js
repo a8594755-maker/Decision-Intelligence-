@@ -15,6 +15,7 @@ import {
 } from '../services/chatPlanningService';
 import { generateTopologyGraphForRun } from '../services/topology/topologyService';
 import { loadArtifact, saveJsonArtifact } from '../utils/artifactStore';
+import { runClosedLoop, isClosedLoopEnabled } from '../services/closed_loop/index.js';
 
 export const WORKFLOW_A_STEPS = ['profile', 'contract', 'validate', 'forecast', 'optimize', 'verify', 'topology', 'report'];
 
@@ -745,6 +746,42 @@ const stepHandlers = {
       riskConfigOverrides: planSettings.risk_config_overrides
     });
 
+    // ── Closed-loop evaluation (non-blocking, feature-flagged) ──────────────────
+    let closedLoopResult = null;
+    if (isClosedLoopEnabled(ctx.settings)) {
+      try {
+        // Load forecast series from the forecast step output for closed-loop analysis
+        const forecastArtifacts = forecastRunId
+          ? await diRunsService.getArtifactsByRunId(forecastRunId).catch(() => [])
+          : [];
+        const forecastSeriesArt = forecastArtifacts.find(a => a.artifact_type === 'forecast_series');
+        const forecastMetricsArt = forecastArtifacts.find(a => a.artifact_type === 'metrics');
+        const forecastBundle = {
+          series: forecastSeriesArt?.artifact_json?.series || [],
+          metrics: forecastMetricsArt?.artifact_json || {}
+        };
+        // Calibration metadata (from PR-C, may not exist yet)
+        const calibrationMeta = forecastMetricsArt?.artifact_json?.calibration_meta || null;
+
+        closedLoopResult = await runClosedLoop({
+          userId: ctx.run.user_id,
+          datasetProfileRow: ctx.datasetProfileRow,
+          forecastRunId,
+          forecastBundle,
+          calibrationMeta,
+          previousForecast: null, // TODO: load from previous run when available
+          riskBundle: null,       // Risk scores loaded separately if risk_mode is on
+          settings: ctx.settings,
+          mode: ctx.settings?.plan?.closed_loop_mode || 'dry_run',
+          configOverrides: ctx.settings?.plan?.closed_loop_config || {},
+          artifactSaver: (runId, type, payload) => saveJsonArtifact(runId, type, payload, ARTIFACT_THRESHOLD)
+        });
+      } catch (clError) {
+        // Non-fatal: base plan result is always preserved
+        console.warn('[workflowAEngine] Closed-loop evaluation failed (base plan unaffected):', clError.message);
+      }
+    }
+
     return {
       status: 'succeeded',
       input_ref: {
@@ -761,6 +798,12 @@ const stepHandlers = {
         risk_aware: planResult?.risk_aware ? {
           num_impacted_skus: planResult.risk_aware.risk_adjustments?.summary?.num_impacted_skus || 0,
           plan_comparison_ref: planResult.artifact_refs?.plan_comparison || null
+        } : null,
+        closed_loop: closedLoopResult ? {
+          status: closedLoopResult.closed_loop_status,
+          run_id: closedLoopResult.closed_loop_run_id,
+          triggered: closedLoopResult.trigger_decision?.should_trigger || false,
+          rerun_submitted: closedLoopResult.planning_run_id != null
         } : null
       },
       result_cards: (() => {
