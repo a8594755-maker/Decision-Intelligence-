@@ -16,6 +16,33 @@ export const DI_PROMPT_IDS = Object.freeze({
   BLOCKING_QUESTIONS: 'prompt_5_blocking_questions'
 });
 
+const DEFAULT_DI_GEMINI_MODEL = 'gemini-3-pro';
+const DI_GEMINI_MODEL = import.meta.env.VITE_DI_GEMINI_MODEL || import.meta.env.VITE_GEMINI_MODEL || DEFAULT_DI_GEMINI_MODEL;
+const DI_GEMINI_MODEL_CANDIDATES = Array.from(new Set(
+  [
+    DI_GEMINI_MODEL,
+    import.meta.env.VITE_DI_GEMINI_MODEL,
+    import.meta.env.VITE_GEMINI_MODEL,
+    DEFAULT_DI_GEMINI_MODEL,
+    'gemini-3.1-pro',
+    'gemini-3-pro',
+    'gemini-3-pro-preview'
+  ]
+    .map((model) => String(model || '').trim())
+    .filter(Boolean)
+));
+const DEFAULT_DI_DEEPSEEK_MODEL = import.meta.env.VITE_DI_DEEPSEEK_MODEL || 'deepseek-chat';
+const DI_DEEPSEEK_MODEL_CANDIDATES = Array.from(new Set(
+  [
+    DEFAULT_DI_DEEPSEEK_MODEL,
+    import.meta.env.VITE_DI_DEEPSEEK_MODEL,
+    'deepseek-v3.2-exp',
+    'deepseek-chat'
+  ]
+    .map((model) => String(model || '').trim())
+    .filter(Boolean)
+));
+
 const PROMPT_PROVIDER = Object.freeze({
   [DI_PROMPT_IDS.DATA_PROFILER]: 'gemini',
   [DI_PROMPT_IDS.SCHEMA_MAPPING]: 'gemini',
@@ -25,11 +52,11 @@ const PROMPT_PROVIDER = Object.freeze({
 });
 
 const PROMPT_DEFAULT_MODEL = Object.freeze({
-  [DI_PROMPT_IDS.DATA_PROFILER]: import.meta.env.VITE_DI_GEMINI_MODEL || 'gemini-3.1-pro',
-  [DI_PROMPT_IDS.SCHEMA_MAPPING]: import.meta.env.VITE_DI_GEMINI_MODEL || 'gemini-3.1-pro',
-  [DI_PROMPT_IDS.WORKFLOW_A_READINESS]: import.meta.env.VITE_DI_GEMINI_MODEL || 'gemini-3.1-pro',
-  [DI_PROMPT_IDS.REPORT_SUMMARY]: import.meta.env.VITE_DI_DEEPSEEK_MODEL || 'deepseek-chat',
-  [DI_PROMPT_IDS.BLOCKING_QUESTIONS]: import.meta.env.VITE_DI_DEEPSEEK_MODEL || 'deepseek-chat'
+  [DI_PROMPT_IDS.DATA_PROFILER]: DI_GEMINI_MODEL,
+  [DI_PROMPT_IDS.SCHEMA_MAPPING]: DI_GEMINI_MODEL,
+  [DI_PROMPT_IDS.WORKFLOW_A_READINESS]: DI_GEMINI_MODEL,
+  [DI_PROMPT_IDS.REPORT_SUMMARY]: DEFAULT_DI_DEEPSEEK_MODEL,
+  [DI_PROMPT_IDS.BLOCKING_QUESTIONS]: DEFAULT_DI_DEEPSEEK_MODEL
 });
 
 const GEMINI_API_VERSION = import.meta.env.VITE_DI_GEMINI_API_VERSION || 'v1beta';
@@ -55,6 +82,11 @@ export const clearDeepSeekApiKey = () => {
   localStorage.removeItem(DEEPSEEK_LOCAL_STORAGE_KEY);
 };
 
+const isModelLookupError = (status, message = '') => {
+  if (status === 404) return true;
+  return /(model|models).*(not found|unsupported|unknown|invalid|not supported)/i.test(message);
+};
+
 const toPromptText = (promptId, input) => {
   if (promptId === DI_PROMPT_IDS.DATA_PROFILER) return buildSystemBrainPrompt(input);
   if (promptId === DI_PROMPT_IDS.SCHEMA_MAPPING) return buildSchemaContractMappingPrompt(input);
@@ -70,34 +102,53 @@ const callGeminiPrompt = async ({ prompt, model, temperature = 0.15, maxOutputTo
     throw new Error('Gemini API key is missing for DI prompt execution.');
   }
 
-  const response = await fetch(
-    `https://generativelanguage.googleapis.com/${GEMINI_API_VERSION}/models/${model}:generateContent?key=${apiKey}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: {
-          temperature,
-          maxOutputTokens
-        }
-      })
+  const modelCandidates = Array.from(new Set(
+    [model, ...DI_GEMINI_MODEL_CANDIDATES]
+      .map((item) => String(item || '').trim())
+      .filter(Boolean)
+  ));
+
+  let retryableError = null;
+
+  for (const modelName of modelCandidates) {
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/${GEMINI_API_VERSION}/models/${modelName}:generateContent?key=${encodeURIComponent(apiKey)}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: {
+            temperature,
+            maxOutputTokens
+          }
+        })
+      }
+    );
+
+    if (!response.ok) {
+      const errorBody = await response.json().catch(() => ({}));
+      const message = errorBody?.error?.message || `Gemini request failed (${response.status})`;
+      if (!isModelLookupError(response.status, message)) {
+        throw new Error(message);
+      }
+      retryableError = new Error(message);
+      continue;
     }
-  );
 
-  if (!response.ok) {
-    const errorBody = await response.json().catch(() => ({}));
-    const message = errorBody?.error?.message || `Gemini request failed (${response.status})`;
-    throw new Error(message);
+    const body = await response.json();
+    const text = body?.candidates?.[0]?.content?.parts?.map((part) => part?.text || '').join('') || '';
+    if (!text) {
+      const finishReason = body?.candidates?.[0]?.finishReason || 'unknown';
+      throw new Error(`Gemini returned empty content (finish_reason=${finishReason}).`);
+    }
+    if (modelName !== model) {
+      console.warn(`DI Gemini model fallback: "${model}" -> "${modelName}"`);
+    }
+    return { text, model: modelName };
   }
 
-  const body = await response.json();
-  const text = body?.candidates?.[0]?.content?.parts?.map((part) => part?.text || '').join('') || '';
-  if (!text) {
-    const finishReason = body?.candidates?.[0]?.finishReason || 'unknown';
-    throw new Error(`Gemini returned empty content (finish_reason=${finishReason}).`);
-  }
-  return text;
+  throw retryableError || new Error(`Gemini request failed: no valid model candidate resolved (configured="${model}")`);
 };
 
 const callDeepSeekPrompt = async ({ prompt, model, temperature = 0.15, maxOutputTokens = 4096 }) => {
@@ -106,32 +157,51 @@ const callDeepSeekPrompt = async ({ prompt, model, temperature = 0.15, maxOutput
     throw new Error('DeepSeek API key is missing for DI prompt execution.');
   }
 
-  const response = await fetch(`${DEEPSEEK_BASE_URL}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`
-    },
-    body: JSON.stringify({
-      model,
-      messages: [{ role: 'user', content: prompt }],
-      temperature,
-      max_tokens: maxOutputTokens
-    })
-  });
+  const modelCandidates = Array.from(new Set(
+    [model, ...DI_DEEPSEEK_MODEL_CANDIDATES]
+      .map((item) => String(item || '').trim())
+      .filter(Boolean)
+  ));
 
-  if (!response.ok) {
-    const errorBody = await response.json().catch(() => ({}));
-    const message = errorBody?.error?.message || `DeepSeek request failed (${response.status})`;
-    throw new Error(message);
+  let retryableError = null;
+
+  for (const modelName of modelCandidates) {
+    const response = await fetch(`${DEEPSEEK_BASE_URL}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        model: modelName,
+        messages: [{ role: 'user', content: prompt }],
+        temperature,
+        max_tokens: maxOutputTokens
+      })
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.json().catch(() => ({}));
+      const message = errorBody?.error?.message || `DeepSeek request failed (${response.status})`;
+      if (!isModelLookupError(response.status, message)) {
+        throw new Error(message);
+      }
+      retryableError = new Error(message);
+      continue;
+    }
+
+    const body = await response.json();
+    const text = body?.choices?.[0]?.message?.content || '';
+    if (!text) {
+      throw new Error('DeepSeek returned empty content.');
+    }
+    if (modelName !== model) {
+      console.warn(`DI DeepSeek model fallback: "${model}" -> "${modelName}"`);
+    }
+    return { text, model: modelName };
   }
 
-  const body = await response.json();
-  const text = body?.choices?.[0]?.message?.content || '';
-  if (!text) {
-    throw new Error('DeepSeek returned empty content.');
-  }
-  return text;
+  throw retryableError || new Error(`DeepSeek request failed: no valid model candidate resolved (configured="${model}")`);
 };
 
 export const runDiPrompt = async ({
@@ -147,13 +217,31 @@ export const runDiPrompt = async ({
 
   const model = PROMPT_DEFAULT_MODEL[promptId];
   const promptText = toPromptText(promptId, input);
-  const rawText = provider === 'gemini'
-    ? await callGeminiPrompt({ prompt: promptText, model, temperature, maxOutputTokens })
-    : await callDeepSeekPrompt({ prompt: promptText, model, temperature, maxOutputTokens });
+  let resolvedModel = model;
+  let rawText = '';
+  if (provider === 'gemini') {
+    const geminiResult = await callGeminiPrompt({
+      prompt: promptText,
+      model,
+      temperature,
+      maxOutputTokens
+    });
+    rawText = geminiResult.text;
+    resolvedModel = geminiResult.model;
+  } else {
+    const deepSeekResult = await callDeepSeekPrompt({
+      prompt: promptText,
+      model,
+      temperature,
+      maxOutputTokens
+    });
+    rawText = deepSeekResult.text;
+    resolvedModel = deepSeekResult.model;
+  }
 
   return {
     provider,
-    model,
+    model: resolvedModel,
     prompt_id: promptId,
     raw: rawText,
     parsed: extractAiJson(rawText)

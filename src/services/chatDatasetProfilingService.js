@@ -12,6 +12,7 @@ import { summarizeDatasetProfileForChat } from './datasetProfilingService';
 const MAX_SAMPLE_ROWS = 25;
 export const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 const MIN_MAPPING_CONFIDENCE = 0.7;
+const DI_CONTRACT_DEBUG = import.meta.env.VITE_DI_CONTRACT_DEBUG === 'true';
 
 function toBinaryString(file) {
   return new Promise((resolve, reject) => {
@@ -212,7 +213,7 @@ export async function prepareChatUploadFromFile(file) {
         }))
     });
 
-    if (classification.suggestedType && UPLOAD_SCHEMAS[classification.suggestedType]) {
+    if (DI_CONTRACT_DEBUG && classification.suggestedType && UPLOAD_SCHEMAS[classification.suggestedType]) {
       const requiredFields = UPLOAD_SCHEMAS[classification.suggestedType].fields
         .filter((field) => field.required)
         .map((field) => field.key);

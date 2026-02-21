@@ -1,15 +1,105 @@
 /**
- * Gemini AI API Service
- * Handles all interactions with Google Gemini AI
+ * AI API Service
+ * - General analysis calls use Gemini
+ * - Conversational chat prefers DeepSeek V3.2, with Gemini fallback
  */
 
 import { buildDataProfilerPrompt } from '../prompts/dataProfilerPrompt';
 
 // Using environment variable for API key (falls back to empty string)
 const DEFAULT_API_KEY = import.meta.env.VITE_GEMINI_API_KEY || "";
-// Model is env-driven; default to Gemini 3.1 Pro.
-const GEMINI_MODEL = import.meta.env.VITE_GEMINI_MODEL || import.meta.env.VITE_DI_GEMINI_MODEL || "gemini-3.1-pro";
+const DEFAULT_GEMINI_MODEL = 'gemini-3-pro';
+const GEMINI_MODEL = import.meta.env.VITE_GEMINI_MODEL || import.meta.env.VITE_DI_GEMINI_MODEL || DEFAULT_GEMINI_MODEL;
+const GEMINI_MODEL_CANDIDATES = Array.from(new Set(
+  [
+    GEMINI_MODEL,
+    import.meta.env.VITE_DI_GEMINI_MODEL,
+    import.meta.env.VITE_GEMINI_MODEL,
+    DEFAULT_GEMINI_MODEL,
+    'gemini-3.1-pro',
+    'gemini-3-pro',
+    'gemini-3-pro-preview'
+  ]
+    .map((model) => String(model || '').trim())
+    .filter(Boolean)
+));
 const API_VERSION = "v1beta"; // Use v1beta for experimental models
+const DEEPSEEK_LOCAL_STORAGE_KEY = 'deepseek_api_key';
+const DEEPSEEK_BASE_URL = String(import.meta.env.VITE_DI_DEEPSEEK_BASE_URL || 'https://api.deepseek.com').replace(/\/+$/, '');
+const DEFAULT_DEEPSEEK_CHAT_MODEL = import.meta.env.VITE_DI_DEEPSEEK_MODEL || 'deepseek-chat';
+const DEEPSEEK_CHAT_MODEL_CANDIDATES = Array.from(new Set(
+  [
+    DEFAULT_DEEPSEEK_CHAT_MODEL,
+    import.meta.env.VITE_DI_DEEPSEEK_MODEL,
+    'deepseek-v3.2-exp',
+    'deepseek-chat'
+  ]
+    .map((model) => String(model || '').trim())
+    .filter(Boolean)
+));
+
+const isModelLookupError = (status, message = '') => {
+  if (status === 404) return true;
+  return /(model|models).*(not found|unsupported|unknown|invalid|not supported)/i.test(message);
+};
+
+const buildGeminiApiUrl = ({ model, action, apiKey, query = '' }) => {
+  const base = `https://generativelanguage.googleapis.com/${API_VERSION}/models/${model}:${action}`;
+  if (query) {
+    return `${base}?${query}&key=${encodeURIComponent(apiKey)}`;
+  }
+  return `${base}?key=${encodeURIComponent(apiKey)}`;
+};
+
+const postGeminiWithModelFallback = async ({
+  apiKey,
+  action,
+  requestBody,
+  query = ''
+}) => {
+  let retryableFailure = null;
+
+  for (const model of GEMINI_MODEL_CANDIDATES) {
+    const apiUrl = buildGeminiApiUrl({ model, action, apiKey, query });
+    const response = await fetch(apiUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(requestBody)
+    });
+
+    if (response.ok) {
+      return { ok: true, response, model, apiUrl };
+    }
+
+    const errorData = await response.json().catch(() => ({}));
+    const errorMessage = errorData?.error?.message || 'Unknown error';
+    const failure = {
+      ok: false,
+      response,
+      status: response.status,
+      model,
+      apiUrl,
+      errorData,
+      errorMessage
+    };
+
+    if (!isModelLookupError(response.status, errorMessage)) {
+      return failure;
+    }
+
+    retryableFailure = failure;
+  }
+
+  return retryableFailure || {
+    ok: false,
+    response: null,
+    status: 0,
+    model: GEMINI_MODEL,
+    apiUrl: '',
+    errorData: {},
+    errorMessage: 'No Gemini model candidates are available for this request.'
+  };
+};
 
 /**
  * Get API Key from environment variable, localStorage, or default value
@@ -21,6 +111,7 @@ export const getApiKey = () => {
     return import.meta.env.VITE_GEMINI_API_KEY;
   }
   // Then use localStorage
+  if (typeof localStorage === 'undefined') return DEFAULT_API_KEY;
   const storedKey = localStorage.getItem('gemini_api_key');
   if (storedKey) {
     return storedKey;
@@ -33,6 +124,7 @@ export const getApiKey = () => {
  * Save API Key to localStorage
  */
 export const saveApiKey = (apiKey) => {
+  if (typeof localStorage === 'undefined') return false;
   if (apiKey && apiKey.trim()) {
     localStorage.setItem('gemini_api_key', apiKey.trim());
     return true;
@@ -44,7 +136,149 @@ export const saveApiKey = (apiKey) => {
  * Clear API Key
  */
 export const clearApiKey = () => {
+  if (typeof localStorage === 'undefined') return;
   localStorage.removeItem('gemini_api_key');
+};
+
+export const getDeepSeekApiKey = () => {
+  if (import.meta.env.VITE_DEEPSEEK_API_KEY) {
+    return import.meta.env.VITE_DEEPSEEK_API_KEY;
+  }
+  if (typeof localStorage === 'undefined') return '';
+  return localStorage.getItem(DEEPSEEK_LOCAL_STORAGE_KEY) || '';
+};
+
+export const saveDeepSeekApiKey = (apiKey) => {
+  if (typeof localStorage === 'undefined') return false;
+  if (!apiKey || !String(apiKey).trim()) return false;
+  localStorage.setItem(DEEPSEEK_LOCAL_STORAGE_KEY, String(apiKey).trim());
+  return true;
+};
+
+export const clearDeepSeekApiKey = () => {
+  if (typeof localStorage === 'undefined') return;
+  localStorage.removeItem(DEEPSEEK_LOCAL_STORAGE_KEY);
+};
+
+const normalizeChatRole = (role) => {
+  const normalized = String(role || '').trim().toLowerCase();
+  if (normalized === 'assistant' || normalized === 'ai') return 'assistant';
+  return 'user';
+};
+
+const buildHistoryLines = (conversationHistory = [], limit = 10) => {
+  return conversationHistory
+    .slice(-limit)
+    .map((msg) => {
+      const content = typeof msg?.content === 'string' ? msg.content.trim() : '';
+      if (!content) return null;
+      const speaker = normalizeChatRole(msg.role) === 'assistant' ? 'Assistant' : 'User';
+      return `${speaker}: ${content}`;
+    })
+    .filter(Boolean)
+    .join('\n');
+};
+
+const buildChatSystemContext = ({ systemPrompt = '', conversationHistory = [], historyLimit = 10 }) => {
+  let fullContext = String(systemPrompt || '');
+  const historyText = buildHistoryLines(conversationHistory, historyLimit);
+  if (historyText) {
+    fullContext += `${fullContext ? '\n\n' : ''}Conversation History:\n${historyText}`;
+  }
+  return fullContext;
+};
+
+const buildDeepSeekMessages = ({ message, conversationHistory = [], systemPrompt = '' }) => {
+  const messages = [];
+  const normalizedSystemPrompt = String(systemPrompt || '').trim();
+  if (normalizedSystemPrompt) {
+    messages.push({ role: 'system', content: normalizedSystemPrompt });
+  }
+
+  const cleanMessage = String(message || '').trim();
+  const historyWindow = conversationHistory.slice(-10);
+  const dedupedHistory = historyWindow.length > 0
+    ? historyWindow.slice(0, -1).concat(
+        (() => {
+          const last = historyWindow[historyWindow.length - 1];
+          const lastRole = normalizeChatRole(last?.role);
+          const lastContent = typeof last?.content === 'string' ? last.content.trim() : '';
+          if (lastRole === 'user' && lastContent === cleanMessage) {
+            return [];
+          }
+          return [last];
+        })()
+      )
+    : [];
+
+  dedupedHistory.forEach((entry) => {
+    const content = typeof entry?.content === 'string' ? entry.content.trim() : '';
+    if (!content) return;
+    messages.push({
+      role: normalizeChatRole(entry.role),
+      content
+    });
+  });
+
+  messages.push({ role: 'user', content: cleanMessage });
+  return messages;
+};
+
+const postDeepSeekWithModelFallback = async ({
+  apiKey,
+  requestBody
+}) => {
+  const modelCandidates = Array.from(new Set(
+    [requestBody?.model, ...DEEPSEEK_CHAT_MODEL_CANDIDATES]
+      .map((item) => String(item || '').trim())
+      .filter(Boolean)
+  ));
+
+  let retryableFailure = null;
+
+  for (const model of modelCandidates) {
+    const response = await fetch(`${DEEPSEEK_BASE_URL}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        ...requestBody,
+        model
+      })
+    });
+
+    if (response.ok) {
+      return { ok: true, response, model };
+    }
+
+    const errorData = await response.json().catch(() => ({}));
+    const errorMessage = errorData?.error?.message || 'Unknown error';
+    const failure = {
+      ok: false,
+      response,
+      status: response.status,
+      model,
+      errorData,
+      errorMessage
+    };
+
+    if (!isModelLookupError(response.status, errorMessage)) {
+      return failure;
+    }
+
+    retryableFailure = failure;
+  }
+
+  return retryableFailure || {
+    ok: false,
+    response: null,
+    status: 0,
+    model: requestBody?.model || DEFAULT_DEEPSEEK_CHAT_MODEL,
+    errorData: {},
+    errorMessage: 'No DeepSeek model candidates are available for this request.'
+  };
 };
 
 /**
@@ -77,38 +311,37 @@ export const callGeminiAPI = async (prompt, systemContext = "", options = {}) =>
       }
     };
 
-    const apiUrl = `https://generativelanguage.googleapis.com/${API_VERSION}/models/${GEMINI_MODEL}:generateContent`;
-    console.log(`Using API URL: ${apiUrl}`);
+    const request = await postGeminiWithModelFallback({
+      apiKey,
+      action: 'generateContent',
+      requestBody
+    });
 
-    const response = await fetch(
-      `${apiUrl}?key=${apiKey}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(requestBody)
-      }
-    );
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
+    if (!request.ok) {
+      const errorData = request.errorData || {};
       console.error("API Error Details:", errorData);
 
       // Handle quota errors explicitly
-      if (response.status === 429) {
+      if (request.status === 429) {
         return "⚠️ API quota exhausted\n\nPlease try:\n1. Wait for daily reset\n2. Replace with a new API key in Settings\n3. Upgrade to a paid plan\n\nGet a new free key: https://ai.google.dev/";
       }
 
       // Handle service unavailable (503) - model overloaded
-      if (response.status === 503) {
+      if (request.status === 503) {
         return "⚠️ AI service temporarily unavailable\n\nModel is currently overloaded, please try again later.\n\nSuggestions:\n1. Wait 30 seconds and retry\n2. Check network connection\n3. If the issue persists, try again later";
       }
 
       // Handle other errors
       const errorMessage = errorData.error?.message || 'Unknown error';
-      return `❌ AI service error (${response.status})\n\n${errorMessage}\n\nPlease check:\n1. Is the API key correct\n2. Is the network connection working\n3. Try again later`;
+      return `❌ AI service error (${request.status || 'unknown'})\n\n${errorMessage}\n\nPlease check:\n1. Is the API key correct\n2. Is the network connection working\n3. Try again later`;
     }
 
-    const data = await response.json();
+    if (request.model !== GEMINI_MODEL) {
+      console.warn(`Model "${GEMINI_MODEL}" is unavailable. Falling back to "${request.model}".`);
+    }
+    console.log(`Using API URL: ${request.apiUrl}`);
+
+    const data = await request.response.json();
     console.log("=== Gemini API Full Response ===");
     console.log(JSON.stringify(data, null, 2));
     
@@ -141,7 +374,7 @@ export const callGeminiAPI = async (prompt, systemContext = "", options = {}) =>
     
     if (!text) {
       console.warn("No text in response. Candidates:", data.candidates);
-      return `No response generated.\n\nFinish reason: ${finishReason || 'unknown'}\n\nThis might be due to:\n1. Content safety filters\n2. Model not supporting this request\n3. Invalid model name (current: ${GEMINI_MODEL})\n\nPlease check the console for full details.`;
+      return `No response generated.\n\nFinish reason: ${finishReason || 'unknown'}\n\nThis might be due to:\n1. Content safety filters\n2. Model not supporting this request\n3. Invalid model name (configured: ${GEMINI_MODEL}, tried: ${request.model})\n\nPlease check the console for full details.`;
     }
     
     return text;
@@ -194,23 +427,55 @@ export const analyzeData = async (data, analysisType = "general") => {
  * AI call for conversational chat
  */
 export const chatWithAI = async (message, conversationHistory = [], dataContext = null) => {
-  let systemContext = "";
+  let baseSystemContext = "";
 
   if (dataContext && Array.isArray(dataContext)) {
-    systemContext = `USER DATA CONTEXT: ${JSON.stringify(dataContext.slice(0, 5))}`;
+    baseSystemContext = `USER DATA CONTEXT: ${JSON.stringify(dataContext.slice(0, 5))}`;
   }
 
-  // Build conversation history
-  if (conversationHistory.length > 0) {
-    const historyText = conversationHistory
-      .slice(-5) // Only take last 5 messages
-      .map(msg => `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}`)
-      .join('\n');
+  // Prefer DeepSeek chat (V3.2 via deepseek-chat alias), fallback to Gemini.
+  const deepSeekApiKey = getDeepSeekApiKey();
+  if (deepSeekApiKey) {
+    try {
+      const request = await postDeepSeekWithModelFallback({
+        apiKey: deepSeekApiKey,
+        requestBody: {
+          model: DEFAULT_DEEPSEEK_CHAT_MODEL,
+          messages: buildDeepSeekMessages({
+            message,
+            conversationHistory,
+            systemPrompt: baseSystemContext
+          }),
+          temperature: 0.7,
+          max_tokens: 8192
+        }
+      });
 
-    systemContext += `\n\nConversation History:\n${historyText}`;
+      if (!request.ok) {
+        const errorMessage = request.errorData?.error?.message || request.errorMessage || `DeepSeek request failed (${request.status || 'unknown'})`;
+        throw new Error(errorMessage);
+      }
+
+      const body = await request.response.json();
+      const content = body?.choices?.[0]?.message?.content;
+      const text = typeof content === 'string'
+        ? content
+        : Array.isArray(content)
+          ? content.map((part) => part?.text || '').join('')
+          : '';
+      if (text) return text;
+      throw new Error('DeepSeek returned empty content.');
+    } catch (error) {
+      console.warn('[chatWithAI] DeepSeek failed, falling back to Gemini:', error.message);
+    }
   }
 
-  return await callGeminiAPI(message, systemContext);
+  const geminiSystemContext = buildChatSystemContext({
+    systemPrompt: baseSystemContext,
+    conversationHistory,
+    historyLimit: 5
+  });
+  return await callGeminiAPI(message, geminiSystemContext);
 };
 
 /**
@@ -348,35 +613,14 @@ Please base your analysis on data, avoid excessive speculation.`;
   });
 };
 
-/**
- * Streaming chat with AI - sends tokens to onChunk callback as they arrive.
- * Falls back to non-streaming callGeminiAPI if streaming fails.
- * @param {string} message - User message
- * @param {Array} conversationHistory - Recent messages [{role, content}, ...]
- * @param {string} systemPrompt - Rich system context (supply-chain state)
- * @param {function} onChunk - Called with each text chunk as it streams
- * @returns {Promise<string>} Full concatenated response
- */
-export const streamChatWithAI = async (message, conversationHistory = [], systemPrompt = '', onChunk = null) => {
-  const apiKey = getApiKey();
-
-  if (!apiKey) {
-    const fallback = "WARNING: No API key found. Add your Google AI API key in Settings.\n\nGet a free key: https://ai.google.dev/";
-    onChunk?.(fallback);
-    return fallback;
-  }
-
-  // Build context with history
-  let fullContext = systemPrompt || '';
-
-  if (conversationHistory.length > 0) {
-    const historyText = conversationHistory
-      .slice(-10)
-      .map(msg => `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}`)
-      .join('\n');
-    fullContext += `\n\nConversation History:\n${historyText}`;
-  }
-
+const streamGeminiChat = async ({
+  apiKey,
+  message,
+  fullContext,
+  onChunk,
+  temperature = 0.7,
+  maxOutputTokens = 8192
+}) => {
   const fullPrompt = fullContext
     ? `${fullContext}\n\nUser Query: ${message}`
     : message;
@@ -384,66 +628,191 @@ export const streamChatWithAI = async (message, conversationHistory = [], system
   const requestBody = {
     contents: [{ parts: [{ text: fullPrompt }] }],
     generationConfig: {
-      temperature: 0.7,
-      maxOutputTokens: 8192,
+      temperature,
+      maxOutputTokens
     }
   };
 
-  const apiUrl = `https://generativelanguage.googleapis.com/${API_VERSION}/models/${GEMINI_MODEL}:streamGenerateContent?alt=sse&key=${apiKey}`;
+  const request = await postGeminiWithModelFallback({
+    apiKey,
+    action: 'streamGenerateContent',
+    requestBody,
+    query: 'alt=sse'
+  });
 
-  try {
-    const response = await fetch(apiUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(requestBody)
-    });
+  if (!request.ok) {
+    throw new Error(request.errorData?.error?.message || request.errorMessage || `Gemini streaming request failed (${request.status || 'unknown'})`);
+  }
 
-    if (!response.ok) {
-      // Fall back to non-streaming
-      console.warn('Streaming failed, falling back to non-streaming');
-      const result = await callGeminiAPI(message, fullContext);
-      onChunk?.(result);
-      return result;
-    }
+  if (request.model !== GEMINI_MODEL) {
+    console.warn(`Streaming model fallback: "${GEMINI_MODEL}" -> "${request.model}"`);
+  }
 
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let fullText = '';
-    let buffer = '';
+  const reader = request.response.body?.getReader();
+  if (!reader) {
+    throw new Error('Gemini streaming response body is not readable.');
+  }
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
+  const decoder = new TextDecoder();
+  let fullText = '';
+  let buffer = '';
 
-      buffer += decoder.decode(value, { stream: true });
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
 
-      // Parse SSE lines
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || ''; // Keep incomplete line in buffer
+    buffer += decoder.decode(value, { stream: true });
 
-      for (const line of lines) {
-        if (!line.startsWith('data: ')) continue;
-        const jsonStr = line.slice(6).trim();
-        if (!jsonStr || jsonStr === '[DONE]') continue;
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
 
-        try {
-          const parsed = JSON.parse(jsonStr);
-          const chunk = parsed.candidates?.[0]?.content?.parts?.[0]?.text;
-          if (chunk) {
-            fullText += chunk;
-            onChunk?.(chunk);
-          }
-        } catch {
-          // Skip malformed JSON chunks
+    for (const line of lines) {
+      if (!line.startsWith('data: ')) continue;
+      const jsonStr = line.slice(6).trim();
+      if (!jsonStr || jsonStr === '[DONE]') continue;
+
+      try {
+        const parsed = JSON.parse(jsonStr);
+        const chunk = parsed.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (chunk) {
+          fullText += chunk;
+          onChunk?.(chunk);
         }
+      } catch {
+        // Skip malformed JSON chunks
       }
     }
+  }
 
-    return fullText || 'No response generated.';
+  return fullText || 'No response generated.';
+};
+
+const streamDeepSeekChat = async ({
+  apiKey,
+  message,
+  conversationHistory,
+  systemPrompt,
+  onChunk,
+  temperature = 0.7,
+  maxOutputTokens = 8192
+}) => {
+  const request = await postDeepSeekWithModelFallback({
+    apiKey,
+    requestBody: {
+      model: DEFAULT_DEEPSEEK_CHAT_MODEL,
+      messages: buildDeepSeekMessages({
+        message,
+        conversationHistory,
+        systemPrompt
+      }),
+      temperature,
+      max_tokens: maxOutputTokens,
+      stream: true
+    }
+  });
+
+  if (!request.ok) {
+    throw new Error(request.errorData?.error?.message || request.errorMessage || `DeepSeek streaming request failed (${request.status || 'unknown'})`);
+  }
+
+  const reader = request.response.body?.getReader();
+  if (!reader) {
+    throw new Error('DeepSeek streaming response body is not readable.');
+  }
+
+  const decoder = new TextDecoder();
+  let fullText = '';
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+
+    for (const line of lines) {
+      if (!line.startsWith('data:')) continue;
+      const jsonStr = line.slice(5).trim();
+      if (!jsonStr || jsonStr === '[DONE]') continue;
+
+      try {
+        const parsed = JSON.parse(jsonStr);
+        const delta = parsed?.choices?.[0]?.delta?.content;
+        const chunk = typeof delta === 'string'
+          ? delta
+          : Array.isArray(delta)
+            ? delta.map((part) => part?.text || '').join('')
+            : '';
+        if (!chunk) continue;
+        fullText += chunk;
+        onChunk?.(chunk);
+      } catch {
+        // Skip malformed chunks
+      }
+    }
+  }
+
+  return fullText || 'No response generated.';
+};
+
+/**
+ * Streaming chat with AI - sends tokens to onChunk callback as they arrive.
+ * Preferred route: DeepSeek V3.2 (deepseek-chat), fallback: Gemini.
+ * @param {string} message - User message
+ * @param {Array} conversationHistory - Recent messages [{role, content}, ...]
+ * @param {string} systemPrompt - Rich system context (supply-chain state)
+ * @param {function} onChunk - Called with each text chunk as it streams
+ * @returns {Promise<string>} Full concatenated response
+ */
+export const streamChatWithAI = async (message, conversationHistory = [], systemPrompt = '', onChunk = null) => {
+  const deepSeekApiKey = getDeepSeekApiKey();
+  const geminiApiKey = getApiKey();
+  const noKeyWarning = "WARNING: No API key found. Add your DeepSeek API key (preferred) or Google AI API key in Settings.";
+
+  if (!deepSeekApiKey && !geminiApiKey) {
+    const fallback = `${noKeyWarning}\n\nDeepSeek: https://platform.deepseek.com/\nGoogle AI: https://ai.google.dev/`;
+    onChunk?.(fallback);
+    return fallback;
+  }
+
+  if (deepSeekApiKey) {
+    try {
+      return await streamDeepSeekChat({
+        apiKey: deepSeekApiKey,
+        message,
+        conversationHistory,
+        systemPrompt,
+        onChunk
+      });
+    } catch (error) {
+      console.warn('[streamChatWithAI] DeepSeek streaming failed, falling back to Gemini:', error.message);
+    }
+  }
+
+  if (!geminiApiKey) {
+    const fallback = `${noKeyWarning}\n\nDeepSeek request failed and no Gemini API key is configured.`;
+    onChunk?.(fallback);
+    return fallback;
+  }
+
+  const geminiContext = buildChatSystemContext({
+    systemPrompt,
+    conversationHistory,
+    historyLimit: 10
+  });
+
+  try {
+    return await streamGeminiChat({
+      apiKey: geminiApiKey,
+      message,
+      fullContext: geminiContext,
+      onChunk
+    });
   } catch (error) {
-    console.warn('Streaming error, falling back:', error.message);
-    // Fall back to non-streaming
-    const result = await callGeminiAPI(message, fullContext);
+    console.warn('[streamChatWithAI] Gemini streaming failed, falling back to non-streaming:', error.message);
+    const result = await callGeminiAPI(message, geminiContext);
     onChunk?.(result);
     return result;
   }
@@ -459,6 +828,9 @@ export default {
   getApiKey,
   saveApiKey,
   clearApiKey,
+  getDeepSeekApiKey,
+  saveDeepSeekApiKey,
+  clearDeepSeekApiKey,
   // Cost analysis related AI functions
   analyzeCostAnomaly,
   generateCostOptimizationSuggestions,

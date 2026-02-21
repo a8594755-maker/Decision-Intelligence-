@@ -1272,7 +1272,8 @@ const SettingsView = ({ darkMode, setDarkMode, user, addNotification }) => {
                   <li>Free API tiers have daily quotas</li>
                   <li>If the quota is exhausted, wait for reset or use a new key</li>
                   <li>API keys are stored locally in your browser, never uploaded</li>
-                  <li>Recommended model: gemini-3.1-pro</li>
+                  <li>Prompt 1-3: Gemini Pro (`gemini-3-pro`)</li>
+                  <li>Prompt 4-5 + chat priority: DeepSeek V3.2 (`deepseek-chat`)</li>
                 </ul>
               </div>
             </div>

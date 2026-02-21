@@ -165,8 +165,8 @@ export default function ForecastCard({ payload, onRunPlan, isPlanRunning = false
           </div>
         )}
 
-        <div className="w-full h-64 bg-white dark:bg-slate-800 rounded border border-slate-200 dark:border-slate-700 p-2">
-          <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
+        <div className="w-full bg-white dark:bg-slate-800 rounded border border-slate-200 dark:border-slate-700 p-2">
+          <ResponsiveContainer width="100%" height={240} minWidth={1} minHeight={1}>
             <LineChart data={chartData}>
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis dataKey="time_bucket" tickFormatter={chartTick} fontSize={11} />

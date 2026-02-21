@@ -14,6 +14,7 @@ import { DI_PROMPT_IDS, runDiPrompt } from './diModelRouterService';
 const { normalizeHeader } = datasetFingerprintInternals;
 const MAX_STATS_ROWS = 500;
 const MAX_MINIMAL_QUESTIONS = 2;
+const DI_CONTRACT_DEBUG = import.meta.env.VITE_DI_CONTRACT_DEBUG === 'true';
 
 const SUPPLY_TYPES = new Set(['demand_fg', 'bom_edge', 'po_open_lines', 'inventory_snapshots']);
 const PROCUREMENT_TYPES = new Set(['goods_receipt', 'price_history', 'supplier_master']);
@@ -629,7 +630,7 @@ export const createDatasetProfileFromSheets = async ({
       }
     });
 
-    if (likelyRole && UPLOAD_SCHEMAS[likelyRole]) {
+    if (DI_CONTRACT_DEBUG && likelyRole && UPLOAD_SCHEMAS[likelyRole]) {
       const requiredFields = UPLOAD_SCHEMAS[likelyRole].fields
         .filter((field) => field.required)
         .map((field) => field.key);

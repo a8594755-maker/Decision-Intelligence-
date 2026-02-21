@@ -62,10 +62,10 @@ An intelligent supplier performance and cost operations dashboard built with Rea
   - Cloud storage
   
 ### AI Integration
-- **Google Gemini 2.5 Flash** 
-  - Intelligent field mapping
-  - Cost analysis and insights
-  - Conversational decision assistant
+- **Google Gemini Pro + DeepSeek V3.2**
+  - Prompt 1-3 (profiling/mapping/readiness): Gemini Pro
+  - Prompt 4-5 (report/blocking questions): DeepSeek V3.2
+  - Conversational decision assistant (DeepSeek-priority routing)
   - Anomaly detection and recommendations
 
 ### Data Processing
