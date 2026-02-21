@@ -826,7 +826,7 @@ const streamDeepSeekChat = async ({
 
 /**
  * Streaming chat with AI - sends tokens to onChunk callback as they arrive.
- * Preferred route: DeepSeek V3.2 (deepseek-chat), fallback: Gemini.
+ * Route: DeepSeek V3.2 (deepseek-chat) only.
  * @param {string} message - User message
  * @param {Array} conversationHistory - Recent messages [{role, content}, ...]
  * @param {string} systemPrompt - Rich system context (supply-chain state)

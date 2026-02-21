@@ -461,66 +461,42 @@ const handleAiChat = async (payload: Record<string, unknown>) => {
   const maxOutputTokens = Math.max(64, Math.floor(toFiniteNumber(payload?.maxOutputTokens, 8192)));
   const requestedModel = String(payload?.model || '').trim();
 
-  if (DEEPSEEK_API_KEY) {
-    try {
-      const result = await callDeepSeekChat({
-        message,
-        conversationHistory,
-        systemPrompt,
-        temperature,
-        maxOutputTokens,
-        model: requestedModel || DEFAULT_DEEPSEEK_MODEL,
-      });
-      return jsonResponse({
-        ok: true,
-        ...result,
-      });
-    } catch (error) {
-      if (!GEMINI_API_KEY) {
-        const status = Number((error as Error & { status?: number })?.status || 500);
-        const messageText = error instanceof Error ? error.message : String(error);
-        return jsonResponse(
-          {
-            error: messageText,
-            code: 'deepseek_chat_failed',
-            details: 'DeepSeek request failed and GEMINI_API_KEY fallback is unavailable.',
-          },
-          status >= 400 && status < 600 ? status : 500,
-        );
-      }
-    }
-  }
-
-  if (!GEMINI_API_KEY) {
+  if (!DEEPSEEK_API_KEY) {
     return jsonResponse(
       {
-        error: 'AI provider key is not configured on server.',
+        error: 'DEEPSEEK_API_KEY is not configured on server.',
         code: 'missing_server_keys',
-        details: 'Set DEEPSEEK_API_KEY or GEMINI_API_KEY in Edge Function secrets.',
+        details: 'Set DEEPSEEK_API_KEY in Edge Function secrets.',
       },
       500,
     );
   }
 
-  const geminiResult = await callGeminiGenerate({
-    prompt: message,
-    systemContext: buildChatSystemContext({
-      systemPrompt,
+  try {
+    const result = await callDeepSeekChat({
+      message,
       conversationHistory,
-      historyLimit: 5,
-    }),
-    options: {
+      systemPrompt,
       temperature,
       maxOutputTokens,
-      model: isGeminiModelName(requestedModel) ? normalizeGeminiModelName(requestedModel) : DEFAULT_GEMINI_MODEL,
-    },
-  });
-  return jsonResponse({
-    ok: true,
-    provider: 'gemini',
-    model: geminiResult.model,
-    text: geminiResult.text,
-  });
+      model: requestedModel || DEFAULT_DEEPSEEK_MODEL,
+    });
+    return jsonResponse({
+      ok: true,
+      ...result,
+    });
+  } catch (error) {
+    const status = Number((error as Error & { status?: number })?.status || 500);
+    const messageText = error instanceof Error ? error.message : String(error);
+    return jsonResponse(
+      {
+        error: messageText,
+        code: 'deepseek_chat_failed',
+        details: 'DeepSeek request failed. Gemini fallback is disabled.',
+      },
+      status >= 400 && status < 600 ? status : 500,
+    );
+  }
 };
 
 const handleDiPrompt = async (payload: Record<string, unknown>) => {
