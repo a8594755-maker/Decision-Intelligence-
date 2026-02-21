@@ -8,6 +8,7 @@ import { extractAiJson, generateMappingPrompt } from '../utils/aiMappingHelper';
 import { classifySheet } from '../utils/sheetClassifier';
 import UPLOAD_SCHEMAS from '../utils/uploadSchemas';
 import { normalizeHeader, buildHeaderIndex, alignAiMappings, logHeaderStats, logMappingAlignStats } from '../utils/headerNormalize';
+import { sendAgentLog } from '../utils/sendAgentLog';
 
 /**
  * Generate prompt for AI uploadType recommendation
@@ -370,9 +371,7 @@ export async function suggestSheetMapping({
     console.log(`[AI Suggest] Headers:`, headers);
     console.log(`[AI Suggest] Sample rows:`, sampleRows.length);
     
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/35d967fa-aaea-4f36-8ecf-97e2f2e17afa',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'oneShotAiSuggestService.js:367',message:'[Entry] suggestSheetMapping called',data:{sheetName,headers,headersCount:headers.length,currentUploadType},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A,B,D'})}).catch(()=>{});
-    // #endregion
+    sendAgentLog({location:'oneShotAiSuggestService.js:suggestSheetMapping',message:'[Entry] suggestSheetMapping called',data:{sheetName,headers,headersCount:headers.length,currentUploadType},sessionId:'debug-session',hypothesisId:'A,B,D'});
 
     // Step 1: If no uploadType specified, use AI to recommend
     let uploadType = currentUploadType;
@@ -467,9 +466,7 @@ export async function suggestSheetMapping({
     const mappings = parseResult.mappings;
     console.log('[AI Suggest] Valid mappings:', mappings.length);
     
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/35d967fa-aaea-4f36-8ecf-97e2f2e17afa',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'oneShotAiSuggestService.js:462',message:'[BEFORE alignment] AI mappings from LLM',data:{mappingsCount:mappings.length,aiMappings:mappings.slice(0,5).map(m=>({source:m.source,target:m.target,confidence:m.confidence})),allAiSources:mappings.map(m=>m.source)},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A,D'})}).catch(()=>{});
-    // #endregion
+    sendAgentLog({location:'oneShotAiSuggestService.js:suggestSheetMapping',message:'[BEFORE alignment] AI mappings from LLM',data:{mappingsCount:mappings.length,aiMappings:mappings.slice(0,5).map(m=>({source:m.source,target:m.target,confidence:m.confidence})),allAiSources:mappings.map(m=>m.source)},sessionId:'debug-session',hypothesisId:'A,D'});
 
     // Step 4b: Validate mappings content
     if (!validateMappings(mappings)) {
@@ -524,9 +521,7 @@ export async function suggestSheetMapping({
     ];
 
     // Step 8: Use header normalization to align AI mappings to actual headers
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/35d967fa-aaea-4f36-8ecf-97e2f2e17afa',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'oneShotAiSuggestService.js:518',message:'[BEFORE alignment] About to align AI mappings',data:{originalHeaders:headers,aiMappings:mappings.map(m=>({source:m.source,target:m.target,conf:m.confidence}))},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A,C'})}).catch(()=>{});
-    // #endregion
+    sendAgentLog({location:'oneShotAiSuggestService.js:suggestSheetMapping',message:'[BEFORE alignment] About to align AI mappings',data:{originalHeaders:headers,aiMappings:mappings.map(m=>({source:m.source,target:m.target,conf:m.confidence}))},sessionId:'debug-session',hypothesisId:'A,C'});
     
     // ✅ Use headerNormalize utility to align AI mappings
     const headerIndexResult = buildHeaderIndex(headers);
@@ -546,9 +541,7 @@ export async function suggestSheetMapping({
       }
     });
     
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/35d967fa-aaea-4f36-8ecf-97e2f2e17afa',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'oneShotAiSuggestService.js:540',message:'[AFTER alignment] columnMapping built with aligned headers',data:{columnMapping,columnMappingKeys:Object.keys(columnMapping),alignedCount:alignedMappings.length,unmatchedCount:alignResult.unmatchedSources.length,unmatchedSources:alignResult.unmatchedSources,keysMatch:Object.keys(columnMapping).every(k=>headers.includes(k))},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A,C'})}).catch(()=>{});
-    // #endregion
+    sendAgentLog({location:'oneShotAiSuggestService.js:suggestSheetMapping',message:'[AFTER alignment] columnMapping built with aligned headers',data:{columnMapping,columnMappingKeys:Object.keys(columnMapping),alignedCount:alignedMappings.length,unmatchedCount:alignResult.unmatchedSources.length,unmatchedSources:alignResult.unmatchedSources,keysMatch:Object.keys(columnMapping).every(k=>headers.includes(k))},sessionId:'debug-session',hypothesisId:'A,C'});
     
     // ⚠️ Warning: if there are unmatched sources, log detailed info
     if (alignResult.unmatchedSources.length > 0) {
@@ -566,9 +559,7 @@ export async function suggestSheetMapping({
       mappingCount: Object.keys(columnMapping).length
     });
 
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/35d967fa-aaea-4f36-8ecf-97e2f2e17afa',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'oneShotAiSuggestService.js:532',message:'[Exit] suggestSheetMapping returning result',data:{uploadType,mappingKeysCount:Object.keys(columnMapping).length,requiredCoverage,confidence:overallConfidence,autoEnable,columnMappingSample:Object.entries(columnMapping).slice(0,3)},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A,E'})}).catch(()=>{});
-    // #endregion
+    sendAgentLog({location:'oneShotAiSuggestService.js:suggestSheetMapping',message:'[Exit] suggestSheetMapping returning result',data:{uploadType,mappingKeysCount:Object.keys(columnMapping).length,requiredCoverage,confidence:overallConfidence,autoEnable,columnMappingSample:Object.entries(columnMapping).slice(0,3)},sessionId:'debug-session',hypothesisId:'A,E'});
     
     return {
       suggestedUploadType: uploadType,

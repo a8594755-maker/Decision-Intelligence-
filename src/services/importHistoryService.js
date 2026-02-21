@@ -4,6 +4,7 @@
  */
 
 import { supabase, RPC_JSON_OPTIONS } from './supabaseClient';
+import { sendAgentLog } from '../utils/sendAgentLog';
 
 /**
  * Import Batches Operations
@@ -71,9 +72,7 @@ export const importBatchesService = {
       payload.metadata = updates.metadata;
     }
 
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/35d967fa-aaea-4f36-8ecf-97e2f2e17afa',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'importHistoryService.js:74',message:'Before update import_batches',data:{batchId,payload,payloadKeys:Object.keys(payload)},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'D'})}).catch(()=>{});
-    // #endregion
+    sendAgentLog({location:'importHistoryService.js:updateBatch',message:'Before update import_batches',data:{batchId,payload,payloadKeys:Object.keys(payload)},sessionId:'debug-session',hypothesisId:'D'});
 
     const { data, error } = await supabase
       .from('import_batches')
@@ -82,9 +81,7 @@ export const importBatchesService = {
       .select()
       .single();
 
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/35d967fa-aaea-4f36-8ecf-97e2f2e17afa',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'importHistoryService.js:81',message:'After update import_batches',data:{success:!error,error:error?{message:error.message,details:error.details,hint:error.hint,code:error.code}:null,batchId},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'D'})}).catch(()=>{});
-    // #endregion
+    sendAgentLog({location:'importHistoryService.js:updateBatch',message:'After update import_batches',data:{success:!error,error:error?{message:error.message,details:error.details,hint:error.hint,code:error.code}:null,batchId},sessionId:'debug-session',hypothesisId:'D'});
 
     if (error) throw error;
     return data;

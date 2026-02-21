@@ -12,6 +12,7 @@ import { validateAndCleanData } from '../utils/dataValidation';
 import { ruleBasedMapping } from '../utils/aiMappingHelper';
 import UPLOAD_SCHEMAS from '../utils/uploadSchemas';
 import { ingestInChunks, DEFAULT_CHUNK_SIZE } from './chunkIngestService';
+import { sendAgentLog } from '../utils/sendAgentLog';
 import {
   checkIngestKeySupport,
   upsertSheetRun,
@@ -138,9 +139,7 @@ export function generateSheetPlans(workbook, fileName = 'unknown', fileSize = 0,
         missingRequired: mappingStatus.missingRequired,
         isComplete: mappingStatus.isComplete
       };
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/35d967fa-aaea-4f36-8ecf-97e2f2e17afa',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'oneShotImportService.js:generateSheetPlans',message:'[generateSheetPlans] Plan pushed',data:{sheetName,uploadType:classification.suggestedType,isComplete:mappingStatus.isComplete,requiredCoverage:mappingStatus.coverage,missingRequired:mappingStatus.missingRequired,mappingDraftKeys:Object.keys(initialMapping)},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H1'})}).catch(()=>{});
-      // #endregion
+      sendAgentLog({location:'oneShotImportService.js:generateSheetPlans',message:'[generateSheetPlans] Plan pushed',data:{sheetName,uploadType:classification.suggestedType,isComplete:mappingStatus.isComplete,requiredCoverage:mappingStatus.coverage,missingRequired:mappingStatus.missingRequired,mappingDraftKeys:Object.keys(initialMapping)},sessionId:'debug-session',hypothesisId:'H1'});
       plans.push(planPayload);
       
     } catch (error) {
@@ -763,12 +762,8 @@ export function validateSheetPlans(sheetPlans) {
   
   const enabledPlans = sheetPlans.filter(p => p.enabled);
   
-  // #region agent log
   const confidenceSnapshot = enabledPlans.map(p => ({ sheetName: p.sheetName, confidence: p.confidence, suggestedType: p.suggestedType, uploadType: p.uploadType }));
-  if (typeof fetch === 'function') {
-    fetch('http://127.0.0.1:7242/ingest/35d967fa-aaea-4f36-8ecf-97e2f2e17afa',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'oneShotImportService.js:validateSheetPlans',message:'[validateSheetPlans] Entry',data:{enabledCount:enabledPlans.length,confidenceSnapshot},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'V1'})}).catch(()=>{});
-  }
-  // #endregion
+  sendAgentLog({location:'oneShotImportService.js:validateSheetPlans',message:'[validateSheetPlans] Entry',data:{enabledCount:enabledPlans.length,confidenceSnapshot},sessionId:'debug-session',hypothesisId:'V1'});
   
   if (enabledPlans.length === 0) {
     errors.push('No sheets enabled for import');
@@ -782,11 +777,7 @@ export function validateSheetPlans(sheetPlans) {
     // Skip confidence check when user has already confirmed mapping (manual/AI + Confirm)
     if (!plan.mappingConfirmed && plan.confidence < 0.5) {
       errors.push(`Sheet "${plan.sheetName}": Very low confidence (${Math.round(plan.confidence * 100)}%), please verify carefully`);
-      // #region agent log
-      if (typeof fetch === 'function') {
-        fetch('http://127.0.0.1:7242/ingest/35d967fa-aaea-4f36-8ecf-97e2f2e17afa',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'oneShotImportService.js:validateSheetPlans',message:'[validateSheetPlans] Low confidence plan',data:{sheetName:plan.sheetName,confidence:plan.confidence,uploadType:plan.uploadType},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'V2'})}).catch(()=>{});
-      }
-      // #endregion
+      sendAgentLog({location:'oneShotImportService.js:validateSheetPlans',message:'[validateSheetPlans] Low confidence plan',data:{sheetName:plan.sheetName,confidence:plan.confidence,uploadType:plan.uploadType},runId:'post-fix',sessionId:'debug-session',hypothesisId:'V2'});
     }
   }
   

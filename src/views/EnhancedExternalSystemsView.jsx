@@ -32,6 +32,7 @@ import { runWithConcurrencyAbortable } from '../utils/concurrency';
 import { getRequiredMappingStatus, formatMissingRequiredMessage } from '../utils/requiredMappingStatus';
 import { getSearchParams, updateUrlSearch } from '../utils/router';
 import { createDatasetProfileFromSheets } from '../services/datasetProfilingService';
+import { sendAgentLog } from '../utils/sendAgentLog';
 
 // Note: Upload type configuration has been moved to src/utils/uploadSchemas.js
 // Kept here for compatibility, but UPLOAD_SCHEMAS should be used
@@ -882,9 +883,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
     }
     
     // Validate sheet plans
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/35d967fa-aaea-4f36-8ecf-97e2f2e17afa',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'EnhancedExternalSystemsView.jsx:handleOneShotImport',message:'[Before validateSheetPlans] sheetPlans snapshot',data:{total:sheetPlans.length,enabled:sheetPlans.filter(p=>p.enabled).length,perSheet:sheetPlans.filter(p=>p.enabled).map(p=>({sheetName:p.sheetName,confidence:p.confidence,uploadType:p.uploadType}))},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'V3'})}).catch(()=>{});
-    // #endregion
+    sendAgentLog({location:'EnhancedExternalSystemsView.jsx:handleOneShotImport',message:'[Before validateSheetPlans] sheetPlans snapshot',data:{total:sheetPlans.length,enabled:sheetPlans.filter(p=>p.enabled).length,perSheet:sheetPlans.filter(p=>p.enabled).map(p=>({sheetName:p.sheetName,confidence:p.confidence,uploadType:p.uploadType}))},sessionId:'debug-session',hypothesisId:'V3'});
     const validation = validateSheetPlans(sheetPlans);
     if (!validation.valid) {
       console.log('[OneShotStep] Import blocked: validation failed', validation.errors);
@@ -1064,17 +1063,13 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
   const updateSheetPlan = (sheetId, updates) => {
     console.log('[DEBUG] updateSheetPlan:', { sheetId, updates });
     
-    // #region agent log
     const hasMappingDraft = updates.hasOwnProperty('mappingDraft');
-    fetch('http://127.0.0.1:7242/ingest/35d967fa-aaea-4f36-8ecf-97e2f2e17afa',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'EnhancedExternalSystemsView.jsx:966',message:'[updateSheetPlan] Called',data:{sheetId,updatesKeys:Object.keys(updates),hasMappingDraft,hasIsComplete:updates.hasOwnProperty('isComplete'),hasMissingRequired:updates.hasOwnProperty('missingRequired'),mappingDraftKeys:updates.mappingDraft?Object.keys(updates.mappingDraft):null},timestamp:Date.now(),sessionId:'debug-session',runId:'incomplete-debug',hypothesisId:'H4'})}).catch(()=>{});
-    // #endregion
+    sendAgentLog({location:'EnhancedExternalSystemsView.jsx:updateSheetPlan',message:'[updateSheetPlan] Called',data:{sheetId,updatesKeys:Object.keys(updates),hasMappingDraft,hasIsComplete:updates.hasOwnProperty('isComplete'),hasMissingRequired:updates.hasOwnProperty('missingRequired'),mappingDraftKeys:updates.mappingDraft?Object.keys(updates.mappingDraft):null},runId:'incomplete-debug',sessionId:'debug-session',hypothesisId:'H4'});
     
     setSheetPlans(prev => {
       const planBefore = prev.find(p => p.sheetId === sheetId);
       
-      // #region agent log
-      if(planBefore){fetch('http://127.0.0.1:7242/ingest/35d967fa-aaea-4f36-8ecf-97e2f2e17afa',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'EnhancedExternalSystemsView.jsx:976',message:'[updateSheetPlan] Plan before update',data:{sheetId,mappingBefore:planBefore.mapping,mappingDraftBefore:planBefore.mappingDraft,headersBefore:planBefore.headers},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'C'})}).catch(()=>{});}
-      // #endregion
+      if(planBefore){sendAgentLog({location:'EnhancedExternalSystemsView.jsx:updateSheetPlan',message:'[updateSheetPlan] Plan before update',data:{sheetId,mappingBefore:planBefore.mapping,mappingDraftBefore:planBefore.mappingDraft,headersBefore:planBefore.headers},sessionId:'debug-session',hypothesisId:'C'});}
       
       const updated = prev.map(plan => 
         plan.sheetId === sheetId ? { ...plan, ...updates } : plan
@@ -1082,9 +1077,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
       
       const planAfter = updated.find(p => p.sheetId === sheetId);
       
-      // #region agent log
-      if(planAfter){fetch('http://127.0.0.1:7242/ingest/35d967fa-aaea-4f36-8ecf-97e2f2e17afa',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'EnhancedExternalSystemsView.jsx:986',message:'[updateSheetPlan] Plan after update',data:{sheetId,mappingAfter:planAfter.mapping,mappingDraftAfter:planAfter.mappingDraft,headersAfter:planAfter.headers,mappingKeysAfter:planAfter.mapping?Object.keys(planAfter.mapping):null,mappingDraftKeysAfter:planAfter.mappingDraft?Object.keys(planAfter.mappingDraft):null},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'C'})}).catch(()=>{});}
-      // #endregion
+      if(planAfter){sendAgentLog({location:'EnhancedExternalSystemsView.jsx:updateSheetPlan',message:'[updateSheetPlan] Plan after update',data:{sheetId,mappingAfter:planAfter.mapping,mappingDraftAfter:planAfter.mappingDraft,headersAfter:planAfter.headers,mappingKeysAfter:planAfter.mapping?Object.keys(planAfter.mapping):null,mappingDraftKeysAfter:planAfter.mappingDraft?Object.keys(planAfter.mappingDraft):null},sessionId:'debug-session',hypothesisId:'C'});}
       
       console.log('[DEBUG] After update:', updated.map(p => ({ 
         sheetId: p.sheetId, 
@@ -1137,17 +1130,13 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
 
   // ✅ Two-step Gate: manual mapping change (Step 2)
   const handleMappingChange = (sheetId, sourceHeader, targetField) => {
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/35d967fa-aaea-4f36-8ecf-97e2f2e17afa',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'EnhancedExternalSystemsView.jsx:1040',message:'[handleMappingChange] Entry',data:{sheetId:sheetId,sourceHeader:sourceHeader,targetField:targetField,sheetPlansCount:sheetPlans.length},timestamp:Date.now(),sessionId:'debug-session',runId:'manual-mapping',hypothesisId:'A'})}).catch(()=>{});
-    // #endregion
+    sendAgentLog({location:'EnhancedExternalSystemsView.jsx:handleMappingChange',message:'[handleMappingChange] Entry',data:{sheetId,sourceHeader,targetField,sheetPlansCount:sheetPlans.length},runId:'manual-mapping',sessionId:'debug-session',hypothesisId:'A'});
     
     setSheetPlans(prev => prev.map(plan => {
       if (plan.sheetId !== sheetId) return plan;
       
       const oldMappingDraft = plan.mappingDraft || {};
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/35d967fa-aaea-4f36-8ecf-97e2f2e17afa',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'EnhancedExternalSystemsView.jsx:1044',message:'[handleMappingChange] Before update',data:{sheetId:plan.sheetId,sheetName:plan.sheetName,oldMappingDraft:oldMappingDraft,oldMappingDraftKeys:Object.keys(oldMappingDraft),mappingConfirmed:plan.mappingConfirmed},timestamp:Date.now(),sessionId:'debug-session',runId:'manual-mapping',hypothesisId:'B'})}).catch(()=>{});
-      // #endregion
+      sendAgentLog({location:'EnhancedExternalSystemsView.jsx:handleMappingChange',message:'[handleMappingChange] Before update',data:{sheetId:plan.sheetId,sheetName:plan.sheetName,oldMappingDraft,oldMappingDraftKeys:Object.keys(oldMappingDraft),mappingConfirmed:plan.mappingConfirmed},runId:'manual-mapping',sessionId:'debug-session',hypothesisId:'B'});
       
       const newMapping = { ...(plan.mappingDraft || {}) };
       if (targetField) {
@@ -1166,9 +1155,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
         columnMapping: newMapping
       });
       
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/35d967fa-aaea-4f36-8ecf-97e2f2e17afa',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'EnhancedExternalSystemsView.jsx:1067',message:'[handleMappingChange] After update',data:{sheetId:plan.sheetId,newMapping:newMapping,newMappingKeys:Object.keys(newMapping),newCoverage:status.coverage,newIsComplete:status.isComplete},timestamp:Date.now(),sessionId:'debug-session',runId:'manual-mapping',hypothesisId:'D'})}).catch(()=>{});
-      // #endregion
+      sendAgentLog({location:'EnhancedExternalSystemsView.jsx:handleMappingChange',message:'[handleMappingChange] After update',data:{sheetId:plan.sheetId,newMapping,newMappingKeys:Object.keys(newMapping),newCoverage:status.coverage,newIsComplete:status.isComplete},runId:'manual-mapping',sessionId:'debug-session',hypothesisId:'D'});
       
       return {
         ...plan,
@@ -1435,9 +1422,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
         return;
       }
 
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/35d967fa-aaea-4f36-8ecf-97e2f2e17afa',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'EnhancedExternalSystemsView.jsx:1301',message:'[BEFORE updateSheetPlan] AI Suggest result received',data:{sheetId,sheetName,resultMapping:result.mapping,resultMappingKeys:Object.keys(result.mapping||{}),planHeaders:plan.headers,planHeadersPreview:plan.headers.slice(0,5)},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'C'})}).catch(()=>{});
-      // #endregion
+      sendAgentLog({location:'EnhancedExternalSystemsView.jsx:handleAiFieldSuggestion',message:'[BEFORE updateSheetPlan] AI Suggest result received',data:{sheetId,sheetName,resultMapping:result.mapping,resultMappingKeys:Object.keys(result.mapping||{}),planHeaders:plan.headers,planHeadersPreview:plan.headers.slice(0,5)},sessionId:'debug-session',hypothesisId:'C'});
       
       // ✅ Fix: write AI mapping to both mapping and mappingDraft
       // UI uses mappingDraft, so this field must be updated
@@ -1462,9 +1447,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
         updates.missingRequired = status.missingRequired;
       }
       
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/35d967fa-aaea-4f36-8ecf-97e2f2e17afa',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'EnhancedExternalSystemsView.jsx:1314',message:'[updateSheetPlan] updates object created with mappingDraft',data:{sheetId,updatesMapping:updates.mapping,updatesMappingDraft:updates.mappingDraft,mappingKeys:Object.keys(updates.mapping||{}),mappingDraftKeys:Object.keys(updates.mappingDraft||{}),hasIsComplete:updates.hasOwnProperty('isComplete'),hasMissingRequired:updates.hasOwnProperty('missingRequired')},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'C'})}).catch(()=>{});
-      // #endregion
+      sendAgentLog({location:'EnhancedExternalSystemsView.jsx:handleAiFieldSuggestion',message:'[updateSheetPlan] updates object created with mappingDraft',data:{sheetId,updatesMapping:updates.mapping,updatesMappingDraft:updates.mappingDraft,mappingKeys:Object.keys(updates.mapping||{}),mappingDraftKeys:Object.keys(updates.mappingDraft||{}),hasIsComplete:updates.hasOwnProperty('isComplete'),hasMissingRequired:updates.hasOwnProperty('missingRequired')},runId:'post-fix',sessionId:'debug-session',hypothesisId:'C'});
 
       // Large file >1000 rows: show warning only, don't default to disabled (let user decide)
       if (plan.rowCount > 1000 && !hasIngestKeySupport) {
@@ -2663,9 +2646,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
                   const recomputed = currentPlan.uploadType ? getRequiredMappingStatus({ uploadType: currentPlan.uploadType, columns: headers, columnMapping: mappingDraft }) : null;
                   const effectiveIsComplete = recomputed ? recomputed.isComplete : currentPlan.isComplete;
                   const effectiveMissingRequired = recomputed ? recomputed.missingRequired : (currentPlan.missingRequired || []);
-                  // #region agent log
-                  fetch('http://127.0.0.1:7242/ingest/35d967fa-aaea-4f36-8ecf-97e2f2e17afa',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'EnhancedExternalSystemsView.jsx:2526',message:'[UI Rendering] Step2 Mapping Review',data:{sheetId:currentPlan.sheetId,sheetName:currentPlan.sheetName,uploadType:currentPlan.uploadType,storedIsComplete:currentPlan.isComplete,effectiveIsComplete,recomputedIsComplete:recomputed?recomputed.isComplete:null,mappingDraftKeys:Object.keys(mappingDraft)},timestamp:Date.now(),sessionId:'debug-session',runId:'incomplete-debug',hypothesisId:'H2_H3'})}).catch(()=>{});
-                  // #endregion
+                  sendAgentLog({location:'EnhancedExternalSystemsView.jsx:renderStep2',message:'[UI Rendering] Step2 Mapping Review',data:{sheetId:currentPlan.sheetId,sheetName:currentPlan.sheetName,uploadType:currentPlan.uploadType,storedIsComplete:currentPlan.isComplete,effectiveIsComplete,recomputedIsComplete:recomputed?recomputed.isComplete:null,mappingDraftKeys:Object.keys(mappingDraft)},runId:'incomplete-debug',sessionId:'debug-session',hypothesisId:'H2_H3'});
 
                   return (
                     <div className="space-y-4">
@@ -2718,11 +2699,9 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
                               const field = schema.fields.find(f => f.key === targetField);
                               const isRequired = field?.required || false;
                               
-                              // #region agent log
                               if (idx === 0) {
-                                fetch('http://127.0.0.1:7242/ingest/35d967fa-aaea-4f36-8ecf-97e2f2e17afa',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'EnhancedExternalSystemsView.jsx:2584',message:'[Dropdown Render] First header',data:{header:header,targetField:targetField,mappingConfirmedStatus:currentPlan.mappingConfirmed,dropdownDisabled:currentPlan.mappingConfirmed,sheetId:currentPlan.sheetId},timestamp:Date.now(),sessionId:'debug-session',runId:'manual-mapping',hypothesisId:'E'})}).catch(()=>{});
+                                sendAgentLog({location:'EnhancedExternalSystemsView.jsx:renderStep2',message:'[Dropdown Render] First header',data:{header,targetField,mappingConfirmedStatus:currentPlan.mappingConfirmed,dropdownDisabled:currentPlan.mappingConfirmed,sheetId:currentPlan.sheetId},runId:'manual-mapping',sessionId:'debug-session',hypothesisId:'E'});
                               }
-                              // #endregion
                               
                               return (
                                 <tr key={idx} className="hover:bg-slate-50 dark:hover:bg-slate-800/50">

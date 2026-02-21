@@ -159,6 +159,18 @@ Execute database/cost_analysis_schema.sql
   - Gemini: https://ai.google.dev/
   - DeepSeek: https://platform.deepseek.com/api-docs/
 
+### Debug Agent Logging (DEV only)
+Debug telemetry logging is available in development mode for tracing upload/AI flows.
+It is **disabled by default** and **never runs in production builds**.
+
+To enable locally, add the following to your `.env.local`:
+```
+VITE_AGENT_LOG_ENDPOINT=http://127.0.0.1:7242/ingest/35d967fa-aaea-4f36-8ecf-97e2f2e17afa
+```
+- The helper (`src/utils/sendAgentLog.js`) only sends when `import.meta.env.DEV === true` **and** `VITE_AGENT_LOG_ENDPOINT` is set.
+- Requests use a 2-second timeout and errors are silently swallowed.
+- Remove or unset the variable to disable logging.
+
 ## 🗄️ Database Schema
 
 ### Core Tables

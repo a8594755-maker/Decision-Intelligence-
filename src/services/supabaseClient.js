@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import { ASSISTANT_NAME } from '../config/branding';
+import { sendAgentLog } from '../utils/sendAgentLog';
 
 // Supabase configuration - using environment variables
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
@@ -192,18 +193,14 @@ export const suppliersService = {
 
     // Insert new suppliers
     if (toInsert.length > 0) {
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/35d967fa-aaea-4f36-8ecf-97e2f2e17afa',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'supabaseClient.js:130',message:'Before insert suppliers',data:{count:toInsert.length,firstItem:toInsert[0],columns:Object.keys(toInsert[0]||{})},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A,B'})}).catch(()=>{});
-      // #endregion
+      sendAgentLog({location:'supabaseClient.js:supplierService.upsert',message:'Before insert suppliers',data:{count:toInsert.length,firstItem:toInsert[0],columns:Object.keys(toInsert[0]||{})},sessionId:'debug-session',hypothesisId:'A,B'});
       
       const { data: insertedData, error: insertError } = await supabase
         .from('suppliers')
         .insert(toInsert)
         .select();
 
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/35d967fa-aaea-4f36-8ecf-97e2f2e17afa',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'supabaseClient.js:137',message:'After insert suppliers',data:{success:!insertError,error:insertError?{message:insertError.message,details:insertError.details,hint:insertError.hint,code:insertError.code}:null,insertedCount:insertedData?.length},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A,B,E'})}).catch(()=>{});
-      // #endregion
+      sendAgentLog({location:'supabaseClient.js:supplierService.upsert',message:'After insert suppliers',data:{success:!insertError,error:insertError?{message:insertError.message,details:insertError.details,hint:insertError.hint,code:insertError.code}:null,insertedCount:insertedData?.length},sessionId:'debug-session',hypothesisId:'A,B,E'});
 
       if (insertError) {
         console.error('Insert error:', insertError);
@@ -1169,9 +1166,7 @@ export const bomEdgesService = {
 
     // ✅ LOG 1: Print table / rows count / batchId type
     console.info("[ingest] table=bom_edges, rows=", bomEdges.length, ", batchId type=", typeof batchId, ", batchId value=", JSON.stringify(batchId).slice(0, 200));
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/35d967fa-aaea-4f36-8ecf-97e2f2e17afa',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'supabaseClient.js:bomEdgesService.batchInsert',message:'[ingest] LOG1 table/uploadType/rows/batchId',data:{tableName:'bom_edges',uploadType:'bom_edge',rows:bomEdges.length,batchIdType:typeof batchId,batchIdPreview:JSON.stringify(batchId).slice(0,200)},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A'})}).catch(()=>{});
-    // #endregion
+    sendAgentLog({location:'supabaseClient.js:bomEdgesService.batchInsert',message:'[ingest] LOG1 table/uploadType/rows/batchId',data:{tableName:'bom_edges',uploadType:'bom_edge',rows:bomEdges.length,batchIdType:typeof batchId,batchIdPreview:JSON.stringify(batchId).slice(0,200)},sessionId:'debug-session',hypothesisId:'A'});
 
     const payload = bomEdges.map(edge => ({
       user_id: userId,
@@ -1214,16 +1209,12 @@ export const bomEdgesService = {
         }
       });
     }
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/35d967fa-aaea-4f36-8ecf-97e2f2e17afa',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'supabaseClient.js:bomEdgesService.batchInsert',message:'[ingest] LOG2 sample keys + uuid field types',data:{sampleKeys:sample?Object.keys(sample):null,uuidFieldTypes},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'B'})}).catch(()=>{});
-    // #endregion
+    sendAgentLog({location:'supabaseClient.js:bomEdgesService.batchInsert',message:'[ingest] LOG2 sample keys + uuid field types',data:{sampleKeys:sample?Object.keys(sample):null,uuidFieldTypes},sessionId:'debug-session',hypothesisId:'B'});
 
     // ✅ LOG 3: Print request body top-level structure
     console.info("[ingest] payload is array:", Array.isArray(payload), ", length=", payload.length);
     console.info("[ingest] payload preview (first 800 chars):", JSON.stringify(payload).slice(0, 800));
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/35d967fa-aaea-4f36-8ecf-97e2f2e17afa',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'supabaseClient.js:bomEdgesService.batchInsert',message:'[ingest] LOG3 request body top-level',data:{bodyIsArray:Array.isArray(payload),bodyLength:payload.length,bodyTopLevelKeys:Array.isArray(payload)?null:Object.keys(payload),bodyPreview:JSON.stringify(payload).slice(0,800)},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'C'})}).catch(()=>{});
-    // #endregion
+    sendAgentLog({location:'supabaseClient.js:bomEdgesService.batchInsert',message:'[ingest] LOG3 request body top-level',data:{bodyIsArray:Array.isArray(payload),bodyLength:payload.length,bodyTopLevelKeys:Array.isArray(payload)?null:Object.keys(payload),bodyPreview:JSON.stringify(payload).slice(0,800)},sessionId:'debug-session',hypothesisId:'C'});
 
     const { data, error } = await supabase
       .from('bom_edges')
