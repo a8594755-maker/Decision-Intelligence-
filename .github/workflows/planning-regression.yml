@@ -36,3 +36,9 @@ jobs:
       - name: Run planning + forecast regression suite
         run: |
           pytest -q tests/regression --maxfail=1 --durations=10 --timeout=30
+
+      - name: Run lightweight ML smoke tests
+        run: |
+          pip install -q lightgbm scikit-learn
+          pytest -q tests/test_retrain_triggers.py tests/test_orchestrator.py --timeout=45
+        continue-on-error: true

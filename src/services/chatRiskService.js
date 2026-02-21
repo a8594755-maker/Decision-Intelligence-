@@ -1,6 +1,8 @@
 import { userFilesService } from './supabaseClient';
 import { computeRiskScores } from '../risk/riskScoring';
 import { buildExceptions } from '../risk/exceptionBuilder';
+import { buildSupplierStats } from '../domains/supply/supplyForecastEngine';
+import { batchComputePODelayProbabilities } from '../domains/supply/poDelayProbability';
 
 const MAX_BLOCKING_QUESTIONS = 2;
 const MAX_CARD_ROWS = 12;
@@ -473,10 +475,26 @@ export async function computeRiskArtifactsFromDatasetProfile({
     receipt_missing_promised_rows: receiptRowsWithoutPromised
   };
 
+  // PO Delay Probability computation (Module E)
+  const supplierStatsResult = buildSupplierStats(receiptMapped.rows, {
+    fallbackLeadTimeDays: 14,
+    historyWindowDays: 90,
+    minSampleSize: 3,
+  });
+
+  const poDelayResult = batchComputePODelayProbabilities({
+    poOpenLines: poMapped.rows,
+    supplierStats: supplierStatsResult.supplierStats,
+    riskScores: riskResult.risk_scores,
+    nowDate: new Date().toISOString().slice(0, 10),
+  });
+
   return {
     po_rows: poMapped.rows,
     receipt_rows: receiptMapped.rows,
     risk_scores: riskResult.risk_scores,
+    po_delay_result: poDelayResult,
+    supplier_stats: supplierStatsResult.supplierStats,
     supporting_metrics: {
       ...(riskResult.supporting_metrics || {}),
       data_quality: dataQuality,
@@ -607,6 +625,35 @@ export function buildRiskReportJson({
   };
 }
 
+export function buildPODelayAlertCardPayload({
+  run,
+  poDelayResult = {},
+  supplierStats = []
+}) {
+  const highRiskPos = Array.isArray(poDelayResult.high_risk_pos)
+    ? poDelayResult.high_risk_pos.slice(0, 50)
+    : [];
+  const criticalRiskPos = Array.isArray(poDelayResult.critical_risk_pos)
+    ? poDelayResult.critical_risk_pos.slice(0, 20)
+    : [];
+
+  return {
+    run_id: run?.id || null,
+    high_risk_pos: highRiskPos,
+    critical_risk_pos: criticalRiskPos,
+    po_delay_summary: poDelayResult.summary || {},
+    supplier_stats: supplierStats.slice(0, 30).map((s) => ({
+      supplier_id: s.supplier_id,
+      plant_id: s.plant_id,
+      on_time_rate: s.on_time_rate,
+      lead_time_p50_days: s.lead_time_p50_days,
+      lead_time_p90_days: s.lead_time_p90_days,
+      sample_size: s.sample_size,
+      fallback_used: s.metrics?.fallback_used || false,
+    })),
+  };
+}
+
 export function buildRiskDownloadsPayload({
   run,
   risk_scores = [],
@@ -673,6 +720,7 @@ export default {
   buildRiskDrilldownCardPayload,
   buildRiskExceptionsArtifacts,
   buildRiskExceptionsCardPayload,
+  buildPODelayAlertCardPayload,
   buildRiskReportJson,
   buildRiskDownloadsPayload
 };

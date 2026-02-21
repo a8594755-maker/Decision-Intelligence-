@@ -10,3 +10,4 @@ export { Modal } from './Modal';
 export { Table, TableHeader } from './Table';
 export { Select, SelectGroup } from './Select';
 export { SidePanel, SidePanelSection, SidePanelRow } from './SidePanel';
+export { default as PermissionGate } from './PermissionGate';

@@ -1,0 +1,173 @@
+name: frontend-ci
+
+on:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'public/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'vitest.config.js'
+      - 'vite.config.js'
+      - 'eslint.config.js'
+      - '.github/workflows/frontend-ci.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'package.json'
+      - 'vitest.config.js'
+  workflow_dispatch:
+
+jobs:
+  lint:
+    name: ESLint
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run ESLint
+        run: npm run lint
+
+  vitest:
+    name: Vitest Unit Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Create test results directory
+        run: mkdir -p test-results
+
+      - name: Run Vitest with coverage
+        run: npm run test:coverage -- --reporter=verbose --reporter=json
+        env:
+          CI: true
+          NODE_ENV: test
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-report-${{ github.run_id }}
+          path: coverage/
+          retention-days: 14
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: vitest-results-${{ github.run_id }}
+          path: test-results/vitest-results.json
+          retention-days: 7
+
+      - name: Post coverage summary to PR
+        if: github.event_name == 'pull_request'
+        uses: davelosert/vitest-coverage-report-action@v2
+        with:
+          json-summary-path: coverage/coverage-summary.json
+          json-summary-compare-path: coverage/coverage-summary.json
+          file-coverage-mode: 'all'
+
+      - name: Generate GitHub Step Summary
+        if: always()
+        run: |
+          node - <<'EOF'
+          import { readFileSync, appendFileSync } from 'fs';
+
+          const lines = ['## Vitest Unit Test Results', ''];
+
+          try {
+            const raw = readFileSync('test-results/vitest-results.json', 'utf-8');
+            const results = JSON.parse(raw);
+            const { numPassedTests = 0, numFailedTests = 0, numTotalTests = 0,
+                    numPassedTestSuites = 0, numTotalTestSuites = 0 } = results;
+            const icon = numFailedTests === 0 ? '✅' : '❌';
+            lines.push(`${icon} **${numPassedTests}/${numTotalTests} tests passed** in ${numPassedTestSuites}/${numTotalTestSuites} suites`);
+            lines.push('');
+            if (numFailedTests > 0) {
+              lines.push('### Failed Tests');
+              results.testResults?.forEach(suite => {
+                suite.assertionResults?.forEach(t => {
+                  if (t.status === 'failed') {
+                    lines.push(`- ❌ \`${suite.testFilePath?.split('/src/')[1]}\` > ${t.fullName}`);
+                  }
+                });
+              });
+            }
+          } catch (e) {
+            lines.push(`Could not parse test results: ${e.message}`);
+          }
+
+          try {
+            const cov = JSON.parse(readFileSync('coverage/coverage-summary.json', 'utf-8'));
+            const total = cov.total;
+            lines.push('', '### Coverage Summary', '');
+            lines.push('| Metric | Coverage |');
+            lines.push('|--------|----------|');
+            lines.push(`| Lines | ${total.lines.pct}% |`);
+            lines.push(`| Functions | ${total.functions.pct}% |`);
+            lines.push(`| Branches | ${total.branches.pct}% |`);
+            lines.push(`| Statements | ${total.statements.pct}% |`);
+          } catch {}
+
+          appendFileSync(process.env.GITHUB_STEP_SUMMARY, lines.join('\n') + '\n');
+          EOF
+        env:
+          GITHUB_STEP_SUMMARY: ${{ github.step_summary }}
+
+  build:
+    name: Vite Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+        env:
+          VITE_SUPABASE_URL: https://placeholder.supabase.co
+          VITE_SUPABASE_ANON_KEY: placeholder-anon-key
+          VITE_ML_API_URL: http://localhost:8000
+
+      - name: Check build output
+        run: |
+          echo "Build output:"
+          ls -lh dist/
+          ls dist/assets/*.js | head -5
+          echo "Build succeeded"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ github.run_id }}
+          path: dist/
+          retention-days: 3

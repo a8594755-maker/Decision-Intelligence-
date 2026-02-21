@@ -8,11 +8,15 @@ import {
   buildRiskDrilldownCardPayload,
   buildRiskExceptionsArtifacts,
   buildRiskExceptionsCardPayload,
+  buildPODelayAlertCardPayload,
   buildRiskReportJson,
   buildRiskDownloadsPayload
 } from '../services/chatRiskService';
 import { generateTopologyGraphForRun } from '../services/topology/topologyService';
 import { loadArtifact, saveCsvArtifact, saveJsonArtifact } from '../utils/artifactStore';
+import { evaluateRiskReplanRecommendation } from '../services/riskClosedLoopService';
+import { evaluateClosedLoopAfterWorkflowB } from '../services/closed_loop/workflowBClosedLoopBridge.js';
+import { generateAlerts } from '../services/proactiveAlertService.js';
 
 export const WORKFLOW_B_STEPS = ['profile', 'contract', 'validate', 'compute_risk', 'exceptions', 'topology', 'report'];
 
@@ -460,11 +464,59 @@ const stepHandlers = {
       { user_id: ctx.run.user_id }
     );
 
+    // Save PO delay signals artifact
+    const poDelayResult = riskArtifacts.po_delay_result || {};
+    const poDelayPayload = {
+      po_delay_signals: (poDelayResult.po_delay_signals || []).slice(0, 200),
+      high_risk_pos: (poDelayResult.high_risk_pos || []).slice(0, 50),
+      critical_risk_pos: (poDelayResult.critical_risk_pos || []).slice(0, 20),
+      summary: poDelayResult.summary || {},
+    };
+    const poDelaySaved = await saveJsonArtifact(ctx.run.id, 'po_delay_signals', poDelayPayload, ARTIFACT_THRESHOLD, {
+      user_id: ctx.run.user_id,
+      filename: `po_delay_signals_run_${ctx.run.id}.json`
+    });
+
     const artifactRefs = {
       risk_scores: riskScoresSaved.ref,
       supporting_metrics: supportingSaved.ref,
-      risk_scores_csv: riskCsvSaved.ref
+      risk_scores_csv: riskCsvSaved.ref,
+      po_delay_signals: poDelaySaved.ref
     };
+
+    // Build result cards
+    const resultCards = [
+      {
+        type: 'risk_summary_card',
+        payload: buildRiskSummaryCardPayload({
+          run: ctx.run,
+          datasetProfileRow: ctx.datasetProfileRow,
+          risk_scores: riskArtifacts.risk_scores,
+          supporting_metrics: supportingPayload
+        })
+      },
+      {
+        type: 'risk_drilldown_card',
+        payload: buildRiskDrilldownCardPayload({
+          run: ctx.run,
+          risk_scores: riskArtifacts.risk_scores,
+          supporting_metrics: supportingPayload
+        })
+      }
+    ];
+
+    // Add PO delay alert card if high-risk POs detected
+    const highRiskPos = poDelayResult.high_risk_pos || [];
+    if (highRiskPos.length > 0) {
+      resultCards.push({
+        type: 'po_delay_alert_card',
+        payload: buildPODelayAlertCardPayload({
+          run: ctx.run,
+          poDelayResult,
+          supplierStats: riskArtifacts.supplier_stats || []
+        })
+      });
+    }
 
     return {
       status: 'succeeded',
@@ -476,27 +528,10 @@ const stepHandlers = {
         risk_scores_ref: riskScoresSaved.ref,
         supporting_metrics_ref: supportingSaved.ref,
         risk_scores_csv_ref: riskCsvSaved.ref,
+        po_delay_signals_ref: poDelaySaved.ref,
         total_entities: riskArtifacts.risk_scores.length
       },
-      result_cards: [
-        {
-          type: 'risk_summary_card',
-          payload: buildRiskSummaryCardPayload({
-            run: ctx.run,
-            datasetProfileRow: ctx.datasetProfileRow,
-            risk_scores: riskArtifacts.risk_scores,
-            supporting_metrics: supportingPayload
-          })
-        },
-        {
-          type: 'risk_drilldown_card',
-          payload: buildRiskDrilldownCardPayload({
-            run: ctx.run,
-            risk_scores: riskArtifacts.risk_scores,
-            supporting_metrics: supportingPayload
-          })
-        }
-      ]
+      result_cards: resultCards
     };
   },
 
@@ -661,6 +696,75 @@ const stepHandlers = {
       });
     }
 
+    // ── Risk Replan evaluation (non-blocking) ─────────────────────────────────
+    let riskReplanCard = null;
+    try {
+      const latestPlanRun = await diRunsService.getLatestRunByStage(ctx.run.user_id, {
+        stage: 'report',
+        status: 'succeeded',
+        dataset_profile_id: ctx.datasetProfileRow.id,
+        workflow: 'workflow_A_replenishment',
+        limit: 1
+      }).catch(() => null);
+
+      const evaluation = evaluateRiskReplanRecommendation({
+        userId: ctx.run.user_id,
+        datasetProfileId: ctx.datasetProfileRow.id,
+        riskRunId: ctx.run.id,
+        riskScores: riskScores,
+        planRunId: latestPlanRun?.id ?? null,
+      });
+
+      if (evaluation.shouldReplan && evaluation.recommendationCard) {
+        riskReplanCard = evaluation.recommendationCard;
+        console.info(
+          `[workflowBEngine] Risk replan recommended: ${evaluation.analysis.highRiskSkus.length} high-risk SKUs`
+        );
+      }
+    } catch (err) {
+      console.warn('[workflowBEngine] Risk replan evaluation failed (non-blocking):', err.message);
+    }
+
+    // ── Gap 8D: Closed-loop bridge — evaluate whether Workflow A needs re-parameterization ──
+    let closedLoopBridgeResult = null;
+    try {
+      const bridgeMode = ctx.settings?.closed_loop_bridge_mode || 'notify_only';
+      closedLoopBridgeResult = await evaluateClosedLoopAfterWorkflowB({
+        userId: ctx.run.user_id,
+        workflowBRunId: ctx.run.id,
+        datasetProfileId: ctx.datasetProfileRow.id,
+        datasetProfileRow: ctx.datasetProfileRow,
+        settings: ctx.settings,
+        bridgeMode,
+      });
+    } catch (bridgeErr) {
+      console.warn('[workflowBEngine] Closed-loop bridge evaluation failed (non-blocking):', bridgeErr.message);
+    }
+
+    // ── Gap 8E: Proactive alerts — generate prioritized risk alerts ──────────
+    let proactiveAlertCard = null;
+    try {
+      const stockoutData = riskScores
+        .filter((r) => r.entity_type === 'supplier_material' && (r.impact_usd || r.p_stockout))
+        .map((r) => ({
+          material_code: r.material_code,
+          plant_id: r.plant_id,
+          p_stockout: Number(r.p_stockout ?? r.metrics?.p_stockout ?? 0),
+          impact_usd: Number(r.impact_usd ?? 0),
+          days_to_stockout: Number(r.days_to_stockout ?? Infinity),
+        }));
+
+      const alertResult = generateAlerts({ riskScores, stockoutData });
+      if (alertResult.alerts.length > 0) {
+        proactiveAlertCard = {
+          type: 'proactive_alert_card',
+          payload: alertResult,
+        };
+      }
+    } catch (alertErr) {
+      console.warn('[workflowBEngine] Proactive alerts generation failed (non-blocking):', alertErr.message);
+    }
+
     return {
       status: 'succeeded',
       input_ref: {
@@ -670,7 +774,12 @@ const stepHandlers = {
       output_ref: {
         artifact_refs: artifactRefs,
         report_ref: reportSaved.ref,
-        summary: reportPayload.summary || ''
+        summary: reportPayload.summary || '',
+        closed_loop_bridge: closedLoopBridgeResult ? {
+          triggered: closedLoopBridgeResult.triggered,
+          status: closedLoopBridgeResult.closed_loop_status,
+          planning_run_id: closedLoopBridgeResult.planning_run_id,
+        } : null
       },
       result_cards: [
         {
@@ -696,7 +805,21 @@ const stepHandlers = {
             risk_scores_csv: typeof riskCsv === 'string' ? riskCsv : (riskCsv?.content || ''),
             exceptions_csv: typeof exceptionsCsv === 'string' ? exceptionsCsv : (exceptionsCsv?.content || '')
           })
-        }
+        },
+        ...(riskReplanCard ? [riskReplanCard] : []),
+        ...(closedLoopBridgeResult?.triggered && closedLoopBridgeResult?.param_patch
+          ? [{
+              type: 'risk_trigger_notification_card',
+              payload: {
+                closed_loop_status: closedLoopBridgeResult.closed_loop_status,
+                trigger_decision: { should_trigger: true, reasons: [] },
+                param_patch: closedLoopBridgeResult.param_patch,
+                planning_run_id: closedLoopBridgeResult.planning_run_id,
+                requires_approval: true,
+              }
+            }]
+          : []),
+        ...(proactiveAlertCard ? [proactiveAlertCard] : [])
       ]
     };
   }

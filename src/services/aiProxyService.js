@@ -1,4 +1,5 @@
 import { supabase } from './supabaseClient';
+import { acquireOrThrow } from '../utils/rateLimiter';
 
 const AI_PROXY_FUNCTION_NAME = 'ai-proxy';
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || '';
@@ -41,6 +42,8 @@ const readFunctionErrorMessage = async (error) => {
 };
 
 export const invokeAiProxy = async (mode, payload = {}) => {
+  acquireOrThrow('ai_proxy');
+
   if (!supabase?.functions?.invoke) {
     throw new Error('Supabase Functions is unavailable. Check VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.');
   }

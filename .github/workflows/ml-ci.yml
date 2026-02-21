@@ -1,0 +1,154 @@
+name: ml-ci
+
+on:
+  pull_request:
+    paths:
+      - "src/ml/**"
+      - "tests/test_training_pipeline.py"
+      - "tests/test_drift_monitor.py"
+      - "tests/test_model_lifecycle_registry.py"
+      - "tests/test_retrain_triggers.py"
+      - "tests/test_orchestrator.py"
+      - "tests/test_automl_retrain_pipeline.py"
+      - "scripts/automl_retrain_pipeline.py"
+      - ".github/workflows/ml-ci.yml"
+  push:
+    branches: [main]
+    paths:
+      - "src/ml/**"
+      - "scripts/automl_retrain_pipeline.py"
+      - ".github/workflows/ml-ci.yml"
+  workflow_dispatch:
+    inputs:
+      run_pipeline:
+        description: "Run pipeline dry-run smoke test"
+        required: false
+        default: true
+        type: boolean
+
+jobs:
+  ml-unit-tests:
+    name: ML Unit Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PYTHONHASHSEED: "0"
+      PYTHONUNBUFFERED: "1"
+      TZ: "UTC"
+      ENABLE_AUTO_RETRAIN: "false"
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      NUMEXPR_NUM_THREADS: "1"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install ML test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install numpy pandas scikit-learn lightgbm pydantic
+          pip install pytest pytest-timeout pytest-cov
+
+      - name: Run drift monitor tests
+        run: |
+          pytest tests/test_drift_monitor.py -v --timeout=30
+
+      - name: Run retrain trigger tests
+        run: |
+          pytest tests/test_retrain_triggers.py -v --timeout=30
+
+      - name: Run model lifecycle registry tests
+        run: |
+          pytest tests/test_model_lifecycle_registry.py -v --timeout=30
+
+      - name: Run orchestrator determinism tests
+        run: |
+          pytest tests/test_orchestrator.py -v --timeout=60
+
+      - name: Run training pipeline tests
+        run: |
+          pytest tests/test_training_pipeline.py -v --timeout=180
+
+      - name: Run retrain pipeline tests
+        run: |
+          pytest tests/test_automl_retrain_pipeline.py -v --timeout=180
+
+      - name: Upload pytest cache
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ml-pytest-cache
+          path: .pytest_cache/
+          retention-days: 7
+
+  pipeline-smoke-test:
+    name: Pipeline Smoke Test (dry-run)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: ml-unit-tests
+    env:
+      PYTHONHASHSEED: "0"
+      ENABLE_AUTO_RETRAIN: "false"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install smoke test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install numpy pandas scikit-learn lightgbm pydantic
+
+      - name: Run pipeline dry-run
+        if: github.event_name != 'workflow_dispatch' || inputs.run_pipeline
+        run: |
+          python scripts/automl_retrain_pipeline.py \
+            --series "SYNTHETIC" \
+            --dry-run \
+            --trigger-root /tmp/retrain_triggers \
+            --registry-root /tmp/model_registry \
+            --report /tmp/pipeline_smoke_report.json \
+            --verbose
+
+      - name: Validate pipeline report
+        if: github.event_name != 'workflow_dispatch' || inputs.run_pipeline
+        run: |
+          python - <<'PY'
+          import json
+
+          with open("/tmp/pipeline_smoke_report.json", "r", encoding="utf-8") as f:
+              report = json.load(f)
+
+          assert report.get("pipeline_id"), "Missing pipeline_id"
+          assert report.get("series_count", 0) > 0, "No series processed"
+          assert "series_results" in report, "Missing series_results"
+
+          for sid, result in report["series_results"].items():
+              assert result.get("drift") is not None, f"Missing drift for {sid}"
+              assert result.get("evaluate") is not None, f"Missing evaluate for {sid}"
+              assert result.get("outcome") in {"success", "error"}, f"Missing outcome for {sid}"
+
+          print("Pipeline smoke report validated.")
+          PY
+
+      - name: Upload pipeline report
+        if: always() && (github.event_name != 'workflow_dispatch' || inputs.run_pipeline)
+        uses: actions/upload-artifact@v4
+        with:
+          name: pipeline-smoke-report
+          path: /tmp/pipeline_smoke_report.json
+          retention-days: 3

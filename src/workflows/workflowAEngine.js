@@ -16,6 +16,8 @@ import {
 import { generateTopologyGraphForRun } from '../services/topology/topologyService';
 import { loadArtifact, saveJsonArtifact } from '../utils/artifactStore';
 import { runClosedLoop, isClosedLoopEnabled } from '../services/closed_loop/index.js';
+import { buildDecisionNarrative } from '../utils/buildDecisionNarrative';
+import { recordPlanGenerated } from '../services/planAuditService';
 
 export const WORKFLOW_A_STEPS = ['profile', 'contract', 'validate', 'forecast', 'optimize', 'verify', 'topology', 'report'];
 
@@ -435,6 +437,7 @@ const loadPlanResultFromChildRun = async ({ childRunId }) => {
   const bomExplosion = await loadArtifactPayloadByType(childRunId, 'bom_explosion');
   const bottlenecks = await loadArtifactPayloadByType(childRunId, 'bottlenecks');
   const report = await loadArtifactPayloadByType(childRunId, 'report_json');
+  const decisionNarrative = await loadArtifactPayloadByType(childRunId, 'decision_narrative');
   const evidencePack = await loadArtifactPayloadByType(childRunId, 'evidence_pack');
   // Prefer explicit plan_csv; fallback to legacy csv for backward compatibility with old runs.
   const preferredCsvPayload = await loadArtifactPayloadByType(childRunId, 'plan_csv');
@@ -461,6 +464,7 @@ const loadPlanResultFromChildRun = async ({ childRunId }) => {
     bom_explosion: toArtifactRef(getLatestArtifactRecordByType(artifacts, 'bom_explosion')),
     bottlenecks: toArtifactRef(getLatestArtifactRecordByType(artifacts, 'bottlenecks')),
     evidence_pack: toArtifactRef(getLatestArtifactRecordByType(artifacts, 'evidence_pack')),
+    decision_narrative: toArtifactRef(getLatestArtifactRecordByType(artifacts, 'decision_narrative')),
     report_json: toArtifactRef(getLatestArtifactRecordByType(artifacts, 'report_json')),
     plan_csv: preferredCsvRef || legacyCsvRef
   };
@@ -487,13 +491,14 @@ const loadPlanResultFromChildRun = async ({ childRunId }) => {
     bom_explosion: bomExplosion || null,
     bottlenecks: bottlenecks || { total_rows: 0, rows: [] },
     final_report: report || { summary: 'Report unavailable', key_results: [], exceptions: [], recommended_actions: [] },
+    decision_narrative: decisionNarrative || null,
     evidence_pack: evidencePack || {},
     plan_csv: typeof csvPayload === 'string' ? csvPayload : (csvPayload?.content || ''),
     component_plan_csv: typeof componentCsvPayload === 'string'
       ? componentCsvPayload
       : (componentCsvPayload?.content || ''),
     artifact_refs: artifactRefs,
-    summary_text: report?.summary || 'Plan loaded from cached artifacts.'
+    summary_text: decisionNarrative?.summary_text || report?.summary || 'Plan loaded from cached artifacts.'
   };
 };
 
@@ -687,7 +692,9 @@ const stepHandlers = {
         if (cachedPlanResult) {
           return {
             status: 'skipped',
-            notice_text: 'Reused cached plan from replay settings.',
+            notice_text: cachedPlanResult?.decision_narrative?.summary_text
+              ? `Reused cached plan from replay settings. ${cachedPlanResult.decision_narrative.summary_text}`
+              : 'Reused cached plan from replay settings.',
             input_ref: {
               reuse_cached_plan: true,
               replay_of_run_id: Number(ctx.settings?.replay_of_run_id)
@@ -703,7 +710,12 @@ const stepHandlers = {
               const cachedRiskPayload = (cachedPlanResult?.risk_mode === 'on' && cachedPlanResult?.risk_aware)
                 ? buildRiskAwarePlanComparisonCardPayload(cachedPlanResult)
                 : null;
+              const cachedDecisionNarrative = cachedPlanResult?.decision_narrative || null;
               return [
+                ...(cachedDecisionNarrative ? [{ type: 'decision_narrative_card', payload: cachedDecisionNarrative }] : []),
+                ...(cachedDecisionNarrative?.requires_approval
+                  ? [{ type: 'plan_approval_card', payload: { ...cachedDecisionNarrative, approval: null } }]
+                  : []),
                 { type: 'plan_summary_card', payload: buildPlanSummaryCardPayload(cachedPlanResult, ctx.datasetProfileRow) },
                 { type: 'plan_table_card', payload: buildPlanTableCardPayload(cachedPlanResult) },
                 { type: 'inventory_projection_card', payload: buildInventoryProjectionCardPayload(cachedPlanResult) },
@@ -752,7 +764,7 @@ const stepHandlers = {
       try {
         // Load forecast series from the forecast step output for closed-loop analysis
         const forecastArtifacts = forecastRunId
-          ? await diRunsService.getArtifactsByRunId(forecastRunId).catch(() => [])
+          ? await diRunsService.getArtifactsForRun(forecastRunId).catch(() => [])
           : [];
         const forecastSeriesArt = forecastArtifacts.find(a => a.artifact_type === 'forecast_series');
         const forecastMetricsArt = forecastArtifacts.find(a => a.artifact_type === 'metrics');
@@ -763,17 +775,99 @@ const stepHandlers = {
         // Calibration metadata (from PR-C, may not exist yet)
         const calibrationMeta = forecastMetricsArt?.artifact_json?.calibration_meta || null;
 
+        // ── Load risk scores for T-RISK trigger evaluation ──────────────────
+        let riskBundle = null;
+        // 1. Try loading from risk_scan step in this run (if workflow included it)
+        const riskScanStep = ctx.stepMap?.get('risk_scan');
+        if (riskScanStep?.output_ref?.risk_scores_ref) {
+          try {
+            const riskPayload = await loadArtifact(riskScanStep.output_ref.risk_scores_ref);
+            const riskRows = Array.isArray(riskPayload?.rows)
+              ? riskPayload.rows
+              : (Array.isArray(riskPayload) ? riskPayload : []);
+            if (riskRows.length > 0) {
+              riskBundle = { riskScores: riskRows };
+            }
+          } catch (riskErr) {
+            console.warn('[workflowAEngine] Could not load risk scores from risk_scan step:', riskErr.message);
+          }
+        }
+        // 2. Fallback: load from latest Workflow B run for this dataset profile
+        if (!riskBundle && ctx.run?.user_id && ctx.datasetProfileRow?.id) {
+          try {
+            const latestRiskRun = await diRunsService.getLatestRunByStage(ctx.run.user_id, {
+              stage: 'compute_risk',
+              status: 'succeeded',
+              dataset_profile_id: ctx.datasetProfileRow.id,
+              workflow: 'workflow_B_risk_exceptions',
+              limit: 1
+            }).catch(() => null);
+            if (latestRiskRun?.id) {
+              const riskArtifacts = await diRunsService.getArtifactsForRun(latestRiskRun.id).catch(() => []);
+              const riskScoresArt = riskArtifacts.find(a => a.artifact_type === 'risk_scores');
+              const riskRows = Array.isArray(riskScoresArt?.artifact_json?.rows)
+                ? riskScoresArt.artifact_json.rows
+                : [];
+              if (riskRows.length > 0) {
+                riskBundle = { riskScores: riskRows };
+                console.info(`[workflowAEngine] Loaded ${riskRows.length} risk scores from latest Workflow B run.`);
+              }
+            }
+          } catch (riskErr) {
+            console.warn('[workflowAEngine] Could not load risk scores from Workflow B:', riskErr.message);
+          }
+        }
+
+        // ── Gap 8B: Load previousForecast for T-UNCERT / T-P50 trigger comparison ──
+        let previousForecastForClosedLoop = null;
+        try {
+          const profileId = ctx.datasetProfileRow?.id;
+          if (profileId && ctx.run?.user_id) {
+            const prevRun = await diRunsService.getLatestRunByStage(ctx.run.user_id, {
+              stage: 'forecast',
+              status: 'succeeded',
+              dataset_profile_id: profileId,
+              workflow: 'workflow_A_replenishment',
+              limit: 1
+            }).catch(() => null);
+            if (prevRun?.id && prevRun.id !== forecastRunId) {
+              const prevArtifacts = await diRunsService.getArtifactsForRun(prevRun.id).catch(() => []);
+              const prevSeriesArt = prevArtifacts.find(a => a.artifact_type === 'forecast_series');
+              const prevMetricsArt = prevArtifacts.find(a => a.artifact_type === 'metrics');
+              if (prevSeriesArt?.artifact_json) {
+                previousForecastForClosedLoop = {
+                  series: prevSeriesArt.artifact_json.series || [],
+                  metrics: prevMetricsArt?.artifact_json || {}
+                };
+              }
+            }
+          }
+        } catch (prevErr) {
+          console.warn('[workflowAEngine] Failed to load previousForecast for closed-loop:', prevErr.message);
+        }
+
         closedLoopResult = await runClosedLoop({
           userId: ctx.run.user_id,
           datasetProfileRow: ctx.datasetProfileRow,
           forecastRunId,
           forecastBundle,
           calibrationMeta,
-          previousForecast: null, // TODO: load from previous run when available
-          riskBundle: null,       // Risk scores loaded separately if risk_mode is on
+          previousForecast: previousForecastForClosedLoop,
+          riskBundle,
           settings: ctx.settings,
-          mode: ctx.settings?.plan?.closed_loop_mode || 'dry_run',
+          mode: ctx.settings?.plan?.closed_loop_mode || 'manual_approve',
           configOverrides: ctx.settings?.plan?.closed_loop_config || {},
+          planRunner: async (plannerParams) => {
+            return runPlanFromDatasetProfile({
+              userId: ctx.run.user_id,
+              datasetProfileRow: ctx.datasetProfileRow,
+              forecastRunId: plannerParams.forecastRunId || forecastRunId,
+              objectiveOverride: plannerParams.objectiveOverride,
+              constraintsOverride: plannerParams.constraintsOverride,
+              settings: plannerParams.settings || ctx.settings,
+              riskMode: planSettings.risk_mode,
+            });
+          },
           artifactSaver: (runId, type, payload) => saveJsonArtifact(runId, type, payload, ARTIFACT_THRESHOLD)
         });
       } catch (clError) {
@@ -784,6 +878,7 @@ const stepHandlers = {
 
     return {
       status: 'succeeded',
+      notice_text: planResult?.decision_narrative?.summary_text || planResult?.summary_text || '',
       input_ref: {
         dataset_profile_id: ctx.datasetProfileRow.id,
         forecast_run_id: forecastRunId
@@ -810,7 +905,12 @@ const stepHandlers = {
         const riskComparisonPayload = (planResult?.risk_mode === 'on' && planResult?.risk_aware)
           ? buildRiskAwarePlanComparisonCardPayload(planResult)
           : null;
+        const decisionNarrative = planResult?.decision_narrative || null;
         return [
+          ...(decisionNarrative ? [{ type: 'decision_narrative_card', payload: decisionNarrative }] : []),
+          ...(decisionNarrative?.requires_approval
+            ? [{ type: 'plan_approval_card', payload: { ...decisionNarrative, approval: null } }]
+            : []),
           { type: 'plan_summary_card', payload: buildPlanSummaryCardPayload(planResult, ctx.datasetProfileRow) },
           { type: 'plan_table_card', payload: buildPlanTableCardPayload(planResult) },
           { type: 'inventory_projection_card', payload: buildInventoryProjectionCardPayload(planResult) },
@@ -821,6 +921,18 @@ const stepHandlers = {
           { type: 'downloads_card', payload: buildPlanDownloadsPayload(planResult) },
           ...(riskComparisonPayload
             ? [{ type: 'risk_aware_plan_comparison_card', payload: riskComparisonPayload }]
+            : []),
+          ...(closedLoopResult?.trigger_decision?.should_trigger
+            ? [{
+                type: 'risk_trigger_notification_card',
+                payload: {
+                  closed_loop_status: closedLoopResult.closed_loop_status,
+                  trigger_decision: closedLoopResult.trigger_decision,
+                  param_patch: closedLoopResult.param_patch,
+                  planning_run_id: closedLoopResult.planning_run_id || null,
+                  requires_approval: closedLoopResult.requires_approval || false,
+                }
+              }]
             : [])
         ];
       })()
@@ -931,6 +1043,89 @@ const stepHandlers = {
       filename: `workflow_report_run_${ctx.run.id}.json`
     });
 
+    // ── Decision Narrative (Gap 7A/7B/7E) ──────────────────────────────────
+    let narrative = null;
+    let narrativeRef = null;
+    try {
+      const [solverMeta, replayMetrics, negotiationOpts] = await Promise.all([
+        loadArtifactPayloadByType(childRunId, 'solver_meta'),
+        loadArtifactPayloadByType(childRunId, 'replay_metrics'),
+        loadArtifactPayloadByType(childRunId, 'negotiation_options'),
+      ]);
+
+      if (solverMeta) {
+        narrative = buildDecisionNarrative({
+          solverStatus: solverMeta.status || 'FEASIBLE',
+          solverKpis: solverMeta.kpis || {},
+          proof: solverMeta.proof || {},
+          infeasibleReasons: solverMeta.infeasible_reasons || [],
+          infeasibleReasonDetails: solverMeta.infeasible_reason_details || [],
+          replayMetrics: replayMetrics || {},
+          negotiationOptions: negotiationOpts,
+          runId: childRunId,
+        });
+
+        const saved = await saveJsonArtifact(ctx.run.id, 'decision_narrative', narrative, ARTIFACT_THRESHOLD, {
+          user_id: ctx.run.user_id,
+          filename: `decision_narrative_run_${ctx.run.id}.json`
+        });
+        narrativeRef = saved.ref;
+      }
+    } catch (err) {
+      console.warn('[workflowAEngine] Decision narrative generation skipped:', err.message);
+    }
+
+    // ── Audit trail (Gap 7C) ────────────────────────────────────────────────
+    try {
+      recordPlanGenerated({
+        userId: ctx.run.user_id,
+        runId: childRunId,
+        kpiSnapshot: {
+          service_level: narrative?.situation?.service_level ?? null,
+          total_cost: narrative?.situation?.total_cost ?? null,
+          stockout_units: narrative?.situation?.stockout_units ?? null,
+        },
+        narrativeSummary: narrative?.summary_text || reportPayload.summary || '',
+      }).catch(() => {}); // fire-and-forget
+    } catch {
+      // non-critical
+    }
+
+    // ── Result cards ────────────────────────────────────────────────────────
+    const resultCards = [{
+      type: 'workflow_report_card',
+      payload: {
+        summary: reportPayload.summary || '',
+        key_results: Array.isArray(reportPayload.key_results) ? reportPayload.key_results : [],
+        exceptions: Array.isArray(reportPayload.exceptions) ? reportPayload.exceptions : [],
+        recommended_actions: Array.isArray(reportPayload.recommended_actions) ? reportPayload.recommended_actions : []
+      }
+    }];
+
+    if (narrative) {
+      resultCards.push({
+        type: 'decision_narrative_card',
+        payload: narrative
+      });
+
+      if (narrative.requires_approval) {
+        resultCards.push({
+          type: 'plan_approval_card',
+          payload: {
+            run_id: childRunId,
+            narrative_summary: narrative.summary_text || '',
+            solver_status: narrative.solver_status,
+            kpi_snapshot: {
+              service_level: narrative.situation?.service_level ?? null,
+              total_cost: narrative.situation?.total_cost ?? null,
+              stockout_units: narrative.situation?.stockout_units ?? null,
+            },
+            requires_approval: true,
+          }
+        });
+      }
+    }
+
     return {
       status: 'succeeded',
       input_ref: {
@@ -938,17 +1133,10 @@ const stepHandlers = {
       },
       output_ref: {
         report_ref: reportArtifact.ref,
+        decision_narrative_ref: narrativeRef,
         summary: reportPayload.summary || ''
       },
-      result_cards: [{
-        type: 'workflow_report_card',
-        payload: {
-          summary: reportPayload.summary || '',
-          key_results: Array.isArray(reportPayload.key_results) ? reportPayload.key_results : [],
-          exceptions: Array.isArray(reportPayload.exceptions) ? reportPayload.exceptions : [],
-          recommended_actions: Array.isArray(reportPayload.recommended_actions) ? reportPayload.recommended_actions : []
-        }
-      }]
+      result_cards: resultCards
     };
   }
 };

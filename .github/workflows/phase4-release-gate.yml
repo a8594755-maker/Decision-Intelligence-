@@ -1,0 +1,113 @@
+name: phase4-release-gate
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      ml_api_url:
+        description: 'ML API URL for canary check'
+        required: false
+        default: ''
+
+jobs:
+  release-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      PYTHONHASHSEED: '0'
+      PYTHONUNBUFFERED: '1'
+      TZ: 'UTC'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install pytest pytest-timeout pytest-json-report \
+                      pydantic numpy pandas ortools httpx
+
+      # ── Step 1: Run regression suite → JSON report ──────────
+      - name: Run regression suite
+        run: |
+          pytest -q tests/regression \
+            --maxfail=1 --timeout=30 \
+            --json-report --json-report-file=pytest_report.json \
+            || true   # 不在這裡 fail，讓 release gate 決定
+
+      # ── Step 2: Generate 3 input JSONs ──────────────────────
+      - name: Generate regression_result.json
+        run: |
+          python scripts/generate_regression_json.py \
+            --input pytest_report.json \
+            --output regression_result.json
+
+      - name: Generate artifact_record.json
+        run: |
+          python scripts/generate_artifact_record.py \
+            --input backtest_report.json \
+            --output artifact_record.json
+
+      - name: Generate canary_result.json
+        env:
+          ML_API_URL: ${{ github.event.inputs.ml_api_url || '' }}
+        run: |
+          if [ -n "$ML_API_URL" ]; then
+            python scripts/generate_canary_report.py \
+              --base-url "$ML_API_URL" \
+              --output canary_result.json
+          else
+            # CI 沒有 live API 時，用 stub（只跑離線 gate）
+            echo '{"canary_report":{"fixture_results":[{"id":"stub","status":"OPTIMAL","solve_time_ms":100,"schema_valid":true}],"endpoint_checks":[]}}' \
+              > canary_result.json
+            echo "⚠️  No ML_API_URL set — endpoint checks skipped"
+          fi
+
+      # ── Step 3: Evaluate release gate ───────────────────────
+      - name: Evaluate release gate
+        id: gate
+        run: |
+          python scripts/evaluate_release_gate.py \
+            --artifact-json artifact_record.json \
+            --regression-json regression_result.json \
+            --canary-json canary_result.json \
+            --output release_gate_result.json \
+            --max-mape 60.0 \
+            --min-coverage-10-90 0.60 \
+            --max-bias-abs 60.0 \
+            --max-pinball-loss 120.0 \
+            --min-val-points 5 \
+            --max-solve-time-ms 15000 \
+            --max-timeout-rate 0.0 \
+            --max-infeasible-rate 0.30
+          echo "exit_code=$?" >> $GITHUB_OUTPUT
+
+      # ── Step 4: Upload artifacts ─────────────────────────────
+      - name: Upload gate artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-gate-${{ github.sha }}
+          path: |
+            release_gate_result.json
+            regression_result.json
+            artifact_record.json
+            canary_result.json
+            pytest_report.json
+          retention-days: 30
+
+      # ── Step 5: Print summary ─────────────────────────────────
+      - name: Print gate result
+        if: always()
+        run: |
+          echo "=== Release Gate Result ==="
+          cat release_gate_result.json | python -m json.tool

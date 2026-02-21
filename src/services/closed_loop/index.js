@@ -10,3 +10,4 @@ export { derivePlanningParams, aggregateUncertaintyWidth, aggregateP50 } from '.
 export { evaluateTriggers, createCooldownManager, getDefaultCooldownManager, resetDefaultCooldownManager } from './triggerEngine.js';
 export { ClosedLoopStore, closedLoopStore } from './closedLoopStore.js';
 export { runClosedLoop, isClosedLoopEnabled } from './closedLoopRunner.js';
+export { evaluateClosedLoopAfterWorkflowB, BRIDGE_MODES } from './workflowBClosedLoopBridge.js';

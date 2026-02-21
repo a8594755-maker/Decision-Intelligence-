@@ -6,6 +6,8 @@ import { constraintChecker } from '../utils/constraintChecker';
 import { replaySimulator } from '../utils/replaySimulator';
 import { saveJsonArtifact, saveCsvArtifact } from '../utils/artifactStore';
 import { DI_PROMPT_IDS, runDiPrompt } from './diModelRouterService';
+import { buildDecisionNarrativeFromPlanResult } from '../utils/buildDecisionNarrative';
+import { recordPlanGenerated } from './planAuditService';
 import {
   MULTI_ECHELON_MODES,
   resolveMultiEchelonConfig,
@@ -574,6 +576,7 @@ const buildEvidencePack = ({
   replayMetrics,
   artifactRefs,
   readiness,
+  decisionNarrative,
   multiEchelon = null,
   componentPlan = null,
   bottlenecks = null
@@ -590,6 +593,7 @@ const buildEvidencePack = ({
     kpis: solverResult?.kpis || {},
     constraint_check: constraintResult || {},
     replay_metrics: replayMetrics || {},
+    decision_narrative: decisionNarrative || null,
     multi_echelon: multiEchelon || null,
     component_plan_summary: componentPlan
       ? {
@@ -774,7 +778,53 @@ const buildReadinessPromptInput = ({ datasetProfileRow, contractJson, objective,
   };
 };
 
-const buildEvidencePromptInput = ({ solverResult, constraintResult, replayMetrics, forecastMetrics, runId, readiness }) => {
+const getProofConstraints = (solverResult) => (
+  Array.isArray(solverResult?.proof?.constraints_checked) ? solverResult.proof.constraints_checked : []
+);
+
+const getProofObjectiveTerms = (solverResult) => (
+  Array.isArray(solverResult?.proof?.objective_terms) ? solverResult.proof.objective_terms : []
+);
+
+const getInfeasibleReasonDetails = (solverResult) => (
+  Array.isArray(solverResult?.infeasible_reason_details)
+    ? solverResult.infeasible_reason_details
+    : (Array.isArray(solverResult?.infeasible_reasons_detailed) ? solverResult.infeasible_reasons_detailed : [])
+);
+
+const extractBindingConstraints = (constraintsChecked = []) => (
+  (Array.isArray(constraintsChecked) ? constraintsChecked : []).filter(
+    (constraint) => constraint?.passed === false || constraint?.binding === true
+  )
+);
+
+const uniqueNonEmptyStrings = (values = []) => {
+  const seen = new Set();
+  return (Array.isArray(values) ? values : [])
+    .map((value) => String(value || '').trim())
+    .filter(Boolean)
+    .filter((value) => {
+      if (seen.has(value)) return false;
+      seen.add(value);
+      return true;
+    });
+};
+
+const extractSuggestedActions = (solverResult, limit = 6) => {
+  const details = getInfeasibleReasonDetails(solverResult);
+  const actions = details.flatMap((item) => (Array.isArray(item?.suggested_actions) ? item.suggested_actions : []));
+  return uniqueNonEmptyStrings(actions).slice(0, Math.max(0, limit));
+};
+
+const buildEvidencePromptInput = ({
+  solverResult,
+  constraintResult,
+  replayMetrics,
+  forecastMetrics,
+  runId,
+  readiness,
+  decisionNarrative = null
+}) => {
   const evidence = [];
   const pushEvidence = (type, payload) => {
     evidence.push({
@@ -784,15 +834,47 @@ const buildEvidencePromptInput = ({ solverResult, constraintResult, replayMetric
     });
   };
 
+  const constraintsChecked = getProofConstraints(solverResult);
+  const bindingConstraints = extractBindingConstraints(constraintsChecked);
+  const objectiveTerms = getProofObjectiveTerms(solverResult);
+
   pushEvidence('solver_result', {
     run_id: runId,
     status: solverResult?.status || 'unknown',
     kpis: solverResult?.kpis || {},
-    solver_meta: solverResult?.solver_meta || {}
+    solver_meta: {
+      ...(solverResult?.solver_meta || {}),
+      gap: solverResult?.solver_meta?.gap ?? null,
+      solve_time_ms: solverResult?.solver_meta?.solve_time_ms ?? null
+    },
+    proof_summary: {
+      binding_constraints: bindingConstraints.slice(0, 20).map((constraint) => ({
+        name: constraint?.name || '',
+        tag: constraint?.tag || null,
+        details: constraint?.details ? String(constraint.details) : '',
+        description: constraint?.description ? String(constraint.description) : '',
+        severity: constraint?.severity || 'hard',
+        scope: constraint?.scope || null,
+        sku: constraint?.sku || null,
+        period: constraint?.period || null
+      })),
+      objective_terms: objectiveTerms.slice(0, 30).map((term) => ({
+        name: term?.name || '',
+        value: term?.value ?? null,
+        note: term?.note ? String(term.note) : ''
+      })),
+      total_constraints_checked: constraintsChecked.length,
+      total_binding: bindingConstraints.length
+    },
+    infeasible_reasons: Array.isArray(solverResult?.infeasible_reasons) ? solverResult.infeasible_reasons.slice(0, 5) : [],
+    suggested_actions: extractSuggestedActions(solverResult, 4)
   });
   pushEvidence('constraint_check', constraintResult || {});
   pushEvidence('replay', replayMetrics || {});
   pushEvidence('forecast_metrics', forecastMetrics || {});
+  if (decisionNarrative && typeof decisionNarrative === 'object') {
+    pushEvidence('decision_narrative', decisionNarrative);
+  }
   if (readiness) {
     pushEvidence('validation', readiness);
   }
@@ -2239,6 +2321,25 @@ export async function runPlanFromDatasetProfile({
       artifactRefs.bottlenecks = bottlenecksSaved.ref;
     }
 
+    const decisionNarrative = buildDecisionNarrativeFromPlanResult({
+      solver_result: solverResult,
+      replay_metrics: replayMetrics,
+      risk_adjustments: riskAwareResult?.risk_adjustments || null,
+      negotiation_options: null,
+      run: { id: run.id }
+    });
+    const decisionNarrativeSaved = await saveJsonArtifact(
+      run.id,
+      'decision_narrative',
+      decisionNarrative,
+      ARTIFACT_SIZE_THRESHOLD,
+      {
+        user_id: userId,
+        filename: `decision_narrative_run_${run.id}.json`
+      }
+    );
+    artifactRefs.decision_narrative = decisionNarrativeSaved.ref;
+
     const evidencePack = buildEvidencePack({
       runId: run.id,
       datasetProfileId: datasetProfileRow.id,
@@ -2248,6 +2349,7 @@ export async function runPlanFromDatasetProfile({
       replayMetrics,
       artifactRefs,
       readiness: readinessPromptArtifact?.output || null,
+      decisionNarrative,
       multiEchelon: multiEchelonDiagnostics,
       componentPlan: componentPlanArtifact,
       bottlenecks: normalizedBottlenecks
@@ -2277,7 +2379,8 @@ export async function runPlanFromDatasetProfile({
         replayMetrics,
         forecastMetrics: forecastMetricsArtifact,
         runId: run.id,
-        readiness: readinessPromptArtifact?.output || null
+        readiness: readinessPromptArtifact?.output || null,
+        decisionNarrative
       });
       const reportPromptResult = await runDiPrompt({
         promptId: DI_PROMPT_IDS.REPORT_SUMMARY,
@@ -2304,6 +2407,22 @@ export async function runPlanFromDatasetProfile({
       filename: `plan_report_run_${run.id}.json`
     });
     artifactRefs.report_json = reportSaved.ref;
+
+    recordPlanGenerated({
+      userId,
+      runId: run.id,
+      kpiSnapshot: {
+        service_level: replayMetrics?.with_plan?.service_level_proxy ?? null,
+        total_cost: solverResult?.kpis?.estimated_total_cost ?? null,
+        stockout_units: replayMetrics?.with_plan?.stockout_units ?? null
+      },
+      narrativeSummary: decisionNarrative?.summary_text || finalReport?.summary || '',
+      metadata: {
+        solver_status: solverResult?.status || 'unknown'
+      }
+    }).catch((error) => {
+      console.warn('[chatPlanningService] audit trail write failed (non-fatal):', error.message);
+    });
 
     const planCsv = toCsv(normalizedPlan);
     const inlinePlanCsv = planCsv.length <= MAX_DOWNLOADABLE_CSV_BYTES ? planCsv : '';
@@ -2356,7 +2475,7 @@ export async function runPlanFromDatasetProfile({
       });
     }
 
-    const summaryText = finalReport.summary;
+    const summaryText = decisionNarrative?.summary_text || finalReport.summary;
 
     return {
       run: updatedRun,
@@ -2378,6 +2497,7 @@ export async function runPlanFromDatasetProfile({
       bottlenecks: normalizedBottlenecks,
       multi_echelon: multiEchelonDiagnostics,
       final_report: finalReport,
+      decision_narrative: decisionNarrative,
       evidence_pack: evidencePack,
       forecast_metrics: forecastMetricsArtifact,
       plan_csv: inlinePlanCsv,
@@ -2485,18 +2605,38 @@ export function buildInventoryProjectionCardPayload(planResult) {
 export function buildPlanExceptionsCardPayload(planResult) {
   const solver = planResult?.solver_result || {};
   const constraintCheck = planResult?.constraint_check || {};
-  const proof = solver.proof || {};
   const bottlenecks = Array.isArray(planResult?.bottlenecks?.rows) ? planResult.bottlenecks.rows : [];
 
-  const roundingLine = (Array.isArray(proof.constraints_checked) ? proof.constraints_checked : [])
-    .find((item) => item.name === 'rounding_adjustments');
+  const constraintsChecked = getProofConstraints(solver);
+  const roundingLine = constraintsChecked.find((item) => item?.name === 'rounding_adjustments');
+  const bindingConstraints = extractBindingConstraints(constraintsChecked);
+  const passingConstraints = constraintsChecked
+    .filter((constraint) => (
+      constraint
+      && constraint.passed !== false
+      && constraint.binding !== true
+      && constraint.name !== 'rounding_adjustments'
+    ))
+    .slice(0, 10);
+  const objectiveTerms = getProofObjectiveTerms(solver);
+  const infeasibleReasonDetails = getInfeasibleReasonDetails(solver);
+  const suggestedActions = extractSuggestedActions(solver, 6);
+  const infeasibilityCategories = uniqueNonEmptyStrings(infeasibleReasonDetails.map((item) => item?.category));
 
   return {
     run_id: planResult?.run?.id || null,
     infeasible_reasons: Array.isArray(solver.infeasible_reasons) ? solver.infeasible_reasons : [],
     constraint_violations: Array.isArray(constraintCheck.violations) ? constraintCheck.violations : [],
     rounding_notes: roundingLine?.details ? String(roundingLine.details).split('; ').slice(0, 10) : [],
-    bom_bottlenecks: bottlenecks.slice(0, 5)
+    bom_bottlenecks: bottlenecks.slice(0, 5),
+    binding_constraints: bindingConstraints,
+    passing_constraints: passingConstraints,
+    objective_terms: objectiveTerms,
+    suggested_actions: suggestedActions,
+    infeasibility_categories: infeasibilityCategories,
+    solver_gap: solver?.solver_meta?.gap ?? null,
+    solver_engine: solver?.solver_meta?.engine || solver?.solver_meta?.solver || null,
+    solve_time_ms: solver?.solver_meta?.solve_time_ms ?? null
   };
 }
 
@@ -2550,6 +2690,14 @@ export function buildPlanDownloadsPayload(planResult) {
       mimeType: 'application/json;charset=utf-8',
       ref: refs.report_json || null,
       content: planResult?.final_report || {}
+    },
+    {
+      label: 'decision_narrative.json',
+      fileName: `decision_narrative_run_${runId}.json`,
+      mimeType: 'application/json;charset=utf-8',
+      ref: refs.decision_narrative || null,
+      content: planResult?.decision_narrative || null,
+      optional: true
     },
     {
       label: 'component_plan.csv',

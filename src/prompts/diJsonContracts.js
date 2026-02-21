@@ -174,29 +174,58 @@ ${compact}`;
 export const buildDecisionIntelligenceReportPrompt = (evidenceInput) => {
   const compact = clampJsonPayload(evidenceInput);
 
-  return `You are a Decision-Intelligence Report Writer.
+  return `You are a Decision-Intelligence Report Writer for supply chain planning.
 
 You MUST output a single valid JSON object only.
 No markdown. No code fences. No extra text.
 
 Hard rules:
 1) Use ONLY the evidence provided. Do not invent numbers, assumptions, or methods.
-2) Every numeric claim must cite evidence_ids.
+2) Every numeric claim MUST cite evidence_ids.
 3) If something is not in evidence, say "not available in evidence".
+4) When solver evidence includes proof_summary.binding_constraints, you MUST:
+   - Name each binding constraint by its "name" or "tag" field.
+   - Quote the "details" string as supporting evidence when details are present.
+   - Translate technical tags to business language:
+     * BUDGET_GLOBAL -> "Global budget cap binding"
+     * CAP_INV[date] -> "Inventory capacity binding on [date]"
+     * CAP_PROD[date] -> "Production capacity binding on [date]"
+     * MOQ[sku] -> "Minimum order quantity binding for [sku]"
+5) When solver evidence includes proof_summary.objective_terms, you MUST:
+   - Reference the numeric values (for example "ordered_units: 240", "estimated_total_cost: 1850").
+   - Use these values as cost decomposition evidence in key_results.
+6) When suggested_actions are in evidence, include them verbatim in recommended_actions.
+7) The exceptions_and_constraints array MUST reference each binding constraint as a separate entry.
 
 Input:
 {
   "evidence": [
-    { "evidence_id": "E1", "type": "data_profile|validation|forecast_metrics|solver_result|constraint_check|replay", "payload": { } }
+    { "evidence_id": "E1", "type": "solver_result", "payload": {
+      "proof_summary": {
+        "binding_constraints": [{ "name": "...", "tag": "...", "details": "...", "sku": null }],
+        "objective_terms": [{ "name": "...", "value": 0, "note": "..." }]
+      },
+      "suggested_actions": ["..."]
+    } },
+    { "evidence_id": "E2", "type": "constraint_check", "payload": { } },
+    { "evidence_id": "E3", "type": "replay", "payload": { } },
+    { "evidence_id": "E4", "type": "forecast_metrics", "payload": { } }
   ]
 }
 
 Output JSON schema:
 {
-  "summary": "string",
+  "summary": "string (<= 120 words, mention binding constraints by name when present)",
   "what_ran": ["string"],
-  "key_results": [ { "claim": "string", "evidence_ids": ["string"] } ],
-  "exceptions_and_constraints": [ { "issue": "string", "impact": "string", "evidence_ids": ["string"] } ],
+  "key_results": [ { "claim": "string (include objective_terms numbers when available)", "evidence_ids": ["string"] } ],
+  "exceptions_and_constraints": [
+    {
+      "issue": "string (binding constraint name + business translation)",
+      "impact": "string (quantified when possible)",
+      "evidence_ids": ["string"],
+      "suggested_action": "string or null"
+    }
+  ],
   "recommended_actions": [ { "action": "string", "why": "string", "evidence_ids": ["string"] } ],
   "downloads": [ { "name": "string", "description": "string" } ]
 }
@@ -236,11 +265,62 @@ Context input:
 ${compact}`;
 };
 
+export const buildScenarioIntentPrompt = (userMessage, currentPlanContext) => {
+  const compact = clampJsonPayload(currentPlanContext);
+
+  return `You are a What-If Scenario Intent Parser for supply chain planning.
+
+You MUST output a single valid JSON object only.
+No markdown. No code fences. No extra text.
+
+Hard rules:
+1. Extract numeric values ONLY from the user message. Never invent numbers.
+2. If no explicit number is given, use null.
+3. Maximum 4 scenarios per batch.
+4. Only generate scenarios when the user explicitly asks for comparison/simulation.
+5. If no clear What-If intent is detected, set has_whatif_intent to false.
+
+Recognized intent types:
+- "budget_comparison": user mentions multiple budget caps (e.g., "$100k vs $150k")
+- "service_level_comparison": user mentions multiple service level targets
+- "risk_comparison": user mentions risk mode, expedite, or safety stock variants
+- "safety_stock_comparison": user mentions different safety stock settings
+- "custom": user describes custom parameter changes
+
+Current plan context (use for baseline reference only):
+${compact}
+
+User message to parse:
+"${userMessage}"
+
+Output JSON schema:
+{
+  "has_whatif_intent": boolean,
+  "intent_type": "budget_comparison|service_level_comparison|risk_comparison|safety_stock_comparison|custom|none",
+  "confidence": "high|medium|low",
+  "scenarios": [
+    {
+      "name": "string (short, descriptive)",
+      "overrides": {
+        "budget_cap": number_or_null,
+        "service_target": number_or_null,
+        "stockout_penalty_multiplier": number_or_null,
+        "safety_stock_alpha": number_or_null,
+        "risk_mode": "on|off|null",
+        "expedite_mode": "on|off|null"
+      },
+      "rationale": "string (why this scenario is included)"
+    }
+  ],
+  "suggested_question": "string (clarifying question if intent is ambiguous, else null)"
+}`;
+};
+
 export default {
   buildSystemBrainPrompt,
   buildSchemaContractMappingPrompt,
   buildWorkflowAReadinessPrompt,
   buildDecisionIntelligenceReportPrompt,
-  buildBlockingQuestionPrompt
+  buildBlockingQuestionPrompt,
+  buildScenarioIntentPrompt,
 };
-

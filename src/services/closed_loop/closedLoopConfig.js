@@ -42,7 +42,14 @@ export const CLOSED_LOOP_CONFIG = {
   max_cooldown_ms: 24 * 60 * 60 * 1000,     // 24 hours
 
   // ── Modes ───────────────────────────────────────────────────────────────────
-  default_mode: 'dry_run'  // 'dry_run' | 'auto_run' | 'manual_approve'
+  default_mode: 'manual_approve',  // 'dry_run' | 'auto_run' | 'manual_approve'
+
+  // ── Risk replan trigger thresholds ──────────────────────────────────────────
+  risk_high_count_trigger: 1,                // min N high-risk SKUs to trigger replan recommendation
+  risk_safety_stock_alpha_low: 0.5,          // risk_score 40-60
+  risk_safety_stock_alpha_medium: 0.8,       // risk_score 60-80
+  risk_safety_stock_alpha_high: 1.2,         // risk_score > 80
+  default_stockout_penalty_per_unit: 50.0    // USD per unit shortfall (for benefit estimation)
 };
 
 // ─── Status enum ──────────────────────────────────────────────────────────────

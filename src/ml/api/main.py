@@ -45,6 +45,7 @@ from ml.api.async_runs import (
     AsyncRunStatusResponse,
     AsyncRunSubmitRequest,
     AsyncRunSubmitResponse,
+    InMemoryAsyncRunStore,
     PostgresAsyncRunStore,
     TERMINAL_JOB_STATUSES,
 )
@@ -192,7 +193,11 @@ _solver_telemetry_store: Optional[Any] = None
 def get_async_run_service() -> AsyncRunService:
     global _async_run_service
     if _async_run_service is None:
-        store = PostgresAsyncRunStore()
+        try:
+            store = PostgresAsyncRunStore()
+        except RuntimeError as exc:
+            logger.info("Async run store fallback to in-memory: %s", exc)
+            store = InMemoryAsyncRunStore()
         _async_run_service = AsyncRunService(store=store, config=AsyncRunConfig.from_env())
     return _async_run_service
 

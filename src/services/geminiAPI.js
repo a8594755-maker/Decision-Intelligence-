@@ -6,6 +6,8 @@
 
 import { buildDataProfilerPrompt } from '../prompts/dataProfilerPrompt';
 import { invokeAiProxy, streamTextToChunks } from './aiProxyService';
+import { trackLlmUsage } from '../utils/llmUsageTracker';
+import { acquireOrThrow, RateLimitError } from '../utils/rateLimiter';
 
 const USE_EDGE_AI_PROXY = true;
 
@@ -314,6 +316,8 @@ const postDeepSeekWithModelFallback = async ({
  */
 export const callGeminiAPI = async (prompt, systemContext = "", options = {}) => {
   if (USE_EDGE_AI_PROXY) {
+    const t0 = Date.now();
+    const usedModel = options.model || DEFAULT_DEEPSEEK_CHAT_MODEL;
     try {
       const fullPrompt = systemContext
         ? `${systemContext}\n\nUser Query: ${prompt}`
@@ -321,16 +325,39 @@ export const callGeminiAPI = async (prompt, systemContext = "", options = {}) =>
       const result = await invokeAiProxy('di_prompt', {
         provider: 'deepseek',
         prompt: fullPrompt,
-        model: options.model || DEFAULT_DEEPSEEK_CHAT_MODEL,
+        model: usedModel,
         temperature: options.temperature || 0.7,
         maxOutputTokens: options.maxOutputTokens || 8192
       });
       const text = typeof result?.text === 'string' ? result.text : '';
+      const usage = result?.usage;
+      trackLlmUsage({
+        source: 'ai_proxy',
+        model: usedModel,
+        provider: 'deepseek',
+        promptTokens: usage?.prompt_tokens ?? null,
+        completionTokens: usage?.completion_tokens ?? null,
+        totalTokens: usage?.total_tokens ?? null,
+        status: text ? 'success' : 'error',
+        latencyMs: Date.now() - t0,
+        workflow: options?.workflow ?? null,
+        promptId: options?.promptId ?? null,
+      });
       if (!text) {
         return 'No response generated.\n\nPlease check AI proxy logs in Supabase Edge Functions.';
       }
       return text;
     } catch (error) {
+      if (error instanceof RateLimitError) return error.message;
+      trackLlmUsage({
+        source: 'ai_proxy',
+        model: usedModel,
+        provider: 'deepseek',
+        status: 'error',
+        latencyMs: Date.now() - t0,
+        workflow: options?.workflow ?? null,
+        promptId: options?.promptId ?? null,
+      });
       const message = String(error?.message || 'Unknown AI proxy error');
       if (/not configured on server|missing_server_keys|api key/i.test(message)) {
         return '⚠️ AI service is not configured on server.\n\nAsk your admin to set Supabase Edge Function secret: DEEPSEEK_API_KEY.';
@@ -344,6 +371,13 @@ export const callGeminiAPI = async (prompt, systemContext = "", options = {}) =>
   if (!apiKey) {
     console.warn("No API Key found.");
     return "WARNING: No API key found. Add your Google AI API key in Settings.\n\nYou can grab a free key here: https://ai.google.dev/";
+  }
+
+  try {
+    acquireOrThrow('legacy_gemini');
+  } catch (error) {
+    if (error instanceof RateLimitError) return error.message;
+    throw error;
   }
 
   try {
@@ -484,6 +518,7 @@ export const chatWithAI = async (message, conversationHistory = [], dataContext 
   }
 
   if (USE_EDGE_AI_PROXY) {
+    const t0 = Date.now();
     try {
       const result = await invokeAiProxy('deepseek_chat', {
         message,
@@ -494,9 +529,30 @@ export const chatWithAI = async (message, conversationHistory = [], dataContext 
         model: 'deepseek-chat'
       });
       const text = typeof result?.text === 'string' ? result.text : '';
+      const usage = result?.usage;
+      trackLlmUsage({
+        source: 'ai_proxy',
+        model: 'deepseek-chat',
+        provider: 'deepseek',
+        promptTokens: usage?.prompt_tokens ?? null,
+        completionTokens: usage?.completion_tokens ?? null,
+        totalTokens: usage?.total_tokens ?? null,
+        status: text ? 'success' : 'error',
+        latencyMs: Date.now() - t0,
+        workflow: 'chat',
+      });
       if (text) return text;
       throw new Error('AI proxy returned empty content.');
     } catch (error) {
+      if (error instanceof RateLimitError) return error.message;
+      trackLlmUsage({
+        source: 'ai_proxy',
+        model: 'deepseek-chat',
+        provider: 'deepseek',
+        status: 'error',
+        latencyMs: Date.now() - t0,
+        workflow: 'chat',
+      });
       console.warn('[chatWithAI] DeepSeek chat failed:', error.message);
       return `❌ DeepSeek 對話服務請求失敗\n\nError: ${error.message}`;
     }
@@ -505,6 +561,13 @@ export const chatWithAI = async (message, conversationHistory = [], dataContext 
   // Legacy local path: DeepSeek only (no Gemini fallback).
   const deepSeekApiKey = getDeepSeekApiKey();
   if (deepSeekApiKey) {
+    try {
+      acquireOrThrow('legacy_deepseek');
+    } catch (error) {
+      if (error instanceof RateLimitError) return error.message;
+      throw error;
+    }
+    const t0 = Date.now();
     try {
       const request = await postDeepSeekWithModelFallback({
         apiKey: deepSeekApiKey,
@@ -526,15 +589,35 @@ export const chatWithAI = async (message, conversationHistory = [], dataContext 
       }
 
       const body = await request.response.json();
+      const usage = body?.usage;
       const content = body?.choices?.[0]?.message?.content;
       const text = typeof content === 'string'
         ? content
         : Array.isArray(content)
           ? content.map((part) => part?.text || '').join('')
           : '';
+      trackLlmUsage({
+        source: 'deepseek_api',
+        model: request.model,
+        provider: 'deepseek',
+        promptTokens: usage?.prompt_tokens ?? null,
+        completionTokens: usage?.completion_tokens ?? null,
+        totalTokens: usage?.total_tokens ?? null,
+        status: text ? 'success' : 'error',
+        latencyMs: Date.now() - t0,
+        workflow: 'chat',
+      });
       if (text) return text;
       throw new Error('DeepSeek returned empty content.');
     } catch (error) {
+      trackLlmUsage({
+        source: 'deepseek_api',
+        model: DEFAULT_DEEPSEEK_CHAT_MODEL,
+        provider: 'deepseek',
+        status: 'error',
+        latencyMs: Date.now() - t0,
+        workflow: 'chat',
+      });
       console.warn('[chatWithAI] DeepSeek failed:', error.message);
       return `❌ DeepSeek 對話服務請求失敗\n\nError: ${error.message}`;
     }
@@ -835,6 +918,7 @@ const streamDeepSeekChat = async ({
  */
 export const streamChatWithAI = async (message, conversationHistory = [], systemPrompt = '', onChunk = null) => {
   if (USE_EDGE_AI_PROXY) {
+    const t0 = Date.now();
     try {
       const result = await invokeAiProxy('deepseek_chat', {
         message,
@@ -845,9 +929,33 @@ export const streamChatWithAI = async (message, conversationHistory = [], system
         model: 'deepseek-chat'
       });
       const text = typeof result?.text === 'string' ? result.text : 'No response generated.';
+      const usage = result?.usage;
+      trackLlmUsage({
+        source: 'ai_proxy',
+        model: 'deepseek-chat',
+        provider: 'deepseek',
+        promptTokens: usage?.prompt_tokens ?? null,
+        completionTokens: usage?.completion_tokens ?? null,
+        totalTokens: usage?.total_tokens ?? null,
+        status: 'success',
+        latencyMs: Date.now() - t0,
+        workflow: 'chat',
+      });
       streamTextToChunks(text, onChunk, 48);
       return text;
     } catch (error) {
+      if (error instanceof RateLimitError) {
+        onChunk?.(error.message);
+        return error.message;
+      }
+      trackLlmUsage({
+        source: 'ai_proxy',
+        model: 'deepseek-chat',
+        provider: 'deepseek',
+        status: 'error',
+        latencyMs: Date.now() - t0,
+        workflow: 'chat',
+      });
       const fallback = `❌ AI service request failed\n\nError message: ${error?.message || 'Unknown AI proxy error'}`;
       onChunk?.(fallback);
       return fallback;
@@ -866,14 +974,41 @@ export const streamChatWithAI = async (message, conversationHistory = [], system
 
   if (deepSeekApiKey) {
     try {
-      return await streamDeepSeekChat({
+      acquireOrThrow('legacy_deepseek');
+    } catch (error) {
+      if (error instanceof RateLimitError) {
+        onChunk?.(error.message);
+        return error.message;
+      }
+      throw error;
+    }
+    const t0ds = Date.now();
+    try {
+      const text = await streamDeepSeekChat({
         apiKey: deepSeekApiKey,
         message,
         conversationHistory,
         systemPrompt,
         onChunk
       });
+      trackLlmUsage({
+        source: 'deepseek_api',
+        model: DEFAULT_DEEPSEEK_CHAT_MODEL,
+        provider: 'deepseek',
+        status: 'success',
+        latencyMs: Date.now() - t0ds,
+        workflow: 'chat',
+      });
+      return text;
     } catch (error) {
+      trackLlmUsage({
+        source: 'deepseek_api',
+        model: DEFAULT_DEEPSEEK_CHAT_MODEL,
+        provider: 'deepseek',
+        status: 'error',
+        latencyMs: Date.now() - t0ds,
+        workflow: 'chat',
+      });
       console.warn('[streamChatWithAI] DeepSeek streaming failed:', error.message);
       const fallback = `❌ DeepSeek 串流對話請求失敗\n\nError: ${error.message}`;
       onChunk?.(fallback);

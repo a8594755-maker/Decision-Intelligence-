@@ -19,6 +19,20 @@ class GovernanceAction(str, Enum):
     SWITCH_SOLVER_ENGINE = "switch_solver_engine"
     ENABLE_AUTOMATION_FLAGS = "enable_automation_flags"
     COMMIT_PLAN = "commit_plan"
+    # V2 enterprise actions (synced with frontend ACTIONS)
+    RUN_PLAN = "run_plan"
+    RUN_WHATIF = "run_whatif"
+    RUN_FORECAST = "run_forecast"
+    EDIT_FORECAST_SETTINGS = "edit_forecast_settings"
+    RUN_RISK_WORKFLOW = "run_risk_workflow"
+    APPROVE_RISK_TRIGGER = "approve_risk_trigger"
+    SET_CLOSED_LOOP_MODE = "set_closed_loop_mode"
+    UPLOAD_DATA = "upload_data"
+    MANAGE_MASTER_DATA = "manage_master_data"
+    MANAGE_USERS = "manage_users"
+    VIEW_SETTINGS = "view_settings"
+    MANAGE_LOGIC_CONTROL = "manage_logic_control"
+    DELETE_RUN = "delete_run"
 
 
 @dataclass(frozen=True)
@@ -40,6 +54,7 @@ class AuthorizationError(PermissionError):
 
 
 _ACTION_ROLES: Dict[GovernanceAction, Set[GovernanceRole]] = {
+    # V1 governance actions
     GovernanceAction.VIEW_AUDIT: {
         GovernanceRole.VIEWER,
         GovernanceRole.ANALYST,
@@ -74,6 +89,63 @@ _ACTION_ROLES: Dict[GovernanceAction, Set[GovernanceRole]] = {
         GovernanceRole.APPROVER,
         GovernanceRole.ADMIN,
     },
+    # V2 enterprise actions (synced with frontend usePermissions.jsx)
+    GovernanceAction.RUN_PLAN: {
+        GovernanceRole.PLANNER,
+        GovernanceRole.APPROVER,
+        GovernanceRole.ADMIN,
+    },
+    GovernanceAction.RUN_WHATIF: {
+        GovernanceRole.ANALYST,
+        GovernanceRole.PLANNER,
+        GovernanceRole.APPROVER,
+        GovernanceRole.ADMIN,
+    },
+    GovernanceAction.RUN_FORECAST: {
+        GovernanceRole.ANALYST,
+        GovernanceRole.PLANNER,
+        GovernanceRole.APPROVER,
+        GovernanceRole.ADMIN,
+    },
+    GovernanceAction.EDIT_FORECAST_SETTINGS: {
+        GovernanceRole.PLANNER,
+        GovernanceRole.APPROVER,
+        GovernanceRole.ADMIN,
+    },
+    GovernanceAction.RUN_RISK_WORKFLOW: {
+        GovernanceRole.PLANNER,
+        GovernanceRole.APPROVER,
+        GovernanceRole.ADMIN,
+    },
+    GovernanceAction.APPROVE_RISK_TRIGGER: {
+        GovernanceRole.APPROVER,
+        GovernanceRole.ADMIN,
+    },
+    GovernanceAction.SET_CLOSED_LOOP_MODE: {
+        GovernanceRole.APPROVER,
+        GovernanceRole.ADMIN,
+    },
+    GovernanceAction.UPLOAD_DATA: {
+        GovernanceRole.PLANNER,
+        GovernanceRole.APPROVER,
+        GovernanceRole.ADMIN,
+    },
+    GovernanceAction.MANAGE_MASTER_DATA: {
+        GovernanceRole.ADMIN,
+    },
+    GovernanceAction.MANAGE_USERS: {
+        GovernanceRole.ADMIN,
+    },
+    GovernanceAction.VIEW_SETTINGS: {
+        GovernanceRole.ADMIN,
+    },
+    GovernanceAction.MANAGE_LOGIC_CONTROL: {
+        GovernanceRole.APPROVER,
+        GovernanceRole.ADMIN,
+    },
+    GovernanceAction.DELETE_RUN: {
+        GovernanceRole.ADMIN,
+    },
 }
 
 
@@ -89,4 +161,3 @@ def ensure_role_allowed(actor_role: GovernanceRole, action: GovernanceAction) ->
     allowed_roles = _ACTION_ROLES.get(action, set())
     if actor_role not in allowed_roles:
         raise AuthorizationError(action=action, role=actor_role, allowed_roles=allowed_roles)
-

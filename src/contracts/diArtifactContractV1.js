@@ -23,7 +23,9 @@ const V1_VALIDATORS = {
   component_plan_table: validateComponentPlanTable,
   component_plan_csv: validateCsvArtifact,
   component_inventory_projection: validateComponentInventoryProjection,
-  bottlenecks: validateBottlenecks
+  bottlenecks: validateBottlenecks,
+  // Decision Narrative v1
+  decision_narrative: validateDecisionNarrative
 };
 
 const MAX_ISSUES = 50;
@@ -567,6 +569,34 @@ function validateComponentInventoryProjection(payload, issues) {
     requireNumberField(issues, row, 'inbound_plan', p);
     requireNumberField(issues, row, 'inbound_open_pos', p);
   });
+}
+
+function validateDecisionNarrative(payload, issues) {
+  const root = ensureObjectPayload(issues, payload);
+  if (!root) return;
+  requireStringField(issues, root, 'version', 'payload');
+  requireStringField(issues, root, 'generated_at', 'payload');
+  requireStringField(issues, root, 'solver_status', 'payload');
+  requireStringField(issues, root, 'summary_text', 'payload');
+  const situation = requireObjectField(issues, root, 'situation', 'payload');
+  if (situation) {
+    requireStringField(issues, situation, 'text', 'payload.situation');
+    requireArrayField(issues, situation, 'evidence_refs', 'payload.situation');
+  }
+  const driver = requireObjectField(issues, root, 'driver', 'payload');
+  if (driver) {
+    requireStringField(issues, driver, 'text', 'payload.driver');
+    requireStringField(issues, driver, 'category', 'payload.driver');
+    requireArrayField(issues, driver, 'evidence_refs', 'payload.driver');
+  }
+  const recommendation = requireObjectField(issues, root, 'recommendation', 'payload');
+  if (recommendation) {
+    requireStringField(issues, recommendation, 'text', 'payload.recommendation');
+    requireStringField(issues, recommendation, 'action_type', 'payload.recommendation');
+    requireArrayField(issues, recommendation, 'evidence_refs', 'payload.recommendation');
+  }
+  requireArrayField(issues, root, 'constraint_binding_summary', 'payload');
+  requireArrayField(issues, root, 'all_evidence_refs', 'payload');
 }
 
 function validateBottlenecks(payload, issues) {

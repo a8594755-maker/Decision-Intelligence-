@@ -25,6 +25,16 @@ import {
   buildRiskAwarePlanComparisonCardPayload
 } from '../../services/chatPlanningService';
 import {
+  requestPlanApproval,
+  approvePlanApproval,
+  rejectPlanApproval,
+  isPlanGovernanceConfigured
+} from '../../services/planGovernanceService';
+import {
+  recordPlanApproved,
+  recordPlanRejected
+} from '../../services/planAuditService';
+import {
   generateTopologyGraphForRun,
   loadTopologyGraphForRun
 } from '../../services/topology/topologyService';
@@ -42,6 +52,7 @@ import { buildDatasetFingerprint } from '../../utils/datasetFingerprint';
 import { buildSignature } from '../../utils/datasetSimilarity';
 import { buildReusePlan, applyContractTemplateToProfile } from '../../utils/reusePlanner';
 import { buildActualVsForecastSeries } from '../../utils/charts/buildActualVsForecastSeries';
+import { buildProofInlineBlock } from '../../utils/proofFormatter';
 import UPLOAD_SCHEMAS from '../../utils/uploadSchemas';
 import { getRequiredMappingStatus } from '../../utils/requiredMappingStatus';
 import { ruleBasedMapping } from '../../utils/aiMappingHelper';
@@ -59,6 +70,8 @@ import RiskSummaryCard from '../../components/chat/RiskSummaryCard';
 import RiskExceptionsCard from '../../components/chat/RiskExceptionsCard';
 import RiskDrilldownCard from '../../components/chat/RiskDrilldownCard';
 import PlanErrorCard from '../../components/chat/PlanErrorCard';
+import DecisionNarrativeCard from '../../components/chat/DecisionNarrativeCard';
+import PlanApprovalCard from '../../components/chat/PlanApprovalCard';
 import WorkflowProgressCard from '../../components/chat/WorkflowProgressCard';
 import WorkflowErrorCard from '../../components/chat/WorkflowErrorCard';
 import BlockingQuestionsCard from '../../components/chat/BlockingQuestionsCard';
@@ -70,6 +83,10 @@ import DownloadsCard from '../../components/chat/DownloadsCard';
 import ContractConfirmationCard from '../../components/chat/ContractConfirmationCard';
 import CanvasPanel from '../../components/chat/CanvasPanel';
 import RiskAwarePlanComparisonCard from '../../components/chat/RiskAwarePlanComparisonCard';
+import RiskReplanCard from '../../components/risk/RiskReplanCard';
+import PODelayAlertCard from '../../components/chat/PODelayAlertCard';
+import RiskTriggerNotificationCard from '../../components/chat/RiskTriggerNotificationCard';
+import ProactiveAlertCard from '../../components/chat/ProactiveAlertCard';
 import AIErrorCard from '../../components/chat/AIErrorCard';
 import SplitShell from '../../components/chat/SplitShell';
 import ConversationSidebar from '../../components/chat/ConversationSidebar';
@@ -763,6 +780,12 @@ Be concise, data-driven, and actionable.\n\n`;
 
   if (activeDatasetContext?.summary) {
     prompt += `\n### Selected Dataset Context\n${activeDatasetContext.summary}\n`;
+  }
+
+  const proofBlock = buildProofInlineBlock(domainCtx?.lastPlanSolverResult);
+  if (proofBlock) {
+    prompt += `\n### Last Plan: Solver Proof\n${proofBlock}\n`;
+    prompt += '\nWhen answering plan questions, reference these binding constraints and objective terms explicitly.\n';
   }
 
   prompt += '\nWhite-box rule: never invent numeric outputs. If exact values are unavailable, say what evidence is missing.';
@@ -1855,15 +1878,31 @@ export default function DecisionSupportView({ user, addNotification }) {
       const bottlenecksPayload = buildBomBottlenecksCardPayload(planResult);
       const downloadsPayload = buildPlanDownloadsPayload(planResult);
       const riskComparisonPayload = buildRiskAwarePlanComparisonCardPayload(planResult);
+      const decisionNarrative = planResult?.decision_narrative || null;
       const inventoryRows = buildInventoryProjectionRowsFromCard(projectionPayload);
       const costRows = buildCostBreakdownRowsFromPlanSummary(summaryPayload);
 
       appendMessagesToCurrentConversation([
         {
           role: 'ai',
-          content: planResult.summary_text,
+          content: decisionNarrative?.summary_text || planResult.summary_text,
           timestamp: new Date().toISOString()
         },
+        ...(decisionNarrative ? [{
+          role: 'ai',
+          type: 'decision_narrative_card',
+          payload: decisionNarrative,
+          timestamp: new Date().toISOString()
+        }] : []),
+        ...(decisionNarrative?.requires_approval ? [{
+          role: 'ai',
+          type: 'plan_approval_card',
+          payload: {
+            ...decisionNarrative,
+            approval: null
+          },
+          timestamp: new Date().toISOString()
+        }] : []),
         {
           role: 'ai',
           type: 'plan_summary_card',
@@ -1926,6 +1965,10 @@ export default function DecisionSupportView({ user, addNotification }) {
       addNotification?.(`Plan run #${planResult?.run?.id || ''} completed.`, 'success');
       // Track latest plan run for What-If Explorer
       if (planResult?.run?.id) setLatestPlanRunId(planResult.run.id);
+      setDomainContext((prev) => ({
+        ...(prev || {}),
+        lastPlanSolverResult: planResult?.solver_result || null
+      }));
     } catch (error) {
       const constraintViolations = Array.isArray(error?.constraint_check?.violations)
         ? error.constraint_check.violations
@@ -1978,6 +2021,250 @@ export default function DecisionSupportView({ user, addNotification }) {
       riskMode: 'on'
     });
   }, [executePlanFlow]);
+
+  const handleRequestPlanApproval = useCallback(async ({ runId, note = '', narrative }) => {
+    if (!user?.id) throw new Error('Please sign in before requesting approval.');
+    if (!runId) throw new Error('runId is required.');
+    if (!isPlanGovernanceConfigured()) {
+      throw new Error('VITE_ML_API_URL is not configured.');
+    }
+
+    const response = await requestPlanApproval({
+      runId,
+      userId: user.id,
+      payload: {
+        run_id: runId,
+        solver_status: narrative?.solver_status || 'unknown',
+        requires_approval: true,
+        summary_text: narrative?.summary_text || ''
+      },
+      reason: 'Plan requires manual approval based on solver/narrative risk criteria.',
+      note
+    });
+    const approval = response?.approval || null;
+    if (!approval) {
+      throw new Error('Approval response missing approval record.');
+    }
+
+    appendMessagesToCurrentConversation([
+      {
+        role: 'ai',
+        content: `Approval request submitted (${approval.approval_id}).`,
+        timestamp: new Date().toISOString()
+      },
+      {
+        role: 'ai',
+        type: 'plan_approval_card',
+        payload: {
+          ...(narrative || {}),
+          run_id: runId,
+          requires_approval: true,
+          approval
+        },
+        timestamp: new Date().toISOString()
+      }
+    ]);
+    addNotification?.(`Approval requested: ${approval.approval_id}`, 'success');
+    return approval;
+  }, [user?.id, appendMessagesToCurrentConversation, addNotification]);
+
+  const handleApprovePlanApproval = useCallback(async ({ approvalId, note = '', runId, narrative = null }) => {
+    if (!user?.id) throw new Error('Please sign in before approving.');
+    if (!approvalId) throw new Error('approvalId is required.');
+    if (!isPlanGovernanceConfigured()) {
+      throw new Error('VITE_ML_API_URL is not configured.');
+    }
+
+    const response = await approvePlanApproval({
+      approvalId,
+      userId: user.id,
+      note
+    });
+    const approval = response?.approval || null;
+    if (!approval) {
+      throw new Error('Approval response missing approval record.');
+    }
+
+    recordPlanApproved({
+      userId: user.id,
+      runId,
+      approvalId: approval.approval_id,
+      note
+    }).catch((error) => {
+      console.warn('[DecisionSupportView] recordPlanApproved failed:', error.message);
+    });
+
+    appendMessagesToCurrentConversation([
+      {
+        role: 'ai',
+        content: `Plan approved (${approval.approval_id}).`,
+        timestamp: new Date().toISOString()
+      },
+      {
+        role: 'ai',
+        type: 'plan_approval_card',
+        payload: {
+          ...(narrative || {}),
+          run_id: runId,
+          requires_approval: true,
+          approval
+        },
+        timestamp: new Date().toISOString()
+      }
+    ]);
+    addNotification?.('Plan approved.', 'success');
+    return approval;
+  }, [user?.id, appendMessagesToCurrentConversation, addNotification]);
+
+  const handleRejectPlanApproval = useCallback(async ({ approvalId, note = '', runId, narrative = null }) => {
+    if (!user?.id) throw new Error('Please sign in before rejecting.');
+    if (!approvalId) throw new Error('approvalId is required.');
+    if (!isPlanGovernanceConfigured()) {
+      throw new Error('VITE_ML_API_URL is not configured.');
+    }
+
+    const response = await rejectPlanApproval({
+      approvalId,
+      userId: user.id,
+      note
+    });
+    const approval = response?.approval || null;
+    if (!approval) {
+      throw new Error('Approval response missing approval record.');
+    }
+
+    recordPlanRejected({
+      userId: user.id,
+      runId,
+      approvalId: approval.approval_id,
+      note
+    }).catch((error) => {
+      console.warn('[DecisionSupportView] recordPlanRejected failed:', error.message);
+    });
+
+    appendMessagesToCurrentConversation([
+      {
+        role: 'ai',
+        content: `Plan rejected (${approval.approval_id}).`,
+        timestamp: new Date().toISOString()
+      },
+      {
+        role: 'ai',
+        type: 'plan_approval_card',
+        payload: {
+          ...(narrative || {}),
+          run_id: runId,
+          requires_approval: true,
+          approval
+        },
+        timestamp: new Date().toISOString()
+      }
+    ]);
+    addNotification?.('Plan rejected.', 'warning');
+    return approval;
+  }, [user?.id, appendMessagesToCurrentConversation, addNotification]);
+
+  const handleRiskReplanDecision = useCallback(async ({
+    action,
+    params = {},
+    datasetProfileId
+  }) => {
+    if (action === 'dismiss_risk_replan') {
+      appendMessagesToCurrentConversation([{
+        role: 'ai',
+        content: 'Risk re-plan recommendation dismissed. Current plan retained.',
+        timestamp: new Date().toISOString()
+      }]);
+      return;
+    }
+
+    if (action === 'replan_with_risk_params') {
+      const { safety_stock_alpha, stockout_penalty_multiplier, risk_mode } = params;
+
+      appendMessagesToCurrentConversation([{
+        role: 'ai',
+        content: `Re-planning with safety_stock_alpha=${safety_stock_alpha}...`,
+        timestamp: new Date().toISOString()
+      }]);
+
+      try {
+        const resolvedProfileRow = await resolveDatasetProfileRow(datasetProfileId);
+        if (!resolvedProfileRow?.id) {
+          throw new Error('Cannot find the corresponding dataset profile.');
+        }
+
+        const runtimeSettings = buildRuntimeWorkflowSettings(activeDatasetContext || {}, {});
+        const planResult = await runPlanFromDatasetProfile({
+          userId: user.id,
+          datasetProfileRow: resolvedProfileRow,
+          riskMode: risk_mode || 'on',
+          riskConfigOverrides: {
+            safety_stock_alpha,
+            stockout_penalty_beta: stockout_penalty_multiplier - 1
+          },
+          settings: {
+            ...runtimeSettings,
+            closed_loop: { mode: 'dry_run' } // Prevent infinite loop
+          }
+        });
+
+        const summaryPayload = buildPlanSummaryCardPayload(planResult, resolvedProfileRow);
+        const tablePayload = buildPlanTableCardPayload(planResult);
+        const projectionPayload = buildInventoryProjectionCardPayload(planResult);
+        const downloadsPayload = buildPlanDownloadsPayload(planResult);
+        const riskComparisonPayload = buildRiskAwarePlanComparisonCardPayload(planResult);
+        const decisionNarrative = planResult?.decision_narrative || null;
+
+        appendMessagesToCurrentConversation([
+          {
+            role: 'ai',
+            content: decisionNarrative?.summary_text || `Risk-adjusted re-plan completed. Service level: ${
+              ((planResult?.solver_result?.kpis?.estimated_service_level ?? 0) * 100).toFixed(1)
+            }%`,
+            timestamp: new Date().toISOString()
+          },
+          ...(decisionNarrative ? [{
+            role: 'ai',
+            type: 'decision_narrative_card',
+            payload: decisionNarrative,
+            timestamp: new Date().toISOString()
+          }] : []),
+          ...(decisionNarrative?.requires_approval ? [{
+            role: 'ai',
+            type: 'plan_approval_card',
+            payload: {
+              ...decisionNarrative,
+              approval: null
+            },
+            timestamp: new Date().toISOString()
+          }] : []),
+          { role: 'ai', type: 'plan_summary_card', payload: summaryPayload, timestamp: new Date().toISOString() },
+          { role: 'ai', type: 'plan_table_card', payload: tablePayload, timestamp: new Date().toISOString() },
+          { role: 'ai', type: 'inventory_projection_card', payload: projectionPayload, timestamp: new Date().toISOString() },
+          { role: 'ai', type: 'downloads_card', payload: downloadsPayload, timestamp: new Date().toISOString() },
+          ...(riskComparisonPayload
+            ? [{ role: 'ai', type: 'risk_aware_plan_comparison_card', payload: riskComparisonPayload, timestamp: new Date().toISOString() }]
+            : [])
+        ]);
+
+        addNotification?.(`Risk-adjusted re-plan completed.`, 'success');
+        if (planResult?.run?.id) setLatestPlanRunId(planResult.run.id);
+      } catch (err) {
+        appendMessagesToCurrentConversation([{
+          role: 'ai',
+          content: `Risk re-plan failed: ${err.message}`,
+          timestamp: new Date().toISOString()
+        }]);
+        addNotification?.(`Risk re-plan failed: ${err.message}`, 'error');
+      }
+    }
+  }, [
+    user,
+    activeDatasetContext,
+    resolveDatasetProfileRow,
+    appendMessagesToCurrentConversation,
+    addNotification
+  ]);
 
   const appendWorkflowStepEventMessages = useCallback((runId, stepEvent, profileId = null) => {
     if (!stepEvent) return;
@@ -2758,6 +3045,15 @@ export default function DecisionSupportView({ user, addNotification }) {
     upsertWorkflowSnapshot,
     processWorkflowRun
   ]);
+
+  const handleRequestRelax = useCallback((optionId) => {
+    if (!optionId) return;
+    appendMessagesToCurrentConversation([{
+      role: 'ai',
+      content: `Constraint relaxation requested: option ${optionId}. Use the Negotiation panel to evaluate and apply this option.`,
+      timestamp: new Date().toISOString()
+    }]);
+  }, [appendMessagesToCurrentConversation]);
 
   const handleCancelAsyncWorkflow = useCallback(async (runId, explicitJobId = null) => {
     const numericRunId = Number(runId);
@@ -3788,6 +4084,19 @@ export default function DecisionSupportView({ user, addNotification }) {
     if (message.type === 'workflow_report_card') {
       return <WorkflowReportCard payload={message.payload} />;
     }
+    if (message.type === 'decision_narrative_card') {
+      return <DecisionNarrativeCard payload={message.payload} onRequestRelax={handleRequestRelax} />;
+    }
+    if (message.type === 'plan_approval_card') {
+      return (
+        <PlanApprovalCard
+          payload={message.payload}
+          onRequestApproval={handleRequestPlanApproval}
+          onApprove={handleApprovePlanApproval}
+          onReject={handleRejectPlanApproval}
+        />
+      );
+    }
     if (message.type === 'topology_graph_card') {
       const runId = Number(message?.payload?.run_id || message?.payload?.graph?.run_id || NaN);
       return (
@@ -3876,6 +4185,9 @@ export default function DecisionSupportView({ user, addNotification }) {
     if (message.type === 'risk_drilldown_card') {
       return <RiskDrilldownCard payload={message.payload} />;
     }
+    if (message.type === 'po_delay_alert_card') {
+      return <PODelayAlertCard payload={message.payload} />;
+    }
     if (message.type === 'validation_card') {
       return <ValidationCard payload={message.payload} />;
     }
@@ -3893,6 +4205,28 @@ export default function DecisionSupportView({ user, addNotification }) {
     if (message.type === 'risk_aware_plan_comparison_card') {
       return <RiskAwarePlanComparisonCard payload={message.payload} />;
     }
+    if (message.type === 'risk_replan_recommendation_card') {
+      return (
+        <RiskReplanCard
+          payload={message.payload}
+          onDecision={handleRiskReplanDecision}
+        />
+      );
+    }
+    if (message.type === 'risk_trigger_notification_card') {
+      return (
+        <RiskTriggerNotificationCard
+          payload={message.payload}
+        />
+      );
+    }
+    if (message.type === 'proactive_alert_card') {
+      return (
+        <ProactiveAlertCard
+          payload={message.payload}
+        />
+      );
+    }
     if (message.type === 'ai_error_card') {
       return (
         <AIErrorCard
@@ -3906,6 +4240,9 @@ export default function DecisionSupportView({ user, addNotification }) {
     activeDatasetContext,
     currentConversationId,
     handleConfigureApiKey,
+    handleApprovePlanApproval,
+    handleRejectPlanApproval,
+    handleRequestPlanApproval,
     handleContractConfirmation,
     handleUseDatasetContextFromCard,
     updateCanvasState,
@@ -3924,7 +4261,9 @@ export default function DecisionSupportView({ user, addNotification }) {
     handleCancelAsyncWorkflow,
     handleApplyReuseSuggestion,
     handleReviewReuseSuggestion,
-    executeRiskAwarePlanFlow
+    executeRiskAwarePlanFlow,
+    handleRiskReplanDecision,
+    handleRequestRelax
   ]);
 
   return (
