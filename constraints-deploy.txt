@@ -1,0 +1,3 @@
+# Deployment constraints to keep critical transitive dependencies compatible.
+# supabase==2.3.0 requires httpx >=0.24,<0.25.
+httpx>=0.24,<0.25

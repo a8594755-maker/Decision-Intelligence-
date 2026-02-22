@@ -9,14 +9,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # 先複製 requirements（利用 layer cache）
-COPY requirements-ml.txt .
+COPY requirements-ml.txt constraints-deploy.txt ./
 
 # 不裝 torch/transformers（減少映像大小，Chronos 改為 optional）
 # 如需完整版，移除 grep 過濾改成 pip install -r requirements-ml.txt
 RUN pip install --no-cache-dir --upgrade pip && \
     grep -v "^torch\|^transformers\|^accelerate" requirements-ml.txt \
     > requirements-deploy.txt && \
-    pip install --no-cache-dir -r requirements-deploy.txt
+    pip install --no-cache-dir -c constraints-deploy.txt -r requirements-deploy.txt
 
 # ── Stage 2: runtime ──────────────────────────────────────────
 FROM python:3.12-slim AS runtime
