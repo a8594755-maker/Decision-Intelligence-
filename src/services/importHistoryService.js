@@ -133,14 +133,20 @@ export const importBatchesService = {
   /**
    * Get single batch details
    * @param {string} batchId - Batch ID
+   * @param {string|null} userId - Optional user scope
    * @returns {Promise<Object>} Batch record
    */
-  async getBatch(batchId) {
-    const { data, error } = await supabase
+  async getBatch(batchId, userId = null) {
+    let query = supabase
       .from('import_batches')
       .select('*')
-      .eq('id', batchId)
-      .single();
+      .eq('id', batchId);
+
+    if (userId) {
+      query = query.eq('user_id', userId);
+    }
+
+    const { data, error } = await query.single();
 
     if (error) throw error;
     return data;
@@ -148,12 +154,17 @@ export const importBatchesService = {
 
   /**
    * Get related data rows by batch ID (preview)
+   * @param {string} userId - User ID
    * @param {string} batchId - Batch ID
    * @param {string} targetTable - Target table name
    * @param {number} limit - Row limit (default 50)
    * @returns {Promise<Array>} Data list
    */
-  async getBatchData(batchId, targetTable, limit = 50) {
+  async getBatchData(userId, batchId, targetTable, limit = 50) {
+    if (!userId) {
+      throw new Error('userId is required for getBatchData');
+    }
+
     // Query based on different target tables
     let query;
     
@@ -162,6 +173,7 @@ export const importBatchesService = {
         query = supabase
           .from('suppliers')
           .select('*')
+          .eq('user_id', userId)
           .eq('batch_id', batchId)
           .limit(limit);
         break;
@@ -170,6 +182,7 @@ export const importBatchesService = {
         query = supabase
           .from('materials')
           .select('*')
+          .eq('user_id', userId)
           .eq('batch_id', batchId)
           .limit(limit);
         break;
@@ -178,6 +191,7 @@ export const importBatchesService = {
         query = supabase
           .from('goods_receipts')
           .select('*, suppliers(supplier_name), materials(material_code, material_name)')
+          .eq('user_id', userId)
           .eq('batch_id', batchId)
           .limit(limit);
         break;
@@ -186,6 +200,7 @@ export const importBatchesService = {
         query = supabase
           .from('price_history')
           .select('*, suppliers(supplier_name), materials(material_code, material_name)')
+          .eq('user_id', userId)
           .eq('batch_id', batchId)
           .limit(limit);
         break;
@@ -195,6 +210,7 @@ export const importBatchesService = {
         query = supabase
           .from('component_demand')
           .select('*')
+          .eq('user_id', userId)
           .eq('batch_id', batchId)
           .order('material_code', { ascending: true })
           .limit(limit);
@@ -204,6 +220,7 @@ export const importBatchesService = {
         query = supabase
           .from('bom_edges')
           .select('*')
+          .eq('user_id', userId)
           .eq('batch_id', batchId)
           .order('parent_material', { ascending: true })
           .limit(limit);
@@ -213,6 +230,7 @@ export const importBatchesService = {
         query = supabase
           .from('demand_fg')
           .select('*')
+          .eq('user_id', userId)
           .eq('batch_id', batchId)
           .order('material_code', { ascending: true })
           .limit(limit);
@@ -222,6 +240,7 @@ export const importBatchesService = {
         query = supabase
           .from('po_open_lines')
           .select('*')
+          .eq('user_id', userId)
           .eq('batch_id', batchId)
           .order('po_number', { ascending: true })
           .limit(limit);
@@ -231,6 +250,7 @@ export const importBatchesService = {
         query = supabase
           .from('inventory_snapshots')
           .select('*')
+          .eq('user_id', userId)
           .eq('batch_id', batchId)
           .order('material_code', { ascending: true })
           .limit(limit);
@@ -240,6 +260,7 @@ export const importBatchesService = {
         query = supabase
           .from('fg_financials')
           .select('*')
+          .eq('user_id', userId)
           .eq('batch_id', batchId)
           .order('material_code', { ascending: true })
           .limit(limit);
@@ -660,13 +681,20 @@ export const importBatchesService = {
   /**
    * Delete batch record (only deletes record, not actual data)
    * @param {string} batchId - Batch ID
+   * @param {string|null} userId - Optional user scope
    * @returns {Promise<Object>} Success message
    */
-  async deleteBatch(batchId) {
-    const { error } = await supabase
+  async deleteBatch(batchId, userId = null) {
+    let query = supabase
       .from('import_batches')
       .delete()
       .eq('id', batchId);
+
+    if (userId) {
+      query = query.eq('user_id', userId);
+    }
+
+    const { error } = await query;
 
     if (error) throw error;
     return { success: true };
@@ -736,7 +764,6 @@ export const importBatchesService = {
 };
 
 export default importBatchesService;
-
 
 
 

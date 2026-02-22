@@ -26,39 +26,6 @@ import {
 import { batchUpsertOperationalCosts } from './costAnalysisService';
 
 /**
- * Generate a UUID v4 using crypto API or fallback
- * @returns {string} UUID string
- */
-function generateUUID() {
-  // Prefer crypto.randomUUID() if available
-  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
-    return crypto.randomUUID();
-  }
-  
-  // Fallback: manual generation
-  const template = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx';
-  return template.replace(/[xy]/g, function(c) {
-    const r = Math.floor(Math.random() * 16);
-    const v = c === 'x' ? r : (r & 0x3 | 0x8);
-    return v.toString(16);
-  });
-}
-
-/**
- * Chunk an array into smaller arrays of specified size
- * @param {Array} array - The array to chunk
- * @param {number} chunkSize - Size of each chunk
- * @returns {Array<Array>} Array of chunked arrays
- */
-function chunkArray(array, chunkSize) {
-  const chunks = [];
-  for (let i = 0; i < array.length; i += chunkSize) {
-    chunks.push(array.slice(i, i + chunkSize));
-  }
-  return chunks;
-}
-
-/**
  * Generate idempotency key for a sheet ingest
  * @param {object} params
  * @returns {string} Stable idempotency key
@@ -108,70 +75,12 @@ class GoodsReceiptStrategy {
       // ===== RPC failed: determine error type and handle =====
       
       if (rpcError instanceof BatchSizeError) {
-        console.warn('[GoodsReceiptStrategy] Batch too large, auto-chunking:', rpcError.message);
-        
-        // Auto-chunk processing - each chunk uses unique batch_id to avoid idempotency deletion issues
-        const chunks = chunkArray(rows, MAX_ROWS_PER_BATCH);
-        let totalInserted = 0;
-        let totalSuppliersCreated = 0;
-        
-        setSaveProgress({
-          stage: 'chunking',
-          current: 0,
-          total: chunks.length,
-          message: `Auto-chunking in progress (${chunks.length} batches)...`
-        });
-
-        for (let i = 0; i < chunks.length; i++) {
-          const chunk = chunks[i];
-          // Generate unique UUID as batch_id for each chunk
-          const chunkBatchId = generateUUID();
-          
-          try {
-            setSaveProgress({
-              stage: 'chunking',
-              current: i + 1,
-              total: chunks.length,
-              message: `Processing batch ${i + 1}/${chunks.length} (${chunk.length} rows)...`
-            });
-
-            const result = await ingestGoodsReceiptsRpc({
-              batchId: chunkBatchId,
-              uploadFileId,
-              rows: chunk
-            });
-
-            totalInserted += result.inserted_count;
-            totalSuppliersCreated += result.suppliers_created || 0;
-            
-            console.log(`[GoodsReceiptStrategy] Chunk ${i + 1}/${chunks.length} completed`);
-            
-          } catch (chunkError) {
-            console.error(`[GoodsReceiptStrategy] Chunk ${i + 1} failed:`, chunkError);
-            
-            // Clear progress and throw error
-            setSaveProgress({ stage: '', current: 0, total: 0, message: '' });
-            throw new Error(
-              `Batch processing failed: batch ${i + 1}/${chunks.length} could not be processed.\n` +
-              `Error details: ${chunkError.message}\n\n` +
-              `Successfully processed ${i} batches, ${totalInserted} records total. ` +
-              `Suggestion: check data quality of the failed batch or contact system administrator.`
-            );
-          }
-        }
-
-        // All batches completed successfully
-        setSaveProgress({ stage: '', current: 0, total: 0, message: '' });
-        
+        console.warn('[GoodsReceiptStrategy] Batch too large for RPC, switching to legacy path:', rpcError.message);
         addNotification(
-          `✓ Auto-chunking completed (${totalInserted} rows in ${chunks.length} batches, created ${totalSuppliersCreated} suppliers)`,
-          'success'
+          `⚠️ Batch exceeds RPC limit (${MAX_ROWS_PER_BATCH.toLocaleString()} rows), switched to compatible mode`,
+          'warning'
         );
-
-        return { savedCount: totalInserted };
-      }
-
-      if (rpcError instanceof RpcError) {
+      } else if (rpcError instanceof RpcError) {
         console.warn('[RPC_FALLBACK] RPC failed, using legacy path:', {
           code: rpcError.code,
           message: rpcError.message
@@ -354,70 +263,12 @@ class PriceHistoryStrategy {
 
     } catch (rpcError) {
       if (rpcError instanceof BatchSizeError) {
-        console.warn('[PriceHistoryStrategy] Batch too large, auto-chunking:', rpcError.message);
-        
-        // Auto-chunk processing - each chunk uses unique batch_id to avoid idempotency deletion issues
-        const chunks = chunkArray(rows, MAX_ROWS_PER_BATCH);
-        let totalInserted = 0;
-        let totalSuppliersCreated = 0;
-        
-        setSaveProgress({
-          stage: 'chunking',
-          current: 0,
-          total: chunks.length,
-          message: `Auto-chunking in progress (${chunks.length} batches)...`
-        });
-
-        for (let i = 0; i < chunks.length; i++) {
-          const chunk = chunks[i];
-          // Generate unique UUID as batch_id for each chunk
-          const chunkBatchId = generateUUID();
-          
-          try {
-            setSaveProgress({
-              stage: 'chunking',
-              current: i + 1,
-              total: chunks.length,
-              message: `Processing batch ${i + 1}/${chunks.length} (${chunk.length} rows)...`
-            });
-
-            const result = await ingestPriceHistoryRpc({
-              batchId: chunkBatchId,
-              uploadFileId,
-              rows: chunk
-            });
-
-            totalInserted += result.inserted_count;
-            totalSuppliersCreated += result.suppliers_created || 0;
-            
-            console.log(`[PriceHistoryStrategy] Chunk ${i + 1}/${chunks.length} completed`);
-            
-          } catch (chunkError) {
-            console.error(`[PriceHistoryStrategy] Chunk ${i + 1} failed:`, chunkError);
-            
-            // Clear progress and throw error
-            setSaveProgress({ stage: '', current: 0, total: 0, message: '' });
-            throw new Error(
-              `Batch processing failed: batch ${i + 1}/${chunks.length} could not be processed.\n` +
-              `Error details: ${chunkError.message}\n\n` +
-              `Successfully processed ${i} batches, ${totalInserted} records total. ` +
-              `Suggestion: check data quality of the failed batch or contact system administrator.`
-            );
-          }
-        }
-
-        // All batches completed successfully
-        setSaveProgress({ stage: '', current: 0, total: 0, message: '' });
-        
+        console.warn('[PriceHistoryStrategy] Batch too large for RPC, switching to legacy path:', rpcError.message);
         addNotification(
-          `✓ Auto-chunking completed (${totalInserted} rows in ${chunks.length} batches, created ${totalSuppliersCreated} suppliers)`,
-          'success'
+          `⚠️ Batch exceeds RPC limit (${MAX_ROWS_PER_BATCH.toLocaleString()} rows), switched to compatible mode`,
+          'warning'
         );
-
-        return { savedCount: totalInserted };
-      }
-
-      if (rpcError instanceof RpcError) {
+      } else if (rpcError instanceof RpcError) {
         console.warn('[RPC_FALLBACK] RPC failed, using legacy path:', {
           code: rpcError.code,
           message: rpcError.message
@@ -601,7 +452,7 @@ class SupplierMasterStrategy {
       ingest_key: options.idempotencyKey || null
     }));
 
-    const result = await suppliersService.insertSuppliers(suppliers);
+    const result = await suppliersService.insertSuppliers(userId, suppliers);
     
     console.log(`[SupplierMasterStrategy] Suppliers saved: ${result.inserted} inserted, ${result.updated} updated`);
     

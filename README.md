@@ -269,8 +269,9 @@ VITE_AGENT_LOG_ENDPOINT=http://127.0.0.1:7242/ingest/35d967fa-aaea-4f36-8ecf-97e
 ```
 decision-intelligence/
 ├── src/
-│   ├── App.jsx                          # Main application, routing and layout
-│   ├── main.jsx                         # Application entry point
+│   ├── App.jsx                          # Legacy compatibility export
+│   ├── main.jsx                         # Application entry point (mounts RouterProvider)
+│   ├── router.jsx                       # Route definitions (createBrowserRouter)
 │   │
 │   ├── views/                           # Main view components
 │   │   ├── SupplierManagementView.jsx   # Supplier management interface

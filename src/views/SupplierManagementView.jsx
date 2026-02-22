@@ -5,12 +5,14 @@ import { Card, Button, Badge, Modal } from '../components/ui';
 import { suppliersService } from '../services/supabaseClient';
 import { extractSuppliers, validateFile } from '../utils/dataProcessing';
 import { getSupplierKpiSummary } from '../services/supplierKpiService';
+import { useAuth } from '../contexts/AuthContext';
 
 /**
  * Supplier Management View
  * Standalone supplier management page with full CRUD functionality
  */
 export const SupplierManagementView = ({ addNotification }) => {
+  const { user } = useAuth();
   const [suppliers, setSuppliers] = useState([]);
   const [suppliersWithKpi, setSuppliersWithKpi] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -53,13 +55,18 @@ export const SupplierManagementView = ({ addNotification }) => {
 
   // Load supplier data
   useEffect(() => {
-    loadSuppliers();
-  }, []);
+    if (user?.id) {
+      loadSuppliers();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
 
   const loadSuppliers = async () => {
+    if (!user?.id) return;
+
     setLoading(true);
     try {
-      const data = await suppliersService.getAllSuppliers();
+      const data = await suppliersService.getAllSuppliers(user.id);
       
       // 去重：合併相同 supplier_name 的記錄，保留最完整的資訊
       const deduplicatedData = deduplicateSuppliers(data);
@@ -67,8 +74,8 @@ export const SupplierManagementView = ({ addNotification }) => {
       setSuppliers(deduplicatedData);
 
       // Load KPI data
-      if (deduplicatedData && deduplicatedData.length > 0 && deduplicatedData[0].user_id) {
-        loadKpiData(deduplicatedData[0].user_id);
+      if (deduplicatedData && deduplicatedData.length > 0) {
+        loadKpiData(user.id, deduplicatedData);
       }
     } catch (error) {
       addNotification(`Load failed: ${error.message}`, "error");
@@ -136,13 +143,13 @@ export const SupplierManagementView = ({ addNotification }) => {
     return Array.from(supplierMap.values());
   };
 
-  const loadKpiData = async (userId) => {
+  const loadKpiData = async (userId, supplierList = suppliers) => {
     setLoadingKpi(true);
     try {
       const kpiData = await getSupplierKpiSummary(userId);
 
       // Merge KPI data with suppliers
-      const merged = suppliers.map(supplier => {
+      const merged = supplierList.map(supplier => {
         const kpi = Array.isArray(kpiData)
           ? kpiData.find(k => k.supplier_id === supplier.id)
           : null;
@@ -163,7 +170,7 @@ export const SupplierManagementView = ({ addNotification }) => {
     } catch (error) {
       console.error('Failed to load KPI data:', error);
       // Fallback: use suppliers without KPI
-      setSuppliersWithKpi(suppliers.map(s => ({
+      setSuppliersWithKpi(supplierList.map(s => ({
         ...s,
         kpi: {
           defect_rate: 0,
@@ -180,6 +187,8 @@ export const SupplierManagementView = ({ addNotification }) => {
 
   // Search functionality
   const handleSearch = async () => {
+    if (!user?.id) return;
+
     if (!searchTerm.trim()) {
       loadSuppliers();
       return;
@@ -187,7 +196,7 @@ export const SupplierManagementView = ({ addNotification }) => {
 
     setLoading(true);
     try {
-      const data = await suppliersService.searchSuppliers(searchTerm);
+      const data = await suppliersService.searchSuppliers(user.id, searchTerm);
       setSuppliers(data);
       setCurrentPage(1);
     } catch (error) {
@@ -199,6 +208,8 @@ export const SupplierManagementView = ({ addNotification }) => {
 
   // Add supplier
   const handleAdd = async () => {
+    if (!user?.id) return;
+
     if (!formData.supplier_name.trim()) {
       addNotification("Supplier name cannot be empty", "error");
       return;
@@ -218,7 +229,7 @@ export const SupplierManagementView = ({ addNotification }) => {
         },
         status: 'active'
       };
-      await suppliersService.insertSuppliers([supplierData]);
+      await suppliersService.insertSuppliers(user.id, [supplierData]);
       addNotification("Supplier added successfully", "success");
       setShowAddModal(false);
       resetForm();
@@ -232,6 +243,8 @@ export const SupplierManagementView = ({ addNotification }) => {
 
   // Edit supplier
   const handleEdit = async () => {
+    if (!user?.id) return;
+
     if (!formData.supplier_name.trim()) {
       addNotification("Supplier name cannot be empty", "error");
       return;
@@ -250,7 +263,7 @@ export const SupplierManagementView = ({ addNotification }) => {
           delivery_time: formData.delivery_time
         }
       };
-      await suppliersService.updateSupplier(selectedSupplier.id, supplierData);
+      await suppliersService.updateSupplier(user.id, selectedSupplier.id, supplierData);
       addNotification("Supplier updated successfully", "success");
       setShowEditModal(false);
       resetForm();
@@ -264,9 +277,11 @@ export const SupplierManagementView = ({ addNotification }) => {
 
   // Delete supplier
   const handleDelete = async () => {
+    if (!user?.id) return;
+
     setLoading(true);
     try {
-      await suppliersService.deleteSupplier(selectedSupplier.id);
+      await suppliersService.deleteSupplier(user.id, selectedSupplier.id);
       addNotification("Supplier deleted successfully", "success");
       setShowDeleteModal(false);
       setSelectedSupplier(null);
@@ -322,6 +337,8 @@ export const SupplierManagementView = ({ addNotification }) => {
   };
 
   const handleImportConfirm = async () => {
+    if (!user?.id) return;
+
     if (importPreview.length === 0) return;
 
     setLoading(true);
@@ -329,7 +346,7 @@ export const SupplierManagementView = ({ addNotification }) => {
 
     try {
       // Batch insert suppliers
-      const { count } = await suppliersService.insertSuppliers(importPreview);
+      const { count } = await suppliersService.insertSuppliers(user.id, importPreview);
 
       setImportProgress(100);
       addNotification(`Successfully imported ${count} suppliers`, "success");

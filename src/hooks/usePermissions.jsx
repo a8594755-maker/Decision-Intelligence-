@@ -2,7 +2,7 @@
  * usePermissions.jsx
  *
  * Frontend RBAC core hook.
- * Fetches current user's role + plant scope from Supabase org_members,
+ * Fetches current user's role + plant scope from Supabase user_profiles,
  * provides can(action) method for all UI components.
  *
  * Design principles:
@@ -14,9 +14,9 @@
 import { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { supabase } from '../services/supabaseClient';
 
-const ORG_MEMBERS_TABLE = 'org_members';
-let isOrgMembersUnavailable = false;
-let hasWarnedOrgMembersUnavailable = false;
+const USER_PROFILES_TABLE = 'user_profiles';
+let isUserProfilesUnavailable = false;
+let hasWarnedUserProfilesUnavailable = false;
 
 function isMissingTableOrSchemaCacheError(error, tableName) {
   if (!error) return false;
@@ -61,14 +61,14 @@ function buildViewerState(errorMessage = null) {
   };
 }
 
-function markOrgMembersUnavailable(error) {
-  isOrgMembersUnavailable = true;
-  if (!hasWarnedOrgMembersUnavailable) {
+function markUserProfilesUnavailable(error) {
+  isUserProfilesUnavailable = true;
+  if (!hasWarnedUserProfilesUnavailable) {
     console.warn(
-      '[usePermissions] org_members table unavailable. Run sql/migrations/organizations_schema.sql, then NOTIFY pgrst, \'reload schema\'.',
+      '[usePermissions] user_profiles table unavailable. Run sql/migrations/logic_control_center_schema.sql, then NOTIFY pgrst, \'reload schema\'.',
       error?.message || ''
     );
-    hasWarnedOrgMembersUnavailable = true;
+    hasWarnedUserProfilesUnavailable = true;
   }
 }
 
@@ -136,6 +136,18 @@ const ROLE_PERMISSIONS = {
   admin: new Set(Object.values(ACTIONS)),  // admin gets all permissions
 };
 
+const ROLE_ALIASES = {
+  logic_editor: 'planner',
+  logic_approver: 'approver',
+  logic_publisher: 'approver',
+};
+
+function normalizeRole(rawRole) {
+  const role = String(rawRole || '').trim().toLowerCase();
+  if (ROLE_PERMISSIONS[role]) return role;
+  return ROLE_ALIASES[role] || 'viewer';
+}
+
 // ── Context ──────────────────────────────────────────────────────────────────
 
 const PermissionsContext = createContext(null);
@@ -152,40 +164,52 @@ export function PermissionsProvider({ userId, children }) {
 
   useEffect(() => {
     if (!userId) {
-      setState((prev) => ({
-        ...prev,
-        ...buildViewerState(null),
-      }));
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- bail-out guard prevents cascading renders
+      setState((prev) => {
+        const next = { ...prev, ...buildViewerState(null) };
+        if (prev.role === next.role && prev.isLoaded === next.isLoaded && prev.error === next.error) return prev;
+        return next;
+      });
       return;
     }
 
-    if (isOrgMembersUnavailable) {
-      setState(buildViewerState(null));
+    if (isUserProfilesUnavailable) {
+      setState((prev) => {
+        const next = buildViewerState(null);
+        if (prev.role === next.role && prev.isLoaded === next.isLoaded && prev.error === next.error) return prev;
+        return next;
+      });
       return;
     }
 
     let active = true;
 
     supabase
-      .from('org_members')
-      .select('role, org_id, plant_scope, dataset_scope')
+      .from('user_profiles')
+      .select('role, accessible_plants')
       .eq('user_id', userId)
       .limit(1)
       .maybeSingle()
       .then(({ data, error }) => {
         if (!active) return;
-        if (error || !data) {
-          const missingTable = isMissingTableOrSchemaCacheError(error, ORG_MEMBERS_TABLE);
-          if (missingTable) markOrgMembersUnavailable(error);
-          // No org_member record → fallback to viewer (safest default)
+        if (error) {
+          const missingTable = isMissingTableOrSchemaCacheError(error, USER_PROFILES_TABLE);
+          if (missingTable) markUserProfilesUnavailable(error);
           setState(buildViewerState(missingTable ? null : error?.message || null));
           return;
         }
+        if (!data) {
+          setState(buildViewerState(null));
+          return;
+        }
+        const plantScope = Array.isArray(data.accessible_plants)
+          ? data.accessible_plants.filter((plant) => plant !== '*')
+          : null;
         setState({
-          role: data.role || 'viewer',
-          orgId: data.org_id,
-          plantScope: data.plant_scope || null,
-          datasetScope: data.dataset_scope || null,
+          role: normalizeRole(data.role),
+          orgId: null,
+          plantScope: plantScope && plantScope.length > 0 ? plantScope : null,
+          datasetScope: null,
           isLoaded: true,
           error: null,
         });

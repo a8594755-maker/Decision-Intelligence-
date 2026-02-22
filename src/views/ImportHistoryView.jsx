@@ -13,7 +13,7 @@ import { importBatchesService } from '../services/importHistoryService';
 import UPLOAD_SCHEMAS from '../utils/uploadSchemas';
 import ViewDataModal from '../components/ViewDataModal';
 
-const ImportHistoryView = ({ addNotification, user }) => {
+const ImportHistoryView = ({ addNotification, user, setView }) => {
   // State
   const [batches, setBatches] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -108,6 +108,7 @@ const ImportHistoryView = ({ addNotification, user }) => {
 
     try {
       const data = await importBatchesService.getBatchData(
+        user.id,
         batch.id,
         batch.target_table,
         50
@@ -232,7 +233,7 @@ const ImportHistoryView = ({ addNotification, user }) => {
 
     setLoading(true);
     try {
-      await importBatchesService.deleteBatch(batchId);
+      await importBatchesService.deleteBatch(batchId, user.id);
       addNotification('Record deleted', 'success');
       await loadBatches();
     } catch (error) {
@@ -790,8 +791,6 @@ const ImportHistoryView = ({ addNotification, user }) => {
 };
 
 export default ImportHistoryView;
-
-
 
 
 

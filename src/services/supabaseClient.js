@@ -127,53 +127,105 @@ export const userFilesService = {
 /**
  * Suppliers Operations
  */
+function normalizeSupplierStatusValue(status) {
+  if (!status || typeof status !== 'string') {
+    return 'active';
+  }
+
+  const normalized = status.toLowerCase().trim();
+  if (normalized === 'active' || normalized === 'inactive') {
+    return normalized;
+  }
+  if (normalized === 'enabled' || normalized === 'enable' || normalized === 'yes' || normalized === '1') {
+    return 'active';
+  }
+  if (normalized === 'disabled' || normalized === 'disable' || normalized === 'no' || normalized === '0' || normalized === 'suspended') {
+    return 'inactive';
+  }
+  return 'active';
+}
+
+function normalizeSupplierNameValue(name) {
+  return String(name || '').toLowerCase().trim().replace(/\s+/g, ' ');
+}
+
+function resolveInsertSuppliersParams(userIdOrSuppliers, maybeSuppliers) {
+  if (Array.isArray(userIdOrSuppliers)) {
+    const suppliers = userIdOrSuppliers;
+    const inferredUserId = suppliers.find((item) => item?.user_id)?.user_id || null;
+    return { userId: inferredUserId, suppliers };
+  }
+
+  return {
+    userId: userIdOrSuppliers || null,
+    suppliers: Array.isArray(maybeSuppliers) ? maybeSuppliers : []
+  };
+}
+
 export const suppliersService = {
   // Batch insert suppliers (using upsert to avoid duplicates)
-  async insertSuppliers(suppliers) {
+  async insertSuppliers(userIdOrSuppliers, maybeSuppliers) {
+    const { userId, suppliers } = resolveInsertSuppliersParams(userIdOrSuppliers, maybeSuppliers);
+
     if (!suppliers || suppliers.length === 0) {
-      return { success: true, count: 0 };
+      return { success: true, count: 0, inserted: 0, updated: 0 };
+    }
+    if (!userId) {
+      throw new Error('insertSuppliers requires userId (or suppliers[].user_id)');
     }
 
     // Check existing suppliers in database first
-    const supplierNames = suppliers.map(s => s.supplier_name).filter(Boolean);
-    const supplierCodes = suppliers.map(s => s.supplier_code).filter(Boolean);
-    
-    let queryBuilder = supabase
-      .from('suppliers')
-      .select('id, supplier_name, supplier_code');
-    
-    // Build OR query conditions
-    const orConditions = [];
+    const normalizedSuppliers = suppliers.map((supplier) => ({
+      ...supplier,
+      user_id: userId,
+      supplier_code: supplier?.supplier_code || null,
+      status: normalizeSupplierStatusValue(supplier?.status)
+    }));
+
+    const supplierNames = [...new Set(normalizedSuppliers.map((s) => s.supplier_name).filter(Boolean))];
+    const supplierCodes = [...new Set(normalizedSuppliers.map((s) => s.supplier_code).filter(Boolean))];
+
+    let existingByName = [];
+    let existingByCode = [];
+
     if (supplierNames.length > 0) {
-      orConditions.push(`supplier_name.in.(${supplierNames.map(n => `"${n}"`).join(',')})`);
+      const { data, error } = await supabase
+        .from('suppliers')
+        .select('id, supplier_name, supplier_code')
+        .eq('user_id', userId)
+        .in('supplier_name', supplierNames);
+      if (error) {
+        console.warn('Failed to check existing suppliers by name:', error);
+      } else {
+        existingByName = data || [];
+      }
     }
+
     if (supplierCodes.length > 0) {
-      orConditions.push(`supplier_code.in.(${supplierCodes.map(c => `"${c}"`).join(',')})`);
-    }
-    
-    const { data: existingSuppliers, error: queryError } = orConditions.length > 0
-      ? await queryBuilder.or(orConditions.join(','))
-      : { data: [], error: null };
-    
-    if (queryError) {
-      console.warn('Failed to check existing suppliers:', queryError);
-      // Continue with insert anyway
+      const { data, error } = await supabase
+        .from('suppliers')
+        .select('id, supplier_name, supplier_code')
+        .eq('user_id', userId)
+        .in('supplier_code', supplierCodes);
+      if (error) {
+        console.warn('Failed to check existing suppliers by code:', error);
+      } else {
+        existingByCode = data || [];
+      }
     }
 
     // Build Map of existing suppliers
     const existingMap = new Map();
-    if (existingSuppliers) {
-      existingSuppliers.forEach(s => {
-        if (s.supplier_code) existingMap.set(`code:${s.supplier_code}`, s.id);
-        if (s.supplier_name) existingMap.set(`name:${s.supplier_name}`, s.id);
-      });
-    }
+    [...existingByName, ...existingByCode].forEach(s => {
+      if (s.supplier_code) existingMap.set(`code:${s.supplier_code}`, s.id);
+      if (s.supplier_name) existingMap.set(`name:${s.supplier_name}`, s.id);
+    });
 
     // Separate new suppliers and suppliers to update
     const toInsert = [];
     const toUpdate = [];
 
-    suppliers.forEach(supplier => {
+    normalizedSuppliers.forEach(supplier => {
       const codeKey = supplier.supplier_code ? `code:${supplier.supplier_code}` : null;
       const nameKey = supplier.supplier_name ? `name:${supplier.supplier_name}` : null;
       
@@ -225,7 +277,8 @@ export const suppliersService = {
         const { error: updateError } = await supabase
           .from('suppliers')
           .update(fieldsToUpdate)
-          .eq('id', id);
+          .eq('id', id)
+          .eq('user_id', userId);
 
         if (updateError) {
           console.error(`Failed to update supplier ${id}:`, updateError);
@@ -244,10 +297,15 @@ export const suppliersService = {
   },
 
   // Get all suppliers
-  async getAllSuppliers() {
+  async getAllSuppliers(userId) {
+    if (!userId) {
+      throw new Error('getAllSuppliers requires userId');
+    }
+
     const { data, error } = await supabase
       .from('suppliers')
       .select('*')
+      .eq('user_id', userId)
       .order('created_at', { ascending: false });
 
     if (error) throw error;
@@ -255,11 +313,16 @@ export const suppliersService = {
   },
 
   // Update supplier
-  async updateSupplier(id, updates) {
+  async updateSupplier(userId, id, updates) {
+    if (!userId) {
+      throw new Error('updateSupplier requires userId');
+    }
+
     const { data, error } = await supabase
       .from('suppliers')
       .update(updates)
       .eq('id', id)
+      .eq('user_id', userId)
       .select();
 
     if (error) throw error;
@@ -267,21 +330,31 @@ export const suppliersService = {
   },
 
   // Delete supplier
-  async deleteSupplier(id) {
+  async deleteSupplier(userId, id) {
+    if (!userId) {
+      throw new Error('deleteSupplier requires userId');
+    }
+
     const { error } = await supabase
       .from('suppliers')
       .delete()
-      .eq('id', id);
+      .eq('id', id)
+      .eq('user_id', userId);
 
     if (error) throw error;
     return { success: true };
   },
 
   // Search suppliers
-  async searchSuppliers(searchTerm) {
+  async searchSuppliers(userId, searchTerm) {
+    if (!userId) {
+      throw new Error('searchSuppliers requires userId');
+    }
+
     const { data, error } = await supabase
       .from('suppliers')
       .select('*')
+      .eq('user_id', userId)
       .or(`supplier_name.ilike.%${searchTerm}%,supplier_code.ilike.%${searchTerm}%,notes.ilike.%${searchTerm}%`)
       .order('created_at', { ascending: false });
 
@@ -360,69 +433,147 @@ export const suppliersService = {
    * @param {Object} options - Options
    * @param {number} options.chunkSize - Batch size (default 200)
    * @returns {Promise<Map>} Returns Map(key -> supplier_id), key is supplier_code or supplier_name_norm
+   * Strategy: match/update by supplier_code first, then fallback to supplier_name_norm.
    */
   async batchUpsertSuppliers(userId, suppliers, options = {}) {
     const { chunkSize = 200 } = options;
     
+    if (!userId) {
+      throw new Error('batchUpsertSuppliers requires userId');
+    }
     if (!suppliers || suppliers.length === 0) {
       return new Map();
     }
 
     console.log(`[batchUpsertSuppliers] Starting upsert for ${suppliers.length} suppliers`);
 
-    // Normalize supplier_name (simulating DB normalize logic)
-    const normalizeSupplierName = (name) => {
-      return name.toLowerCase().trim().replace(/\s+/g, ' ');
-    };
-
-    // Normalize supplier status (ensure only 'active' or 'inactive' is written)
-    const normalizeSupplierStatus = (status) => {
-      if (!status || typeof status !== 'string') {
-        return 'active';
-      }
-      const normalized = status.toLowerCase().trim();
-      if (normalized === 'active' || normalized === 'inactive') {
-        return normalized;
-      }
-      if (normalized === 'enabled' || normalized === 'enable' || normalized === 'yes' || normalized === '1') {
-        return 'active';
-      }
-      if (normalized === 'disabled' || normalized === 'disable' || normalized === 'no' || normalized === '0' || normalized === 'suspended') {
-        return 'inactive';
-      }
-      return 'active'; // Default value
-    };
-
-    // Prepare upsert payload
-    const payload = suppliers.map(s => ({
+    // Prepare payload
+    const payload = suppliers.map((s) => ({
       user_id: userId,
       supplier_name: s.supplier_name,
       supplier_code: s.supplier_code || null,
-      supplier_name_norm: normalizeSupplierName(s.supplier_name),
-      status: normalizeSupplierStatus(s.status),
+      supplier_name_norm: normalizeSupplierNameValue(s.supplier_name),
+      status: normalizeSupplierStatusValue(s.status),
       batch_id: s.batch_id || null,
       contact_info: s.contact_info || null
     }));
 
-    // Batch upsert
-    const allUpsertedIds = [];
-    for (let i = 0; i < payload.length; i += chunkSize) {
-      const chunk = payload.slice(i, i + chunkSize);
-      
-      console.log(`[batchUpsertSuppliers] Upserting chunk ${Math.floor(i / chunkSize) + 1}/${Math.ceil(payload.length / chunkSize)} (${chunk.length} items)`);
+    // Deduplicate input to avoid duplicate writes inside the same batch.
+    const deduped = [];
+    const seenKeys = new Set();
+    payload.forEach((row) => {
+      const key = row.supplier_code ? `code:${row.supplier_code}` : `name:${row.supplier_name_norm}`;
+      if (seenKeys.has(key)) return;
+      seenKeys.add(key);
+      deduped.push(row);
+    });
 
-      // Use upsert (ON CONFLICT)
-      // Strategy: prioritize supplier_code, fallback to supplier_name_norm
+    const supplierCodes = [...new Set(deduped.map((s) => s.supplier_code).filter(Boolean))];
+    const supplierNameNorms = [...new Set(deduped.map((s) => s.supplier_name_norm).filter(Boolean))];
+
+    const existingByCode = new Map();
+    const existingByName = new Map();
+
+    if (supplierCodes.length > 0) {
+      for (let i = 0; i < supplierCodes.length; i += chunkSize) {
+        const codeChunk = supplierCodes.slice(i, i + chunkSize);
+        const { data, error } = await supabase
+          .from('suppliers')
+          .select('id, supplier_code, supplier_name_norm')
+          .eq('user_id', userId)
+          .in('supplier_code', codeChunk);
+        if (error) {
+          console.error('[batchUpsertSuppliers] Lookup by code error:', error);
+          throw error;
+        }
+        (data || []).forEach((row) => {
+          if (row.supplier_code) existingByCode.set(row.supplier_code, row);
+          if (row.supplier_name_norm) existingByName.set(row.supplier_name_norm, row);
+        });
+      }
+    }
+
+    if (supplierNameNorms.length > 0) {
+      for (let i = 0; i < supplierNameNorms.length; i += chunkSize) {
+        const nameChunk = supplierNameNorms.slice(i, i + chunkSize);
+        const { data, error } = await supabase
+          .from('suppliers')
+          .select('id, supplier_code, supplier_name_norm')
+          .eq('user_id', userId)
+          .in('supplier_name_norm', nameChunk);
+        if (error) {
+          console.error('[batchUpsertSuppliers] Lookup by name_norm error:', error);
+          throw error;
+        }
+        (data || []).forEach((row) => {
+          if (row.supplier_code) existingByCode.set(row.supplier_code, row);
+          if (row.supplier_name_norm) existingByName.set(row.supplier_name_norm, row);
+        });
+      }
+    }
+
+    const rowsToUpdate = [];
+    const rowsToInsert = [];
+    deduped.forEach((row) => {
+      const byCode = row.supplier_code ? existingByCode.get(row.supplier_code) : null;
+      const byName = existingByName.get(row.supplier_name_norm);
+      const matched = byCode || byName;
+      if (matched?.id) {
+        rowsToUpdate.push({ id: matched.id, row });
+      } else {
+        rowsToInsert.push(row);
+      }
+    });
+
+    const allUpsertedIds = [];
+
+    // Update matched records first (code match takes precedence).
+    for (const { id, row } of rowsToUpdate) {
+      const updatePayload = {
+        supplier_name: row.supplier_name,
+        supplier_name_norm: row.supplier_name_norm,
+        status: row.status || 'active',
+      };
+      if (row.batch_id) {
+        updatePayload.batch_id = row.batch_id;
+      }
+      if (row.supplier_code) {
+        updatePayload.supplier_code = row.supplier_code;
+      }
+      if (row.contact_info) {
+        updatePayload.contact_info = row.contact_info;
+      }
+
+      const { data, error } = await supabase
+        .from('suppliers')
+        .update(updatePayload)
+        .eq('id', id)
+        .eq('user_id', userId)
+        .select('id, supplier_code, supplier_name_norm')
+        .single();
+
+      if (error) {
+        console.error('[batchUpsertSuppliers] Update error:', error);
+        throw new Error(`Supplier update failed: ${error.message || JSON.stringify(error)}`);
+      }
+      allUpsertedIds.push(data);
+    }
+
+    // Insert new records (with name_norm conflict fallback for concurrency safety).
+    for (let i = 0; i < rowsToInsert.length; i += chunkSize) {
+      const chunk = rowsToInsert.slice(i, i + chunkSize);
+      console.log(`[batchUpsertSuppliers] Upserting new chunk ${Math.floor(i / chunkSize) + 1}/${Math.ceil(Math.max(rowsToInsert.length, 1) / chunkSize)} (${chunk.length} items)`);
+
       const { data: upsertedData, error: upsertError } = await supabase
         .from('suppliers')
         .upsert(chunk, {
-          onConflict: 'user_id,supplier_name_norm',  // Use name as primary conflict key
-          ignoreDuplicates: false  // Update instead of ignore
+          onConflict: 'user_id,supplier_name_norm',
+          ignoreDuplicates: false
         })
         .select('id, supplier_code, supplier_name_norm');
 
       if (upsertError) {
-        console.error('[batchUpsertSuppliers] Upsert error:', upsertError);
+        console.error('[batchUpsertSuppliers] Insert upsert error:', upsertError);
         throw new Error(`Supplier batch upsert failed: ${upsertError.message || JSON.stringify(upsertError)}`);
       }
 

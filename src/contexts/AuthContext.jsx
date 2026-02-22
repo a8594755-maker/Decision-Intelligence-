@@ -17,19 +17,47 @@ export function AuthProvider({ children }) {
     setTimeout(() => setNotifications(prev => prev.filter(n => n.id !== id)), 3000);
   }, []);
 
+  const loadUserRole = useCallback(async (userId) => {
+    if (!userId) {
+      setRole('viewer');
+      return;
+    }
+
+    try {
+      const { data, error } = await supabase
+        .from('user_profiles')
+        .select('role')
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      if (error) {
+        console.warn('Failed to load user role:', error.message);
+        setRole('viewer');
+        return;
+      }
+
+      setRole(data?.role || 'viewer');
+    } catch (err) {
+      console.warn('Failed to load user role:', err?.message || err);
+      setRole('viewer');
+    }
+  }, []);
+
   // Bootstrap auth session
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session: s } }) => {
+    supabase.auth.getSession().then(async ({ data: { session: s } }) => {
       setSession(s);
+      await loadUserRole(s?.user?.id ?? null);
       setLoading(false);
     });
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, s) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, s) => {
       setSession(s);
+      await loadUserRole(s?.user?.id ?? null);
       if (!s) setLoading(false);
     });
     return () => subscription.unsubscribe();
-  }, []);
+  }, [loadUserRole]);
 
   const handleLogin = useCallback(async (email, password, selectedRole) => {
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });

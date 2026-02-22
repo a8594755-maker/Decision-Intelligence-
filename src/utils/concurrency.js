@@ -12,9 +12,10 @@
  */
 export async function runWithConcurrency(tasks, concurrency = 2, onProgress = null) {
   const results = [];
-  const executing = [];
+  const executing = new Set();
   let completed = 0;
   const total = tasks.length;
+  const limit = Math.max(1, Number(concurrency) || 1);
 
   for (const [index, task] of tasks.entries()) {
     const promise = Promise.resolve().then(() => task()).then(
@@ -34,14 +35,17 @@ export async function runWithConcurrency(tasks, concurrency = 2, onProgress = nu
       }
     );
 
-    results[index] = promise;
-    executing.push(promise);
+    let trackedPromise = null;
+    trackedPromise = promise.finally(() => {
+      executing.delete(trackedPromise);
+    });
+
+    results[index] = trackedPromise;
+    executing.add(trackedPromise);
 
     // When concurrency limit reached, wait for one to complete
-    if (executing.length >= concurrency) {
+    if (executing.size >= limit) {
       await Promise.race(executing);
-      // Remove completed promises
-      executing.splice(0, executing.findIndex(p => p === promise) + 1);
     }
   }
 
@@ -61,9 +65,10 @@ export async function runWithConcurrency(tasks, concurrency = 2, onProgress = nu
  */
 export async function runWithConcurrencyAbortable(tasks, signal, concurrency = 2, onProgress = null) {
   const results = [];
-  const executing = [];
+  const executing = new Set();
   let completed = 0;
   const total = tasks.length;
+  const limit = Math.max(1, Number(concurrency) || 1);
 
   // Check if already aborted
   if (signal?.aborted) {
@@ -100,14 +105,17 @@ export async function runWithConcurrencyAbortable(tasks, signal, concurrency = 2
       }
     );
 
-    results[index] = promise;
-    executing.push(promise);
+    let trackedPromise = null;
+    trackedPromise = promise.finally(() => {
+      executing.delete(trackedPromise);
+    });
+
+    results[index] = trackedPromise;
+    executing.add(trackedPromise);
 
     // When concurrency limit reached, wait for one to complete
-    if (executing.length >= concurrency) {
+    if (executing.size >= limit) {
       await Promise.race(executing);
-      // Remove completed promises
-      executing.splice(0, executing.findIndex(p => p === promise) + 1);
     }
   }
 

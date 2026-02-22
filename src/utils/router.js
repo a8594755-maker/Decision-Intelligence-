@@ -1,6 +1,6 @@
 /**
- * Lightweight view ↔ URL path mapping for Decision-Intelligence SPA.
- * No react-router; used with History API (pushState / popstate).
+ * URL helpers for search params + legacy path compatibility.
+ * Works alongside react-router (router entry is src/router.jsx).
  */
 
 const VIEW_PATH_MAP = {
