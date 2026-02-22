@@ -38,6 +38,7 @@ COPY run_ml_api.py .
 # 環境變數預設值
 ENV PYTHONUNBUFFERED=1 \
     PYTHONHASHSEED=0 \
+    PYTHONPATH=/app/src \
     HOST=0.0.0.0 \
     PORT=8000 \
     DI_SOLVER_ENGINE=ortools \
@@ -47,8 +48,6 @@ EXPOSE 8000
 
 # 健康檢查
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)" || exit 1
+    CMD ["sh", "-c", "python -c \"import os,urllib.request;urllib.request.urlopen('http://localhost:%s/health'%os.environ.get('PORT','8000'),timeout=5)\" || exit 1"]
 
-CMD ["python", "-m", "uvicorn", "src.ml.api.main:app", \
-     "--host", "0.0.0.0", "--port", "8000", \
-     "--workers", "1", "--timeout-keep-alive", "30"]
+CMD ["sh", "-c", "python -m uvicorn ml.api.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1 --timeout-keep-alive 30"]

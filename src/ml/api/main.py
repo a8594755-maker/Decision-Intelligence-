@@ -1,10 +1,15 @@
 import sys
 from pathlib import Path
 
-# Add project root to Python path
-root_dir = str(Path(__file__).resolve().parents[3])
-if root_dir not in sys.path:
-    sys.path.append(root_dir)
+# Ensure both import styles work:
+# - `uvicorn ml.api.main:app` (needs /app/src on sys.path)
+# - `uvicorn src.ml.api.main:app` (already has /app, but imports use `ml.*`)
+_current_file = Path(__file__).resolve()
+_src_dir = str(_current_file.parents[2])      # /app/src
+_project_root = str(_current_file.parents[3]) # /app
+for _path in (_src_dir, _project_root):
+    if _path not in sys.path:
+        sys.path.insert(0, _path)
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
