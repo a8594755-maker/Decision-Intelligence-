@@ -49,3 +49,20 @@ src/App.jsx.backup
 
 # Local Netlify folder
 .netlify
+
+# AI-generated logs / summaries (keep root clean)
+ONESHOT_*.md
+ONE_SHOT_*.md
+STEP[0-9]*.md
+PHASE[0-9]*.md
+TWO_STEP_*.md
+BUGFIX_*.md
+*_SUMMARY.md
+*_COMPLETE.md
+*_QA.md
+*_FIX.md
+*_CHECKLIST.md
+backtest_report.json
+
+# Test scratch files in root
+PHASE*_CONSOLE_TEST.js
