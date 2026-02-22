@@ -25,14 +25,24 @@ const proofSchema = z.object({
   objective_terms: z.array(z.object({
     name: z.string(),
     value: z.any().optional(),
-    note: z.string().optional().nullable()
+    note: z.string().optional().nullable(),
+    units: z.string().optional().nullable(),
+    business_label: z.string().optional().nullable(),
+    qty_driver: z.number().optional().nullable(),
+    unit_cost_driver: z.number().optional().nullable()
   }).passthrough()).default([]),
   constraints_checked: z.array(z.object({
     name: z.string(),
     passed: z.boolean(),
     details: z.string().optional(),
     tag: z.string().optional(),
-    tags: z.array(z.string()).optional()
+    tags: z.array(z.string()).optional(),
+    binding: z.boolean().optional().nullable(),
+    slack: z.number().optional().nullable(),
+    slack_unit: z.string().optional().nullable(),
+    shadow_price_approx: z.number().optional().nullable(),
+    shadow_price_unit: z.string().optional().nullable(),
+    natural_language: z.string().optional().nullable()
   }).passthrough()).default([]),
   constraint_tags: z.array(z.object({}).passthrough()).default([]),
   infeasibility_analysis: z.object({
@@ -97,7 +107,20 @@ export const planningResponseSchema = z.object({
   infeasible_reasons: z.array(z.string()),
   infeasible_reason_details: z.array(infeasibleReasonDetailSchema).default([]),
   diagnostics: z.object({}).passthrough().default({}),
-  proof: proofSchema
+  proof: proofSchema,
+  explain_summary: z.object({
+    headline: z.string().default(''),
+    top_binding_constraint: z.string().nullable().optional(),
+    key_relaxation: z.object({
+      constraint: z.string(),
+      relax_by: z.number().nullable().optional(),
+      relax_unit: z.string().nullable().optional(),
+      estimated_saving: z.number().nullable().optional(),
+      saving_unit: z.string().nullable().optional(),
+      nl_text: z.string().nullable().optional()
+    }).passthrough().nullable().optional(),
+    confidence: z.string().default('medium')
+  }).passthrough().nullable().optional()
 }).passthrough();
 
 const forecastPointSchema = z.object({

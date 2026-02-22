@@ -136,7 +136,7 @@ def _parse_allowed_origins(raw_value: str) -> List[str]:
 
 
 ALLOWED_ORIGINS = _parse_allowed_origins(
-    os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173")
+    os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174")
 )
 
 

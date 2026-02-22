@@ -138,6 +138,11 @@ function buildConstraintBindingSummary({
         binding: isBinding,
         violations: constraint.violations ?? 0,
         details: constraint.details || '',
+        slack: safeNum(constraint.slack),
+        slack_unit: constraint.slack_unit || null,
+        shadow_price_approx: safeNum(constraint.shadow_price_approx),
+        shadow_price_unit: constraint.shadow_price_unit || null,
+        natural_language: constraint.natural_language || null,
         marginal_impact: marginalImpact,
         priority: CONSTRAINT_PRIORITY[constraint.name] ?? 0,
         evidence_ref: `proof.constraints_checked[name=${constraint.name}]`
@@ -202,6 +207,12 @@ function buildSituation({ solverStatus, solverKpis, replayMetrics, riskAdjustmen
   };
 }
 
+const formatSlack = (slack, slackUnit) => {
+  if (slack == null) return '-';
+  const formatted = Number(slack).toLocaleString(undefined, { maximumFractionDigits: 1 });
+  return slackUnit ? `${formatted} ${slackUnit}` : formatted;
+};
+
 function buildDriver({
   bindingConstraints = [],
   objectiveTerms = [],
@@ -234,16 +245,35 @@ function buildDriver({
 
   const topBinding = bindingConstraints[0];
   if (topBinding) {
-    text = `The primary binding constraint is "${topBinding.name}".`;
+    const nl = topBinding.natural_language;
+    const slack = safeNum(topBinding.slack);
+    const sp = safeNum(topBinding.shadow_price_approx);
+    const slackUnit = topBinding.slack_unit || '';
+
+    // Prefer solver-provided natural_language, fall back to template
+    text = nl || `The primary binding constraint is "${topBinding.name}".`;
     evidenceRefs.push(topBinding.evidence_ref);
-    if (topBinding.marginal_impact?.description) {
+
+    // Append slack and shadow price details when available
+    if (sp != null && slack != null) {
+      text += ` (remaining slack: ${formatSlack(slack, slackUnit)}, marginal value: ${money(sp)}/unit relaxed)`;
+      evidenceRefs.push(`proof.constraints_checked[name=${topBinding.name}].shadow_price_approx`);
+    } else if (slack != null) {
+      text += ` (remaining slack: ${formatSlack(slack, slackUnit)})`;
+    }
+
+    // Fall back to marginal_impact description if no solver-level shadow price
+    if (sp == null && topBinding.marginal_impact?.description) {
       text += ` ${topBinding.marginal_impact.description}.`;
       evidenceRefs.push(`marginal_impact.${topBinding.name}`);
     }
+
     return {
       text,
       category: 'binding_constraint',
       binding_constraint: topBinding.name,
+      slack,
+      shadow_price: sp,
       evidence_refs: evidenceRefs
     };
   }
@@ -253,7 +283,8 @@ function buildDriver({
     .sort((a, b) => (safeNum(b.value) || 0) - (safeNum(a.value) || 0))[0];
 
   if (topObjective) {
-    text = `The plan is unconstrained. The dominant cost driver is "${topObjective.name}" at ${money(safeNum(topObjective.value))}.`;
+    const label = topObjective.business_label || topObjective.name;
+    text = `The plan is unconstrained. The dominant cost driver is "${label}" at ${money(safeNum(topObjective.value))}.`;
     evidenceRefs.push(`proof.objective_terms[name=${topObjective.name}]`);
     return { text, category: 'cost_driver', evidence_refs: evidenceRefs };
   }
@@ -333,19 +364,50 @@ function buildRecommendation({
   };
 }
 
-function buildTradeOffs({ negotiationOptions = null }) {
-  const options = negotiationOptions?.options || [];
-  if (options.length === 0) return [];
+function buildTradeOffs({ negotiationOptions = null, explainSummary = null }) {
+  const result = [];
 
-  return options.slice(0, 4).map((option) => ({
-    option_id: option.option_id,
-    title: option.title,
-    overrides: option.overrides || {},
-    why: (option.why || []).join(' '),
-    estimated_sl_delta: null,
-    estimated_cost_delta: null,
-    evidence_refs: option.evidence_refs || []
-  }));
+  // Insert key relaxation from explain_summary as the first trade-off if available
+  const relaxation = explainSummary?.key_relaxation;
+  if (relaxation?.nl_text) {
+    const relaxBy = safeNum(relaxation.relax_by);
+    const estimatedSaving = safeNum(relaxation.estimated_saving);
+    const roi = (relaxBy && estimatedSaving && relaxBy > 0)
+      ? `${(estimatedSaving / relaxBy).toFixed(1)}x`
+      : null;
+
+    result.push({
+      option_id: `relax_${relaxation.constraint}`,
+      title: `Relax ${relaxation.constraint}`,
+      constraint: relaxation.constraint,
+      overrides: {},
+      why: relaxation.nl_text,
+      cost: relaxBy != null ? `${money(relaxBy)} ${relaxation.relax_unit || ''}`.trim() : null,
+      benefit: estimatedSaving != null ? `${money(estimatedSaving)} ${relaxation.saving_unit || ''}`.trim() : null,
+      roi_text: roi,
+      nl_text: relaxation.nl_text,
+      estimated_sl_delta: null,
+      estimated_cost_delta: estimatedSaving != null ? -estimatedSaving : null,
+      evidence_refs: ['explain_summary.key_relaxation']
+    });
+  }
+
+  // Append negotiation options (up to 4 total)
+  const options = negotiationOptions?.options || [];
+  const remaining = 4 - result.length;
+  for (const option of options.slice(0, remaining)) {
+    result.push({
+      option_id: option.option_id,
+      title: option.title,
+      overrides: option.overrides || {},
+      why: (option.why || []).join(' '),
+      estimated_sl_delta: null,
+      estimated_cost_delta: null,
+      evidence_refs: option.evidence_refs || []
+    });
+  }
+
+  return result;
 }
 
 export function buildDecisionNarrative({
@@ -357,6 +419,7 @@ export function buildDecisionNarrative({
   replayMetrics = {},
   riskAdjustments = null,
   negotiationOptions = null,
+  explainSummary = null,
   runId = null,
   generatedAt = null
 } = {}) {
@@ -392,7 +455,7 @@ export function buildDecisionNarrative({
     replayMetrics
   });
 
-  const tradeOffs = buildTradeOffs({ negotiationOptions });
+  const tradeOffs = buildTradeOffs({ negotiationOptions, explainSummary });
 
   const allEvidenceRefs = [
     ...new Set([
@@ -419,6 +482,7 @@ export function buildDecisionNarrative({
     recommendation,
     trade_offs: tradeOffs,
     constraint_binding_summary: constraintBindingSummary,
+    explain_summary: explainSummary || null,
     requires_approval: requiresApproval,
     all_evidence_refs: allEvidenceRefs,
     summary_text: [situation.text, driver.text, recommendation.text]
@@ -430,6 +494,7 @@ export function buildDecisionNarrative({
 export function buildDecisionNarrativeFromPlanResult(planResult) {
   const solverResult = planResult?.solver_result || planResult?.solverResult || {};
   const proof = solverResult?.proof || {};
+  const explainSummary = solverResult?.explain_summary || planResult?.explain_summary || null;
 
   return buildDecisionNarrative({
     solverStatus: solverResult?.status || 'FEASIBLE',
@@ -440,6 +505,7 @@ export function buildDecisionNarrativeFromPlanResult(planResult) {
     replayMetrics: planResult?.replay_metrics || {},
     riskAdjustments: planResult?.risk_adjustments || null,
     negotiationOptions: planResult?.negotiation_options || null,
+    explainSummary,
     runId: planResult?.run?.id || null
   });
 }

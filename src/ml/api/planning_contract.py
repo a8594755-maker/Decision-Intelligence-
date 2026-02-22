@@ -82,6 +82,12 @@ class ConstraintCheck(BaseModel):
     details: str = ""
     tag: Optional[str] = None
     tags: List[str] = Field(default_factory=list)
+    binding: Optional[bool] = None
+    slack: Optional[float] = None
+    slack_unit: Optional[str] = None
+    shadow_price_approx: Optional[float] = None
+    shadow_price_unit: Optional[str] = None
+    natural_language: Optional[str] = None
 
 
 class ObjectiveTerm(BaseModel):
@@ -90,6 +96,10 @@ class ObjectiveTerm(BaseModel):
     name: str
     value: Any = None
     note: Optional[str] = None
+    units: Optional[str] = None
+    business_label: Optional[str] = None
+    qty_driver: Optional[float] = None
+    unit_cost_driver: Optional[float] = None
 
 
 class ProofPayload(BaseModel):
@@ -122,6 +132,26 @@ class InfeasibleReasonDetail(BaseModel):
     category: str = "capacity"
     top_offending_tags: List[str] = Field(default_factory=list)
     suggested_actions: List[str] = Field(default_factory=list)
+
+
+class KeyRelaxation(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    constraint: str
+    relax_by: Optional[float] = None
+    relax_unit: Optional[str] = None
+    estimated_saving: Optional[float] = None
+    saving_unit: Optional[str] = None
+    nl_text: Optional[str] = None
+
+
+class ExplainSummary(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    headline: str = ""
+    top_binding_constraint: Optional[str] = None
+    key_relaxation: Optional[KeyRelaxation] = None
+    confidence: str = "medium"
 
 
 class SolverMeta(BaseModel):
@@ -161,6 +191,7 @@ class PlanningResponse(BaseModel):
     infeasible_reason_details: List[InfeasibleReasonDetail] = Field(default_factory=list)
     diagnostics: Dict[str, Any] = Field(default_factory=dict)
     proof: ProofPayload = Field(default_factory=ProofPayload)
+    explain_summary: Optional[Dict[str, Any]] = None
 
     @field_validator("contract_version")
     @classmethod
@@ -276,6 +307,9 @@ def finalize_planning_response(
     else:
         proof["diagnose_mode"] = bool(proof.get("diagnose_mode"))
     root["proof"] = proof
+
+    if root.get("explain_summary") is None:
+        root["explain_summary"] = None
 
     solver_meta = dict(root.get("solver_meta") or {})
     engine = str(

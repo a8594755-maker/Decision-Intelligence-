@@ -56,6 +56,53 @@ const BINDING_PROOF = {
   ]
 };
 
+const BINDING_PROOF_WITH_SLACK = {
+  objective_terms: [
+    { name: 'holding_cost', value: 1800.0, business_label: 'Inventory holding' },
+    { name: 'procurement_cost', value: 14900.0, business_label: 'Procurement volume' },
+    { name: 'stockout_cost', value: 6500.0, business_label: 'Shortage exposure' }
+  ],
+  constraints_checked: [
+    {
+      name: 'budget_cap',
+      passed: true,
+      binding: true,
+      violations: 0,
+      details: 'Total spend 9700 vs cap 10000.',
+      slack: 300.0,
+      slack_unit: 'USD',
+      shadow_price_approx: 8.0,
+      shadow_price_unit: 'USD saved / USD relaxed',
+      natural_language: 'Budget cap is nearly exhausted (remaining: 300.0 USD).'
+    },
+    {
+      name: 'moq',
+      passed: true,
+      binding: true,
+      violations: 0,
+      details: 'Rows violating MOQ: 0.',
+      slack: 0.0,
+      slack_unit: 'units',
+      natural_language: 'MOQ violations on 0 rows.'
+    },
+    { name: 'pack_size_multiple', passed: true, binding: false, violations: 0 }
+  ]
+};
+
+const SAMPLE_EXPLAIN_SUMMARY = {
+  headline: 'Projected shortage of 1500 units, primary constraint is budget_cap',
+  top_binding_constraint: 'budget_cap',
+  key_relaxation: {
+    constraint: 'budget_cap',
+    relax_by: 10000,
+    relax_unit: 'USD',
+    estimated_saving: 80000,
+    saving_unit: 'USD',
+    nl_text: 'Relaxing budget cap by USD 10,000 could reduce shortage penalty by up to 80,000 USD.'
+  },
+  confidence: 'high'
+};
+
 const INFEASIBLE_PROOF = {
   objective_terms: [],
   constraints_checked: [
@@ -367,5 +414,131 @@ describe('buildDecisionNarrativeFromPlanResult', () => {
     expect(narrative.run_id).toBe(321);
     expect(narrative.solver_status).toBe('FEASIBLE');
     expect(Array.isArray(narrative.constraint_binding_summary)).toBe(true);
+  });
+
+  it('passes explain_summary from solver_result', () => {
+    const narrative = buildDecisionNarrativeFromPlanResult({
+      run: { id: 999 },
+      solver_result: {
+        status: 'OPTIMAL',
+        kpis: SAMPLE_SOLVER_KPIS,
+        proof: BINDING_PROOF_WITH_SLACK,
+        infeasible_reasons: [],
+        explain_summary: SAMPLE_EXPLAIN_SUMMARY
+      },
+      replay_metrics: GOOD_REPLAY_METRICS
+    });
+
+    expect(narrative.explain_summary).not.toBeNull();
+    expect(narrative.explain_summary.top_binding_constraint).toBe('budget_cap');
+    expect(narrative.explain_summary.confidence).toBe('high');
+  });
+});
+
+describe('buildDecisionNarrative: solver-provided slack and shadow_price', () => {
+  it('driver text includes slack and shadow_price when provided by solver', () => {
+    const result = buildDecisionNarrative({
+      solverStatus: 'FEASIBLE',
+      solverKpis: SAMPLE_SOLVER_KPIS,
+      proof: BINDING_PROOF_WITH_SLACK,
+      replayMetrics: GOOD_REPLAY_METRICS
+    });
+
+    expect(result.driver.category).toBe('binding_constraint');
+    expect(result.driver.binding_constraint).toBe('budget_cap');
+    expect(result.driver.slack).toBe(300.0);
+    expect(result.driver.shadow_price).toBe(8.0);
+    expect(result.driver.text).toContain('300');
+    expect(result.driver.text).toContain('$8');
+  });
+
+  it('constraint_binding_summary propagates slack and natural_language from solver', () => {
+    const result = buildDecisionNarrative({
+      solverStatus: 'FEASIBLE',
+      solverKpis: SAMPLE_SOLVER_KPIS,
+      proof: BINDING_PROOF_WITH_SLACK,
+      replayMetrics: GOOD_REPLAY_METRICS
+    });
+
+    const budgetSummary = result.constraint_binding_summary.find((c) => c.name === 'budget_cap');
+    expect(budgetSummary.slack).toBe(300.0);
+    expect(budgetSummary.slack_unit).toBe('USD');
+    expect(budgetSummary.shadow_price_approx).toBe(8.0);
+    expect(budgetSummary.natural_language).toContain('Budget cap');
+  });
+});
+
+describe('buildDecisionNarrative: explain_summary trade_offs', () => {
+  it('inserts key_relaxation as first trade-off', () => {
+    const result = buildDecisionNarrative({
+      solverStatus: 'FEASIBLE',
+      solverKpis: SAMPLE_SOLVER_KPIS,
+      proof: BINDING_PROOF_WITH_SLACK,
+      replayMetrics: GOOD_REPLAY_METRICS,
+      explainSummary: SAMPLE_EXPLAIN_SUMMARY
+    });
+
+    expect(result.trade_offs.length).toBeGreaterThanOrEqual(1);
+    const first = result.trade_offs[0];
+    expect(first.constraint).toBe('budget_cap');
+    expect(first.nl_text).toContain('Relaxing budget cap');
+    expect(first.roi_text).toBe('8.0x');
+    expect(first.evidence_refs).toContain('explain_summary.key_relaxation');
+  });
+
+  it('includes explain_summary in output when provided', () => {
+    const result = buildDecisionNarrative({
+      solverStatus: 'FEASIBLE',
+      proof: BINDING_PROOF_WITH_SLACK,
+      replayMetrics: GOOD_REPLAY_METRICS,
+      explainSummary: SAMPLE_EXPLAIN_SUMMARY
+    });
+
+    expect(result.explain_summary).toEqual(SAMPLE_EXPLAIN_SUMMARY);
+  });
+
+  it('explain_summary is null when not provided', () => {
+    const result = buildDecisionNarrative({
+      solverStatus: 'FEASIBLE',
+      proof: BINDING_PROOF,
+      replayMetrics: GOOD_REPLAY_METRICS
+    });
+
+    expect(result.explain_summary).toBeNull();
+  });
+
+  it('combines explain_summary relaxation with negotiation options', () => {
+    const result = buildDecisionNarrative({
+      solverStatus: 'FEASIBLE',
+      proof: BINDING_PROOF_WITH_SLACK,
+      replayMetrics: POOR_REPLAY_METRICS,
+      negotiationOptions: NEGOTIATION_OPTIONS,
+      explainSummary: SAMPLE_EXPLAIN_SUMMARY
+    });
+
+    expect(result.trade_offs.length).toBe(3);
+    expect(result.trade_offs[0].constraint).toBe('budget_cap');
+    expect(result.trade_offs[1].option_id).toBe('opt_004');
+    expect(result.trade_offs[2].option_id).toBe('opt_005');
+  });
+});
+
+describe('buildDecisionNarrative: business_label on objective terms', () => {
+  it('driver uses business_label when available', () => {
+    const proofWithLabels = {
+      objective_terms: [
+        { name: 'procurement_cost', value: 14900.0, business_label: 'Procurement volume' },
+        { name: 'stockout_cost', value: 6500.0, business_label: 'Shortage exposure' }
+      ],
+      constraints_checked: []
+    };
+    const result = buildDecisionNarrative({
+      solverStatus: 'OPTIMAL',
+      proof: proofWithLabels,
+      replayMetrics: GOOD_REPLAY_METRICS
+    });
+
+    expect(result.driver.category).toBe('cost_driver');
+    expect(result.driver.text).toContain('Procurement volume');
   });
 });

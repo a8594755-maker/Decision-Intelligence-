@@ -102,6 +102,18 @@ class SolverStatusInfo:
     time_limit_hit: bool
 
 
+@dataclass(frozen=True)
+class SupplierInfo:
+    """V2: Per-supplier parameters for multi-supplier optimization."""
+    supplier_id: str
+    lead_time_days: int
+    unit_cost: float
+    moq_s: int        # scaled MOQ
+    pack_s: int        # scaled pack size
+    max_order_qty_s: int  # scaled max order qty
+    fixed_order_cost: float
+
+
 def _read_attr(obj: Any, name: str, default: Any = None) -> Any:
     """Read an attribute from object or dict with graceful fallback."""
     if obj is None:
@@ -508,8 +520,14 @@ def _mk_constraint_check(
     sku: Optional[str] = None,
     echelon: str = "single",
     tags: Optional[List[str]] = None,
+    binding: Optional[bool] = None,
+    slack: Optional[float] = None,
+    slack_unit: Optional[str] = None,
+    shadow_price_approx: Optional[float] = None,
+    shadow_price_unit: Optional[str] = None,
+    natural_language: Optional[str] = None,
 ) -> Dict[str, Any]:
-    return {
+    result: Dict[str, Any] = {
         "name": name,
         "tag": tag,
         "tags": [str(item) for item in (tags or []) if str(item).strip()],
@@ -522,10 +540,25 @@ def _mk_constraint_check(
         "sku": sku,
         "echelon": echelon,
     }
+    if binding is not None:
+        result["binding"] = binding
+    if slack is not None:
+        result["slack"] = round(slack, 4)
+    if slack_unit is not None:
+        result["slack_unit"] = slack_unit
+    if shadow_price_approx is not None:
+        result["shadow_price_approx"] = round(shadow_price_approx, 4)
+    if shadow_price_unit is not None:
+        result["shadow_price_unit"] = shadow_price_unit
+    if natural_language is not None:
+        result["natural_language"] = natural_language
+    return result
 
 
 def _suggestions_for_categories(categories: Set[str]) -> List[str]:
     actions: List[str] = []
+    if "safety_stock" in categories:
+        actions.append("Lower safety stock targets or increase supply to maintain buffer levels.")
     if "capacity" in categories:
         actions.append("Increase shared production/inventory capacity in constrained periods.")
         actions.append("Reduce demand target or allow backlog for constrained periods.")
@@ -547,14 +580,16 @@ def _suggestions_for_categories(categories: Set[str]) -> List[str]:
 def _summarize_infeasibility(tags: List[str]) -> Dict[str, Any]:
     categories: Set[str] = set()
     for tag in tags:
-        if tag.startswith("CAP_PROD") or tag.startswith("CAP_INV"):
+        if tag.startswith("CAP_PROD") or tag.startswith("CAP_INV") or tag.startswith("CAP_VOL") or tag.startswith("CAP_WEIGHT"):
             categories.add("capacity")
-        elif tag.startswith("BUDGET_GLOBAL"):
+        elif tag.startswith("BUDGET_GLOBAL") or tag.startswith("BUDGET_PERIOD"):
             categories.add("budget")
         elif tag.startswith("MOQ") or tag.startswith("PACK") or tag.startswith("MAXQ"):
             categories.add("moq_pack")
         elif tag.startswith("BALANCE_INV"):
             categories.add("lead_time")
+        elif tag.startswith("SAFETY_STOCK"):
+            categories.add("safety_stock")
         elif tag.startswith("SERVICE_LEVEL_GLOBAL"):
             categories.add("demand_infeasible")
         elif tag.startswith("BOM_LINK") or tag.startswith("COMP_FEAS"):
@@ -569,6 +604,93 @@ def _summarize_infeasibility(tags: List[str]) -> Dict[str, Any]:
     }
 
 
+def _compute_shadow_prices(
+    payload: Any,
+    constraints_checked_list: List[Dict[str, Any]],
+    base_objective: float,
+) -> Dict[str, Dict[str, Any]]:
+    """
+    V2: Approximate shadow prices via parametric perturbation.
+    For each binding scalar constraint, re-solve with RHS ± delta.
+    """
+    shadow_prices: Dict[str, Dict[str, Any]] = {}
+
+    perturbation_targets = [
+        ("budget_cap", "shared_constraints.budget_cap", 0.10),
+        ("shared_production_cap", "shared_constraints.production_capacity_per_period", 0.10),
+        ("shared_inventory_cap", "shared_constraints.inventory_capacity_per_period", 0.10),
+        ("budget_per_period", "shared_constraints.budget_per_period", 0.10),
+    ]
+
+    for name, path, delta_frac in perturbation_targets:
+        matching = [c for c in constraints_checked_list if c.get("name") == name and c.get("binding")]
+        if not matching:
+            continue
+
+        current_val = _read_path(payload, path, None)
+        if current_val is None or not isinstance(current_val, (int, float)):
+            continue
+
+        delta = max(1.0, abs(float(current_val)) * delta_frac)
+
+        trial_plus = _clone_payload(payload)
+        _set_path(trial_plus, "diagnose_mode", False)
+        _set_path(trial_plus, "_internal_diagnose", True)
+        _set_path(trial_plus, "_solver_time_limit_seconds", DIAGNOSE_SOLVER_SECONDS)
+        _set_path(trial_plus, "settings.compute_shadow_prices", False)
+        _set_path(trial_plus, path, float(current_val) + delta)
+        try:
+            res_plus = solve_replenishment(trial_plus)
+            obj_plus = res_plus.get("kpis", {}).get("estimated_total_cost")
+        except Exception:
+            obj_plus = None
+
+        trial_minus = _clone_payload(payload)
+        _set_path(trial_minus, "diagnose_mode", False)
+        _set_path(trial_minus, "_internal_diagnose", True)
+        _set_path(trial_minus, "_solver_time_limit_seconds", DIAGNOSE_SOLVER_SECONDS)
+        _set_path(trial_minus, "settings.compute_shadow_prices", False)
+        _set_path(trial_minus, path, max(0, float(current_val) - delta))
+        try:
+            res_minus = solve_replenishment(trial_minus)
+            obj_minus = res_minus.get("kpis", {}).get("estimated_total_cost")
+        except Exception:
+            obj_minus = None
+
+        if obj_plus is not None and obj_minus is not None:
+            sp = (obj_minus - obj_plus) / (2 * delta)
+            shadow_prices[name] = {
+                "shadow_price_approx": round(sp, 6),
+                "unit": "cost_reduction_per_unit_increase",
+                "delta_used": round(delta, 4),
+                "base_value": round(float(current_val), 4),
+                "interpretation": (
+                    f"Increasing {name} by 1 unit reduces total cost by ~{abs(sp):.4f}."
+                    if sp > 0
+                    else f"Constraint {name} is not cost-effective to relax."
+                ),
+            }
+
+    return shadow_prices
+
+
+def _build_relaxation_summary(analyses: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """V2: Build relaxation summary from analysis results."""
+    if not analyses:
+        return None
+    restoring = [a for a in analyses if a.get("feasible_after_relaxation")]
+    if not restoring:
+        return {"feasible_found": False, "levels_tried": len(analyses), "restoring_levels": []}
+    best = min(restoring, key=lambda a: a.get("priority", 999))
+    return {
+        "feasible_found": True,
+        "levels_tried": len(analyses),
+        "restoring_levels": [a["relaxed_tags"][0] for a in restoring],
+        "recommended_relaxation": best["relaxed_tags"][0],
+        "recommendation_text": best.get("recommendation", ""),
+    }
+
+
 def _run_relaxation_analysis_single(payload: Any) -> List[Dict[str, Any]]:
     """
     Diagnose infeasibility by progressively relaxing constraint families.
@@ -577,14 +699,17 @@ def _run_relaxation_analysis_single(payload: Any) -> List[Dict[str, Any]]:
     analyses: List[Dict[str, Any]] = []
 
     relax_steps = [
-        ("CAP_PROD", {"shared_constraints.production_capacity_per_period": None}),
-        ("CAP_INV", {"shared_constraints.inventory_capacity_per_period": None}),
-        ("BUDGET_GLOBAL", {"shared_constraints.budget_cap": None, "constraints.budget_cap": None}),
-        ("SERVICE_LEVEL_GLOBAL", {"objective.service_level_target": None}),
-        ("LOT_SIZING", {"constraints.moq": [], "constraints.pack_size": [], "constraints.max_order_qty": []}),
+        ("BUDGET_PERIOD", 2, "budget", "Remove per-period budget limits.", {"shared_constraints.budget_per_period": None}),
+        ("BUDGET_GLOBAL", 3, "budget", "Increase or remove the global budget cap.", {"shared_constraints.budget_cap": None, "constraints.budget_cap": None}),
+        ("SERVICE_LEVEL_GLOBAL", 4, "demand", "Lower the service level target.", {"objective.service_level_target": None}),
+        ("CAP_PROD", 5, "capacity", "Increase production/ordering capacity.", {"shared_constraints.production_capacity_per_period": None}),
+        ("CAP_INV", 6, "capacity", "Increase inventory storage capacity.", {"shared_constraints.inventory_capacity_per_period": None}),
+        ("CAP_VOL", 7, "capacity", "Increase volume-based storage capacity.", {"shared_constraints.volume_capacity_per_period": None}),
+        ("CAP_WEIGHT", 8, "capacity", "Increase weight-based capacity limits.", {"shared_constraints.weight_capacity_per_period": None}),
+        ("LOT_SIZING", 9, "lot_sizing", "Relax MOQ, pack-size, or max-order-qty constraints.", {"constraints.moq": [], "constraints.pack_size": [], "constraints.max_order_qty": []}),
     ]
 
-    for tag, updates in relax_steps:
+    for tag, priority, category, recommendation, updates in relax_steps:
         trial = _clone_payload(payload)
         # Force fast, non-recursive diagnose calls.
         _set_path(trial, "diagnose_mode", False)
@@ -602,10 +727,90 @@ def _run_relaxation_analysis_single(payload: Any) -> List[Dict[str, Any]]:
             delta_cost_proxy = None
         analyses.append({
             "relaxed_tags": [tag],
+            "priority": priority,
+            "category": category,
+            "recommendation": recommendation,
             "feasible_after_relaxation": feasible_after,
             "delta_cost_proxy": delta_cost_proxy,
         })
     return analyses
+
+
+def _build_explain_summary(
+    *,
+    status: "PlanningStatus",
+    constraints_checked: List[Dict[str, Any]],
+    objective_terms: List[Dict[str, Any]],
+    total_stockout: float,
+    stockout_penalty: float,
+    total_spend: float,
+    budget_cap: Optional[float],
+    budget_mode_effective: Optional[str],
+) -> Dict[str, Any]:
+    """Build a top-level explain_summary from solver results."""
+    confidence_map = {
+        PlanningStatus.OPTIMAL: "high",
+        PlanningStatus.FEASIBLE: "medium",
+    }
+    confidence = confidence_map.get(status, "low")
+
+    binding = [c for c in constraints_checked if c.get("binding") is True]
+    top_binding = binding[0]["name"] if binding else None
+
+    # Build headline
+    parts: List[str] = []
+    if total_stockout > 1e-6:
+        parts.append(f"Projected shortage of {round(total_stockout, 0):.0f} units")
+    if top_binding:
+        parts.append(f"primary constraint is {top_binding}")
+    headline = ", ".join(parts) if parts else "Plan meets all constraints with no projected shortage."
+
+    # Build key relaxation suggestion from the top binding constraint
+    key_relaxation: Optional[Dict[str, Any]] = None
+    if top_binding == "budget_cap" and budget_cap is not None and budget_cap > 0:
+        relax_amount = round(budget_cap * 0.10, 2)
+        relax_unit = "USD" if budget_mode_effective == "spend" else "units"
+        estimated_saving = round(stockout_penalty * total_stockout, 2) if total_stockout > 0 else 0.0
+        if estimated_saving > 0:
+            key_relaxation = {
+                "constraint": "budget_cap",
+                "relax_by": relax_amount,
+                "relax_unit": relax_unit,
+                "estimated_saving": estimated_saving,
+                "saving_unit": "USD",
+                "nl_text": (
+                    f"Relaxing budget cap by {relax_unit} {relax_amount:,.0f} "
+                    f"could reduce shortage penalty by up to {estimated_saving:,.0f} {relax_unit}."
+                ),
+            }
+    elif top_binding and top_binding.startswith("shared_production"):
+        if total_stockout > 0:
+            estimated_saving = round(stockout_penalty * total_stockout * 0.5, 2)
+            key_relaxation = {
+                "constraint": top_binding,
+                "relax_by": None,
+                "relax_unit": "units/period",
+                "estimated_saving": estimated_saving,
+                "saving_unit": "USD",
+                "nl_text": f"Increasing production capacity could reduce shortage penalty by ~{estimated_saving:,.0f} USD.",
+            }
+    elif top_binding == "moq" and total_stockout > 0:
+        estimated_saving = round(stockout_penalty * total_stockout * 0.3, 2)
+        key_relaxation = {
+            "constraint": "moq",
+            "relax_by": None,
+            "relax_unit": "units",
+            "estimated_saving": estimated_saving,
+            "saving_unit": "USD",
+            "nl_text": f"Relaxing MOQ requirements could reduce shortage penalty by ~{estimated_saving:,.0f} USD.",
+        }
+
+    return {
+        "headline": headline,
+        "top_binding_constraint": top_binding,
+        "key_relaxation": key_relaxation,
+        "confidence": confidence,
+    }
 
 
 # ── public API ─────────────────────────────────────────────────────────────────
@@ -661,6 +866,8 @@ def solve_replenishment(
 
     stockout_penalty = max(0.0, _to_float(_read_attr(objective, "stockout_penalty", 1.0), 1.0))
     holding_cost = max(0.0, _to_float(_read_attr(objective, "holding_cost", 0.0), 0.0))
+    safety_stock_penalty_raw = _read_attr(objective, "safety_stock_violation_penalty", None)
+    safety_stock_penalty: float = max(0.0, _to_float(safety_stock_penalty_raw, 10.0)) if safety_stock_penalty_raw is not None else 10.0
     service_level_target_raw = _read_attr(objective, "service_level_target", None)
     service_level_target: Optional[float] = None
     if service_level_target_raw is not None:
@@ -669,6 +876,7 @@ def solve_replenishment(
     coeff_order = OBJ_SCALE
     coeff_stockout = int(round(stockout_penalty * OBJ_SCALE))
     coeff_holding = int(round(holding_cost * OBJ_SCALE))
+    coeff_ss_penalty = int(round(safety_stock_penalty * OBJ_SCALE))
 
     constraint_tags: List[Dict[str, Any]] = []
 
@@ -697,6 +905,9 @@ def solve_replenishment(
     maxq_s: Dict[str, int] = _build_qty_map(_read_attr(constraints, "max_order_qty", None), "max_qty")
     unit_cost_map: Dict[str, float] = _build_unit_cost_map_me(_read_attr(constraints, "unit_costs", None))
     sku_priority_map: Dict[str, float] = {}
+    sku_volume_map: Dict[str, float] = {}
+    sku_weight_map: Dict[str, float] = {}
+    suppliers_by_key: Dict[Tuple[str, str], List[SupplierInfo]] = {}
 
     budget_cap_raw = _first_non_none(
         _read_attr(shared_constraints, "budget_cap", None),
@@ -716,6 +927,11 @@ def solve_replenishment(
         _read_attr(constraints, "inventory_capacity_per_period", None),
         _read_attr(multi_echelon, "inventory_capacity_per_period", None),
     )
+
+    # V2: per-period budget, volume/weight capacity
+    budget_per_period_raw = _read_attr(shared_constraints, "budget_per_period", None)
+    volume_cap_raw = _read_attr(shared_constraints, "volume_capacity_per_period", None)
+    weight_cap_raw = _read_attr(shared_constraints, "weight_capacity_per_period", None)
 
     # Demand parse: legacy + items[].
     forecast_by_key: Dict[Tuple[str, str], List[Tuple[date, int, Optional[int]]]] = {}
@@ -795,6 +1011,38 @@ def solve_replenishment(
         priority = _first_non_none(_read_attr(item, "service_level_weight", None), _read_attr(item, "priority_weight", None))
         if priority is not None:
             sku_priority_map[sku] = max(0.01, _to_float(priority, 1.0))
+
+        # V2: volume/weight per unit (for capacity constraints)
+        volume_per_unit = _first_non_none(
+            _read_attr(item, "volume_per_unit", None),
+            _read_attr(item_constraints, "volume_per_unit", None),
+        )
+        if volume_per_unit is not None:
+            sku_volume_map[sku] = max(0.0, _to_float(volume_per_unit, 0.0))
+        weight_per_unit = _first_non_none(
+            _read_attr(item, "weight_per_unit", None),
+            _read_attr(item_constraints, "weight_per_unit", None),
+        )
+        if weight_per_unit is not None:
+            sku_weight_map[sku] = max(0.0, _to_float(weight_per_unit, 0.0))
+
+        # V2 Feature 1: Parse suppliers for multi-supplier optimization
+        supplier_rows = _as_list(_read_attr(item, "suppliers", None))
+        if supplier_rows:
+            key = _key(sku, item_plant)
+            for sup in supplier_rows:
+                sup_id = str(_read_attr(sup, "supplier_id", "") or "").strip()
+                if not sup_id:
+                    continue
+                suppliers_by_key.setdefault(key, []).append(SupplierInfo(
+                    supplier_id=sup_id,
+                    lead_time_days=max(0, int(round(_to_float(_read_attr(sup, "lead_time_days", 0.0), 0.0)))),
+                    unit_cost=max(0.0, _to_float(_read_attr(sup, "unit_cost", 0.0), 0.0)),
+                    moq_s=_s(max(0.0, _to_float(_read_attr(sup, "moq", 0.0), 0.0))),
+                    pack_s=_s(max(0.0, _to_float(_read_attr(sup, "pack_size", 0.0), 0.0))),
+                    max_order_qty_s=_s(max(0.0, _to_float(_read_attr(sup, "max_order_qty", 0.0), 0.0))),
+                    fixed_order_cost=max(0.0, _to_float(_read_attr(sup, "fixed_order_cost", 0.0), 0.0)),
+                ))
 
     if not forecast_by_key:
         return _empty_response(
@@ -921,49 +1169,131 @@ def solve_replenishment(
         back_coeff = max(1, coeff_stockout * max(1, int(round(sku_priority * 100))) + tie_rank)
         order_coeff = max(1, coeff_order + int(round(sku_unit_cost * 10)))
 
+        # V2 Feature 1: Multi-supplier variables
+        sups = suppliers_by_key.get(key, [])
+        has_suppliers = len(sups) > 1
+        supplier_order_vars: Dict[str, List[Any]] = {}
+        supplier_y_vars: Dict[str, List[Any]] = {}
+        supplier_k_vars: Dict[str, Optional[List[Any]]] = {}
+
+        if has_suppliers:
+            for sup in sups:
+                sid = sup.supplier_id
+                s_tag = f"{var_tag}_{sid}"
+                s_order = [model.NewIntVar(0, ub_order, f"ord_{s_tag}_{t}") for t in range(T)]
+                s_y = [model.NewBoolVar(f"y_{s_tag}_{t}") for t in range(T)]
+                supplier_order_vars[sid] = s_order
+                supplier_y_vars[sid] = s_y
+
+                s_k: Optional[List[Any]] = None
+                if sup.pack_s > SCALE:
+                    mk = ub_order // sup.pack_s + 2
+                    s_k = [model.NewIntVar(0, int(mk), f"k_{s_tag}_{t}") for t in range(T)]
+                supplier_k_vars[sid] = s_k
+
+                for t in range(T):
+                    if s_k is not None:
+                        model.Add(s_order[t] == s_k[t] * sup.pack_s)
+                    if sup.moq_s > 0:
+                        model.Add(s_order[t] >= sup.moq_s).OnlyEnforceIf(s_y[t])
+                        model.Add(s_order[t] == 0).OnlyEnforceIf(s_y[t].Not())
+                    else:
+                        model.Add(s_order[t] == 0).OnlyEnforceIf(s_y[t].Not())
+                        model.Add(s_order[t] >= 1).OnlyEnforceIf(s_y[t])
+                    if sup.max_order_qty_s > 0:
+                        model.Add(s_order[t] <= sup.max_order_qty_s)
+
+            # Aggregate: order[t] = sum of supplier orders
+            for t in range(T):
+                model.Add(order_vars[t] == sum(supplier_order_vars[s.supplier_id][t] for s in sups))
+
         for t in range(T):
             day = days_list[t]
             order_vars_by_day.setdefault(day, []).append(order_vars[t])
             inv_vars_by_day.setdefault(day, []).append(inv_vars[t])
 
-            if k_vars is not None:
-                model.Add(order_vars[t] == k_vars[t] * sku_pack_s)
-                _tag(f"PACK[{sku},{t}]", "Order quantity must be a pack-size multiple.", scope="sku_period", period=day.isoformat(), sku=sku)
+            if not has_suppliers:
+                # Single-supplier path (backward compatible)
+                if k_vars is not None:
+                    model.Add(order_vars[t] == k_vars[t] * sku_pack_s)
+                    _tag(f"PACK[{sku},{t}]", "Order quantity must be a pack-size multiple.", scope="sku_period", period=day.isoformat(), sku=sku)
 
-            if sku_moq_s > 0:
-                model.Add(order_vars[t] >= sku_moq_s).OnlyEnforceIf(y_vars[t])
-                model.Add(order_vars[t] == 0).OnlyEnforceIf(y_vars[t].Not())
-                _tag(f"MOQ[{sku},{t}]", "Order quantity must satisfy MOQ when ordered.", scope="sku_period", period=day.isoformat(), sku=sku)
-            else:
-                model.Add(order_vars[t] == 0).OnlyEnforceIf(y_vars[t].Not())
-                model.Add(order_vars[t] >= 1).OnlyEnforceIf(y_vars[t])
+                if sku_moq_s > 0:
+                    model.Add(order_vars[t] >= sku_moq_s).OnlyEnforceIf(y_vars[t])
+                    model.Add(order_vars[t] == 0).OnlyEnforceIf(y_vars[t].Not())
+                    _tag(f"MOQ[{sku},{t}]", "Order quantity must satisfy MOQ when ordered.", scope="sku_period", period=day.isoformat(), sku=sku)
+                else:
+                    model.Add(order_vars[t] == 0).OnlyEnforceIf(y_vars[t].Not())
+                    model.Add(order_vars[t] >= 1).OnlyEnforceIf(y_vars[t])
 
-            if sku_max_s > 0:
-                model.Add(order_vars[t] <= sku_max_s)
-                _tag(f"MAXQ[{sku},{t}]", "Per-SKU max order quantity.", scope="sku_period", period=day.isoformat(), sku=sku)
+                if sku_max_s > 0:
+                    model.Add(order_vars[t] <= sku_max_s)
+                    _tag(f"MAXQ[{sku},{t}]", "Per-SKU max order quantity.", scope="sku_period", period=day.isoformat(), sku=sku)
 
-            order_idx = t - lead_time
+            # Inventory balance: handle multi-supplier lead times
             open_po_t = open_po_cal.get(day, 0)
             const_rhs = on_hand_s + open_po_t - demand_s_list[t] if t == 0 else open_po_t - demand_s_list[t]
             lhs = inv_vars[t] - back_vars[t]
-            if order_idx >= 0:
-                lhs = lhs - order_vars[order_idx]
+
+            if has_suppliers:
+                # Each supplier has its own lead time
+                for sup in sups:
+                    order_idx_s = t - sup.lead_time_days
+                    if order_idx_s >= 0:
+                        lhs = lhs - supplier_order_vars[sup.supplier_id][order_idx_s]
+            else:
+                order_idx = t - lead_time
+                if order_idx >= 0:
+                    lhs = lhs - order_vars[order_idx]
+
             if t > 0:
                 lhs = lhs - inv_vars[t - 1] + back_vars[t - 1]
             model.Add(lhs == const_rhs)
             _tag(f"BALANCE_INV[{sku},{t}]", "Inventory flow balance.", scope="sku_period", period=day.isoformat(), sku=sku)
 
         all_order_vars.extend(order_vars)
-        for v in order_vars:
-            obj_terms.append(order_coeff * v)
+
+        if has_suppliers:
+            # Per-supplier objective terms
+            for sup in sups:
+                sid = sup.supplier_id
+                sup_order_coeff = max(1, coeff_order + int(round(sup.unit_cost * 10)))
+                for v in supplier_order_vars[sid]:
+                    obj_terms.append(sup_order_coeff * v)
+                if sup.fixed_order_cost > 0:
+                    fixed_coeff = int(round(sup.fixed_order_cost * OBJ_SCALE))
+                    for v in supplier_y_vars[sid]:
+                        obj_terms.append(fixed_coeff * v)
+        else:
+            for v in order_vars:
+                obj_terms.append(order_coeff * v)
         for v in back_vars:
             obj_terms.append(back_coeff * v)
         if coeff_holding > 0:
             for v in inv_vars:
                 obj_terms.append(coeff_holding * v)
 
-        sku_var_maps[key] = {"order": order_vars, "inv": inv_vars, "back": back_vars, "y": y_vars, "k": k_vars}
-        sku_meta[key] = {"days": days_list, "demand_s": demand_s_list, "lead_time": lead_time}
+        # V2 Feature 6: Safety stock soft constraint
+        safety_stock_s_val = int(seed.get("safety_stock_s", 0))
+        ss_slack_vars: Optional[List[Any]] = None
+        if safety_stock_s_val > 0:
+            ss_slack_vars = [model.NewIntVar(0, safety_stock_s_val, f"ss_slack_{var_tag}_{t}") for t in range(T)]
+            for t in range(T):
+                model.Add(inv_vars[t] + ss_slack_vars[t] >= safety_stock_s_val)
+                _tag(f"SAFETY_STOCK[{sku},{t}]", "Safety stock soft floor.", severity="soft", scope="sku_period", period=days_list[t].isoformat(), sku=sku)
+            if coeff_ss_penalty > 0:
+                for v in ss_slack_vars:
+                    obj_terms.append(coeff_ss_penalty * v)
+
+        sku_var_maps[key] = {
+            "order": order_vars, "inv": inv_vars, "back": back_vars, "y": y_vars, "k": k_vars, "ss_slack": ss_slack_vars,
+            "supplier_order": supplier_order_vars if has_suppliers else {},
+            "supplier_y": supplier_y_vars if has_suppliers else {},
+        }
+        sku_meta[key] = {
+            "days": days_list, "demand_s": demand_s_list, "lead_time": lead_time, "safety_stock_s": safety_stock_s_val,
+            "suppliers": sups if has_suppliers else [],
+        }
 
     if not sku_var_maps:
         return _empty_response(
@@ -1029,6 +1359,90 @@ def solve_replenishment(
             model.Add(sum(end_back_vars) <= allowed_backlog)
             _tag("SERVICE_LEVEL_GLOBAL", "Hard end-of-horizon service-level target.")
 
+    # V2 Feature 4: Per-period budget constraints
+    budget_per_period_cap_s: Dict[date, int] = {}
+    budget_per_period_mode: Optional[str] = None
+    if budget_per_period_raw is not None:
+        auto_cost = any(v > 0.0 for v in unit_cost_map.values())
+        use_cost = budget_mode == "spend" or (budget_mode not in {"quantity"} and auto_cost)
+        budget_per_period_mode = "spend" if use_cost else "quantity"
+        for idx, day in enumerate(all_days):
+            cap = _capacity_for_period(budget_per_period_raw, idx, day)
+            if cap is None:
+                continue
+            if use_cost:
+                spend_day: List[Any] = []
+                for k2 in ordered_keys:
+                    if k2 not in sku_var_maps:
+                        continue
+                    sk = k2[0]
+                    m2 = sku_meta[k2]
+                    coeff_c = max(0, int(round(max(0.0, unit_cost_map.get(sk, 1.0)) * SCALE)))
+                    for t_idx, d in enumerate(m2["days"]):
+                        if d == day:
+                            spend_day.append(coeff_c * sku_var_maps[k2]["order"][t_idx])
+                if spend_day:
+                    cap_s2 = int(round(cap * SCALE * SCALE))
+                    model.Add(sum(spend_day) <= cap_s2)
+                    budget_per_period_cap_s[day] = cap_s2
+            else:
+                day_orders = order_vars_by_day.get(day, [])
+                if day_orders:
+                    cap_s_pp = _s(cap)
+                    model.Add(sum(day_orders) <= cap_s_pp)
+                    budget_per_period_cap_s[day] = cap_s_pp
+            _tag(f"BUDGET_PERIOD[{day.isoformat()}]", "Per-period budget cap.", scope="period", period=day.isoformat())
+
+    # V2 Feature 5: Volume-based inventory capacity
+    volume_cap_by_day_s: Dict[date, int] = {}
+    if volume_cap_raw is not None and sku_volume_map:
+        for idx, day in enumerate(all_days):
+            cap = _capacity_for_period(volume_cap_raw, idx, day)
+            if cap is None:
+                continue
+            cap_s2 = int(round(cap * SCALE * SCALE))
+            vol_terms: List[Any] = []
+            for k2 in ordered_keys:
+                if k2 not in sku_var_maps:
+                    continue
+                vol = sku_volume_map.get(k2[0], 0.0)
+                if vol <= 0.0:
+                    continue
+                vol_coeff = max(0, int(round(vol * SCALE)))
+                m2 = sku_meta[k2]
+                for t_idx, d in enumerate(m2["days"]):
+                    if d == day:
+                        vol_terms.append(vol_coeff * sku_var_maps[k2]["inv"][t_idx])
+            if vol_terms:
+                model.Add(sum(vol_terms) <= cap_s2)
+                volume_cap_by_day_s[day] = cap_s2
+                _tag(f"CAP_VOL[{day.isoformat()}]", "Volume-based inventory capacity.", scope="period", period=day.isoformat())
+
+    # V2 Feature 5: Weight-based inventory capacity
+    weight_cap_by_day_s: Dict[date, int] = {}
+    if weight_cap_raw is not None and sku_weight_map:
+        for idx, day in enumerate(all_days):
+            cap = _capacity_for_period(weight_cap_raw, idx, day)
+            if cap is None:
+                continue
+            cap_s2 = int(round(cap * SCALE * SCALE))
+            wt_terms: List[Any] = []
+            for k2 in ordered_keys:
+                if k2 not in sku_var_maps:
+                    continue
+                wt = sku_weight_map.get(k2[0], 0.0)
+                if wt <= 0.0:
+                    continue
+                wt_coeff = max(0, int(round(wt * SCALE)))
+                m2 = sku_meta[k2]
+                for t_idx, d in enumerate(m2["days"]):
+                    if d == day:
+                        wt_terms.append(wt_coeff * sku_var_maps[k2]["inv"][t_idx])
+            if wt_terms:
+                model.Add(sum(wt_terms) <= cap_s2)
+                weight_cap_by_day_s[day] = cap_s2
+                _tag(f"CAP_WEIGHT[{day.isoformat()}]", "Weight-based inventory capacity.", scope="period", period=day.isoformat())
+
     if obj_terms:
         model.Minimize(sum(obj_terms))
 
@@ -1065,6 +1479,7 @@ def solve_replenishment(
             restoring = [r["relaxed_tags"][0] for r in relaxation_analysis if r.get("feasible_after_relaxation")]
             if restoring:
                 infeasibility_analysis = _summarize_infeasibility(restoring)
+        relaxation_applied = _build_relaxation_summary(relaxation_analysis)
 
         diagnostics: Dict[str, Any] = {}
         if diagnose_mode and not internal_diagnose:
@@ -1148,6 +1563,9 @@ def solve_replenishment(
                     "production_capacity": None,
                     "inventory_capacity": None,
                 },
+                "binding_constraints": [],
+                "shadow_prices": None,
+                "relaxation_applied": relaxation_applied,
                 "solver_meta": _build_solver_meta(
                     status_info=status_info,
                     settings=solver_settings,
@@ -1210,7 +1628,29 @@ def solve_replenishment(
             total_stockout += _us(back_val_s)
             total_holding += _us(inv_val_s)
 
-            if order_val_s > 0:
+            sup_vars = vars_.get("supplier_order", {})
+            meta_sups = meta.get("suppliers", [])
+            if order_val_s > 0 and meta_sups:
+                # V2: Multi-supplier plan lines
+                order_day = days_list[t]
+                for sup in meta_sups:
+                    sid = sup.supplier_id
+                    s_val_s = int(solver.Value(sup_vars[sid][t]))
+                    if s_val_s > 0:
+                        s_qty = _us(s_val_s)
+                        arrival_day = order_day + timedelta(days=sup.lead_time_days)
+                        plan_rows.append({
+                            "sku": sku,
+                            "plant_id": plant_id or None,
+                            "supplier_id": sid,
+                            "order_date": order_day.isoformat(),
+                            "arrival_date": arrival_day.isoformat(),
+                            "order_qty": float(round(s_qty, 6)),
+                        })
+                        total_order_qty += s_qty
+                        total_spend += s_qty * sup.unit_cost
+            elif order_val_s > 0:
+                # Single-supplier path (backward compatible)
                 order_qty = _us(order_val_s)
                 order_day = days_list[t]
                 arrival_day = order_day + timedelta(days=lead_time)
@@ -1224,6 +1664,8 @@ def solve_replenishment(
                 total_order_qty += order_qty
                 total_spend += order_qty * sku_unit_cost
 
+            if order_val_s > 0:
+                order_qty = _us(order_val_s)
                 if order_qty < -1e-9:
                     nonneg_failed += 1
                 if sku_moq_s > 0 and order_val_s < sku_moq_s - 1:
@@ -1234,6 +1676,94 @@ def solve_replenishment(
                     max_failed += 1
 
     plan_rows.sort(key=lambda r: (r["sku"], r.get("plant_id") or "", r["order_date"]))
+
+    # V2 Feature 6: Extract safety stock violations
+    ss_violations: Dict[str, List[Dict[str, Any]]] = {}
+    total_ss_violation_periods = 0
+    for key in ordered_keys:
+        if key not in sku_var_maps:
+            continue
+        sku_k, plant_k = key
+        vars_ = sku_var_maps[key]
+        meta_ = sku_meta[key]
+        if vars_.get("ss_slack"):
+            safety_stock_real = _us(meta_.get("safety_stock_s", 0))
+            for t in range(len(meta_["days"])):
+                slack_val = _us(int(solver.Value(vars_["ss_slack"][t])))
+                if slack_val > 1e-6:
+                    total_ss_violation_periods += 1
+                    ss_violations.setdefault(sku_k, []).append({
+                        "period": meta_["days"][t].isoformat(),
+                        "shortfall": round(slack_val, 4),
+                        "safety_stock_target": round(safety_stock_real, 4),
+                        "actual_inventory": round(_us(int(solver.Value(vars_["inv"][t]))), 4),
+                    })
+
+    # V2 Feature 4: Per-period budget verification
+    budget_pp_usage_by_day: Dict[date, float] = {}
+    budget_pp_failed = 0
+    if budget_per_period_cap_s:
+        for day in sorted(budget_per_period_cap_s.keys()):
+            if budget_per_period_mode == "spend":
+                used_s2 = 0
+                for k2 in ordered_keys:
+                    if k2 not in sku_var_maps:
+                        continue
+                    sk = k2[0]
+                    m2 = sku_meta[k2]
+                    coeff_c = max(0, int(round(max(0.0, unit_cost_map.get(sk, 1.0)) * SCALE)))
+                    for t_idx, d in enumerate(m2["days"]):
+                        if d == day:
+                            used_s2 += coeff_c * int(solver.Value(sku_var_maps[k2]["order"][t_idx]))
+                budget_pp_usage_by_day[day] = used_s2 / (SCALE * SCALE) if SCALE else 0.0
+            else:
+                used_s = sum(int(solver.Value(v)) for v in order_vars_by_day.get(day, []))
+                budget_pp_usage_by_day[day] = _us(used_s)
+            cap_real = budget_pp_usage_by_day[day]
+            cap_limit = budget_per_period_cap_s[day] / (SCALE * SCALE) if budget_per_period_mode == "spend" else _us(budget_per_period_cap_s[day])
+            if cap_real > cap_limit + 1e-6:
+                budget_pp_failed += 1
+
+    # V2 Feature 5: Volume/weight verification
+    volume_usage_by_day: Dict[date, float] = {}
+    volume_failed = 0
+    if volume_cap_by_day_s:
+        for day in sorted(volume_cap_by_day_s.keys()):
+            used_s2 = 0
+            for k2 in ordered_keys:
+                if k2 not in sku_var_maps:
+                    continue
+                vol = sku_volume_map.get(k2[0], 0.0)
+                if vol <= 0.0:
+                    continue
+                vol_coeff = max(0, int(round(vol * SCALE)))
+                m2 = sku_meta[k2]
+                for t_idx, d in enumerate(m2["days"]):
+                    if d == day:
+                        used_s2 += vol_coeff * int(solver.Value(sku_var_maps[k2]["inv"][t_idx]))
+            volume_usage_by_day[day] = used_s2 / (SCALE * SCALE) if SCALE else 0.0
+            if used_s2 > volume_cap_by_day_s[day] + 1:
+                volume_failed += 1
+
+    weight_usage_by_day: Dict[date, float] = {}
+    weight_failed = 0
+    if weight_cap_by_day_s:
+        for day in sorted(weight_cap_by_day_s.keys()):
+            used_s2 = 0
+            for k2 in ordered_keys:
+                if k2 not in sku_var_maps:
+                    continue
+                wt = sku_weight_map.get(k2[0], 0.0)
+                if wt <= 0.0:
+                    continue
+                wt_coeff = max(0, int(round(wt * SCALE)))
+                m2 = sku_meta[k2]
+                for t_idx, d in enumerate(m2["days"]):
+                    if d == day:
+                        used_s2 += wt_coeff * int(solver.Value(sku_var_maps[k2]["inv"][t_idx]))
+            weight_usage_by_day[day] = used_s2 / (SCALE * SCALE) if SCALE else 0.0
+            if used_s2 > weight_cap_by_day_s[day] + 1:
+                weight_failed += 1
 
     service_level: Optional[float] = None
     if total_demand > 0.0:
@@ -1296,6 +1826,101 @@ def solve_replenishment(
                 "message": "Hard service-level target violated.",
             })
 
+    # ── Compute slack, binding, and natural language for each constraint ──
+    budget_slack: Optional[float] = None
+    budget_binding = False
+    budget_slack_unit: Optional[str] = None
+    budget_nl: Optional[str] = None
+    if budget_cap is not None:
+        budget_used = total_spend if budget_mode_effective == "spend" else total_order_qty
+        budget_slack = round(budget_cap - budget_used, 4)
+        budget_slack_unit = "USD" if budget_mode_effective == "spend" else "units"
+        budget_binding = budget_slack < budget_cap * 0.03  # within 3% of cap
+        if budget_binding:
+            budget_nl = f"Budget cap is nearly exhausted (remaining: {budget_slack:,.1f} {budget_slack_unit})."
+        else:
+            budget_nl = f"Budget utilization is healthy with {budget_slack:,.1f} {budget_slack_unit} remaining."
+
+    # Production cap: min slack across all periods
+    prod_min_slack: Optional[float] = None
+    prod_binding = False
+    prod_nl: Optional[str] = None
+    if production_cap_by_day_s:
+        slacks = []
+        for day, cap_s in production_cap_by_day_s.items():
+            used_s = production_usage_s_by_day.get(day, 0)
+            slacks.append(_us(cap_s - used_s))
+        prod_min_slack = round(min(slacks), 4) if slacks else None
+        prod_binding = prod_min_slack is not None and prod_min_slack < 1.0
+        if prod_binding:
+            prod_nl = f"Production capacity is binding (tightest period slack: {prod_min_slack:,.1f} units)."
+
+    # Inventory cap: min slack across all periods
+    inv_min_slack: Optional[float] = None
+    inv_binding = False
+    inv_nl: Optional[str] = None
+    if inventory_cap_by_day_s:
+        slacks = []
+        for day, cap_s in inventory_cap_by_day_s.items():
+            used_s = inventory_usage_s_by_day.get(day, 0)
+            slacks.append(_us(cap_s - used_s))
+        inv_min_slack = round(min(slacks), 4) if slacks else None
+        inv_binding = inv_min_slack is not None and inv_min_slack < 1.0
+        if inv_binding:
+            inv_nl = f"Inventory capacity is binding (tightest period slack: {inv_min_slack:,.1f} units)."
+
+    # V2: Per-period budget binding detection
+    budget_pp_min_slack: Optional[float] = None
+    budget_pp_binding = False
+    budget_pp_nl: Optional[str] = None
+    if budget_per_period_cap_s:
+        slacks = []
+        for day in sorted(budget_per_period_cap_s.keys()):
+            cap_real = budget_per_period_cap_s[day] / (SCALE * SCALE) if budget_per_period_mode == "spend" else _us(budget_per_period_cap_s[day])
+            used_real = budget_pp_usage_by_day.get(day, 0.0)
+            slacks.append(round(cap_real - used_real, 4))
+        budget_pp_min_slack = min(slacks) if slacks else None
+        budget_pp_binding = budget_pp_min_slack is not None and budget_pp_min_slack < max(1.0, (cap_real * 0.03 if cap_real else 1.0))
+        if budget_pp_binding:
+            budget_pp_nl = f"Per-period budget is binding (tightest slack: {budget_pp_min_slack:,.1f})."
+
+    # V2: Volume capacity binding detection
+    vol_min_slack: Optional[float] = None
+    vol_binding = False
+    vol_nl: Optional[str] = None
+    if volume_cap_by_day_s:
+        slacks = []
+        for day in sorted(volume_cap_by_day_s.keys()):
+            cap_real = volume_cap_by_day_s[day] / (SCALE * SCALE)
+            used_real = volume_usage_by_day.get(day, 0.0)
+            slacks.append(round(cap_real - used_real, 4))
+        vol_min_slack = min(slacks) if slacks else None
+        vol_binding = vol_min_slack is not None and vol_min_slack < 1.0
+        if vol_binding:
+            vol_nl = f"Volume capacity is binding (tightest slack: {vol_min_slack:,.1f})."
+
+    # V2: Weight capacity binding detection
+    wt_min_slack: Optional[float] = None
+    wt_binding = False
+    wt_nl: Optional[str] = None
+    if weight_cap_by_day_s:
+        slacks = []
+        for day in sorted(weight_cap_by_day_s.keys()):
+            cap_real = weight_cap_by_day_s[day] / (SCALE * SCALE)
+            used_real = weight_usage_by_day.get(day, 0.0)
+            slacks.append(round(cap_real - used_real, 4))
+        wt_min_slack = min(slacks) if slacks else None
+        wt_binding = wt_min_slack is not None and wt_min_slack < 1.0
+        if wt_binding:
+            wt_nl = f"Weight capacity is binding (tightest slack: {wt_min_slack:,.1f})."
+
+    # V2: Safety stock binding detection
+    ss_binding = total_ss_violation_periods > 0
+    ss_nl = f"Safety stock breached in {total_ss_violation_periods} SKU-periods." if ss_binding else None
+
+    moq_binding = moq_failed > 0
+    moq_nl = f"MOQ violations on {moq_failed} rows." if moq_binding else None
+
     constraints_checked: List[Dict[str, Any]] = [
         _mk_constraint_check(
             name="order_qty_non_negative",
@@ -1304,6 +1929,7 @@ def solve_replenishment(
             details=f"Negative quantity rows: {nonneg_failed}.",
             description="All planned order quantities must be non-negative.",
             scope="row",
+            binding=nonneg_failed > 0,
         ),
         _mk_constraint_check(
             name="moq",
@@ -1312,6 +1938,10 @@ def solve_replenishment(
             details=f"Rows violating MOQ: {moq_failed}.",
             description="MOQ enforcement across SKU-period rows.",
             scope="sku_period",
+            binding=moq_binding,
+            slack=0.0 if moq_binding else None,
+            slack_unit="units",
+            natural_language=moq_nl,
         ),
         _mk_constraint_check(
             name="pack_size_multiple",
@@ -1320,6 +1950,7 @@ def solve_replenishment(
             details=f"Rows violating pack-size multiple: {pack_failed}.",
             description="Pack-size multiple enforcement across SKU-period rows.",
             scope="sku_period",
+            binding=pack_failed > 0,
         ),
         _mk_constraint_check(
             name="budget_cap",
@@ -1327,6 +1958,10 @@ def solve_replenishment(
             passed=budget_passed,
             details=budget_detail,
             description="Shared budget cap across all SKUs.",
+            binding=budget_binding if budget_cap is not None else None,
+            slack=budget_slack,
+            slack_unit=budget_slack_unit,
+            natural_language=budget_nl,
         ),
         _mk_constraint_check(
             name="max_order_qty",
@@ -1335,6 +1970,7 @@ def solve_replenishment(
             details=f"Rows violating max_order_qty: {max_failed}.",
             description="Max order quantity per SKU-period.",
             scope="sku_period",
+            binding=max_failed > 0,
         ),
     ]
     if production_cap_by_day_s:
@@ -1347,6 +1983,10 @@ def solve_replenishment(
             description="Shared production/order capacity per period.",
             scope="period",
             tags=prod_period_tags,
+            binding=prod_binding,
+            slack=prod_min_slack,
+            slack_unit="units",
+            natural_language=prod_nl,
         ))
     if inventory_cap_by_day_s:
         inv_period_tags = [f"CAP_INV[{day.isoformat()}]" for day in sorted(inventory_cap_by_day_s.keys())]
@@ -1358,6 +1998,10 @@ def solve_replenishment(
             description="Shared inventory capacity per period.",
             scope="period",
             tags=inv_period_tags,
+            binding=inv_binding,
+            slack=inv_min_slack,
+            slack_unit="units",
+            natural_language=inv_nl,
         ))
     if service_level_target is not None:
         constraints_checked.append(_mk_constraint_check(
@@ -1366,6 +2010,70 @@ def solve_replenishment(
             passed=service_target_passed,
             details=service_target_details,
             description="Hard end-of-horizon service-level target.",
+        ))
+
+    # V2: Safety stock constraint check
+    constraints_checked.append(_mk_constraint_check(
+        name="safety_stock",
+        tag="SAFETY_STOCK",
+        passed=total_ss_violation_periods == 0,
+        details=f"Safety stock violations across {total_ss_violation_periods} SKU-periods.",
+        description="Soft safety stock floor on inventory.",
+        severity="soft",
+        scope="sku_period",
+        binding=ss_binding,
+        natural_language=ss_nl,
+    ))
+
+    # V2: Per-period budget constraint check
+    if budget_per_period_cap_s:
+        pp_tags = [f"BUDGET_PERIOD[{day.isoformat()}]" for day in sorted(budget_per_period_cap_s.keys())]
+        constraints_checked.append(_mk_constraint_check(
+            name="budget_per_period",
+            tag="BUDGET_PERIOD",
+            passed=budget_pp_failed == 0,
+            details=f"Periods violating per-period budget: {budget_pp_failed}.",
+            description="Per-period budget cap.",
+            scope="period",
+            tags=pp_tags,
+            binding=budget_pp_binding,
+            slack=budget_pp_min_slack,
+            slack_unit="USD" if budget_per_period_mode == "spend" else "units",
+            natural_language=budget_pp_nl,
+        ))
+
+    # V2: Volume capacity constraint check
+    if volume_cap_by_day_s:
+        vol_tags = [f"CAP_VOL[{day.isoformat()}]" for day in sorted(volume_cap_by_day_s.keys())]
+        constraints_checked.append(_mk_constraint_check(
+            name="volume_capacity",
+            tag="CAP_VOL",
+            passed=volume_failed == 0,
+            details=f"Periods violating volume capacity: {volume_failed}.",
+            description="Volume-based inventory capacity per period.",
+            scope="period",
+            tags=vol_tags,
+            binding=vol_binding,
+            slack=vol_min_slack,
+            slack_unit="volume_units",
+            natural_language=vol_nl,
+        ))
+
+    # V2: Weight capacity constraint check
+    if weight_cap_by_day_s:
+        wt_tags = [f"CAP_WEIGHT[{day.isoformat()}]" for day in sorted(weight_cap_by_day_s.keys())]
+        constraints_checked.append(_mk_constraint_check(
+            name="weight_capacity",
+            tag="CAP_WEIGHT",
+            passed=weight_failed == 0,
+            details=f"Periods violating weight capacity: {weight_failed}.",
+            description="Weight-based inventory capacity per period.",
+            scope="period",
+            tags=wt_tags,
+            binding=wt_binding,
+            slack=wt_min_slack,
+            slack_unit="weight_units",
+            natural_language=wt_nl,
         ))
 
     if total_stockout > 1e-9:
@@ -1461,6 +2169,78 @@ def solve_replenishment(
             "periods": period_rows,
         }
 
+    # V2: Per-period budget shared KPI
+    budget_pp_shared_kpi = None
+    if budget_per_period_cap_s:
+        pp_rows: List[Dict[str, Any]] = []
+        pp_utils: List[float] = []
+        for day in sorted(budget_per_period_cap_s.keys()):
+            cap_real = budget_per_period_cap_s[day] / (SCALE * SCALE) if budget_per_period_mode == "spend" else _us(budget_per_period_cap_s[day])
+            used_real = budget_pp_usage_by_day.get(day, 0.0)
+            util_v = None if cap_real <= 0 else used_real / cap_real
+            if util_v is not None:
+                pp_utils.append(util_v)
+            pp_rows.append({"period": day.isoformat(), "used": round(used_real, 6), "cap": round(cap_real, 6), "utilization": None if util_v is None else round(util_v, 6)})
+        budget_pp_shared_kpi = {
+            "mode": budget_per_period_mode or "quantity",
+            "avg_utilization": None if not pp_utils else round(sum(pp_utils) / len(pp_utils), 6),
+            "max_utilization": None if not pp_utils else round(max(pp_utils), 6),
+            "binding_periods": [r["period"] for r in pp_rows if (r["utilization"] or 0.0) >= 0.999],
+            "periods": pp_rows,
+        }
+
+    # V2: Volume capacity shared KPI
+    volume_shared_kpi = None
+    if volume_cap_by_day_s:
+        v_rows: List[Dict[str, Any]] = []
+        v_utils: List[float] = []
+        for day in sorted(volume_cap_by_day_s.keys()):
+            cap_real = volume_cap_by_day_s[day] / (SCALE * SCALE)
+            used_real = volume_usage_by_day.get(day, 0.0)
+            util_v = None if cap_real <= 0 else used_real / cap_real
+            if util_v is not None:
+                v_utils.append(util_v)
+            v_rows.append({"period": day.isoformat(), "used": round(used_real, 6), "cap": round(cap_real, 6), "utilization": None if util_v is None else round(util_v, 6)})
+        volume_shared_kpi = {
+            "avg_utilization": None if not v_utils else round(sum(v_utils) / len(v_utils), 6),
+            "max_utilization": None if not v_utils else round(max(v_utils), 6),
+            "binding_periods": [r["period"] for r in v_rows if (r["utilization"] or 0.0) >= 0.999],
+            "periods": v_rows,
+        }
+
+    # V2: Weight capacity shared KPI
+    weight_shared_kpi = None
+    if weight_cap_by_day_s:
+        w_rows: List[Dict[str, Any]] = []
+        w_utils: List[float] = []
+        for day in sorted(weight_cap_by_day_s.keys()):
+            cap_real = weight_cap_by_day_s[day] / (SCALE * SCALE)
+            used_real = weight_usage_by_day.get(day, 0.0)
+            util_v = None if cap_real <= 0 else used_real / cap_real
+            if util_v is not None:
+                w_utils.append(util_v)
+            w_rows.append({"period": day.isoformat(), "used": round(used_real, 6), "cap": round(cap_real, 6), "utilization": None if util_v is None else round(util_v, 6)})
+        weight_shared_kpi = {
+            "avg_utilization": None if not w_utils else round(sum(w_utils) / len(w_utils), 6),
+            "max_utilization": None if not w_utils else round(max(w_utils), 6),
+            "binding_periods": [r["period"] for r in w_rows if (r["utilization"] or 0.0) >= 0.999],
+            "periods": w_rows,
+        }
+
+    # V2 Feature 7: Binding constraints list
+    binding_constraints = [c["name"] for c in constraints_checked if c.get("binding") is True]
+
+    # V2 Feature 2: Shadow price analysis (opt-in)
+    compute_sp = _to_bool(_read_path(payload, "settings.compute_shadow_prices", False), False)
+    shadow_prices: Dict[str, Any] = {}
+    if compute_sp and not internal_diagnose and status_info.has_feasible_solution:
+        shadow_prices = _compute_shadow_prices(payload, constraints_checked, est_cost)
+        for check in constraints_checked:
+            sp_entry = shadow_prices.get(check["name"])
+            if sp_entry:
+                check["shadow_price_approx"] = sp_entry["shadow_price_approx"]
+                check["shadow_price_unit"] = sp_entry["unit"]
+
     proof_infeasibility_tags = []
     for row in infeasible_reasons_detailed:
         proof_infeasibility_tags.extend(_as_list(row.get("top_offending_tags")))
@@ -1472,6 +2252,7 @@ def solve_replenishment(
     relaxation_analysis: List[Dict[str, Any]] = []
     if diagnose_mode and not internal_diagnose:
         relaxation_analysis = _run_relaxation_analysis_single(payload)
+    relaxation_applied = _build_relaxation_summary(relaxation_analysis)
     diagnostics: Dict[str, Any] = {}
     if diagnose_mode and not internal_diagnose:
         diagnostics = {
@@ -1495,7 +2276,14 @@ def solve_replenishment(
                 "budget": budget_shared_kpi,
                 "production_capacity": production_shared_kpi,
                 "inventory_capacity": inventory_shared_kpi,
+                "budget_per_period": budget_pp_shared_kpi,
+                "volume_capacity": volume_shared_kpi,
+                "weight_capacity": weight_shared_kpi,
+                "safety_stock_violations": ss_violations if ss_violations else None,
             },
+            "binding_constraints": binding_constraints,
+            "shadow_prices": shadow_prices if shadow_prices else None,
+            "relaxation_applied": relaxation_applied,
             "solver_meta": _build_solver_meta(
                 status_info=SolverStatusInfo(
                     status=status,
@@ -1509,7 +2297,16 @@ def solve_replenishment(
                 objective_value=obj_real,
                 best_bound=bound_real,
                 gap=gap,
-                extra={"deterministic_mode": bool(solver_settings.deterministic_mode)},
+                extra={
+                    "deterministic_mode": bool(solver_settings.deterministic_mode),
+                    "v2_features": {
+                        "multi_supplier": bool(any(m.get("suppliers") for m in sku_meta.values())),
+                        "shadow_prices": bool(shadow_prices),
+                        "safety_stock_soft": bool(any(m.get("safety_stock_s", 0) > 0 for m in sku_meta.values())),
+                        "per_period_budget": bool(budget_per_period_cap_s),
+                        "volume_weight_capacity": bool(volume_cap_by_day_s or weight_cap_by_day_s),
+                    },
+                },
             ),
             "infeasible_reasons": sorted(set(infeasible_reasons)),
             "infeasible_reason_details": infeasible_reasons_detailed,
@@ -1517,10 +2314,38 @@ def solve_replenishment(
             "diagnostics": diagnostics,
             "proof": {
                 "objective_terms": [
-                    {"name": "ordered_units", "value": round(total_order_qty, 6), "note": "Total planned replenishment quantity."},
-                    {"name": "stockout_units", "value": round(total_stockout, 6), "note": "Projected unmet demand units (backlog)."},
-                    {"name": "holding_units", "value": round(total_holding, 6), "note": "Projected positive inventory accumulation."},
-                    {"name": "estimated_total_cost", "value": round(est_cost, 6), "note": "ordering_qty + stockout_penalty × backlog + holding_cost × inventory."},
+                    {
+                        "name": "ordered_units",
+                        "value": round(total_order_qty, 6),
+                        "note": "Total planned replenishment quantity.",
+                        "units": "units",
+                        "business_label": "Procurement volume",
+                    },
+                    {
+                        "name": "stockout_units",
+                        "value": round(total_stockout, 6),
+                        "note": "Projected unmet demand units (backlog).",
+                        "units": "units",
+                        "business_label": "Shortage exposure",
+                        "qty_driver": round(total_stockout, 6),
+                        "unit_cost_driver": round(stockout_penalty, 6) if stockout_penalty else None,
+                    },
+                    {
+                        "name": "holding_units",
+                        "value": round(total_holding, 6),
+                        "note": "Projected positive inventory accumulation.",
+                        "units": "units",
+                        "business_label": "Inventory holding",
+                        "qty_driver": round(total_holding, 6),
+                        "unit_cost_driver": round(holding_cost, 6) if holding_cost else None,
+                    },
+                    {
+                        "name": "estimated_total_cost",
+                        "value": round(est_cost, 6),
+                        "note": "ordering_qty + stockout_penalty × backlog + holding_cost × inventory.",
+                        "units": "cost_units",
+                        "business_label": "Total plan cost",
+                    },
                 ],
                 "constraints_checked": constraints_checked,
                 "constraint_tags": constraint_tags,
@@ -1528,6 +2353,16 @@ def solve_replenishment(
                 "relaxation_analysis": relaxation_analysis,
                 "diagnose_mode": bool(diagnose_mode),
             },
+            "explain_summary": _build_explain_summary(
+                status=status,
+                constraints_checked=constraints_checked,
+                objective_terms=[],
+                total_stockout=total_stockout,
+                stockout_penalty=stockout_penalty,
+                total_spend=total_spend,
+                budget_cap=budget_cap,
+                budget_mode_effective=budget_mode_effective,
+            ),
         },
         default_engine="cp_sat",
         default_status=status,

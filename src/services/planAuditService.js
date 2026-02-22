@@ -8,6 +8,51 @@
 import { supabase } from './supabaseClient';
 
 const TABLE = 'di_plan_audit_log';
+let isAuditTableUnavailable = false;
+let hasWarnedAuditTableUnavailable = false;
+
+function isMissingTableOrSchemaCacheError(error, tableName = TABLE) {
+  if (!error) return false;
+
+  const code = String(error?.code || '').toUpperCase();
+  const status = Number(error?.status || 0);
+  const blob = [
+    error?.message,
+    error?.details,
+    error?.hint,
+    error?.error_description
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+
+  const normalizedTable = String(tableName || '').toLowerCase();
+  const tableReferenced = normalizedTable ? blob.includes(normalizedTable) : false;
+  const missingSignal =
+    blob.includes('schema cache') ||
+    blob.includes('does not exist') ||
+    blob.includes('relation') ||
+    blob.includes('not found') ||
+    blob.includes('could not find the table');
+
+  return (
+    code === '42P01' ||
+    code === 'PGRST205' ||
+    status === 404 ||
+    (tableReferenced && missingSignal)
+  );
+}
+
+function markAuditTableUnavailable(error) {
+  isAuditTableUnavailable = true;
+  if (!hasWarnedAuditTableUnavailable) {
+    console.warn(
+      '[planAuditService] di_plan_audit_log table unavailable. Run sql/migrations/di_plan_audit_log.sql, then NOTIFY pgrst, \'reload schema\'.',
+      error?.message || ''
+    );
+    hasWarnedAuditTableUnavailable = true;
+  }
+}
 
 export async function recordPlanGenerated({
   userId,
@@ -83,7 +128,7 @@ export async function recordScenarioRun({
 }
 
 export async function getAuditTrailForRun(userId, runId, limit = 20) {
-  if (!userId || !runId) return [];
+  if (!userId || !runId || isAuditTableUnavailable) return [];
 
   try {
     const { data, error } = await supabase
@@ -95,8 +140,10 @@ export async function getAuditTrailForRun(userId, runId, limit = 20) {
       .limit(limit);
 
     if (error) {
-      const msg = error.message || '';
-      if (msg.includes('does not exist') || msg.includes('42P01')) return [];
+      if (isMissingTableOrSchemaCacheError(error)) {
+        markAuditTableUnavailable(error);
+        return [];
+      }
       throw error;
     }
 
@@ -108,7 +155,7 @@ export async function getAuditTrailForRun(userId, runId, limit = 20) {
 }
 
 export async function getRecentAuditTrail(userId, limit = 50) {
-  if (!userId) return [];
+  if (!userId || isAuditTableUnavailable) return [];
 
   try {
     const { data, error } = await supabase
@@ -119,8 +166,10 @@ export async function getRecentAuditTrail(userId, limit = 50) {
       .limit(limit);
 
     if (error) {
-      const msg = error.message || '';
-      if (msg.includes('does not exist') || msg.includes('42P01')) return [];
+      if (isMissingTableOrSchemaCacheError(error)) {
+        markAuditTableUnavailable(error);
+        return [];
+      }
       throw error;
     }
 
@@ -142,7 +191,7 @@ async function appendAuditEvent({
   note = '',
   metadata = {}
 }) {
-  if (!userId) return null;
+  if (!userId || isAuditTableUnavailable) return null;
 
   const payload = {
     user_id: userId,
@@ -165,9 +214,8 @@ async function appendAuditEvent({
       .single();
 
     if (error) {
-      const msg = error.message || '';
-      if (msg.includes('does not exist') || msg.includes('42P01')) {
-        console.warn('[planAuditService] di_plan_audit_log table not found. Run migration first.');
+      if (isMissingTableOrSchemaCacheError(error)) {
+        markAuditTableUnavailable(error);
         return null;
       }
       throw error;

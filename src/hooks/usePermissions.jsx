@@ -14,6 +14,64 @@
 import { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { supabase } from '../services/supabaseClient';
 
+const ORG_MEMBERS_TABLE = 'org_members';
+let isOrgMembersUnavailable = false;
+let hasWarnedOrgMembersUnavailable = false;
+
+function isMissingTableOrSchemaCacheError(error, tableName) {
+  if (!error) return false;
+
+  const code = String(error?.code || '').toUpperCase();
+  const status = Number(error?.status || 0);
+  const blob = [
+    error?.message,
+    error?.details,
+    error?.hint,
+    error?.error_description
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+
+  const normalizedTable = String(tableName || '').toLowerCase();
+  const tableReferenced = normalizedTable ? blob.includes(normalizedTable) : false;
+  const missingSignal =
+    blob.includes('schema cache') ||
+    blob.includes('does not exist') ||
+    blob.includes('relation') ||
+    blob.includes('not found') ||
+    blob.includes('could not find the table');
+
+  return (
+    code === '42P01' ||
+    code === 'PGRST205' ||
+    status === 404 ||
+    (tableReferenced && missingSignal)
+  );
+}
+
+function buildViewerState(errorMessage = null) {
+  return {
+    role: 'viewer',
+    orgId: null,
+    plantScope: null,
+    datasetScope: null,
+    isLoaded: true,
+    error: errorMessage,
+  };
+}
+
+function markOrgMembersUnavailable(error) {
+  isOrgMembersUnavailable = true;
+  if (!hasWarnedOrgMembersUnavailable) {
+    console.warn(
+      '[usePermissions] org_members table unavailable. Run sql/migrations/organizations_schema.sql, then NOTIFY pgrst, \'reload schema\'.',
+      error?.message || ''
+    );
+    hasWarnedOrgMembersUnavailable = true;
+  }
+}
+
 // ── Action definitions (synced with backend rbac.py) ──────────────────────
 
 export const ACTIONS = {
@@ -96,9 +154,13 @@ export function PermissionsProvider({ userId, children }) {
     if (!userId) {
       setState((prev) => ({
         ...prev,
-        role: 'viewer',
-        isLoaded: true,
+        ...buildViewerState(null),
       }));
+      return;
+    }
+
+    if (isOrgMembersUnavailable) {
+      setState(buildViewerState(null));
       return;
     }
 
@@ -109,19 +171,14 @@ export function PermissionsProvider({ userId, children }) {
       .select('role, org_id, plant_scope, dataset_scope')
       .eq('user_id', userId)
       .limit(1)
-      .single()
+      .maybeSingle()
       .then(({ data, error }) => {
         if (!active) return;
         if (error || !data) {
+          const missingTable = isMissingTableOrSchemaCacheError(error, ORG_MEMBERS_TABLE);
+          if (missingTable) markOrgMembersUnavailable(error);
           // No org_member record → fallback to viewer (safest default)
-          setState({
-            role: 'viewer',
-            orgId: null,
-            plantScope: null,
-            datasetScope: null,
-            isLoaded: true,
-            error: error?.message || null,
-          });
+          setState(buildViewerState(missingTable ? null : error?.message || null));
           return;
         }
         setState({
