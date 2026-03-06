@@ -22,6 +22,34 @@ export const WORKFLOW_NAMES = {
   B: 'workflow_B_risk_exceptions'
 };
 
+export const WORKFLOW_REGISTRY_ERROR_CODES = {
+  INVALID_RUN_ID: 'INVALID_RUN_ID',
+  RUN_NOT_FOUND: 'RUN_NOT_FOUND'
+};
+
+const DEFAULT_ERROR_ACTIONS = {
+  [WORKFLOW_REGISTRY_ERROR_CODES.INVALID_RUN_ID]: [
+    'Retry from the workflow card with a valid run id.',
+    'Start a new workflow run if this card is stale.'
+  ],
+  [WORKFLOW_REGISTRY_ERROR_CODES.RUN_NOT_FOUND]: [
+    'This workflow run is missing or no longer accessible.',
+    'Start a new workflow run from the latest dataset card.'
+  ]
+};
+
+export class WorkflowRegistryError extends Error {
+  constructor(code, message, options = {}) {
+    super(message);
+    this.name = 'WorkflowRegistryError';
+    this.code = code || WORKFLOW_REGISTRY_ERROR_CODES.INVALID_RUN_ID;
+    this.run_id = options.run_id ?? null;
+    this.nextActions = Array.isArray(options.nextActions) && options.nextActions.length > 0
+      ? options.nextActions.slice(0, 2)
+      : (DEFAULT_ERROR_ACTIONS[this.code] || DEFAULT_ERROR_ACTIONS[WORKFLOW_REGISTRY_ERROR_CODES.INVALID_RUN_ID]);
+  }
+}
+
 const WORKFLOW_ALIASES = {
   workflow_a: WORKFLOW_NAMES.A,
   workflow_a_replenishment: WORKFLOW_NAMES.A,
@@ -65,9 +93,27 @@ const resolveEngine = (workflowName) => {
   return ENGINES[normalized] || ENGINES[WORKFLOW_NAMES.A];
 };
 
+const parseRunId = (run_id) => {
+  const runId = Number(run_id);
+  if (!Number.isInteger(runId) || runId <= 0) {
+    throw new WorkflowRegistryError(
+      WORKFLOW_REGISTRY_ERROR_CODES.INVALID_RUN_ID,
+      'run_id must be a positive integer',
+      { run_id }
+    );
+  }
+  return runId;
+};
+
 const resolveEngineByRun = async (runId) => {
   const run = await diRunsService.getRun(runId);
-  if (!run) throw new Error(`Run ${runId} not found`);
+  if (!run) {
+    throw new WorkflowRegistryError(
+      WORKFLOW_REGISTRY_ERROR_CODES.RUN_NOT_FOUND,
+      `Run ${runId} not found`,
+      { run_id: runId }
+    );
+  }
   const workflowName = normalizeWorkflowName(run.workflow);
   return {
     run,
@@ -101,36 +147,31 @@ export async function startWorkflow({
 }
 
 export async function runNextStep(run_id) {
-  const runId = Number(run_id);
-  if (!Number.isFinite(runId)) throw new Error('run_id must be numeric');
+  const runId = parseRunId(run_id);
   const { engine } = await resolveEngineByRun(runId);
   return engine.runNextStep(runId);
 }
 
 export async function resumeRun(run_id, options = {}) {
-  const runId = Number(run_id);
-  if (!Number.isFinite(runId)) throw new Error('run_id must be numeric');
+  const runId = parseRunId(run_id);
   const { engine } = await resolveEngineByRun(runId);
   return engine.resumeRun(runId, options);
 }
 
 export async function replayRun(run_id, options = {}) {
-  const runId = Number(run_id);
-  if (!Number.isFinite(runId)) throw new Error('run_id must be numeric');
+  const runId = parseRunId(run_id);
   const { engine } = await resolveEngineByRun(runId);
   return engine.replayRun(runId, options);
 }
 
 export async function getRunSnapshot(run_id) {
-  const runId = Number(run_id);
-  if (!Number.isFinite(runId)) throw new Error('run_id must be numeric');
+  const runId = parseRunId(run_id);
   const { engine } = await resolveEngineByRun(runId);
   return engine.getRunSnapshot(runId);
 }
 
 export async function submitBlockingAnswers(run_id, answers = {}) {
-  const runId = Number(run_id);
-  if (!Number.isFinite(runId)) throw new Error('run_id must be numeric');
+  const runId = parseRunId(run_id);
   const { engine } = await resolveEngineByRun(runId);
   return engine.submitBlockingAnswers(runId, answers);
 }

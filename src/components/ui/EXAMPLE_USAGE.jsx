@@ -241,22 +241,21 @@ export const SidePanelMobileExample = () => {
 
 // ========== 範例 5: 完整整合（模擬 RiskDashboard）==========
 
+const MOCK_DATA = [
+  { id: '1', item: 'PN-001', plant: 'PL01', risk: 'critical', days: 3, stock: 50 },
+  { id: '2', item: 'PN-002', plant: 'PL02', risk: 'warning', days: 10, stock: 200 },
+  { id: '3', item: 'PN-003', plant: 'PL01', risk: 'low', days: 30, stock: 1000 },
+  { id: '4', item: 'PN-004', plant: 'PL03', risk: 'critical', days: 5, stock: 80 }
+];
+
 export const CompleteIntegrationExample = () => {
   const [selectedPlant, setSelectedPlant] = useState('all');
   const [selectedRisk, setSelectedRisk] = useState('all');
   const [selectedItem, setSelectedItem] = useState(null);
 
-  // Mock 資料
-  const mockData = [
-    { id: '1', item: 'PN-001', plant: 'PL01', risk: 'critical', days: 3, stock: 50 },
-    { id: '2', item: 'PN-002', plant: 'PL02', risk: 'warning', days: 10, stock: 200 },
-    { id: '3', item: 'PN-003', plant: 'PL01', risk: 'low', days: 30, stock: 1000 },
-    { id: '4', item: 'PN-004', plant: 'PL03', risk: 'critical', days: 5, stock: 80 }
-  ];
-
   // 篩選資料
   const filteredData = useMemo(() => {
-    return mockData.filter(item => {
+    return MOCK_DATA.filter(item => {
       if (selectedPlant !== 'all' && item.plant !== selectedPlant) return false;
       if (selectedRisk !== 'all' && item.risk !== selectedRisk) return false;
       return true;

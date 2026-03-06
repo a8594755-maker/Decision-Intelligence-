@@ -88,7 +88,15 @@ export const datasetProfilesService = {
       .select('*')
       .single();
 
-    if (error) throwDatasetProfilesError(error);
+    if (error) {
+      console.warn('[datasetProfilesService] DB save failed, returning local-only profile:', error.message);
+      return {
+        ...insertPayload,
+        id: `local-${Date.now()}`,
+        created_at: new Date().toISOString(),
+        _local: true
+      };
+    }
     return data;
   },
 

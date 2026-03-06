@@ -157,6 +157,8 @@ class SolverHealthThresholds:
     infeasible_rate: float = 0.20
     backlog_jobs: int = 10
     queue_wait_p95_ms: float = 120_000.0
+    solve_time_slo_ms: float = 30_000.0
+    cost_per_ms: float = 0.0
 
     @classmethod
     def from_env(cls) -> "SolverHealthThresholds":
@@ -165,6 +167,8 @@ class SolverHealthThresholds:
             infeasible_rate=float(os.getenv("DI_SOLVER_ALERT_INFEASIBLE_RATE_THRESHOLD", "0.20")),
             backlog_jobs=int(os.getenv("DI_SOLVER_ALERT_BACKLOG_JOBS_THRESHOLD", "10")),
             queue_wait_p95_ms=float(os.getenv("DI_SOLVER_ALERT_QUEUE_WAIT_P95_MS_THRESHOLD", "120000")),
+            solve_time_slo_ms=float(os.getenv("DI_SOLVER_ALERT_SOLVE_TIME_SLO_MS_THRESHOLD", "30000")),
+            cost_per_ms=float(os.getenv("DI_SOLVER_COST_PER_MS", "0")),
         )
 
     def with_overrides(
@@ -174,12 +178,16 @@ class SolverHealthThresholds:
         infeasible_rate: Optional[float] = None,
         backlog_jobs: Optional[int] = None,
         queue_wait_p95_ms: Optional[float] = None,
+        solve_time_slo_ms: Optional[float] = None,
+        cost_per_ms: Optional[float] = None,
     ) -> "SolverHealthThresholds":
         return SolverHealthThresholds(
             timeout_rate=self.timeout_rate if timeout_rate is None else float(timeout_rate),
             infeasible_rate=self.infeasible_rate if infeasible_rate is None else float(infeasible_rate),
             backlog_jobs=self.backlog_jobs if backlog_jobs is None else int(backlog_jobs),
             queue_wait_p95_ms=self.queue_wait_p95_ms if queue_wait_p95_ms is None else float(queue_wait_p95_ms),
+            solve_time_slo_ms=self.solve_time_slo_ms if solve_time_slo_ms is None else float(solve_time_slo_ms),
+            cost_per_ms=self.cost_per_ms if cost_per_ms is None else float(cost_per_ms),
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -269,6 +277,9 @@ def summarize_solver_health(
     if queue_wait_for_alert is None:
         queue_wait_for_alert = 0.0
 
+    solve_time_p50 = _percentile(solve_times, 0.50)
+    solve_time_p95 = _percentile(solve_times, 0.95)
+
     return {
         "window": str(window_label),
         "window_start": _to_iso(window_start),
@@ -286,8 +297,8 @@ def summarize_solver_health(
         },
         "solve_time_ms": {
             "count": int(len(solve_times)),
-            "p50": _percentile(solve_times, 0.50),
-            "p95": _percentile(solve_times, 0.95),
+            "p50": solve_time_p50,
+            "p95": solve_time_p95,
         },
         "queue": {
             "observed_queue_wait_samples": int(len(wait_samples)),
@@ -375,6 +386,23 @@ def evaluate_solver_health_alerts(
                 "message": (
                     f"queue_wait_ms_p95={queue_wait_p95_ms:.1f} exceeded "
                     f"threshold={threshold_cfg.queue_wait_p95_ms:.1f}"
+                ),
+            }
+        )
+
+    # Phase 4.6: Solve-time SLO breach
+    solve_time_p95 = float((summary.get("solve_time_ms") or {}).get("p95") or 0.0)
+    if solve_time_p95 > 0 and solve_time_p95 > threshold_cfg.solve_time_slo_ms:
+        alerts.append(
+            {
+                "code": "solve_time_slo_breach",
+                "metric": "solve_time_ms_p95",
+                "value": round(solve_time_p95, 3),
+                "threshold": threshold_cfg.solve_time_slo_ms,
+                "window": window,
+                "message": (
+                    f"solve_time_ms_p95={solve_time_p95:.1f} exceeded "
+                    f"SLO threshold={threshold_cfg.solve_time_slo_ms:.1f}"
                 ),
             }
         )
@@ -551,6 +579,13 @@ def collect_solver_health(
         alerts = evaluate_solver_health_alerts(summary, threshold_cfg)
         if emit_alert_logs and alerts:
             emit_solver_health_alert_logs(alerts)
+        # Phase 4.6: Compute cost_per_solve if cost_per_ms is configured
+        if threshold_cfg.cost_per_ms > 0:
+            solve_p50 = (summary.get("solve_time_ms") or {}).get("p50")
+            summary["cost_per_solve"] = round(solve_p50 * threshold_cfg.cost_per_ms, 6) if solve_p50 else None
+        else:
+            summary["cost_per_solve"] = None
+
         summary_by_window[label] = summary
         alerts_by_window[label] = alerts
         total_alerts += len(alerts)

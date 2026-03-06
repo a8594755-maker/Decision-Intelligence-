@@ -118,14 +118,41 @@ export function generateSingleForecast(
     // Normal case: use moving average with confidence intervals
     forecastValues = calculateForecastValues(stats.mean, stats.std, zScore);
   } else if (historicalData.length > 0) {
-    // Fallback: use last bucket value (naive forecast)
+    // Fallback: use last bucket value (naive forecast) with synthetic confidence intervals
     const lastValue = Number(historicalData[historicalData.length - 1].demand_qty) || 0;
-    forecastValues = { p10: lastValue, p50: lastValue, p90: lastValue };
+    if (lastValue > 0) {
+      // Build a reasonable confidence band: ±20% of last value
+      forecastValues = {
+        p10: Math.max(0, Math.round(lastValue * 0.8)),
+        p50: lastValue,
+        p90: Math.round(lastValue * 1.2)
+      };
+    } else {
+      // Last value was zero — use mean of all available points if any are non-zero
+      const nonZeroValues = historicalData.map(h => Number(h.demand_qty) || 0).filter(v => v > 0);
+      if (nonZeroValues.length > 0) {
+        const avgNonZero = nonZeroValues.reduce((s, v) => s + v, 0) / nonZeroValues.length;
+        forecastValues = {
+          p10: Math.max(0, Math.round(avgNonZero * 0.8)),
+          p50: Math.round(avgNonZero),
+          p90: Math.round(avgNonZero * 1.2)
+        };
+      } else {
+        forecastValues = { p10: 0, p50: 0, p90: 0 };
+      }
+    }
     fallbackUsed = true;
+    console.warn(
+      `[demandForecastEngine] Insufficient data (n=${historicalData.length}) for ${materialCode}@${plantId}, using naive fallback: p50=${forecastValues.p50}`
+    );
   } else {
-    // No historical data: all zeros
+    // No historical data at all — this is a data pipeline problem
     forecastValues = { p10: 0, p50: 0, p90: 0 };
     fallbackUsed = true;
+    console.error(
+      `[demandForecastEngine] NO historical data for ${materialCode}@${plantId}. ` +
+      'Check that demand_fg.csv rows are correctly parsed and stored in the database.'
+    );
   }
 
   // Calculate WAPE for metrics

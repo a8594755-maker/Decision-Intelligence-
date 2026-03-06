@@ -1,11 +1,75 @@
 @import "tailwindcss";
 
+/* ============================================================
+   Decision-Intelligence Design Tokens
+   Brand direction: clear, powerful, trustworthy, not cold
+   ============================================================ */
+
 :root {
-  --chat-bg: #f8fafc;
+  /* === Brand palette: deep indigo, not generic blue === */
+  --brand-50:  #eef2ff;
+  --brand-100: #e0e7ff;
+  --brand-200: #c7d2fe;
+  --brand-500: #6366f1;
+  --brand-600: #4f46e5;
+  --brand-700: #4338ca;
+
+  /* === Risk / status === */
+  --risk-critical: #dc2626;
+  --risk-warning:  #d97706;
+  --risk-safe:     #059669;
+
+  /* === Surface system: warm whites, not slate === */
+  --surface-base:   #fafaf9;
+  --surface-card:   #ffffff;
+  --surface-subtle: #f5f5f4;
+
+  /* === Text system: stone tones === */
+  --text-primary:   #1c1917;
+  --text-secondary: #78716c;
+  --text-muted:     #a8a29e;
+
+  /* === Borders === */
+  --border-default: rgba(0, 0, 0, 0.08);
+  --border-strong:  rgba(0, 0, 0, 0.15);
+
+  /* === Shadows with layered depth === */
+  --shadow-card: 0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
+  --shadow-elevated: 0 4px 16px rgba(0,0,0,0.08), 0 1px 4px rgba(0,0,0,0.05);
+  --shadow-float: 0 20px 40px rgba(0,0,0,0.12), 0 4px 12px rgba(0,0,0,0.06);
+
+  /* === Chat (legacy compat) === */
+  --chat-bg: var(--surface-base);
   --chat-surface: rgba(255, 255, 255, 0.92);
-  --chat-border: rgba(15, 23, 42, 0.1);
-  --chat-shadow-soft: 0 10px 30px -18px rgba(15, 23, 42, 0.22);
+  --chat-border: var(--border-default);
+  --chat-shadow-soft: var(--shadow-card);
+
+  /* === Sidebar === */
+  --sidebar-width-collapsed: 3.5rem;
+  --sidebar-width-expanded: 14rem;
 }
+
+/* === Dark mode token overrides === */
+.dark {
+  --surface-base:   #111110;
+  --surface-card:   #1c1b1a;
+  --surface-subtle: #252422;
+
+  --text-primary:   #fafaf9;
+  --text-secondary: #a8a29e;
+  --text-muted:     #78716c;
+
+  --border-default: rgba(255, 255, 255, 0.08);
+  --border-strong:  rgba(255, 255, 255, 0.15);
+
+  --shadow-card: 0 1px 3px rgba(0,0,0,0.2), 0 1px 2px rgba(0,0,0,0.15);
+  --shadow-elevated: 0 4px 16px rgba(0,0,0,0.3), 0 1px 4px rgba(0,0,0,0.2);
+  --shadow-float: 0 20px 40px rgba(0,0,0,0.4), 0 4px 12px rgba(0,0,0,0.2);
+}
+
+/* ============================================================
+   Global Base Styles
+   ============================================================ */
 
 html {
   height: 100%;
@@ -21,189 +85,133 @@ body {
   min-height: 100%;
   width: 100%;
   overflow-x: hidden;
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+  font-family: 'Inter', 'SF Pro Text', system-ui, -apple-system, sans-serif;
+  font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  background: radial-gradient(circle at 10% 10%, #f8fafc 0%, #f1f5f9 45%, #eef2ff 100%);
+  background-color: var(--surface-base);
+  color: var(--text-primary);
 }
 
-/* Animations for UI Components */
+/* === Tabular numbers for dashboards === */
+.font-numeric {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum';
+}
+
+/* ============================================================
+   Animations
+   ============================================================ */
+
 @keyframes fade-in {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
 
 @keyframes slide-in-right {
-  from {
-    transform: translateX(100%);
-  }
-  to {
-    transform: translateX(0);
-  }
+  from { transform: translateX(100%); }
+  to   { transform: translateX(0); }
 }
 
 @keyframes slide-in-left {
-  from {
-    transform: translateX(-100%);
-  }
-  to {
-    transform: translateX(0);
-  }
+  from { transform: translateX(-100%); }
+  to   { transform: translateX(0); }
 }
 
-.animate-fade-in {
-  animation: fade-in 0.2s ease-out;
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
-.animate-slide-in-right {
-  animation: slide-in-right 0.3s ease-out;
-}
-
-.animate-slide-in-left {
-  animation: slide-in-left 0.3s ease-out;
-}
+.animate-fade-in       { animation: fade-in 0.2s ease-out; }
+.animate-slide-in-right { animation: slide-in-right 0.3s ease-out; }
+.animate-slide-in-left  { animation: slide-in-left 0.3s ease-out; }
+.animate-slide-up       { animation: slide-up 0.35s ease-out; }
 
 @media (prefers-reduced-motion: reduce) {
   .animate-fade-in,
   .animate-slide-in-right,
-  .animate-slide-in-left {
+  .animate-slide-in-left,
+  .animate-slide-up {
     animation: none !important;
   }
 }
 
+/* ============================================================
+   Scrollbar Styles
+   ============================================================ */
+
 .chat-scrollbar,
 .scrollbar-thin {
   scrollbar-width: thin;
-  scrollbar-color: #cbd5e1 transparent;
+  scrollbar-color: #d6d3d1 transparent;
 }
 
-.scrollbar-thin::-webkit-scrollbar {
-  width: 6px;
-}
-
-.scrollbar-thin::-webkit-scrollbar-track {
-  background: transparent;
-}
-
+.scrollbar-thin::-webkit-scrollbar { width: 5px; }
+.scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
 .scrollbar-thin::-webkit-scrollbar-thumb {
-  background-color: #cbd5e1;
+  background-color: #d6d3d1;
   border-radius: 6px;
 }
 
-.dark .scrollbar-thin {
-  scrollbar-color: #475569 transparent;
-}
+.dark .scrollbar-thin { scrollbar-color: #44403c transparent; }
+.dark .scrollbar-thin::-webkit-scrollbar-thumb { background-color: #44403c; }
 
-.dark .scrollbar-thin::-webkit-scrollbar-thumb {
-  background-color: #475569;
-}
-
-.chat-scrollbar::-webkit-scrollbar {
-  width: 8px;
-}
-
-.chat-scrollbar::-webkit-scrollbar-track {
-  background: transparent;
-}
-
+.chat-scrollbar::-webkit-scrollbar { width: 5px; }
+.chat-scrollbar::-webkit-scrollbar-track { background: transparent; }
 .chat-scrollbar::-webkit-scrollbar-thumb {
-  background-color: #cbd5e1;
+  background-color: #d6d3d1;
   border-radius: 8px;
 }
 
-.dark .chat-scrollbar {
-  scrollbar-color: #475569 transparent;
-}
+.dark .chat-scrollbar { scrollbar-color: #44403c transparent; }
+.dark .chat-scrollbar::-webkit-scrollbar-thumb { background-color: #44403c; }
 
-.dark .chat-scrollbar::-webkit-scrollbar-thumb {
-  background-color: #475569;
-}
-
-/* Risk Table Custom Scrollbar Styling */
-.risk-table-scroll::-webkit-scrollbar {
-  height: 10px;
-}
-
+/* Risk Table Scrollbar */
+.risk-table-scroll::-webkit-scrollbar { height: 10px; }
 .risk-table-scroll::-webkit-scrollbar-track {
-  background: #f1f5f9;
+  background: var(--surface-subtle);
   border-radius: 5px;
 }
-
 .risk-table-scroll::-webkit-scrollbar-thumb {
-  background: #cbd5e1;
+  background: #d6d3d1;
   border-radius: 5px;
-  border: 2px solid #f1f5f9;
+  border: 2px solid var(--surface-subtle);
 }
+.risk-table-scroll::-webkit-scrollbar-thumb:hover { background: #a8a29e; }
 
-.risk-table-scroll::-webkit-scrollbar-thumb:hover {
-  background: #94a3b8;
-}
-
-.dark .risk-table-scroll::-webkit-scrollbar-track {
-  background: #1e293b;
-}
-
+.dark .risk-table-scroll::-webkit-scrollbar-track { background: var(--surface-subtle); }
 .dark .risk-table-scroll::-webkit-scrollbar-thumb {
-  background: #475569;
-  border: 2px solid #1e293b;
+  background: #44403c;
+  border: 2px solid var(--surface-subtle);
 }
+.dark .risk-table-scroll::-webkit-scrollbar-thumb:hover { background: #57534e; }
 
-.dark .risk-table-scroll::-webkit-scrollbar-thumb:hover {
-  background: #64748b;
-}
-
-/* Scroll shadow indicators for table */
+/* Scroll shadow indicators */
 .scroll-shadow-left,
 .scroll-shadow-right {
   transition: opacity 0.2s ease;
   pointer-events: none;
 }
-
 .scroll-shadow-left.visible,
-.scroll-shadow-right.visible {
-  opacity: 1;
-}
+.scroll-shadow-right.visible { opacity: 1; }
 
 /* Sticky column shadows */
-.shadow-sticky-left {
-  box-shadow: 2px 0 5px -2px rgba(0, 0, 0, 0.1);
-}
+.shadow-sticky-left  { box-shadow: 2px 0 5px -2px rgba(0, 0, 0, 0.1); }
+.shadow-sticky-right { box-shadow: -2px 0 5px -2px rgba(0, 0, 0, 0.1); }
 
-.shadow-sticky-right {
-  box-shadow: -2px 0 5px -2px rgba(0, 0, 0, 0.1);
-}
-
-/* Table container specific styles */
+/* Table container */
 #risk-table-container {
   scrollbar-width: thin;
-  scrollbar-color: #cbd5e1 #f1f5f9;
+  scrollbar-color: #d6d3d1 var(--surface-subtle);
 }
-
-#risk-table-container::-webkit-scrollbar {
-  height: 8px;
-}
-
-#risk-table-container::-webkit-scrollbar-track {
-  background: #f1f5f9;
-}
-
+#risk-table-container::-webkit-scrollbar { height: 8px; }
+#risk-table-container::-webkit-scrollbar-track { background: var(--surface-subtle); }
 #risk-table-container::-webkit-scrollbar-thumb {
-  background-color: #cbd5e1;
+  background-color: #d6d3d1;
   border-radius: 4px;
 }
 
-.dark #risk-table-container {
-  scrollbar-color: #475569 #1e293b;
-}
-
-.dark #risk-table-container::-webkit-scrollbar-track {
-  background: #1e293b;
-}
-
-.dark #risk-table-container::-webkit-scrollbar-thumb {
-  background-color: #475569;
-}
+.dark #risk-table-container { scrollbar-color: #44403c var(--surface-subtle); }
+.dark #risk-table-container::-webkit-scrollbar-track { background: var(--surface-subtle); }
+.dark #risk-table-container::-webkit-scrollbar-thumb { background-color: #44403c; }

@@ -14,7 +14,7 @@ for _path in (_src_dir, _project_root):
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from ml.demand_forecasting.prophet_trainer import ProphetTrainer
 from ml.demand_forecasting.lightgbm_trainer import LightGBMTrainer
 from ml.demand_forecasting.chronos_trainer import ChronosTrainer
@@ -28,6 +28,21 @@ import hashlib
 import numpy as np
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any, Tuple
+
+# Sentry error monitoring (optional — enabled when SENTRY_DSN is set)
+_sentry_dsn = os.getenv("SENTRY_DSN")
+if _sentry_dsn:
+    try:
+        import sentry_sdk
+        from sentry_sdk.integrations.fastapi import FastApiIntegration
+        sentry_sdk.init(
+            dsn=_sentry_dsn,
+            environment=os.getenv("DI_ENV", "production"),
+            traces_sample_rate=0.2,
+            integrations=[FastApiIntegration()],
+        )
+    except ImportError:
+        pass  # sentry-sdk not installed — skip silently
 import math
 
 from ml.api.planning_contract import (
@@ -115,7 +130,7 @@ def _require_action_role(request: Request, action: GovernanceAction) -> ActorCon
 
 
 def sanitize_numpy(obj):
-    """Recursively convert numpy types to native Python types for JSON serialization."""
+    """Recursively normalize values to JSON-safe Python types."""
     if isinstance(obj, dict):
         return {k: sanitize_numpy(v) for k, v in obj.items()}
     elif isinstance(obj, (list, tuple)):
@@ -123,11 +138,14 @@ def sanitize_numpy(obj):
     elif isinstance(obj, (np.integer,)):
         return int(obj)
     elif isinstance(obj, (np.floating,)):
-        return float(obj)
+        value = float(obj)
+        return value if math.isfinite(value) else None
+    elif isinstance(obj, float):
+        return obj if math.isfinite(obj) else None
     elif isinstance(obj, (np.bool_,)):
         return bool(obj)
     elif isinstance(obj, np.ndarray):
-        return obj.tolist()
+        return sanitize_numpy(obj.tolist())
     return obj
 
 app = FastAPI(
@@ -164,6 +182,22 @@ app.add_middleware(
 app.include_router(excel_export_router)
 app.include_router(registry_router)
 
+
+# Phase 4.7: X-Tenant-ID header extraction middleware
+@app.middleware("http")
+async def tenant_id_middleware(request: Request, call_next):
+    """Extract X-Tenant-ID header and attach to request state."""
+    tenant_id = (request.headers.get("x-tenant-id") or "").strip()
+    request.state.tenant_id = tenant_id
+    response = await call_next(request)
+    return response
+
+
+def _tenant_id_from_request(request: Request) -> str:
+    """Get tenant_id from request state (set by middleware)."""
+    return getattr(request.state, "tenant_id", "") or ""
+
+
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     return JSONResponse(
@@ -174,8 +208,10 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 # Configuration
 ERP_API_ENDPOINT = os.getenv("ERP_ENDPOINT", "https://erp-api.example.com")
-ERP_API_KEY = os.getenv("ERP_API_KEY", "default-key")
 USE_MOCK_ERP = os.getenv("USE_MOCK_ERP", "true").lower() == "true"
+ERP_API_KEY = os.getenv("ERP_API_KEY", "")
+if not USE_MOCK_ERP and not ERP_API_KEY:
+    raise ValueError("ERP_API_KEY environment variable is required when USE_MOCK_ERP is not true")
 
 # Initialize services - 根据环境变量选择真实或Mock ERP连接器
 if USE_MOCK_ERP:
@@ -248,6 +284,32 @@ def _request_async_enabled(model: BaseModel) -> bool:
         return True
     extras = getattr(model, "model_extra", None) or {}
     return bool(extras.get("async"))
+
+
+def _coerce_forecast_result(result: Any, *, source: str) -> Dict[str, Any]:
+    """Normalize forecast pipeline outputs into a predictable dict payload."""
+    if result is None:
+        return {
+            "success": False,
+            "error": f"Forecast pipeline returned no result from {source}.",
+            "attempted_models": [],
+            "errors": [{"source": source, "error": "empty_result"}],
+        }
+    if not isinstance(result, dict):
+        return {
+            "success": False,
+            "error": f"Forecast pipeline returned invalid payload type {type(result).__name__} from {source}.",
+            "attempted_models": [],
+            "errors": [{"source": source, "error": "invalid_result_type"}],
+        }
+    if "success" in result:
+        return result
+    normalized = dict(result)
+    normalized["success"] = False
+    normalized.setdefault("error", f"Forecast pipeline result missing 'success' flag from {source}.")
+    normalized.setdefault("attempted_models", [])
+    normalized.setdefault("errors", [])
+    return normalized
 
 
 @app.post("/jobs", response_model=AsyncRunSubmitResponse)
@@ -426,6 +488,20 @@ async def demand_forecast(request: ForecastRequest):
     :return: 预测结果
     """
     try:
+        # Phase 1 – P1.5: Import boundary gate (schema validation)
+        from ml.demand_forecasting.dataset_schema import validate_forecast_payload
+        schema_errors = validate_forecast_payload({
+            "materialCode": request.materialCode,
+            "horizonDays": request.horizonDays,
+            "modelType": request.modelType,
+            "history": request.history,
+        })
+        if schema_errors:
+            return JSONResponse(
+                status_code=422,
+                content={"errors": schema_errors, "message": "Schema validation failed"},
+            )
+
         if _request_async_enabled(request):
             if not request.userId:
                 raise HTTPException(status_code=400, detail="userId is required when async mode is enabled")
@@ -509,9 +585,14 @@ async def demand_forecast(request: ForecastRequest):
                 inline_history=inline_history
             )
 
-        if not result["success"]:
+        result = _coerce_forecast_result(
+            result,
+            source="prod_pointer -> champion -> fallback",
+        )
+
+        if not result.get("success", False):
             return {
-                "error": result["error"],
+                "error": result.get("error", "Forecast inference failed."),
                 "attempted_models": result.get("attempted_models", []),
                 "errors": result.get("errors", [])
             }
@@ -573,6 +654,23 @@ async def demand_forecast(request: ForecastRequest):
             "metadata": base_metadata,
             "cached": False
         }
+
+        # Phase 1 – P1.3: Surface data quality report when inline history is provided
+        if inline_history is not None and len(inline_history) >= 3:
+            try:
+                from ml.demand_forecasting.data_contract import SalesSeries, DataQualityReport
+                from ml.demand_forecasting.data_validation import validate_and_clean_series
+                import pandas as pd
+                dates = pd.date_range(end=datetime.now().date(), periods=len(inline_history), freq="D")
+                series = SalesSeries(
+                    sku=request.materialCode,
+                    dates=[str(d.date()) for d in dates],
+                    values=list(inline_history),
+                )
+                _, quality_report = validate_and_clean_series(series)
+                response["data_quality"] = quality_report.to_dict()
+            except Exception:
+                pass  # non-critical; don't block forecast
 
         # 4. 添加模型比较信息
         if request.includeComparison and "comparison" in result:
@@ -667,8 +765,8 @@ async def model_status(request: ModelStatusRequest):
         
         # 添加模型详细信息
         model_details = {}
-        for model_name, model_status in status.items():
-            if model_status["available"]:
+        for model_name, model_state in status.items():
+            if model_state["available"]:
                 if model_name.lower() == "chronos":
                     model_details[model_name] = chronos_trainer.get_model_info()
                 elif model_name.lower() == "lightgbm":
@@ -731,10 +829,12 @@ async def stress_test(request: ForecastRequest):
             preferred_model=request.modelType,
             inline_history=inline_history
         )
-        
-        if not result["success"]:
+
+        result = _coerce_forecast_result(result, source="stress_test:fallback")
+
+        if not result.get("success", False):
             return {
-                "error": result["error"],
+                "error": result.get("error", "Forecast inference failed."),
                 "analysis": analysis,
                 "recommended_model": recommended.value
             }
@@ -891,6 +991,7 @@ class SharedConstraintsInput(BaseModel):
 
 class ItemDemandPoint(BaseModel):
     date: str
+    p10: Optional[float] = None
     p50: float
     p90: Optional[float] = None
 
@@ -914,6 +1015,15 @@ class PlanningItemInput(BaseModel):
     demand: List[ItemDemandPoint] = Field(default_factory=list)
     demand_series: List[ItemDemandPoint] = Field(default_factory=list)
 
+    @model_validator(mode="after")
+    def _sync_demand_aliases(self):
+        # Keep both legacy keys in sync so downstream solvers can read either one.
+        if self.demand and not self.demand_series:
+            self.demand_series = list(self.demand)
+        elif self.demand_series and not self.demand:
+            self.demand = list(self.demand_series)
+        return self
+
 
 class SolverSettingsInput(BaseModel):
     time_limit: Optional[float] = None
@@ -932,6 +1042,17 @@ class ObjectiveInput(BaseModel):
     stockout_penalty: Optional[float] = None
     holding_cost: Optional[float] = None
     service_level_target: Optional[float] = None
+    safety_stock_violation_penalty: Optional[float] = None
+
+
+class RiskSignalsInput(BaseModel):
+    """Risk-driven solver signals (Gap E1). All fields have no-op defaults."""
+    ss_penalty_by_key: Dict[str, float] = Field(default_factory=dict)
+    dual_source_keys: List[str] = Field(default_factory=list)
+    dual_source_min_split_fraction: float = 0.2
+    expedite_keys: List[str] = Field(default_factory=list)
+    expedite_lead_time_reduction_days: int = 0
+    expedite_cost_multiplier: float = 1.0
 
 
 class ReplenishmentPlanRequest(BaseModel):
@@ -960,6 +1081,7 @@ class ReplenishmentPlanRequest(BaseModel):
     settings: Dict[str, Any] = Field(default_factory=dict)
     max_attempts: Optional[int] = None
     workload: Dict[str, Any] = Field(default_factory=dict)
+    risk_signals: RiskSignalsInput = Field(default_factory=RiskSignalsInput)
 
     @field_validator("contract_version")
     @classmethod
@@ -1018,21 +1140,8 @@ def _build_sku_lookup(rows: List[SkuQtyConstraint], value_key: str) -> Dict[str,
     return lookup
 
 
-def _build_unit_cost_lookup(rows: List[SkuUnitCostConstraint]) -> Dict[str, float]:
-    lookup = {}
-    for row in rows or []:
-        sku = str(row.sku or "").strip()
-        if not sku:
-            continue
-        unit_cost = row.unit_cost
-        if unit_cost is None:
-            continue
-        lookup[sku] = max(0.0, _to_float(unit_cost, 0.0))
-    return lookup
-
-
 def _parse_env_bool(name: str, default: bool = False) -> bool:
-    raw = os.getenv(name, "")
+    raw = os.getenv(name)
     if raw is None:
         return default
     text = str(raw).strip().lower()
@@ -1041,25 +1150,6 @@ def _parse_env_bool(name: str, default: bool = False) -> bool:
     if text in {"0", "false", "no", "n", "off"}:
         return False
     return default
-
-
-def _infer_period_days(sorted_dates: List[Any]) -> int:
-    if len(sorted_dates) <= 1:
-        return 1
-    deltas = []
-    for idx in range(1, len(sorted_dates)):
-        prev_day = sorted_dates[idx - 1]
-        next_day = sorted_dates[idx]
-        if not prev_day or not next_day:
-            continue
-        days = int((next_day - prev_day).days)
-        if days > 0:
-            deltas.append(days)
-    if not deltas:
-        return 1
-    deltas.sort()
-    return max(1, int(deltas[len(deltas) // 2]))
-
 
 def _format_plan_row(sku: str, plant_id: str, order_date, arrival_date, order_qty: float):
     return {
@@ -1599,6 +1689,8 @@ class TrainRequest(BaseModel):
     seed: int = 42
     mape_gate: float = 20.0
     history: Optional[List[float]] = None
+    historyStartDate: Optional[str] = None
+    historyEndDate: Optional[str] = None
     use_optuna: bool = True            # Task 2: 是否啟用 Optuna 自動調參
     optuna_trials: int = 30            # Optuna 試驗次數
 
@@ -1615,6 +1707,23 @@ async def train_model(request: TrainRequest):
     import time
     t0 = time.time()
 
+    # Phase 1 – P1.5: Import boundary gate (schema validation)
+    from ml.demand_forecasting.dataset_schema import validate_train_payload
+    schema_errors = validate_train_payload({
+        "modelType": request.modelType,
+        "days": request.days,
+        "seed": request.seed,
+        "mape_gate": request.mape_gate,
+        "history": request.history,
+        "historyStartDate": request.historyStartDate,
+        "historyEndDate": request.historyEndDate,
+    })
+    if schema_errors:
+        return JSONResponse(
+            status_code=422,
+            content={"errors": schema_errors, "message": "Schema validation failed"},
+        )
+
     model_type = request.modelType.lower()
     if model_type not in ("lightgbm", "prophet", "all"):
         return {"error": f"支援 lightgbm / prophet / all，收到: {request.modelType}"}
@@ -1627,16 +1736,31 @@ async def train_model(request: TrainRequest):
         model_dir = os.path.join(os.path.dirname(__file__), '..', 'models')
         os.makedirs(model_dir, exist_ok=True)
 
+        history_start = _parse_iso_day(request.historyStartDate) if request.historyStartDate else None
+        history_end = _parse_iso_day(request.historyEndDate) if request.historyEndDate else None
+        if request.historyStartDate and history_start is None:
+            return {"error": f"historyStartDate must be YYYY-MM-DD, got: {request.historyStartDate}"}
+        if request.historyEndDate and history_end is None:
+            return {"error": f"historyEndDate must be YYYY-MM-DD, got: {request.historyEndDate}"}
+        if history_start and history_end and history_end < history_start:
+            return {"error": "historyEndDate must be on or after historyStartDate"}
+
+        def _build_training_dates(periods: int):
+            if history_start is not None:
+                return pd.date_range(start=history_start.isoformat(), periods=periods, freq='D')
+            anchor_end = history_end or datetime.now(timezone.utc).date()
+            return pd.date_range(end=anchor_end.isoformat(), periods=periods, freq='D')
+
         # ══════════════════════════════════════════════
         # 0. 準備數據（共用）
         # ══════════════════════════════════════════════
         if request.history and len(request.history) >= 60:
-            dates = pd.date_range(start='2025-01-01', periods=len(request.history), freq='D')
+            dates = _build_training_dates(len(request.history))
             df = pd.DataFrame({'date': dates, 'sales': request.history})
         else:
             np.random.seed(request.seed)
             days = request.days
-            dates = pd.date_range(start='2025-01-01', periods=days, freq='D')
+            dates = _build_training_dates(days)
             base = 50
             trend = np.arange(days) * 0.02
             weekly = 5 * np.sin(2 * np.pi * np.arange(days) / 7)
@@ -1657,6 +1781,21 @@ async def train_model(request: TrainRequest):
             "n": len(df),
             "computed_at": datetime.now().isoformat()
         }
+
+        # Phase 1 – P1.3: Compute data quality report for training data
+        _data_quality = None
+        try:
+            from ml.demand_forecasting.data_contract import SalesSeries
+            from ml.demand_forecasting.data_validation import validate_and_clean_series
+            _train_series = SalesSeries(
+                sku="train",
+                dates=[str(d.date()) for d in df['date']],
+                values=df['sales'].tolist(),
+            )
+            _, _train_quality = validate_and_clean_series(_train_series)
+            _data_quality = _train_quality.to_dict()
+        except Exception:
+            pass  # non-critical
 
         deploy_results = {}
 
@@ -1682,15 +1821,22 @@ async def train_model(request: TrainRequest):
         deployed = [k for k, v in deploy_results.items() if v.get("status") == "deployed"]
         rejected = [k for k, v in deploy_results.items() if v.get("status") == "rejected"]
 
-        return {
+        train_response = {
             "status": "deployed" if deployed else "rejected",
             "deployed_models": deployed,
             "rejected_models": rejected,
             "results": deploy_results,
             "training_stats_baseline": training_stats,
+            "training_window": {
+                "start_date": str(df['date'].min().date()),
+                "end_date": str(df['date'].max().date()),
+            },
             "elapsed_seconds": round(elapsed, 2),
             "message": f"✅ 已完成: {', '.join(deployed) if deployed else '無模型通過閘門'}"
         }
+        if _data_quality is not None:
+            train_response["data_quality"] = _data_quality
+        return train_response
 
     except Exception as e:
         import traceback
@@ -1717,62 +1863,53 @@ def _train_lightgbm(df, fe, model_dir, request, training_stats):
 
     optuna_info = None
 
-    # ── Task 2: Optuna 自動調參 ──
+    # ── Optuna HPO via shared module ──
+    best_params = {
+        'boosting_type': 'gbdt', 'objective': 'regression', 'metric': 'mape',
+        'num_leaves': 31, 'learning_rate': 0.05, 'feature_fraction': 0.9,
+        'bagging_fraction': 0.8, 'bagging_freq': 5, 'verbose': -1,
+    }
+
     if request.use_optuna:
         try:
-            import optuna
-            optuna.logging.set_verbosity(optuna.logging.WARNING)
+            from ml.training.hpo import HPOConfig, run_hpo
+            from ml.training.dataset_builder import DatasetBundle
 
-            def objective(trial):
-                params = {
-                    'boosting_type': 'gbdt',
-                    'objective': 'regression',
-                    'metric': 'mape',
-                    'verbose': -1,
-                    'feature_pre_filter': False,
-                    'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.3, log=True),
-                    'num_leaves': trial.suggest_int('num_leaves', 15, 127),
-                    'feature_fraction': trial.suggest_float('feature_fraction', 0.5, 1.0),
-                    'bagging_fraction': trial.suggest_float('bagging_fraction', 0.5, 1.0),
-                    'bagging_freq': trial.suggest_int('bagging_freq', 1, 10),
-                    'min_child_samples': trial.suggest_int('min_child_samples', 5, 50),
-                    'reg_alpha': trial.suggest_float('reg_alpha', 1e-8, 10.0, log=True),
-                    'reg_lambda': trial.suggest_float('reg_lambda', 1e-8, 10.0, log=True),
-                }
-                m = lgb.train(
-                    params, train_data,
-                    valid_sets=[val_data], valid_names=['valid'],
-                    num_boost_round=500,
-                    callbacks=[lgb.early_stopping(30), lgb.log_evaluation(0)],
-                )
-                preds = m.predict(X_val)
-                return mean_absolute_percentage_error(y_val, preds) * 100
+            mini_bundle = DatasetBundle(
+                series_id="legacy_train",
+                frequency="D",
+                horizon=30,
+                train_df=X_train,
+                val_df=X_val,
+                test_df=None,
+                X_train=X_train,
+                y_train=y_train,
+                X_val=X_val,
+                y_val=y_val,
+                feature_columns=list(FEATURE_COLUMNS),
+            )
 
-            study = optuna.create_study(direction='minimize')
-            study.optimize(objective, n_trials=request.optuna_trials, show_progress_bar=False)
+            hpo_cfg = HPOConfig(
+                enabled=True,
+                n_trials=request.optuna_trials,
+                cv_mode="holdout",
+                seed=request.seed,
+            )
 
+            hpo_result = run_hpo(mini_bundle, hpo_cfg)
             best_params = {
                 'boosting_type': 'gbdt', 'objective': 'regression', 'metric': 'mape',
-                'verbose': -1, **study.best_params
+                'verbose': -1, **hpo_result.best_params,
             }
             optuna_info = {
-                "best_mape": round(study.best_value, 2),
-                "best_params": {k: round(v, 6) if isinstance(v, float) else v for k, v in study.best_params.items()},
-                "n_trials": request.optuna_trials,
+                "best_mape": round(hpo_result.best_score, 2),
+                "best_params": hpo_result.to_dict()["best_params"],
+                "n_trials": hpo_result.n_trials_completed,
             }
         except ImportError:
-            best_params = {
-                'boosting_type': 'gbdt', 'objective': 'regression', 'metric': 'mape',
-                'num_leaves': 31, 'learning_rate': 0.05, 'feature_fraction': 0.9,
-                'bagging_fraction': 0.8, 'bagging_freq': 5, 'verbose': -1,
-            }
             optuna_info = {"skipped": True, "reason": "optuna not installed"}
-    else:
-        best_params = {
-            'boosting_type': 'gbdt', 'objective': 'regression', 'metric': 'mape',
-            'num_leaves': 31, 'learning_rate': 0.05, 'feature_fraction': 0.9,
-            'bagging_fraction': 0.8, 'bagging_freq': 5, 'verbose': -1,
-        }
+        except Exception as e:
+            optuna_info = {"skipped": True, "reason": str(e)}
 
     # 用最佳參數正式訓練
     model = lgb.train(
@@ -2212,15 +2349,21 @@ async def run_simulation(request: SimulationRequest):
 
         result = orch.run()
 
-        # Get daily log for timeline
+        # Get daily log for timeline.
+        # Pandas will coerce missing numeric cells (e.g. early forecast=None) to NaN,
+        # so normalize non-finite values to None before JSON serialization.
         daily_df = orch.get_daily_log_df()
-        timeline_sample = daily_df.iloc[::7].to_dict(orient="records")  # Every 7 days
+        timeline_sample = (
+            daily_df.iloc[::7]
+            .replace([np.nan, np.inf, -np.inf], None)
+            .to_dict(orient="records")
+        )  # Every 7 days
 
-        return {
+        return sanitize_numpy({
             "success": True,
             **result.to_dict(),
             "timeline_sample": timeline_sample,
-        }
+        })
 
     except Exception as e:
         import traceback
@@ -2244,7 +2387,7 @@ async def optimize_params(request: OptimizeRequest):
         )
 
         result = opt.optimize(n_trials=request.n_trials, method=request.method)
-        return {"success": True, **result.to_dict()}
+        return sanitize_numpy({"success": True, **result.to_dict()})
 
     except Exception as e:
         import traceback
@@ -2332,15 +2475,16 @@ async def simulation_comparison(request: ComparisonRequest):
 
         results = {}
         for name, params in strategies.items():
+            sc_inv = scenario_config.inventory_config
             config = InventoryConfig(
-                initial_inventory=scenario_config.inventory_config.initial_inventory,
+                initial_inventory=sc_inv.initial_inventory,
                 safety_stock_factor=params.get("safety_stock_factor", 1.5),
                 reorder_point=params.get("reorder_point", 200),
                 order_quantity_days=params.get("order_quantity_days", 14),
-                holding_cost_per_unit_day=scenario_config.inventory_config.holding_cost_per_unit_day,
-                stockout_penalty_per_unit=scenario_config.inventory_config.stockout_penalty_per_unit,
-                ordering_cost_per_order=scenario_config.inventory_config.ordering_cost_per_order,
-                unit_cost=scenario_config.inventory_config.unit_cost,
+                holding_cost_per_unit_day=params.get("holding_cost_per_unit_day", sc_inv.holding_cost_per_unit_day),
+                stockout_penalty_per_unit=params.get("stockout_penalty_per_unit", sc_inv.stockout_penalty_per_unit),
+                ordering_cost_per_order=params.get("ordering_cost_per_order", sc_inv.ordering_cost_per_order),
+                unit_cost=params.get("unit_cost", sc_inv.unit_cost),
             )
 
             scenario_copy = get_scenario(request.scenario)
@@ -2352,7 +2496,14 @@ async def simulation_comparison(request: ComparisonRequest):
                 use_forecaster=False,
             )
             result = orch.run()
-            results[name] = result.to_dict()
+            strategy_result = result.to_dict()
+            daily_df = orch.get_daily_log_df()
+            strategy_result["timeline_sample"] = (
+                daily_df.iloc[::7]
+                .replace([np.nan, np.inf, -np.inf], None)
+                .to_dict(orient="records")
+            )
+            results[name] = strategy_result
 
         # Find best strategy
         ranked = sorted(
@@ -2361,7 +2512,7 @@ async def simulation_comparison(request: ComparisonRequest):
             if x[1]["kpis"]["fill_rate_pct"] >= 95 else float("inf"),
         )
 
-        return {
+        return sanitize_numpy({
             "success": True,
             "scenario": request.scenario,
             "strategies": results,
@@ -2376,8 +2527,40 @@ async def simulation_comparison(request: ComparisonRequest):
                 for i, (name, r) in enumerate(ranked)
             ],
             "recommendation": ranked[0][0] if ranked else None,
-        }
+        })
 
+    except Exception as e:
+        import traceback
+        return {"success": False, "error": str(e), "traceback": traceback.format_exc()}
+
+
+# ── Phase 3 – P3.3: Simulation → Re-Optimization Feedback ────────────────────
+
+
+class SimulationReoptimizeRequest(BaseModel):
+    """Request to derive re-optimization inputs from simulation results."""
+    sim_result: dict = Field(..., description="Output from /run-simulation")
+    original_plan: Optional[dict] = Field(default=None, description="Original planning payload for diffing")
+    config: Optional[dict] = Field(default=None, description="Override thresholds")
+
+
+@app.post("/simulation/reoptimize")
+async def simulation_reoptimize(request: SimulationReoptimizeRequest):
+    """
+    Phase 3 – Simulation → Re-Optimization Feedback Loop
+    ─────────────────────────────────────────────────────
+    Takes simulation KPIs and derives constraint tightening inputs
+    for the replenishment solver (safety stock uplift, penalty increase, etc.).
+    """
+    try:
+        from ml.simulation.feedback_loop import derive_reoptimization_inputs
+
+        reopt = derive_reoptimization_inputs(
+            sim_result=request.sim_result,
+            original_plan=request.original_plan,
+            config=request.config,
+        )
+        return sanitize_numpy({"success": True, **reopt})
     except Exception as e:
         import traceback
         return {"success": False, "error": str(e), "traceback": traceback.format_exc()}
@@ -2434,6 +2617,7 @@ async def auto_model_switch(request: ForecastRequest):
             horizon_days=request.horizonDays,
             preferred_model=chosen_model,
         )
+        result = _coerce_forecast_result(result, source="auto_model_switch:fallback")
 
         return {
             "success": result.get("success", False),
@@ -2447,6 +2631,8 @@ async def auto_model_switch(request: ForecastRequest):
             },
             "prediction": result.get("prediction", {}),
             "metadata": result.get("metadata", {}),
+            "error": None if result.get("success", False) else result.get("error"),
+            "errors": result.get("errors", []),
         }
 
     except Exception as e:
@@ -2481,6 +2667,14 @@ class ClosedLoopRunRequest(BaseModel):
     risk_scores: List[Dict[str, Any]] = Field(default_factory=list)
     mode: str = "dry_run"
     config_overrides: Dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("mode")
+    @classmethod
+    def _validate_mode(cls, value: str) -> str:
+        mode = str(value or "dry_run").strip().lower()
+        if mode not in {"dry_run", "auto_run"}:
+            raise ValueError("mode must be 'dry_run' or 'auto_run'")
+        return mode
 
 
 # ── Closed-loop pure functions (Python-side, stateless) ──────────────────────
@@ -2518,6 +2712,9 @@ _CL_DEFAULTS: Dict[str, Any] = {
     "stockout_penalty_base": 10.0,
     "stockout_penalty_uncertainty_uplift": 0.3,
     "lead_time_buffer_high_risk_days": 3,
+    # Phase 3 expansions
+    "service_level_target_default": 0.95,
+    "expedite_risk_threshold": 80,
 }
 
 
@@ -2646,9 +2843,10 @@ def _cl_derive_params(
     agg: Dict[str, Dict] = {}
     for pt in series:
         key = f"{pt.get('sku', pt.get('material_code', ''))}|{pt.get('plant_id', '')}"
-        e = agg.setdefault(key, {"sum_p50": 0.0, "sum_p90": 0.0, "n": 0})
+        e = agg.setdefault(key, {"sum_p50": 0.0, "sum_p90": 0.0, "sum_p10": 0.0, "n": 0})
         e["sum_p50"] += _cl_safe_float(pt.get("p50", 0))
         e["sum_p90"] += _cl_safe_float(pt.get("p90", _cl_safe_float(pt.get("p50", 0))))
+        e["sum_p10"] += _cl_safe_float(pt.get("p10", _cl_safe_float(pt.get("p50", 0))))
         e["n"] += 1
     ss: Dict[str, float] = {}
     for key in sorted(agg):
@@ -2657,14 +2855,51 @@ def _cl_derive_params(
         avg_p90 = e["sum_p90"] / e["n"] if e["n"] > 0 else 0
         ss[key] = round(avg_p50 + alpha * max(0, avg_p90 - avg_p50), 6)
 
+    # R-CL5: service_level_target (Phase 3 expansion)
+    service_level_target = cfg.get("service_level_target_default", 0.95)
+    if risk_above >= 3:
+        service_level_target = min(0.99, service_level_target + 0.02)
+        explanation.append(f"R-CL5: {risk_above} high-risk entities; service_level raised to {service_level_target:.2f}")
+    elif math.isfinite(coverage) and coverage > cfg.get("coverage_upper_band", 0.95):
+        service_level_target = max(0.90, service_level_target - 0.02)
+        explanation.append(f"R-CL5: Wide uncertainty coverage; service_level relaxed to {service_level_target:.2f}")
+
+    # R-CL6: moq_multiplier for high-demand SKUs (Phase 3 expansion)
+    moq_multiplier: Dict[str, float] = {}
+    for key in sorted(agg):
+        e = agg[key]
+        avg_p50 = e["sum_p50"] / e["n"] if e["n"] > 0 else 0
+        avg_p90 = e["sum_p90"] / e["n"] if e["n"] > 0 else 0
+        demand_spread = max(0, avg_p90 - avg_p50)
+        if avg_p50 > 0 and demand_spread / avg_p50 > 0.5:
+            moq_multiplier[key] = 1.5
+    if moq_multiplier:
+        explanation.append(f"R-CL6: {len(moq_multiplier)} SKUs with high demand spread; MOQ multiplier=1.5")
+
+    # R-CL7: expedite_flag for critical risk entities (Phase 3 expansion)
+    expedite_keys: Dict[str, bool] = {}
+    for r in risk_scores:
+        score = _cl_safe_float(r.get("risk_score", 0))
+        if score > cfg.get("expedite_risk_threshold", 80):
+            key = f"{r.get('material_code', r.get('entity_id', ''))}|{r.get('plant_id', '')}"
+            expedite_keys[key] = True
+    if expedite_keys:
+        explanation.append(f"R-CL7: {len(expedite_keys)} critical-risk entities flagged for expedite")
+
     return {
-        "version": "v0",
+        "version": "v1",
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "patch": {
             "safety_stock_by_key": ss,
-            "objective": {"stockout_penalty": penalty, "stockout_penalty_base": cfg["stockout_penalty_base"]},
+            "objective": {
+                "stockout_penalty": penalty,
+                "stockout_penalty_base": cfg["stockout_penalty_base"],
+                "service_level_target": service_level_target,
+            },
             "lead_time_buffer_by_key": dict(sorted(lt_buffer.items())),
             "safety_stock_alpha": alpha,
+            "moq_multiplier_by_key": moq_multiplier,
+            "expedite_keys": list(expedite_keys.keys()),
         },
         "explanation": explanation,
         "derived_values": {
@@ -2673,6 +2908,9 @@ def _cl_derive_params(
             "effective_alpha": alpha,
             "uncertainty_width_delta_pct": round(uw_delta, 6) if uw_delta is not None else None,
             "risk_entities_above_threshold": risk_above,
+            "service_level_target": service_level_target,
+            "moq_multiplier_count": len(moq_multiplier),
+            "expedite_count": len(expedite_keys),
         },
     }
 
@@ -2717,8 +2955,8 @@ async def closed_loop_run(request: ClosedLoopRunRequest):
     """
     Evaluate closed-loop triggers and optionally submit a planning re-run.
     For dry_run mode, returns what would happen without executing.
-    For auto_run mode, currently returns TRIGGERED_DRY_RUN (server-side auto-run
-    is delegated to the JS orchestration layer).
+    For auto_run mode, server-side execution is delegated to the JS orchestration
+    layer and reported transparently via execution_state.
     """
     cfg = {**_CL_DEFAULTS, **request.config_overrides}
     trigger = _cl_evaluate_triggers(
@@ -2747,12 +2985,178 @@ async def closed_loop_run(request: ClosedLoopRunRequest):
         cfg=cfg,
     )
 
-    # Server-side auto_run is not implemented here (delegated to JS orchestration).
+    requested_mode = str(request.mode or "dry_run").strip().lower()
+    execution_state = "DRY_RUN_COMPLETED"
+    explanation = list(param_patch["explanation"])
+    if requested_mode == "auto_run":
+        execution_state = "AUTO_RUN_DELEGATED"
+        explanation.append(
+            "auto_run requested; server-side execution is delegated to JS orchestration."
+        )
+
+    # Server-side auto_run remains delegated to JS orchestration.
     return {
         "closed_loop_status": "TRIGGERED_DRY_RUN",
         "trigger_decision": trigger,
         "param_patch": param_patch,
-        "explanation": param_patch["explanation"],
+        "explanation": explanation,
         "planning_run_id": None,
-        "mode": request.mode,
+        "mode": requested_mode,
+        "execution_state": execution_state,
+        "auto_run_executed": False,
+    }
+
+
+# ===========================================================================
+# Supplier Event Connector — Sense Layer Endpoints
+# ===========================================================================
+
+VALID_SUPPLIER_EVENT_TYPES = {
+    "delivery_delay", "quality_alert", "capacity_change",
+    "force_majeure", "shipment_status", "price_change",
+}
+VALID_SEVERITY_LEVELS = {"low", "medium", "high", "critical"}
+
+
+class SupplierEventPayload(BaseModel):
+    """Single supplier event from an external system."""
+    model_config = {"populate_by_name": True}
+
+    event_id: str
+    event_type: str
+    supplier_id: str
+    supplier_name: Optional[str] = None
+    material_code: Optional[str] = None
+    plant_id: Optional[str] = None
+    severity: str = "medium"
+    occurred_at: str
+    source_system: str = "external"
+    description: str = ""
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    details: Dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("event_type")
+    @classmethod
+    def validate_event_type(cls, v):
+        if v not in VALID_SUPPLIER_EVENT_TYPES:
+            raise ValueError(f"event_type must be one of {VALID_SUPPLIER_EVENT_TYPES}, got '{v}'")
+        return v
+
+    @field_validator("severity")
+    @classmethod
+    def validate_severity(cls, v):
+        if v not in VALID_SEVERITY_LEVELS:
+            raise ValueError(f"severity must be one of {VALID_SEVERITY_LEVELS}, got '{v}'")
+        return v
+
+
+class SupplierEventRequest(BaseModel):
+    """Single event request wrapper."""
+    event: SupplierEventPayload
+
+
+class SupplierEventBatchRequest(BaseModel):
+    """Batch event request (up to 100)."""
+    events: List[SupplierEventPayload] = Field(..., min_length=1, max_length=100)
+    source_system: str = "external"
+    batch_id: Optional[str] = None
+
+
+def _persist_supplier_events(rows: list) -> int:
+    """Best-effort persist to supplier_events table via Supabase REST API."""
+    try:
+        url = supabase_client.url
+        headers = supabase_client.headers
+        if not url or not headers.get("apikey"):
+            return 0
+        import requests as _req
+        resp = _req.post(
+            f"{url}/rest/v1/supplier_events",
+            headers={**headers, "Prefer": "return=minimal"},
+            json=rows,
+        )
+        if resp.status_code < 300:
+            return len(rows)
+        logger.warning("[supplier-events] Persist returned %s: %s", resp.status_code, resp.text[:200])
+        return 0
+    except Exception as e:
+        logger.warning("[supplier-events] Persist failed: %s", e)
+        return 0
+
+
+@app.post("/supplier-events")
+async def receive_supplier_event(request: SupplierEventRequest):
+    """
+    Receive a single real-time supplier event.
+    Validates, persists for audit, and returns acknowledgement.
+    Risk recalculation and alert triggering happens on the JS frontend side.
+    """
+    ev = request.event
+    now = datetime.now(timezone.utc).isoformat()
+
+    row = {
+        "event_id": ev.event_id,
+        "event_type": ev.event_type,
+        "supplier_id": ev.supplier_id,
+        "supplier_name": ev.supplier_name,
+        "material_code": (ev.material_code or "").upper() or None,
+        "plant_id": (ev.plant_id or "").upper() or None,
+        "severity": ev.severity,
+        "occurred_at": ev.occurred_at,
+        "source_system": ev.source_system,
+        "description": ev.description,
+        "details_json": ev.details,
+        "metadata_json": ev.metadata,
+        "received_at": now,
+    }
+    persisted = _persist_supplier_events([row])
+
+    return {
+        "status": "accepted",
+        "event_id": ev.event_id,
+        "event_type": ev.event_type,
+        "persisted": persisted > 0,
+        "received_at": now,
+    }
+
+
+@app.post("/supplier-events/batch")
+async def receive_supplier_event_batch(request: SupplierEventBatchRequest):
+    """
+    Receive a batch of supplier events (up to 100).
+    Validates each, persists for audit, returns per-event status.
+    """
+    now = datetime.now(timezone.utc).isoformat()
+    batch_id = request.batch_id or f"batch_{now}"
+
+    rows = []
+    results = []
+    for ev in request.events:
+        rows.append({
+            "event_id": ev.event_id,
+            "event_type": ev.event_type,
+            "supplier_id": ev.supplier_id,
+            "supplier_name": ev.supplier_name,
+            "material_code": (ev.material_code or "").upper() or None,
+            "plant_id": (ev.plant_id or "").upper() or None,
+            "severity": ev.severity,
+            "occurred_at": ev.occurred_at,
+            "source_system": request.source_system,
+            "description": ev.description,
+            "details_json": ev.details,
+            "metadata_json": ev.metadata,
+            "received_at": now,
+            "batch_id": batch_id,
+        })
+        results.append({"event_id": ev.event_id, "status": "accepted"})
+
+    persist_count = _persist_supplier_events(rows) if rows else 0
+
+    return {
+        "status": "accepted",
+        "batch_id": batch_id,
+        "total_events": len(request.events),
+        "persisted_count": persist_count,
+        "results": results,
+        "received_at": now,
     }

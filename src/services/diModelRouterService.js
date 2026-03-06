@@ -5,6 +5,7 @@ import {
   buildSystemBrainPrompt,
   buildWorkflowAReadinessPrompt
 } from '../prompts/diJsonContracts';
+import { buildIntentParserPrompt, validateIntentContract } from '../prompts/intentParserPrompt';
 import { extractAiJson } from '../utils/aiMappingHelper';
 import { invokeAiProxy } from './aiProxyService';
 
@@ -13,7 +14,8 @@ export const DI_PROMPT_IDS = Object.freeze({
   SCHEMA_MAPPING: 'prompt_2_schema_mapping',
   WORKFLOW_A_READINESS: 'prompt_3_workflow_a_readiness',
   REPORT_SUMMARY: 'prompt_4_report_summary',
-  BLOCKING_QUESTIONS: 'prompt_5_blocking_questions'
+  BLOCKING_QUESTIONS: 'prompt_5_blocking_questions',
+  INTENT_PARSER: 'prompt_6_intent_parser'
 });
 
 const DEFAULT_DI_GEMINI_MODEL = 'gemini-3.1-pro-preview';
@@ -54,7 +56,8 @@ const PROMPT_PROVIDER = Object.freeze({
   [DI_PROMPT_IDS.SCHEMA_MAPPING]: 'gemini',
   [DI_PROMPT_IDS.WORKFLOW_A_READINESS]: 'gemini',
   [DI_PROMPT_IDS.REPORT_SUMMARY]: 'deepseek',
-  [DI_PROMPT_IDS.BLOCKING_QUESTIONS]: 'deepseek'
+  [DI_PROMPT_IDS.BLOCKING_QUESTIONS]: 'deepseek',
+  [DI_PROMPT_IDS.INTENT_PARSER]: 'deepseek'
 });
 
 const PROMPT_DEFAULT_MODEL = Object.freeze({
@@ -62,12 +65,14 @@ const PROMPT_DEFAULT_MODEL = Object.freeze({
   [DI_PROMPT_IDS.SCHEMA_MAPPING]: DI_GEMINI_MODEL,
   [DI_PROMPT_IDS.WORKFLOW_A_READINESS]: DI_GEMINI_MODEL,
   [DI_PROMPT_IDS.REPORT_SUMMARY]: DEFAULT_DI_DEEPSEEK_MODEL,
-  [DI_PROMPT_IDS.BLOCKING_QUESTIONS]: DEFAULT_DI_DEEPSEEK_MODEL
+  [DI_PROMPT_IDS.BLOCKING_QUESTIONS]: DEFAULT_DI_DEEPSEEK_MODEL,
+  [DI_PROMPT_IDS.INTENT_PARSER]: DEFAULT_DI_DEEPSEEK_MODEL
 });
 const STRICT_JSON_PROMPTS = new Set([
   DI_PROMPT_IDS.DATA_PROFILER,
   DI_PROMPT_IDS.SCHEMA_MAPPING,
-  DI_PROMPT_IDS.WORKFLOW_A_READINESS
+  DI_PROMPT_IDS.WORKFLOW_A_READINESS,
+  DI_PROMPT_IDS.INTENT_PARSER
 ]);
 
 const isPlainObject = (value) => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -102,6 +107,10 @@ const validatePromptContract = (promptId, parsed) => {
     );
   }
 
+  if (promptId === DI_PROMPT_IDS.INTENT_PARSER) {
+    return validateIntentContract(parsed);
+  }
+
   return true;
 };
 
@@ -125,6 +134,7 @@ const toPromptText = (promptId, input) => {
   if (promptId === DI_PROMPT_IDS.WORKFLOW_A_READINESS) return buildWorkflowAReadinessPrompt(input);
   if (promptId === DI_PROMPT_IDS.REPORT_SUMMARY) return buildDecisionIntelligenceReportPrompt(input);
   if (promptId === DI_PROMPT_IDS.BLOCKING_QUESTIONS) return buildBlockingQuestionPrompt(input);
+  if (promptId === DI_PROMPT_IDS.INTENT_PARSER) return buildIntentParserPrompt(input);
   throw new Error(`Unsupported DI prompt id: ${promptId}`);
 };
 

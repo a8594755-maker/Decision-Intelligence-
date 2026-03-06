@@ -206,8 +206,8 @@ export async function runInventoryProbForecast(userId, bomRunId, options = {}) {
         },
         outputs: {
           row_counts: {
-            summary: summaryPayloads.length,
-            series: seriesPayloads.length
+            summary: mcResult.keys.length,
+            series: mcResult.metrics.keysWithSeries
           },
           kpis: {
             maxPStockout: Math.max(...summaries.map(s => s.pStockout || 0)),
@@ -225,7 +225,7 @@ export async function runInventoryProbForecast(userId, bomRunId, options = {}) {
     return {
       mode: (isDegraded || mcResult.metrics.degraded) ? 'degraded' : 'success',
       reason: isDegraded 
-        ? `Large workload: ${trials} trials / ${totalKeys} keys / ${timeBuckets.length} buckets. Series limited.` 
+        ? `Large workload: ${actualTrials} trials / ${totalKeys} keys / ${timeBuckets.length} buckets. Series limited.`
         : mcResult.metrics.degraded 
           ? `Series limited to top ${MAX_KEYS_FOR_SERIES} keys` 
           : null,

@@ -43,7 +43,7 @@ function ChatComposer({
             type="button"
             className="absolute left-2.5 top-2.5 p-2 rounded-lg text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors disabled:opacity-50"
             onClick={onFilePicker}
-            disabled={isTyping || isUploading}
+            disabled={isUploading}
             title="Upload CSV/XLSX"
           >
             {isUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Paperclip className="w-4 h-4" />}

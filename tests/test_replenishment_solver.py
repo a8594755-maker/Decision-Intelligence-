@@ -905,6 +905,70 @@ class TestSafetyStockSoftConstraint:
         v2 = meta.get("v2_features") or {}
         assert v2.get("safety_stock_soft") is False
 
+    def test_p90_derived_safety_stock_activates_soft_floor(self):
+        """P90 uncertainty should activate safety-stock floor even if uploaded safety_stock=0."""
+        series = _series("SKU-SS4", "P1", n_days=3, p50=10.0, p90=30.0)
+        inv = [_inventory("SKU-SS4", "P1", on_hand=0.0, safety_stock=0.0, lead_time_days=0.0)]
+        req = _request(series=series, inventory=inv, horizon_days=3)
+        result = solve_replenishment(req)
+
+        meta = result.get("solver_meta", {})
+        v2 = meta.get("v2_features") or {}
+        bridge = meta.get("uncertainty_bridge") or {}
+        assert v2.get("safety_stock_soft") is True
+        assert bridge.get("keys_with_p90", 0) >= 1
+        assert bridge.get("keys_with_derived_safety_stock", 0) >= 1
+
+    def test_closed_loop_safety_stock_patch_is_consumed(self):
+        """Closed-loop safety_stock_by_key should be read and applied by the solver."""
+        series = _series("SKU-SS5", "P1", n_days=2, p50=0.0, p90=0.0)
+        inv = [_inventory("SKU-SS5", "P1", on_hand=0.0, safety_stock=0.0, lead_time_days=0.0)]
+        req = _request(
+            series=series,
+            inventory=inv,
+            horizon_days=2,
+            settings={
+                "closed_loop_meta": {
+                    "param_patch": {
+                        "patch": {
+                            "safety_stock_by_key": {
+                                "SKU-SS5|P1": 40.0,
+                            },
+                            "safety_stock_alpha": 0.8,
+                        }
+                    }
+                }
+            },
+        )
+        result = solve_replenishment(req)
+
+        meta = result.get("solver_meta", {})
+        v2 = meta.get("v2_features") or {}
+        bridge = meta.get("uncertainty_bridge") or {}
+        assert v2.get("safety_stock_soft") is True
+        assert bridge.get("keys_with_closed_loop_safety_stock", 0) >= 1
+
+
+class TestServiceLevelUncertaintyBridge:
+    def test_service_level_uses_p90_basis_when_available(self):
+        """Hard service-level check should use p90-aware demand basis when p90 is present."""
+        series = _series("SKU-SL-P90", "P1", n_days=1, p50=10.0, p90=20.0)
+        inv = [_inventory("SKU-SL-P90", "P1", on_hand=0.0, safety_stock=0.0, lead_time_days=0.0)]
+        req = _request(
+            series=series,
+            inventory=inv,
+            horizon_days=1,
+            budget_cap=0.0,  # force no ordering so backlog equals p50 demand
+            service_level_target=0.5,
+        )
+        result = solve_replenishment(req)
+
+        checks = result.get("proof", {}).get("constraints_checked", [])
+        sl_check = next((c for c in checks if c.get("name") == "service_level_target"), None)
+        assert sl_check is not None
+        assert sl_check.get("passed") is True
+        assert "using p90_or_p50 demand basis" in str(sl_check.get("details", ""))
+
 
 # ── V2-T2: Per-period budget constraints (Feature 4) ─────────────────────────
 
@@ -1323,8 +1387,10 @@ class TestShadowPriceAnalysis:
                 assert v2.get("shadow_prices") is True
                 for name, info in sp.items():
                     assert "shadow_price_approx" in info
+                    # Exact LP dual value should be present in primary path.
+                    assert "shadow_price_dual" in info
                     assert "interpretation" in info
-                    assert "delta_used" in info
+                    assert info.get("method") in {"lp_relaxation_dual", "parametric_perturbation"}
 
     def test_shadow_prices_not_computed_by_default(self):
         """Shadow prices should NOT be computed unless explicitly requested."""

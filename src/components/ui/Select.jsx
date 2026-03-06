@@ -50,7 +50,7 @@ export const Select = ({
           text-slate-900 dark:text-slate-100
           ${sizeClasses[size]}
           pr-10
-          focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500
+          focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500
           disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed
           dark:disabled:bg-slate-800 dark:disabled:text-slate-600
           transition-colors

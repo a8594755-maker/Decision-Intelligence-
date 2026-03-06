@@ -202,7 +202,7 @@ const parsePhone = (value) => {
 
   // Remove whitespace, parentheses, dashes, plus signs, etc.
   let cleaned = String(value)
-    .replace(/[\s\(\)\-\+]/g, '')
+    .replace(/[\s()\-+]/g, '')
     .trim();
 
   // Check if at least 6 digits
@@ -269,25 +269,6 @@ const validateAndCleanField = (value, fieldDef, uploadType, row = {}) => {
           errors.push(...phoneResult.errors);
         }
       }
-      break;
-
-    case 'number':
-      cleanedValue = parseNumber(value);
-      if (cleanedValue === null && value !== null && value !== '') {
-        errors.push(`${fieldDef.label} must be a number, but got: ${value}`);
-      }
-      // Check numeric range
-      if (cleanedValue !== null) {
-        if (fieldDef.min !== undefined && cleanedValue < fieldDef.min) {
-          errors.push(`${fieldDef.label} cannot be less than ${fieldDef.min}`);
-        }
-        if (fieldDef.max !== undefined && cleanedValue > fieldDef.max) {
-          errors.push(`${fieldDef.label} cannot be greater than ${fieldDef.max}`);
-        }
-      }
-      break;
-    
-    case 'string':
       // Special handling for week_bucket format - supports Excel date number auto-conversion
       if (fieldDef.key === 'week_bucket' && cleanedValue) {
         const strValue = String(cleanedValue).trim();

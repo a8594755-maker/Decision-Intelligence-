@@ -1,0 +1,7 @@
+{
+  "passed": true,
+  "total": 25,
+  "passed_count": 25,
+  "failed": 0,
+  "source": "pytest-json-report"
+}

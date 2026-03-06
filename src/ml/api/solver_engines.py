@@ -20,6 +20,7 @@ from ml.api.replenishment_solver import (
     solve_replenishment,
     solve_replenishment_multi_echelon,
 )
+from ml.api.solver_availability import cplex_available, gurobi_available
 
 
 class SolverErrorCode(str, Enum):
@@ -73,12 +74,16 @@ class EngineSelection:
 _ENGINE_KEY_TO_META_ENGINE = {
     "heuristic": "heuristic",
     "ortools": "cp_sat",
+    "gurobi": "gurobi",
+    "cplex": "cplex",
     "commercial_stub": "commercial_stub",
 }
 
 _ENGINE_KEY_TO_SOLVER_NAME = {
     "heuristic": "heuristic",
     "ortools": "cp_sat",
+    "gurobi": "gurobi_milp",
+    "cplex": "cplex_milp",
     "commercial_stub": "commercial_stub",
 }
 
@@ -106,11 +111,13 @@ _CANONICAL_SOLVER_META_DEFAULTS = {
     "time_limit_hit": False,
 }
 
+_COMMERCIAL_ENGINE_KEYS = frozenset({"gurobi", "cplex", "commercial_stub"})
+
 _DEFAULT_ALLOWLISTS = {
     "prod": ("heuristic", "ortools"),
-    "staging": ("heuristic", "ortools", "commercial_stub"),
-    "test": ("heuristic", "ortools", "commercial_stub"),
-    "dev": ("heuristic", "ortools", "commercial_stub"),
+    "staging": ("heuristic", "ortools", "gurobi", "cplex", "commercial_stub"),
+    "test": ("heuristic", "ortools", "gurobi", "cplex", "commercial_stub"),
+    "dev": ("heuristic", "ortools", "gurobi", "cplex", "commercial_stub"),
 }
 
 _governance_store: Optional[GovernanceStore] = None
@@ -237,7 +244,7 @@ def resolve_engine_allowlist(environment: Optional[str] = None) -> Tuple[str, ..
         defaults = set(env_override)
 
     if env_name == "prod" and not _to_bool(os.getenv("DI_ENABLE_COMMERCIAL_SOLVERS"), False):
-        defaults = {engine for engine in defaults if not engine.startswith("commercial")}
+        defaults = {engine for engine in defaults if engine not in _COMMERCIAL_ENGINE_KEYS}
 
     if not defaults:
         defaults = {"heuristic"}
@@ -254,6 +261,10 @@ def resolve_default_engine() -> str:
     governed = _to_text_engine((runtime_state or {}).get("solver_engine"))
     if governed == "cp_sat":
         governed = "ortools"
+    if governed == "gurobi_milp":
+        governed = "gurobi"
+    if governed == "cplex_milp":
+        governed = "cplex"
     return governed or fallback
 
 
@@ -334,6 +345,19 @@ def _normalize_engine_payload(
     if "infeasible_reasons_detailed" not in normalized:
         details = normalized.get("infeasible_reason_details")
         normalized["infeasible_reasons_detailed"] = details if isinstance(details, list) else []
+
+    # Phase 4.3: Ensure proof has explain parity fields for all engines.
+    proof = normalized.get("proof")
+    if isinstance(proof, dict):
+        proof.setdefault("shadow_prices", [])
+        proof.setdefault("binding_constraints", [])
+        proof.setdefault("explain_summary", "")
+
+    # Ensure top-level explain parity fields exist across engines.
+    normalized.setdefault("binding_constraints", [])
+    normalized.setdefault("shadow_prices", None)
+    normalized.setdefault("relaxation_applied", None)
+
     return normalized
 
 
@@ -466,9 +490,91 @@ class CommercialEngineStub:
         return _normalize_engine_payload(payload, engine_key=self.key)
 
 
+class GurobiEngine:
+    key = "gurobi"
+
+    def solve(
+        self,
+        planning_contract: Any,
+        *,
+        cancel_check: Optional[Callable[[], bool]] = None,
+    ) -> Dict[str, Any]:
+        if not gurobi_available():
+            raise SolverEngineError(
+                SolverErrorCode.ENGINE_UNAVAILABLE,
+                "Gurobi is not installed or no valid license found; cannot use gurobi engine.",
+                engine=self.key,
+            )
+
+        from ml.api.replenishment_solver_gurobi import (
+            solve_replenishment_gurobi,
+            solve_replenishment_multi_echelon_gurobi,
+        )
+
+        try:
+            if _is_multi_echelon_request(planning_contract):
+                result = solve_replenishment_multi_echelon_gurobi(
+                    planning_contract, cancel_check=cancel_check
+                )
+            else:
+                result = solve_replenishment_gurobi(
+                    planning_contract, cancel_check=cancel_check
+                )
+        except Exception as exc:
+            raise SolverEngineError(
+                SolverErrorCode.ENGINE_RUNTIME_ERROR,
+                f"Gurobi solve failed: {exc}",
+                engine=self.key,
+            ) from exc
+
+        return _normalize_engine_payload(result, engine_key=self.key)
+
+
+class CplexEngine:
+    key = "cplex"
+
+    def solve(
+        self,
+        planning_contract: Any,
+        *,
+        cancel_check: Optional[Callable[[], bool]] = None,
+    ) -> Dict[str, Any]:
+        if not cplex_available():
+            raise SolverEngineError(
+                SolverErrorCode.ENGINE_UNAVAILABLE,
+                "CPLEX (docplex) is not installed or engine is not usable; cannot use cplex engine.",
+                engine=self.key,
+            )
+
+        from ml.api.replenishment_solver_cplex import (
+            solve_replenishment_cplex,
+            solve_replenishment_multi_echelon_cplex,
+        )
+
+        try:
+            if _is_multi_echelon_request(planning_contract):
+                result = solve_replenishment_multi_echelon_cplex(
+                    planning_contract, cancel_check=cancel_check
+                )
+            else:
+                result = solve_replenishment_cplex(
+                    planning_contract, cancel_check=cancel_check
+                )
+        except Exception as exc:
+            raise SolverEngineError(
+                SolverErrorCode.ENGINE_RUNTIME_ERROR,
+                f"CPLEX solve failed: {exc}",
+                engine=self.key,
+            ) from exc
+
+        return _normalize_engine_payload(result, engine_key=self.key)
+
+
 ENGINE_REGISTRY: Dict[str, ISolverEngine] = {
     "ortools": ORToolsEngine(),
     "heuristic": HeuristicEngine(),
+    "gurobi": GurobiEngine(),
+    "cplex": CplexEngine(),
     "commercial_stub": CommercialEngineStub(),
 }
 
@@ -481,6 +587,10 @@ def is_solver_engine_available(engine_key: str) -> bool:
     normalized = _to_text_engine(engine_key)
     if normalized == "ortools":
         return bool(ortools_available())
+    if normalized == "gurobi":
+        return bool(gurobi_available())
+    if normalized == "cplex":
+        return bool(cplex_available())
     return normalized in ENGINE_REGISTRY
 
 

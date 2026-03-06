@@ -452,6 +452,27 @@ describe('buildDecisionNarrative: solver-provided slack and shadow_price', () =>
     expect(result.driver.text).toContain('$8');
   });
 
+  it('prefers solver dual shadow price over approximate fallback when both exist', () => {
+    const dualProof = {
+      ...BINDING_PROOF_WITH_SLACK,
+      constraints_checked: BINDING_PROOF_WITH_SLACK.constraints_checked.map((constraint) => (
+        constraint.name === 'budget_cap'
+          ? { ...constraint, shadow_price_dual: 9.5, shadow_price_approx: 8.0 }
+          : constraint
+      ))
+    };
+
+    const result = buildDecisionNarrative({
+      solverStatus: 'FEASIBLE',
+      solverKpis: SAMPLE_SOLVER_KPIS,
+      proof: dualProof,
+      replayMetrics: GOOD_REPLAY_METRICS
+    });
+
+    expect(result.driver.shadow_price).toBe(9.5);
+    expect(result.driver.evidence_refs).toContain('proof.constraints_checked[name=budget_cap].shadow_price_dual');
+  });
+
   it('constraint_binding_summary propagates slack and natural_language from solver', () => {
     const result = buildDecisionNarrative({
       solverStatus: 'FEASIBLE',

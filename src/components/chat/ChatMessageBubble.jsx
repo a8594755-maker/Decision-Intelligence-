@@ -1,6 +1,7 @@
 import React, { memo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { Bell } from 'lucide-react';
 
 const markdownComponents = {
   table: ({ children }) => (
@@ -28,12 +29,20 @@ const markdownComponents = {
 function ChatMessageBubble({ message, renderSpecialMessage, timestampText = '' }) {
   const isUser = message?.role === 'user';
   const hasSpecial = Boolean(message?.type);
+  const isProactive = Boolean(message?.is_proactive);
 
   return (
     <div className={`w-full flex ${isUser ? 'justify-end' : 'justify-start'} animate-fade-in`}>
       <div className={`max-w-[88%] ${hasSpecial ? 'w-full' : ''}`}>
+        {/* Proactive alert banner */}
+        {isProactive && (
+          <div className="flex items-center gap-1.5 mb-1 px-1">
+            <Bell className="w-3.5 h-3.5 text-amber-500" />
+            <span className="text-[11px] font-medium text-amber-600 dark:text-amber-400">Proactive Alert</span>
+          </div>
+        )}
         {hasSpecial ? (
-          <div className="w-full">{renderSpecialMessage?.(message)}</div>
+          <div className={`w-full ${isProactive ? 'border-l-2 border-amber-400 pl-2' : ''}`}>{renderSpecialMessage?.(message)}</div>
         ) : (
           <div
             className={`rounded-2xl px-4 py-2.5 shadow-sm ${

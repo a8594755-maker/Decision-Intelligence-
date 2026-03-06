@@ -66,3 +66,7 @@ backtest_report.json
 
 # Test scratch files in root
 PHASE*_CONSOLE_TEST.js
+
+# Auto-generated output directories
+test-results/
+reports/

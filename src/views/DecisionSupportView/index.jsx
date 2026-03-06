@@ -34,6 +34,7 @@ import {
   recordPlanApproved,
   recordPlanRejected
 } from '../../services/planAuditService';
+import { writeApprovedPlanBaseline } from '../../services/planWritebackService';
 import {
   generateTopologyGraphForRun,
   loadTopologyGraphForRun
@@ -48,14 +49,8 @@ import {
   WORKFLOW_NAMES
 } from '../../workflows/workflowRegistry';
 import asyncRunsApiClient, { isAsyncRunsConnectivityError } from '../../services/asyncRunsApiClient';
-import { buildDatasetFingerprint } from '../../utils/datasetFingerprint';
 import { buildSignature } from '../../utils/datasetSimilarity';
 import { buildReusePlan, applyContractTemplateToProfile } from '../../utils/reusePlanner';
-import { buildActualVsForecastSeries } from '../../utils/charts/buildActualVsForecastSeries';
-import { buildProofInlineBlock } from '../../utils/proofFormatter';
-import UPLOAD_SCHEMAS from '../../utils/uploadSchemas';
-import { getRequiredMappingStatus } from '../../utils/requiredMappingStatus';
-import { ruleBasedMapping } from '../../utils/aiMappingHelper';
 import { APP_NAME, ASSISTANT_NAME } from '../../config/branding';
 import { executeChatCanvasRun, RUN_STEP_ORDER } from '../../services/chatCanvasWorkflowService';
 import DataSummaryCard from '../../components/chat/DataSummaryCard';
@@ -88,714 +83,64 @@ import PODelayAlertCard from '../../components/chat/PODelayAlertCard';
 import RiskTriggerNotificationCard from '../../components/chat/RiskTriggerNotificationCard';
 import ProactiveAlertCard from '../../components/chat/ProactiveAlertCard';
 import AIErrorCard from '../../components/chat/AIErrorCard';
+import PlanComparisonCard from '../../components/chat/PlanComparisonCard';
+import EnhancedPlanApprovalCard from '../../components/chat/EnhancedPlanApprovalCard';
+import ApprovalReminderCard from '../../components/chat/ApprovalReminderCard';
+import DigitalTwinSimulationCard from '../../components/chat/DigitalTwinSimulationCard';
+import NegotiationPanel from '../../components/chat/NegotiationPanel';
+import * as digitalTwinService from '../../services/digitalTwinService';
+import { runNegotiation, checkNegotiationTrigger } from '../../services/negotiation/negotiationOrchestrator';
 import SplitShell from '../../components/chat/SplitShell';
 import ConversationSidebar from '../../components/chat/ConversationSidebar';
 import ChatThread from '../../components/chat/ChatThread';
 import ChatComposer from '../../components/chat/ChatComposer';
-
-const STORAGE_KEY = 'decision_intelligence_conversations';
-const TABLE_UNAVAILABLE_KEY = 'decision_intelligence_conversations_table_unavailable';
-const SIDEBAR_COLLAPSED_KEY_PREFIX = 'decision_intelligence_sidebar_collapsed_';
-const CANVAS_SPLIT_RATIO_KEY_PREFIX = 'decision_intelligence_canvas_split_ratio_';
-const MAX_UPLOAD_MESSAGE = 'Please upload aggregated data (e.g., SKU-store-day/week). Maximum 50MB.';
-
-const tableUnavailableAtLoad = sessionStorage.getItem(TABLE_UNAVAILABLE_KEY) === '1';
-const conversationsDb = tableUnavailableAtLoad ? null : supabase;
-
-const isTableUnavailable = () => !conversationsDb || sessionStorage.getItem(TABLE_UNAVAILABLE_KEY) === '1';
-const markTableUnavailable = () => {
-  sessionStorage.setItem(TABLE_UNAVAILABLE_KEY, '1');
-};
-
-const DEFAULT_CANVAS_STATE = {
-  isOpen: false,
-  activeTab: 'logs',
-  run: null,
-  logs: [],
-  stepStatuses: RUN_STEP_ORDER.reduce((acc, step) => ({
-    ...acc,
-    [step]: { status: 'queued', updated_at: new Date().toISOString(), notes: '' }
-  }), {}),
-  codeText: '',
-  chartPayload: {
-    actual_vs_forecast: [],
-    inventory_projection: [],
-    cost_breakdown: [],
-    topology_graph: null
-  },
-  downloads: [],
-  topologyRunning: false
-};
-
-const EXECUTION_KEYWORDS = [
-  'plan',
-  'forecast',
-  'replenishment',
-  'order quantity',
-  'stock',
-  'optimize',
-  'schedule',
-  'allocation',
-  'inventory'
-];
-
-const SPLIT_RATIO_MIN = 0.25;
-const SPLIT_RATIO_MAX = 0.75;
-const ASYNC_JOB_POLL_INTERVAL_MS = 2000;
-const ASYNC_JOB_MAX_POLLS = 1200;
-
-function clampSplitRatio(value) {
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric)) return 0.5;
-  return Math.min(SPLIT_RATIO_MAX, Math.max(SPLIT_RATIO_MIN, numeric));
-}
-
-function isApiKeyConfigError(message = '') {
-  const text = String(message || '').toLowerCase();
-  if (!text) return false;
-  const mentionsKey = text.includes('api key') || text.includes('apikey');
-  const keyStateError = text.includes('not valid')
-    || text.includes('invalid')
-    || text.includes('missing')
-    || text.includes('no api key');
-  return (
-    text.includes('warning: no api key found')
-    || text.includes('missing_server_keys')
-    || text.includes('not configured on server')
-    || (mentionsKey && text.includes('(400)'))
-    || (mentionsKey && keyStateError)
-  );
-}
-
-function getErrorMessage(error, fallback = 'Unexpected error') {
-  if (error instanceof Error && error.message) {
-    return error.message;
-  }
-  if (typeof error?.message === 'string' && error.message) {
-    return error.message;
-  }
-  if (typeof error?.details === 'string' && error.details) {
-    return error.details;
-  }
-  if (typeof error?.hint === 'string' && error.hint) {
-    return error.hint;
-  }
-  if (typeof error?.error_description === 'string' && error.error_description) {
-    return error.error_description;
-  }
-  return fallback;
-}
-
-// Allowlisted bind_to prefixes for blocking-question answers (PR-5)
-const BIND_TO_ALLOWLIST = ['mapping.', 'settings.'];
-
-const QUICK_PROMPTS = [
-  { label: 'Top risk items', prompt: 'What are my top 5 highest-risk materials right now? Show their risk scores and recommended actions.' },
-  { label: 'Stockout forecast', prompt: 'Which materials are most likely to stockout in the next 2 weeks? What actions should I take?' },
-  { label: 'Replenishment plan', prompt: 'Plan replenishment for Warehouse A next month and show constraints/exceptions.' }
-];
-
-const REQUIRED_UPLOAD_TYPES_BY_EXECUTION = {
-  forecast: ['demand_fg'],
-  [WORKFLOW_NAMES.A]: ['demand_fg', 'inventory_snapshots', 'po_open_lines', 'bom_edge'],
-  [WORKFLOW_NAMES.B]: ['po_open_lines', 'goods_receipt']
-};
-
-function loadLocalConversations(userId) {
-  try {
-    const raw = localStorage.getItem(`${STORAGE_KEY}_${userId}`);
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveLocalConversations(userId, conversations) {
-  try {
-    localStorage.setItem(`${STORAGE_KEY}_${userId}`, JSON.stringify(conversations));
-  } catch {
-    // Ignore localStorage quota errors.
-  }
-}
-
-const normalizeHeader = (value) => String(value || '').trim().toLowerCase().replace(/[\s\-./]+/g, '_');
-
-function inferTimeGuess(columns = []) {
-  const normalized = columns.map(normalizeHeader);
-  const timeColumn = normalized.find((col) => /(date|week|month|time|bucket|snapshot)/.test(col)) || '';
-  let granularity = 'unknown';
-  if (timeColumn.includes('week')) granularity = 'week';
-  else if (timeColumn.includes('month')) granularity = 'month';
-  else if (timeColumn.includes('date') || timeColumn.includes('snapshot')) granularity = 'day';
-
-  return { timeColumn, granularity };
-}
-
-function buildFingerprintFromUpload(sheetsRaw = [], mappingPlans = []) {
-  const planBySheet = new Map((mappingPlans || []).map((plan) => [String(plan.sheet_name || '').toLowerCase(), plan]));
-
-  return buildDatasetFingerprint({
-    sheets: (sheetsRaw || []).map((sheet) => {
-      const sheetName = String(sheet.sheet_name || sheet.sheetName || 'Sheet');
-      const matchedPlan = planBySheet.get(sheetName.toLowerCase()) || {};
-      const guess = inferTimeGuess(sheet.columns || []);
-      return {
-        sheet_name: sheetName,
-        columns: sheet.columns || Object.keys((sheet.rows || [])[0] || {}),
-        inferred_type: matchedPlan.upload_type || 'unknown',
-        time_column_guess: guess.timeColumn,
-        time_granularity_guess: guess.granularity
-      };
-    })
-  });
-}
-
-function getWorkflowFromProfile(profileJson = {}) {
-  const label = String(profileJson?.global?.workflow_guess?.label || 'A').trim().toUpperCase();
-  if (label === 'A') return WORKFLOW_NAMES.A;
-  if (label === 'B') return WORKFLOW_NAMES.B;
-  if (label === 'C') return WORKFLOW_NAMES.A;
-  return WORKFLOW_NAMES.A;
-}
-
-function buildRuntimeWorkflowSettings(context = {}, explicitSettings = {}) {
-  const templateSettings = context?.reused_settings_template || {};
-  return {
-    ...templateSettings,
-    ...explicitSettings,
-    reuse_enabled: context?.reuse_enabled !== false,
-    force_retrain: Boolean(context?.force_retrain)
-  };
-}
-
-function buildValidationPayload(profileRow) {
-  const validation = profileRow?.contract_json?.validation || {};
-  return {
-    status: validation.status || 'fail',
-    reasons: Array.isArray(validation.reasons) && validation.reasons.length > 0
-      ? validation.reasons
-      : ['Validation reasons unavailable']
-  };
-}
-
-function buildDownloadsPayload({ profileJson, contractJson, profileId }) {
-  return {
-    files: [
-      {
-        label: 'profile.json',
-        fileName: `profile_${profileId || 'latest'}.json`,
-        mimeType: 'application/json',
-        content: profileJson || {}
-      },
-      {
-        label: 'contract.json',
-        fileName: `contract_${profileId || 'latest'}.json`,
-        mimeType: 'application/json',
-        content: contractJson || {}
-      }
-    ]
-  };
-}
-
-function buildConfirmationPayload(cardPayload, mappingPlans = []) {
-  const profileBySheet = new Map(
-    (cardPayload?.profile_json?.sheets || []).map((sheet) => [
-      String(sheet?.sheet_name || ''),
-      sheet
-    ])
-  );
-  const contractBySheet = new Map(
-    (cardPayload?.contract_json?.datasets || []).map((dataset) => [
-      String(dataset?.sheet_name || ''),
-      dataset
-    ])
-  );
-  const planBySheet = new Map((mappingPlans || []).map((plan) => [String(plan.sheet_name || ''), plan]));
-  const lowConfidenceSheets = (cardPayload?.sheets || []).filter((sheet) => {
-    const missingRequired = (sheet.missing_required_fields || []).length > 0;
-    return Number(sheet.confidence || 0) < 0.7 || missingRequired;
-  });
-
-  if (lowConfidenceSheets.length === 0) return null;
-
-  const questions = lowConfidenceSheets.map((sheet) => {
-    const plan = planBySheet.get(sheet.sheet_name) || {};
-    const candidates = Array.isArray(plan.candidates) ? plan.candidates : [];
-    const deduped = new Map();
-    const profileSheet = profileBySheet.get(sheet.sheet_name) || {};
-    const contractSheet = contractBySheet.get(sheet.sheet_name) || {};
-
-    [
-      { upload_type: sheet.upload_type || 'unknown', confidence: sheet.confidence || 0 },
-      ...candidates
-    ].forEach((candidate) => {
-      const key = String(candidate.upload_type || 'unknown');
-      if (!deduped.has(key)) {
-        deduped.set(key, {
-          upload_type: key,
-          confidence: Number(candidate.confidence || 0)
-        });
-      }
-    });
-
-    return {
-      sheet_name: sheet.sheet_name,
-      current_type: sheet.upload_type || 'unknown',
-      confidence: Number(sheet.confidence || 0),
-      missing_required_fields: Array.isArray(sheet.missing_required_fields) ? sheet.missing_required_fields : [],
-      available_columns: Array.isArray(profileSheet.original_headers) ? profileSheet.original_headers : [],
-      current_mapping: (contractSheet && typeof contractSheet.mapping === 'object') ? contractSheet.mapping : {},
-      options: Array.from(deduped.values())
-        .sort((a, b) => b.confidence - a.confidence)
-        .slice(0, 5)
-    };
-  });
-
-  return {
-    dataset_profile_id: cardPayload.dataset_profile_id,
-    questions
-  };
-}
-
-function toSourceToTargetMapping(targetToSource = {}) {
-  const mapping = {};
-  Object.entries(targetToSource || {}).forEach(([targetField, sourceColumn]) => {
-    if (!targetField || !sourceColumn) return;
-    mapping[String(sourceColumn)] = String(targetField);
-  });
-  return mapping;
-}
-
-function toTargetToSourceMapping(sourceToTarget = {}) {
-  const mapping = {};
-  Object.entries(sourceToTarget || {}).forEach(([sourceColumn, targetField]) => {
-    if (!sourceColumn || !targetField) return;
-    mapping[String(targetField)] = String(sourceColumn);
-  });
-  return mapping;
-}
-
-function normalizeMappingToken(value) {
-  return String(value || '').trim().toLowerCase().replace(/[\s\-./]+/g, '_');
-}
-
-function resolveHeaderCandidate(sourceCandidate, headers = []) {
-  const candidate = String(sourceCandidate || '').trim();
-  if (!candidate) return null;
-
-  const exact = (headers || []).find((header) => String(header) === candidate);
-  if (exact) return String(exact);
-
-  const byNormalized = new Map();
-  (headers || []).forEach((header) => {
-    const normalized = normalizeMappingToken(header);
-    if (!normalized || byNormalized.has(normalized)) return;
-    byNormalized.set(normalized, String(header));
-  });
-  return byNormalized.get(normalizeMappingToken(candidate)) || null;
-}
-
-function inferMappingForRole(uploadType, headers = [], existingTargetToSource = {}) {
-  const schema = UPLOAD_SCHEMAS[uploadType];
-  if (!schema || !Array.isArray(headers) || headers.length === 0) {
-    return existingTargetToSource || {};
-  }
-
-  const sourceToTarget = {
-    ...toSourceToTargetMapping(existingTargetToSource || {})
-  };
-
-  const usedTargets = new Set(Object.values(sourceToTarget));
-  const usedSourceColumns = new Set(Object.keys(sourceToTarget));
-
-  // First pass: exact normalized header <-> field key mapping.
-  const headerByNormalized = new Map();
-  headers.forEach((header) => {
-    const normalized = normalizeMappingToken(header);
-    if (!normalized || headerByNormalized.has(normalized)) return;
-    headerByNormalized.set(normalized, header);
-  });
-  (schema.fields || []).forEach((field) => {
-    const target = String(field?.key || '');
-    if (!target || usedTargets.has(target)) return;
-    const directHeader = headerByNormalized.get(normalizeMappingToken(target));
-    if (!directHeader || usedSourceColumns.has(directHeader)) return;
-    sourceToTarget[directHeader] = target;
-    usedSourceColumns.add(directHeader);
-    usedTargets.add(target);
-  });
-
-  const suggestions = ruleBasedMapping(headers, uploadType, schema.fields)
-    .filter((item) => item?.source && item?.target && Number(item?.confidence || 0) >= 0.6)
-    .sort((a, b) => Number(b.confidence || 0) - Number(a.confidence || 0));
-
-  suggestions.forEach(({ source, target }) => {
-    if (!source || !target) return;
-    if (sourceToTarget[source]) return;
-    if (usedSourceColumns.has(source)) return;
-    if (usedTargets.has(target)) return;
-    sourceToTarget[source] = target;
-    usedSourceColumns.add(source);
-    usedTargets.add(target);
-  });
-
-  const status = getRequiredMappingStatus({
-    uploadType,
-    columns: headers,
-    columnMapping: sourceToTarget
-  });
-  const missing = Array.isArray(status.missingRequired) ? status.missingRequired : [];
-
-  if (missing.length > 0) {
-    // Secondary permissive pass for required fields only.
-    suggestions.forEach(({ source, target }) => {
-      if (!missing.includes(target)) return;
-      if (sourceToTarget[source]) return;
-      if (usedSourceColumns.has(source)) return;
-      if (usedTargets.has(target)) return;
-      sourceToTarget[source] = target;
-      usedSourceColumns.add(source);
-      usedTargets.add(target);
-    });
-  }
-
-  return toTargetToSourceMapping(sourceToTarget);
-}
-
-function applyContractOverrides(contractJson = {}, profileJson = {}, overrides = {}, mappingOverrides = {}) {
-  if (!contractJson || typeof contractJson !== 'object') return contractJson;
-  const updates = Object.entries(overrides || {});
-  const mappingUpdates = Object.entries(mappingOverrides || {});
-  if (updates.length === 0 && mappingUpdates.length === 0) return contractJson;
-
-  const bySheet = new Map(updates.map(([sheet, role]) => [String(sheet).toLowerCase(), String(role)]));
-  const mappingBySheet = new Map(mappingUpdates.map(([sheet, mapping]) => [String(sheet).toLowerCase(), mapping || {}]));
-  const sheets = Array.isArray(profileJson?.sheets) ? profileJson.sheets : [];
-  const headersBySheet = new Map(
-    sheets.map((sheet) => [
-      String(sheet?.sheet_name || '').toLowerCase(),
-      Array.isArray(sheet?.original_headers) ? sheet.original_headers : []
-    ])
-  );
-
-  return {
-    ...contractJson,
-    datasets: (contractJson.datasets || []).map((dataset) => {
-      const sheetKey = String(dataset.sheet_name || '').toLowerCase();
-      const headers = headersBySheet.get(sheetKey) || [];
-      const role = bySheet.get(sheetKey) || dataset.upload_type;
-      const manualMapping = mappingBySheet.get(sheetKey) || {};
-      let inferredMapping = inferMappingForRole(role, headers, dataset.mapping || {});
-
-      Object.entries(manualMapping).forEach(([targetField, sourceCandidate]) => {
-        if (!targetField) return;
-        const resolved = resolveHeaderCandidate(sourceCandidate, headers);
-        if (!resolved) return;
-        inferredMapping[String(targetField)] = resolved;
-      });
-
-      return {
-        ...dataset,
-        upload_type: role,
-        mapping: inferredMapping
-      };
-    })
-  };
-}
-
-function buildExecutionGateResult(profileRow = {}, executionKey = 'forecast') {
-  const requiredTypes = REQUIRED_UPLOAD_TYPES_BY_EXECUTION[executionKey] || [];
-  const datasets = Array.isArray(profileRow?.contract_json?.datasets) ? profileRow.contract_json.datasets : [];
-  const issues = [];
-
-  requiredTypes.forEach((uploadType) => {
-    const candidates = datasets
-      .filter((dataset) => String(dataset?.upload_type || '').toLowerCase() === String(uploadType).toLowerCase())
-      .sort((a, b) => Number(b?.requiredCoverage || 0) - Number(a?.requiredCoverage || 0));
-
-    if (candidates.length === 0) {
-      issues.push({
-        upload_type: uploadType,
-        reason: 'missing_dataset',
-        missing_required_fields: []
-      });
-      return;
-    }
-
-    const best = candidates[0];
-    const coverage = Number(best?.requiredCoverage || 0);
-    const missingRequired = Array.isArray(best?.missing_required_fields) ? best.missing_required_fields : [];
-    const validationStatus = String(best?.validation?.status || '').toLowerCase();
-    if (coverage < 1 || missingRequired.length > 0 || validationStatus !== 'pass') {
-      issues.push({
-        upload_type: uploadType,
-        sheet_name: best?.sheet_name || '',
-        reason: 'insufficient_required_coverage',
-        requiredCoverage: coverage,
-        missing_required_fields: missingRequired
-      });
-    }
-  });
-
-  return {
-    requiredTypes,
-    issues,
-    isValid: issues.length === 0
-  };
-}
-
-function buildEvidenceSummaryText(summary = {}) {
-  const keyResults = Array.isArray(summary.key_results) ? summary.key_results : [];
-  const exceptions = Array.isArray(summary.exceptions) ? summary.exceptions : [];
-  const actions = Array.isArray(summary.recommended_actions) ? summary.recommended_actions : [];
-
-  const lines = [];
-  lines.push('### Evidence-only Summary');
-  lines.push(summary.summary || 'Summary unavailable.');
-
-  if (keyResults.length > 0) {
-    lines.push('');
-    lines.push('**Key results**');
-    keyResults.forEach((item) => {
-      lines.push(`- ${item.claim} _(evidence: ${(item.evidence_ids || []).join(', ') || 'none'})_`);
-    });
-  }
-
-  if (exceptions.length > 0) {
-    lines.push('');
-    lines.push('**Exceptions**');
-    exceptions.forEach((item) => {
-      lines.push(`- ${item.issue || item.claim} _(evidence: ${(item.evidence_ids || []).join(', ') || 'none'})_`);
-    });
-  }
-
-  if (actions.length > 0) {
-    lines.push('');
-    lines.push('**Recommended actions**');
-    actions.forEach((item) => lines.push(`- ${item}`));
-  }
-
-  return lines.join('\n');
-}
-
-function toFiniteNumber(value) {
-  const numeric = Number(value);
-  return Number.isFinite(numeric) ? numeric : null;
-}
-
-function buildActualVsForecastRowsFromForecastCard(payload = {}) {
-  const built = buildActualVsForecastSeries(payload);
-  return built.series.length > 0 ? built.rows : [];
-}
-
-function buildInventoryProjectionRowsFromCard(payload = {}) {
-  const groups = Array.isArray(payload?.groups) ? payload.groups : [];
-  const selected = groups.find((group) => Array.isArray(group?.points) && group.points.length > 0);
-  if (!selected) return [];
-
-  return selected.points
-    .map((point, index) => ({
-      date: point?.date || point?.time_bucket || `t_${index + 1}`,
-      with_plan: toFiniteNumber(point?.with_plan),
-      without_plan: toFiniteNumber(point?.without_plan),
-      demand: toFiniteNumber(point?.demand)
-    }))
-    .filter((row) => row.with_plan !== null || row.without_plan !== null || row.demand !== null);
-}
-
-function buildCostBreakdownRowsFromPlanSummary(payload = {}) {
-  const kpis = payload?.kpis || {};
-  const serviceLevel = toFiniteNumber(kpis?.estimated_service_level);
-  const primary = [
-    { label: 'Estimated Total Cost', value: toFiniteNumber(kpis?.estimated_total_cost) },
-    { label: 'Stockout Units', value: toFiniteNumber(kpis?.estimated_stockout_units) },
-    { label: 'Holding Units', value: toFiniteNumber(kpis?.estimated_holding_units) },
-    { label: 'Service Level (%)', value: serviceLevel === null ? null : Number((serviceLevel * 100).toFixed(2)) }
-  ].filter((item) => item.value !== null);
-
-  if (primary.length > 0) {
-    return primary;
-  }
-
-  const withPlan = payload?.replay_metrics?.with_plan || {};
-  const fallback = [
-    { label: 'Service Level (%)', value: toFiniteNumber(withPlan?.service_level_proxy) },
-    { label: 'Stockout Units', value: toFiniteNumber(withPlan?.stockout_units) },
-    { label: 'Avg Inventory', value: toFiniteNumber(withPlan?.average_inventory) }
-  ]
-    .filter((item) => item.value !== null)
-    .map((item) => (
-      item.label === 'Service Level (%)'
-        ? { ...item, value: Number((Number(item.value) * 100).toFixed(2)) }
-        : item
-    ));
-
-  return fallback;
-}
-
-function deriveCanvasChartPatchFromCard(cardType, payload = {}) {
-  if (cardType === 'forecast_result_card') {
-    const rows = buildActualVsForecastRowsFromForecastCard(payload);
-    if (rows.length === 0) return null;
-    const groups = Array.isArray(payload.series_groups) ? payload.series_groups : [];
-    return { actual_vs_forecast: rows, ...(groups.length > 0 ? { series_groups: groups } : {}) };
-  }
-  if (cardType === 'inventory_projection_card') {
-    const rows = buildInventoryProjectionRowsFromCard(payload);
-    return rows.length > 0 ? { inventory_projection: rows } : null;
-  }
-  if (cardType === 'plan_summary_card') {
-    const rows = buildCostBreakdownRowsFromPlanSummary(payload);
-    return rows.length > 0 ? { cost_breakdown: rows } : null;
-  }
-  if (cardType === 'topology_graph_card') {
-    if (payload?.graph && typeof payload.graph === 'object') {
-      return { topology_graph: payload.graph };
-    }
-  }
-  if (cardType === 'risk_aware_plan_comparison_card') {
-    if (payload?.kpis) {
-      return { plan_comparison: { kpis: payload.kpis, key_changes: payload.key_changes || [] } };
-    }
-    return null;
-  }
-  return null;
-}
-
-function extractRunIdFromMessage(message) {
-  if (!message) return null;
-  const payload = message.payload || {};
-  const fields = [payload.run_id, payload.runId, payload.forecast_run_id];
-  for (const field of fields) {
-    const numeric = Number(field);
-    if (Number.isFinite(numeric)) return numeric;
-  }
-  return null;
-}
-
-function findLatestRunIdFromMessages(messages = []) {
-  for (let i = messages.length - 1; i >= 0; i -= 1) {
-    const runId = extractRunIdFromMessage(messages[i]);
-    if (Number.isFinite(runId)) return runId;
-  }
-  return null;
-}
-
-function findLatestWorkflowRunIdFromMessages(messages = []) {
-  for (let i = messages.length - 1; i >= 0; i -= 1) {
-    const message = messages[i];
-    if (!message) continue;
-    const type = String(message.type || '').trim();
-    if (type && type !== 'workflow_progress_card' && type !== 'topology_graph_card') {
-      continue;
-    }
-    const runId = extractRunIdFromMessage(message);
-    if (Number.isFinite(runId)) return runId;
-  }
-  return null;
-}
-
-async function loadDomainContext(userId) {
-  const ctx = { riskItems: [], suppliers: null, materials: null, whatIfRuns: [], deliveryStats: null };
-
-  try {
-    const { data } = await supabase
-      .from('risk_score_results')
-      .select('material_code, plant_id, p_stockout, impact_usd, score')
-      .eq('user_id', userId)
-      .order('score', { ascending: false })
-      .limit(10);
-    if (data) ctx.riskItems = data;
-  } catch {
-    // Optional table.
-  }
-
-  try {
-    const [{ count: sCount }, { count: mCount }] = await Promise.all([
-      supabase.from('suppliers').select('*', { count: 'exact', head: true }),
-      supabase.from('materials').select('*', { count: 'exact', head: true }).eq('user_id', userId)
-    ]);
-    ctx.suppliers = sCount;
-    ctx.materials = mCount;
-  } catch {
-    // Optional tables.
-  }
-
-  try {
-    const { data } = await supabase
-      .from('what_if_runs')
-      .select('material_code, plant_id, action_type, delta_p_stockout, delta_impact_usd, cost_usd, roi, created_at')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false })
-      .limit(5);
-    if (data) ctx.whatIfRuns = data;
-  } catch {
-    // Optional table.
-  }
-
-  try {
-    const since = new Date();
-    since.setDate(since.getDate() - 30);
-    const { data } = await supabase
-      .from('goods_receipts')
-      .select('is_on_time')
-      .eq('user_id', userId)
-      .gte('actual_delivery_date', since.toISOString().split('T')[0]);
-    if (data && data.length > 0) {
-      const onTime = data.filter((row) => row.is_on_time === true).length;
-      ctx.deliveryStats = {
-        total: data.length,
-        onTimeRate: ((onTime / data.length) * 100).toFixed(1)
-      };
-    }
-  } catch {
-    // Optional table.
-  }
-
-  return ctx;
-}
-
-function buildSystemPrompt(domainCtx, activeDatasetContext) {
-  let prompt = `You are **${ASSISTANT_NAME}**, an expert supply-chain AI.
-Answer in the same language the user writes in. Use Markdown formatting (tables, bold, lists) for clarity.
-Be concise, data-driven, and actionable.\n\n`;
-
-  prompt += '## Current Supply Chain State\n';
-
-  if (domainCtx?.suppliers != null || domainCtx?.materials != null) {
-    prompt += `- **Suppliers**: ${domainCtx.suppliers ?? 'unknown'} | **Materials**: ${domainCtx.materials ?? 'unknown'}\n`;
-  }
-
-  if (domainCtx?.deliveryStats) {
-    prompt += `- **Delivery performance (30d)**: ${domainCtx.deliveryStats.total} receipts, ${domainCtx.deliveryStats.onTimeRate}% on-time\n`;
-  }
-
-  if (domainCtx?.riskItems?.length > 0) {
-    prompt += '\n### Top Risk Items (by score)\n';
-    prompt += '| Material | Plant | P(stockout) | Impact USD | Score |\n|---|---|---|---|---|\n';
-    domainCtx.riskItems.forEach((r) => {
-      prompt += `| ${r.material_code} | ${r.plant_id} | ${(r.p_stockout * 100).toFixed(0)}% | $${Number(r.impact_usd).toLocaleString()} | ${Number(r.score).toFixed(0)} |\n`;
-    });
-  }
-
-  if (activeDatasetContext?.summary) {
-    prompt += `\n### Selected Dataset Context\n${activeDatasetContext.summary}\n`;
-  }
-
-  const proofBlock = buildProofInlineBlock(domainCtx?.lastPlanSolverResult);
-  if (proofBlock) {
-    prompt += `\n### Last Plan: Solver Proof\n${proofBlock}\n`;
-    prompt += '\nWhen answering plan questions, reference these binding constraints and objective terms explicitly.\n';
-  }
-
-  prompt += '\nWhite-box rule: never invent numeric outputs. If exact values are unavailable, say what evidence is missing.';
-  return prompt;
-}
-
-function isExecutionIntent(text = '') {
-  const lowered = String(text || '').toLowerCase();
-  return EXECUTION_KEYWORDS.some((keyword) => lowered.includes(keyword));
-}
+import useSessionContext from '../../hooks/useSessionContext';
+import { parseIntent, routeIntent } from '../../services/chatIntentService';
+import { handleParameterChange, handlePlanComparison, buildComparisonSummaryText } from '../../services/chatRefinementService';
+import { createAlertMonitor, buildAlertChatMessage, isAlertMonitorEnabled } from '../../services/alertMonitorService';
+import { batchApprove, batchReject } from '../../services/approvalWorkflowService';
+import { buildEvidenceResponse } from '../../services/evidenceResponseService';
+import {
+  STORAGE_KEY,
+  SIDEBAR_COLLAPSED_KEY_PREFIX,
+  CANVAS_SPLIT_RATIO_KEY_PREFIX,
+  MAX_UPLOAD_MESSAGE,
+  DEFAULT_CANVAS_STATE,
+  SPLIT_RATIO_MIN,
+  SPLIT_RATIO_MAX,
+  ASYNC_JOB_POLL_INTERVAL_MS,
+  ASYNC_JOB_MAX_POLLS,
+  BIND_TO_ALLOWLIST,
+  QUICK_PROMPTS,
+  REQUIRED_UPLOAD_TYPES_BY_EXECUTION,
+  clampSplitRatio,
+  isApiKeyConfigError,
+  getErrorMessage,
+  loadLocalConversations,
+  saveLocalConversations,
+  buildFingerprintFromUpload,
+  getWorkflowFromProfile,
+  buildRuntimeWorkflowSettings,
+  buildValidationPayload,
+  buildDownloadsPayload,
+  buildConfirmationPayload,
+  applyContractOverrides,
+  buildExecutionGateResult,
+  buildEvidenceSummaryText,
+  deriveCanvasChartPatchFromCard,
+  findLatestRunIdFromMessages,
+  findLatestWorkflowRunIdFromMessages,
+  normalizeWorkflowUiError,
+  loadDomainContext,
+  buildSystemPrompt,
+  isExecutionIntent,
+  initTableAvailability,
+  isTableUnavailable,
+  markTableUnavailable,
+} from './helpers.js';
+
+const tableAvailable = initTableAvailability();
+const conversationsDb = tableAvailable ? supabase : null;
 
 export default function DecisionSupportView({ user, addNotification }) {
   const userStorageSuffix = user?.id || 'anon';
@@ -838,6 +183,11 @@ export default function DecisionSupportView({ user, addNotification }) {
   });
 
   const [isCanvasDetached, setIsCanvasDetached] = useState(false);
+  const [isNegotiationGenerating, setIsNegotiationGenerating] = useState(false);
+
+  // SmartOps 2.0: Session context for stateful conversations
+  const sessionCtx = useSessionContext(user?.id, currentConversationId);
+  const alertMonitorRef = useRef(null);
 
   const textareaRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -868,11 +218,51 @@ export default function DecisionSupportView({ user, addNotification }) {
   useEffect(() => {
     if (!user?.id) return;
     setContextLoading(true);
-    loadDomainContext(user.id)
+    const timeout = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('context_load_timeout')), 8000)
+    );
+    Promise.race([loadDomainContext(user.id, supabase), timeout])
       .then((ctx) => setDomainContext(ctx))
       .catch(() => setDomainContext(null))
       .finally(() => setContextLoading(false));
   }, [user?.id]);
+
+  // SmartOps 2.0: Proactive alert monitor
+  useEffect(() => {
+    if (!user?.id || !isAlertMonitorEnabled()) return;
+
+    const monitor = createAlertMonitor({
+      userId: user.id,
+      loadRiskState: async (userId) => {
+        const ctx = domainContext || {};
+        return {
+          riskScores: ctx.riskItems || [],
+          stockoutData: (ctx.riskItems || []).map((r) => ({
+            material_code: r.material_code,
+            plant_id: r.plant_id,
+            p_stockout: r.p_stockout ?? 0,
+            impact_usd: r.impact_usd ?? 0,
+            days_to_stockout: r.days_to_stockout ?? Infinity,
+          })),
+        };
+      },
+      onAlertsBatch: (alertPayload) => {
+        if (!currentConversationId) return;
+        const dismissed = new Set(sessionCtx.context?.active_alerts?.dismissed_ids || []);
+        const filtered = {
+          ...alertPayload,
+          alerts: alertPayload.alerts.filter((a) => !dismissed.has(a.alert_id)),
+        };
+        if (filtered.alerts.length === 0) return;
+        appendMessagesToCurrentConversation([buildAlertChatMessage(filtered)]);
+      },
+    });
+
+    alertMonitorRef.current = monitor;
+    monitor.start();
+
+    return () => monitor.stop();
+  }, [user?.id, currentConversationId, domainContext]);
 
   useEffect(() => {
     if (!user?.id) return;
@@ -1949,6 +1339,37 @@ export default function DecisionSupportView({ user, addNotification }) {
         }] : [])
       ]);
 
+      // --- Negotiation trigger detection ---
+      try {
+        const negTrigger = await checkNegotiationTrigger(planResult?.run?.id);
+        if (negTrigger) {
+          appendMessagesToCurrentConversation([
+            {
+              role: 'ai',
+              content: negTrigger === 'infeasible'
+                ? 'Solver returned INFEASIBLE. Negotiation options are available to resolve this.'
+                : 'KPI shortfall detected. Negotiation options may improve the plan.',
+              timestamp: new Date().toISOString(),
+            },
+            {
+              role: 'ai',
+              type: 'negotiation_card',
+              payload: {
+                planRunId: planResult?.run?.id,
+                trigger: negTrigger,
+                negotiation_options: null,
+                negotiation_evaluation: null,
+                negotiation_report: null,
+                round: 1,
+              },
+              timestamp: new Date().toISOString(),
+            },
+          ]);
+        }
+      } catch (negErr) {
+        console.warn('[DSV] Negotiation trigger check failed:', negErr?.message);
+      }
+
       if (inventoryRows.length > 0 || costRows.length > 0) {
         updateCanvasState(currentConversationId, (prev) => ({
           ...prev,
@@ -2092,6 +1513,19 @@ export default function DecisionSupportView({ user, addNotification }) {
       note
     }).catch((error) => {
       console.warn('[DecisionSupportView] recordPlanApproved failed:', error.message);
+    });
+
+    // Write approved plan orders + inventory targets to baseline tables
+    writeApprovedPlanBaseline({
+      userId: user.id,
+      runId,
+      approvalId: approval.approval_id
+    }).then((result) => {
+      if (result?.success) {
+        console.info(`[WriteBack] Baseline written: ${result.orders_inserted} orders, ${result.targets_inserted} targets`);
+      }
+    }).catch((err) => {
+      console.warn('[WriteBack] non-fatal:', err.message);
     });
 
     appendMessagesToCurrentConversation([
@@ -2387,6 +1821,9 @@ export default function DecisionSupportView({ user, addNotification }) {
       for (let i = 0; i < ASYNC_JOB_MAX_POLLS; i += 1) {
         const jobStatus = await asyncRunsApiClient.getJob(jobId);
         const runStatus = String(jobStatus?.run_status || jobStatus?.status || 'queued').toLowerCase();
+        const runMeta = jobStatus?.run_meta && typeof jobStatus.run_meta === 'object'
+          ? jobStatus.run_meta
+          : {};
 
         latestSnapshot = {
           run: {
@@ -2394,7 +1831,13 @@ export default function DecisionSupportView({ user, addNotification }) {
             workflow: jobStatus?.workflow || null,
             stage: jobStatus?.run_stage || jobStatus?.current_step || null,
             status: runStatus,
-            meta: jobStatus?.run_meta || {}
+            job_id: jobId,
+            meta: {
+              ...runMeta,
+              job_id: runMeta.job_id || jobId,
+              async_job_id: runMeta.async_job_id || jobId,
+              async_mode: true
+            }
           },
           steps: Array.isArray(jobStatus?.step_summary) ? jobStatus.step_summary : [],
           artifacts: []
@@ -2439,10 +1882,17 @@ export default function DecisionSupportView({ user, addNotification }) {
         }
       }
     } catch (error) {
+      const uiError = normalizeWorkflowUiError(error, {
+        fallbackMessage: 'Workflow execution failed.',
+        fallbackActions: [
+          'Retry the workflow run.',
+          'If the issue persists, review run artifacts and mappings.'
+        ]
+      });
       appendMessagesToCurrentConversation([
         {
           role: 'ai',
-          content: `Workflow execution failed: ${error.message}`,
+          content: `Workflow execution failed: ${uiError.message}`,
           timestamp: new Date().toISOString()
         },
         {
@@ -2450,17 +1900,14 @@ export default function DecisionSupportView({ user, addNotification }) {
           type: 'workflow_error_card',
           payload: {
             step: 'workflow',
-            error_code: 'UNKNOWN',
-            error_message: error.message || 'Workflow execution failed.',
-            next_actions: [
-              'Retry the workflow run.',
-              'If the issue persists, review run artifacts and mappings.'
-            ]
+            error_code: uiError.code,
+            error_message: uiError.message,
+            next_actions: uiError.nextActions
           },
           timestamp: new Date().toISOString()
         }
       ]);
-      addNotification?.(`Workflow run failed: ${error.message}`, 'error');
+      addNotification?.(`Workflow run failed: ${uiError.message}`, 'error');
     } finally {
       setWorkflowRunActive(runId, false);
     }
@@ -2741,6 +2188,39 @@ export default function DecisionSupportView({ user, addNotification }) {
     });
   }, [executeWorkflowFlow]);
 
+  const executeDigitalTwinFlow = useCallback(async ({ scenario = 'normal', chaosIntensity = null } = {}) => {
+    appendMessagesToCurrentConversation([{
+      role: 'ai',
+      content: `Running Digital Twin simulation with **${scenario}** scenario...`,
+      timestamp: new Date().toISOString(),
+    }]);
+
+    try {
+      const result = await digitalTwinService.runSimulation({
+        scenario,
+        seed: 42,
+        chaosIntensity: chaosIntensity || undefined,
+      });
+
+      if (!result.success) throw new Error(result.error || 'Simulation failed');
+
+      const cardPayload = digitalTwinService.buildDigitalTwinCardPayload(result);
+
+      appendMessagesToCurrentConversation([{
+        role: 'ai',
+        type: 'digital_twin_simulation_card',
+        payload: cardPayload,
+        timestamp: new Date().toISOString(),
+      }]);
+    } catch (err) {
+      appendMessagesToCurrentConversation([{
+        role: 'ai',
+        content: `Digital Twin simulation failed: ${err.message}`,
+        timestamp: new Date().toISOString(),
+      }]);
+    }
+  }, [appendMessagesToCurrentConversation]);
+
   const handleRunTopology = useCallback(async (requestedRunId = null) => {
     if (!user?.id) {
       addNotification?.('Please sign in before running topology.', 'error');
@@ -2868,32 +2348,55 @@ export default function DecisionSupportView({ user, addNotification }) {
     addNotification
   ]);
 
-  const handleResumeWorkflowA = useCallback(async (runId) => {
-    if (!runId) return;
+  const handleResumeWorkflowA = useCallback(async (runId, explicitJobId = null) => {
+    const numericRunId = toPositiveRunId(runId);
+    if (!numericRunId) return;
+    const snapshot = workflowSnapshots[numericRunId] || workflowSnapshots[String(numericRunId)] || null;
+    const asyncJobId = explicitJobId
+      || asyncJobByRunRef.current[numericRunId]
+      || snapshot?.run?.job_id
+      || snapshot?.run?.meta?.job_id
+      || snapshot?.run?.meta?.async_job_id
+      || null;
     try {
-      const resumed = await resumeWorkflowRun(runId, { maxSteps: 1 });
+      if (asyncJobId) {
+        const asyncError = new Error(`Run #${numericRunId} is managed by async job ${asyncJobId} and cannot be resumed from this card.`);
+        asyncError.code = 'ASYNC_RUN_UNSUPPORTED';
+        asyncError.nextActions = [
+          'Wait for the async job to finish or cancel it.',
+          'Start a new workflow run from the latest dataset card.'
+        ];
+        throw asyncError;
+      }
+
+      const resumed = await resumeWorkflowRun(numericRunId, { maxSteps: 1 });
       upsertWorkflowSnapshot(resumed);
       if (Array.isArray(resumed.events)) {
-        resumed.events.forEach((event) => appendWorkflowStepEventMessages(runId, event));
+        resumed.events.forEach((event) => appendWorkflowStepEventMessages(numericRunId, event));
       }
       if (String(resumed?.run?.status || '').toLowerCase() === 'running') {
-        await processWorkflowRun(runId);
+        await processWorkflowRun(numericRunId);
       }
     } catch (error) {
+      const uiError = normalizeWorkflowUiError(error, {
+        fallbackMessage: 'Unable to resume workflow.',
+        fallbackActions: ['Retry resume.', 'Start a new workflow run from the latest dataset card.']
+      });
       appendMessagesToCurrentConversation([{
         role: 'ai',
         type: 'workflow_error_card',
         payload: {
           step: 'resume',
-          error_code: 'UNKNOWN',
-          error_message: error.message || 'Unable to resume workflow.',
-          next_actions: ['Retry resume.', 'Replay the workflow if resume keeps failing.']
+          error_code: uiError.code,
+          error_message: uiError.message,
+          next_actions: uiError.nextActions
         },
         timestamp: new Date().toISOString()
       }]);
-      addNotification?.(`Workflow resume failed: ${error.message}`, 'error');
+      addNotification?.(`Workflow resume failed: ${uiError.message}`, 'error');
     }
   }, [
+    workflowSnapshots,
     appendWorkflowStepEventMessages,
     appendMessagesToCurrentConversation,
     addNotification,
@@ -2958,29 +2461,34 @@ export default function DecisionSupportView({ user, addNotification }) {
   }, [user?.id, appendMessagesToCurrentConversation, handleResumeWorkflowA]);
 
   const handleSubmitBlockingAnswers = useCallback(async (runId, answers = {}) => {
-    if (!runId || !user?.id) return;
+    const numericRunId = toPositiveRunId(runId);
+    if (!numericRunId || !user?.id) return;
     try {
-      const result = await submitWorkflowBlockingAnswers(Number(runId), answers);
+      const result = await submitWorkflowBlockingAnswers(numericRunId, answers);
       upsertWorkflowSnapshot(result);
       if (Array.isArray(result.events)) {
-        result.events.forEach((event) => appendWorkflowStepEventMessages(runId, event));
+        result.events.forEach((event) => appendWorkflowStepEventMessages(numericRunId, event));
       }
       if (String(result?.run?.status || '').toLowerCase() === 'running') {
-        await processWorkflowRun(runId);
+        await processWorkflowRun(numericRunId);
       }
     } catch (error) {
+      const uiError = normalizeWorkflowUiError(error, {
+        fallbackMessage: 'Unable to resume after answering.',
+        fallbackActions: ['Retry or use the Resume button.', 'Start a new workflow run if this card is stale.']
+      });
       appendMessagesToCurrentConversation([{
         role: 'ai',
         type: 'workflow_error_card',
         payload: {
           step: 'resume',
-          error_code: 'UNKNOWN',
-          error_message: error.message || 'Unable to resume after answering.',
-          next_actions: ['Retry or use the Resume button.']
+          error_code: uiError.code,
+          error_message: uiError.message,
+          next_actions: uiError.nextActions
         },
         timestamp: new Date().toISOString()
       }]);
-      addNotification?.(`Failed to submit answers: ${error.message}`, 'error');
+      addNotification?.(`Failed to submit answers: ${uiError.message}`, 'error');
     }
   }, [
     user?.id,
@@ -2991,15 +2499,33 @@ export default function DecisionSupportView({ user, addNotification }) {
     upsertWorkflowSnapshot
   ]);
 
-  const handleReplayWorkflowA = useCallback(async (runId, options = {}) => {
-    if (!runId) return;
+  const handleReplayWorkflowA = useCallback(async (runId, options = {}, explicitJobId = null) => {
+    const numericRunId = toPositiveRunId(runId);
+    if (!numericRunId) return;
     if (!user?.id) {
       addNotification?.('Please sign in before replay.', 'error');
       return;
     }
 
     try {
-      const replaySnapshot = await replayWorkflowRun(runId, {
+      const snapshot = workflowSnapshots[numericRunId] || workflowSnapshots[String(numericRunId)] || null;
+      const asyncJobId = explicitJobId
+        || asyncJobByRunRef.current[numericRunId]
+        || snapshot?.run?.job_id
+        || snapshot?.run?.meta?.job_id
+        || snapshot?.run?.meta?.async_job_id
+        || null;
+      if (asyncJobId) {
+        const asyncError = new Error(`Run #${numericRunId} is managed by async job ${asyncJobId} and cannot be replayed from this card.`);
+        asyncError.code = 'ASYNC_RUN_UNSUPPORTED';
+        asyncError.nextActions = [
+          'Start a new workflow run from the latest dataset card.',
+          'Keep this run card for audit history only.'
+        ];
+        throw asyncError;
+      }
+
+      const replaySnapshot = await replayWorkflowRun(numericRunId, {
         use_cached_forecast: Boolean(options?.use_cached_forecast),
         use_cached_plan: Boolean(options?.use_cached_plan)
       });
@@ -3010,7 +2536,7 @@ export default function DecisionSupportView({ user, addNotification }) {
       appendMessagesToCurrentConversation([
         {
           role: 'ai',
-          content: `Replay started from run #${runId} (new run #${newRunId}).`,
+          content: `Replay started from run #${numericRunId} (new run #${newRunId}).`,
           timestamp: new Date().toISOString()
         },
         {
@@ -3025,21 +2551,26 @@ export default function DecisionSupportView({ user, addNotification }) {
 
       await processWorkflowRun(newRunId);
     } catch (error) {
+      const uiError = normalizeWorkflowUiError(error, {
+        fallbackMessage: 'Unable to replay workflow.',
+        fallbackActions: ['Retry replay.', 'Run the workflow again from the latest dataset card.']
+      });
       appendMessagesToCurrentConversation([{
         role: 'ai',
         type: 'workflow_error_card',
         payload: {
           step: 'replay',
-          error_code: 'UNKNOWN',
-          error_message: error.message || 'Unable to replay workflow.',
-          next_actions: ['Retry replay.', 'Run the workflow again from the latest dataset card.']
+          error_code: uiError.code,
+          error_message: uiError.message,
+          next_actions: uiError.nextActions
         },
         timestamp: new Date().toISOString()
       }]);
-      addNotification?.(`Workflow replay failed: ${error.message}`, 'error');
+      addNotification?.(`Workflow replay failed: ${uiError.message}`, 'error');
     }
   }, [
     user?.id,
+    workflowSnapshots,
     addNotification,
     appendMessagesToCurrentConversation,
     upsertWorkflowSnapshot,
@@ -3054,6 +2585,241 @@ export default function DecisionSupportView({ user, addNotification }) {
       timestamp: new Date().toISOString()
     }]);
   }, [appendMessagesToCurrentConversation]);
+
+  // ---------------------------------------------------------------------------
+  // Negotiation handlers (multi-round infeasibility resolution)
+  // ---------------------------------------------------------------------------
+
+  const handleGenerateNegotiationOptions = useCallback(async (cardPayload) => {
+    if (!user?.id || !cardPayload?.planRunId) return;
+
+    setIsNegotiationGenerating(true);
+
+    try {
+      const profileId = activeDatasetContext?.dataset_profile_id;
+      if (!profileId) {
+        appendMessagesToCurrentConversation([{
+          role: 'ai',
+          content: 'No dataset profile is linked to this session. Please upload a dataset first, then rerun forecast + plan.',
+          timestamp: new Date().toISOString(),
+        }]);
+        return;
+      }
+
+      let resolvedProfileRow = null;
+      try {
+        resolvedProfileRow = await datasetProfilesService.getProfile(profileId);
+      } catch (profileErr) {
+        console.error('[DSV] Failed to load dataset profile for negotiation:', profileErr?.message);
+      }
+
+      if (!resolvedProfileRow?.user_file_id) {
+        appendMessagesToCurrentConversation([{
+          role: 'ai',
+          content: 'Dataset profile has no linked source file. Re-upload the dataset from chat and rerun forecast + plan.',
+          timestamp: new Date().toISOString(),
+        }]);
+        return;
+      }
+
+      const result = await runNegotiation({
+        userId: user.id,
+        planRunId: cardPayload.planRunId,
+        datasetProfileRow: resolvedProfileRow,
+        forecastRunId: sessionCtx.lastForecastRunId,
+        config: {},
+        bypassFeatureFlag: true,
+      });
+
+      if (result.triggered && result.negotiation_options) {
+        sessionCtx.updateNegotiation(result, cardPayload.planRunId);
+
+        appendMessagesToCurrentConversation([{
+          role: 'ai',
+          type: 'negotiation_card',
+          payload: {
+            planRunId: cardPayload.planRunId,
+            trigger: result.trigger,
+            negotiation_options: result.negotiation_options,
+            negotiation_evaluation: result.negotiation_evaluation,
+            negotiation_report: result.negotiation_report,
+            round: sessionCtx.context?.negotiation?.round || 1,
+          },
+          timestamp: new Date().toISOString(),
+        }]);
+      } else {
+        appendMessagesToCurrentConversation([{
+          role: 'ai',
+          content: `Negotiation analysis complete but no actionable options found${result.suppressed_reason ? ` (${result.suppressed_reason})` : ''}.`,
+          timestamp: new Date().toISOString(),
+        }]);
+      }
+    } catch (err) {
+      appendMessagesToCurrentConversation([{
+        role: 'ai',
+        content: `Negotiation option generation failed: ${err.message}`,
+        timestamp: new Date().toISOString(),
+      }]);
+    } finally {
+      setIsNegotiationGenerating(false);
+    }
+  }, [user?.id, activeDatasetContext, sessionCtx, appendMessagesToCurrentConversation]);
+
+  const handleApplyNegotiationOption = useCallback(async (option, evalResult, cardPayload) => {
+    if (!user?.id || !option?.option_id) return;
+
+    const optionId = option.option_id;
+    const overrides = option.overrides || {};
+
+    appendMessagesToCurrentConversation([{
+      role: 'ai',
+      content: `Applying negotiation option ${optionId}: "${option.title}"...`,
+      timestamp: new Date().toISOString(),
+    }]);
+
+    // Rotate current plan to previous for comparison
+    sessionCtx.rotatePlan();
+
+    try {
+      const profileId = activeDatasetContext?.dataset_profile_id;
+      if (!profileId) {
+        appendMessagesToCurrentConversation([{
+          role: 'ai',
+          content: 'No dataset profile is linked to this session. Please upload a dataset first, then rerun forecast + plan before applying negotiation options.',
+          timestamp: new Date().toISOString(),
+        }]);
+        return;
+      }
+
+      let resolvedProfileRow = null;
+      try {
+        resolvedProfileRow = await datasetProfilesService.getProfile(profileId);
+      } catch (profileErr) {
+        console.error('[DSV] Failed to load dataset profile for negotiation apply:', profileErr?.message);
+      }
+
+      if (!resolvedProfileRow?.user_file_id) {
+        appendMessagesToCurrentConversation([{
+          role: 'ai',
+          content: 'Dataset profile has no linked source file. Re-upload the dataset from chat and rerun forecast + plan before applying negotiation options.',
+          timestamp: new Date().toISOString(),
+        }]);
+        return;
+      }
+
+      const constraintsOverride = overrides.constraints && Object.keys(overrides.constraints).length > 0
+        ? overrides.constraints : null;
+      const objectiveOverride = overrides.objective && Object.keys(overrides.objective).length > 0
+        ? overrides.objective : null;
+
+      const planResult = await runPlanFromDatasetProfile({
+        userId: user.id,
+        datasetProfileRow: resolvedProfileRow,
+        forecastRunId: sessionCtx.lastForecastRunId,
+        constraintsOverride,
+        objectiveOverride,
+      });
+
+      // Update plan context
+      sessionCtx.updatePlan(planResult);
+
+      // Record negotiation option applied
+      const newKpis = planResult?.solver_result?.kpis || {};
+      sessionCtx.recordNegOptionApplied(optionId, planResult?.run?.id, newKpis);
+
+      // Build plan cards
+      const summaryPayload = buildPlanSummaryCardPayload(planResult, resolvedProfileRow);
+      const tablePayload = buildPlanTableCardPayload(planResult);
+      const projectionPayload = buildInventoryProjectionCardPayload(planResult);
+      const downloadsPayload = buildPlanDownloadsPayload(planResult);
+
+      // Build comparison
+      const comparison = handlePlanComparison(sessionCtx.context);
+      const comparisonText = comparison ? buildComparisonSummaryText(comparison) : '';
+
+      const messages = [
+        ...(comparison ? [{
+          role: 'ai',
+          type: 'plan_comparison_card',
+          payload: comparison,
+          content: comparisonText,
+          timestamp: new Date().toISOString(),
+        }] : []),
+        {
+          role: 'ai',
+          type: 'plan_summary_card',
+          payload: summaryPayload,
+          timestamp: new Date().toISOString(),
+        },
+        {
+          role: 'ai',
+          type: 'plan_table_card',
+          payload: tablePayload,
+          timestamp: new Date().toISOString(),
+        },
+        {
+          role: 'ai',
+          type: 'inventory_projection_card',
+          payload: projectionPayload,
+          timestamp: new Date().toISOString(),
+        },
+        {
+          role: 'ai',
+          type: 'downloads_card',
+          payload: downloadsPayload,
+          timestamp: new Date().toISOString(),
+        },
+      ];
+
+      appendMessagesToCurrentConversation(messages);
+
+      // Check if the new plan is STILL infeasible -- if so, trigger another round
+      try {
+        const newTrigger = await checkNegotiationTrigger(planResult?.run?.id);
+        if (newTrigger) {
+          const nextRound = (sessionCtx.context?.negotiation?.round || 1) + 1;
+          appendMessagesToCurrentConversation([
+            {
+              role: 'ai',
+              content: `Plan still has issues (${newTrigger}). Starting negotiation round ${nextRound}...`,
+              timestamp: new Date().toISOString(),
+            },
+            {
+              role: 'ai',
+              type: 'negotiation_card',
+              payload: {
+                planRunId: planResult?.run?.id,
+                trigger: newTrigger,
+                negotiation_options: null,
+                negotiation_evaluation: null,
+                negotiation_report: null,
+                round: nextRound,
+              },
+              timestamp: new Date().toISOString(),
+            },
+          ]);
+        } else {
+          appendMessagesToCurrentConversation([{
+            role: 'ai',
+            content: 'Negotiation option applied successfully. The new plan is feasible.',
+            timestamp: new Date().toISOString(),
+          }]);
+          sessionCtx.clearNegotiation();
+        }
+      } catch (checkErr) {
+        console.warn('[DSV] Post-negotiation trigger check failed:', checkErr?.message);
+      }
+
+      addNotification?.(`Plan re-run #${planResult?.run?.id || ''} with option ${optionId} completed.`, 'success');
+      if (planResult?.run?.id) setLatestPlanRunId(planResult.run.id);
+    } catch (err) {
+      appendMessagesToCurrentConversation([{
+        role: 'ai',
+        content: `Failed to apply option ${optionId}: ${err.message}`,
+        timestamp: new Date().toISOString(),
+      }]);
+    }
+  }, [user?.id, activeDatasetContext, sessionCtx, appendMessagesToCurrentConversation, addNotification]);
 
   const handleCancelAsyncWorkflow = useCallback(async (runId, explicitJobId = null) => {
     const numericRunId = Number(runId);
@@ -3114,7 +2880,12 @@ export default function DecisionSupportView({ user, addNotification }) {
       const datasetFingerprint = buildFingerprintFromUpload(uploadPreparation.sheetsRaw, uploadPreparation.mappingPlans);
 
       setUploadStatusText('Saving raw file...');
-      const fileRecord = await userFilesService.saveFile(user.id, file.name, uploadPreparation.rawRowsForStorage);
+      let fileRecord = null;
+      try {
+        fileRecord = await userFilesService.saveFile(user.id, file.name, uploadPreparation.rawRowsForStorage);
+      } catch (saveErr) {
+        console.warn('[DSV] Raw file save skipped (non-blocking):', saveErr?.message);
+      }
 
       setUploadStatusText('Validating contract...');
       let profileRecord = await createDatasetProfileFromSheets({
@@ -3645,9 +3416,10 @@ export default function DecisionSupportView({ user, addNotification }) {
     setIsTyping(true);
     setStreamingContent('');
 
-    if (textareaRef.current) {
+    try {
+      if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
-    }
+      }
 
     const updatedMessages = [...currentMessages, userMessage];
     setConversations((prev) => prev.map((conversation) =>
@@ -3856,6 +3628,183 @@ export default function DecisionSupportView({ user, addNotification }) {
       return;
     }
 
+    // SmartOps 2.0: LLM-powered intent parsing + action routing
+    try {
+      const parsedIntent = await parseIntent({
+        userMessage: messageText,
+        sessionContext: sessionCtx.context,
+        domainContext,
+      });
+
+      if (parsedIntent.intent !== 'GENERAL_CHAT' && parsedIntent.confidence > 0.7) {
+        const intentHandlers = {
+          executePlanFlow: (params) => executePlanFlow({
+            datasetProfileId: params.datasetProfileId || (Number.isFinite(Number(activeDatasetContext?.dataset_profile_id)) ? Number(activeDatasetContext.dataset_profile_id) : null),
+            constraintsOverride: params.constraintsOverride,
+            objectiveOverride: params.objectiveOverride,
+          }),
+          executeForecastFlow: (params) => executeForecastFlow({
+            datasetProfileId: params.datasetProfileId || (Number.isFinite(Number(activeDatasetContext?.dataset_profile_id)) ? Number(activeDatasetContext.dataset_profile_id) : null),
+          }),
+          executeWorkflowAFlow: (params) => executeWorkflowAFlow({
+            datasetProfileId: params.datasetProfileId || (Number.isFinite(Number(activeDatasetContext?.dataset_profile_id)) ? Number(activeDatasetContext.dataset_profile_id) : null),
+          }),
+          executeWorkflowBFlow: (params) => executeWorkflowBFlow({
+            datasetProfileId: params.datasetProfileId || (Number.isFinite(Number(activeDatasetContext?.dataset_profile_id)) ? Number(activeDatasetContext.dataset_profile_id) : null),
+          }),
+          executeDigitalTwinFlow: (params) => executeDigitalTwinFlow({
+            scenario: params.scenario || 'normal',
+            chaosIntensity: params.chaosIntensity || null,
+          }),
+          handleParameterChange: async (intent, ctx) => {
+            const result = await handleParameterChange({
+              parsedIntent: intent,
+              sessionContext: ctx,
+              userId: user?.id,
+              conversationId: currentConversationId,
+              rerunPlan: (params) => executePlanFlow({
+                datasetProfileId: Number.isFinite(Number(activeDatasetContext?.dataset_profile_id)) ? Number(activeDatasetContext.dataset_profile_id) : null,
+                constraintsOverride: params.constraintsOverride,
+                objectiveOverride: params.objectiveOverride,
+              }),
+            });
+            if (result?.comparison) {
+              appendMessagesToCurrentConversation([{
+                role: 'ai',
+                type: 'plan_comparison_card',
+                payload: result.comparison,
+                content: buildComparisonSummaryText(result.comparison),
+                timestamp: new Date().toISOString(),
+              }]);
+            }
+          },
+          comparePlans: (ctx) => {
+            const comparison = handlePlanComparison(ctx);
+            if (comparison) {
+              appendMessagesToCurrentConversation([{
+                role: 'ai',
+                type: 'plan_comparison_card',
+                payload: comparison,
+                content: buildComparisonSummaryText(comparison),
+                timestamp: new Date().toISOString(),
+              }]);
+            } else {
+              appendMessagesToCurrentConversation([{
+                role: 'ai',
+                content: 'No previous plan available for comparison. Run a plan first, then make changes to compare.',
+                timestamp: new Date().toISOString(),
+              }]);
+            }
+          },
+          runWhatIf: (scenarioOverrides) => {
+            // Delegate to existing what-if flow via canvas run
+            handleCanvasRun(messageText, updatedMessages);
+          },
+          handleApproval: async (action) => {
+            const pending = (sessionCtx.context?.pending_approvals || []).filter((a) => a.status === 'PENDING');
+            if (pending.length === 0) {
+              appendMessagesToCurrentConversation([{
+                role: 'ai',
+                content: 'No pending approvals found.',
+                timestamp: new Date().toISOString(),
+              }]);
+              return;
+            }
+            const approvalIds = pending.map((a) => a.approval_id);
+            if (action === 'approve_all') {
+              await batchApprove({ approvalIds, userId: user?.id, note: 'Approved via chat' });
+              approvalIds.forEach((id) => sessionCtx.resolveApproval(id, 'APPROVED'));
+              appendMessagesToCurrentConversation([{
+                role: 'ai',
+                content: `Approved ${approvalIds.length} pending approval(s).`,
+                timestamp: new Date().toISOString(),
+              }]);
+            } else if (action === 'reject_all') {
+              await batchReject({ approvalIds, userId: user?.id, note: 'Rejected via chat' });
+              approvalIds.forEach((id) => sessionCtx.resolveApproval(id, 'REJECTED'));
+              appendMessagesToCurrentConversation([{
+                role: 'ai',
+                content: `Rejected ${approvalIds.length} pending approval(s).`,
+                timestamp: new Date().toISOString(),
+              }]);
+            }
+          },
+          applyNegotiationOption: async ({ optionId, optionTitle }) => {
+            const negCtx = sessionCtx.context?.negotiation;
+            if (!negCtx || negCtx.round === 0 || !negCtx.options) {
+              appendMessagesToCurrentConversation([{
+                role: 'ai',
+                content: 'No active negotiation session. Please run a plan first to trigger negotiation options.',
+                timestamp: new Date().toISOString(),
+              }]);
+              return;
+            }
+
+            const optionDefs = negCtx.options?.options || [];
+            let matchedOption = null;
+
+            if (optionId) {
+              const normalizedId = String(optionId).match(/^opt_\d+$/)
+                ? optionId
+                : `opt_${String(optionId).replace(/\D/g, '').padStart(3, '0')}`;
+              matchedOption = optionDefs.find((o) => o.option_id === normalizedId);
+            }
+
+            if (!matchedOption && optionTitle) {
+              const lowerTitle = optionTitle.toLowerCase();
+              matchedOption = optionDefs.find((o) =>
+                o.title.toLowerCase().includes(lowerTitle)
+              );
+            }
+
+            if (!matchedOption && (optionTitle || '').toLowerCase().includes('recommend')) {
+              const recommendedId = negCtx.report?.recommended_option_id;
+              matchedOption = optionDefs.find((o) => o.option_id === recommendedId);
+            }
+
+            if (!matchedOption) {
+              appendMessagesToCurrentConversation([{
+                role: 'ai',
+                content: `Could not identify option "${optionId || optionTitle}". Available options: ${optionDefs.map((o) => `${o.option_id} ("${o.title}")`).join(', ')}`,
+                timestamp: new Date().toISOString(),
+              }]);
+              return;
+            }
+
+            const rankedOptions = negCtx.evaluation?.ranked_options || [];
+            const evalResult = rankedOptions.find((r) => r.option_id === matchedOption.option_id) || null;
+
+            await handleApplyNegotiationOption(
+              matchedOption,
+              evalResult,
+              { planRunId: negCtx.active_plan_run_id }
+            );
+          },
+          appendMessage: (msg) => appendMessagesToCurrentConversation([msg]),
+          onNoDataset: () => appendMessagesToCurrentConversation([{
+            role: 'ai',
+            content: 'Please upload a dataset first. You can drag and drop a CSV or XLSX file into the chat.',
+            timestamp: new Date().toISOString(),
+          }]),
+        };
+
+        const result = await routeIntent(parsedIntent, sessionCtx.context, intentHandlers, {
+          userId: user?.id,
+          conversationId: currentConversationId,
+          datasetProfileId: Number.isFinite(Number(activeDatasetContext?.dataset_profile_id)) ? Number(activeDatasetContext.dataset_profile_id) : null,
+        });
+
+        if (result?.handled) {
+          setIsTyping(false);
+          setStreamingContent('');
+          return;
+        }
+      }
+    } catch (intentError) {
+      console.warn('[DSV] Intent parsing failed, falling through to chat:', intentError?.message);
+    }
+
+    // Fallback: legacy keyword-based execution intent
     const canExecute = Boolean(activeDatasetContext?.dataset_profile_id) && isExecutionIntent(messageText);
     if (canExecute) {
       const handled = await handleCanvasRun(messageText, updatedMessages);
@@ -3930,19 +3879,30 @@ export default function DecisionSupportView({ user, addNotification }) {
     setStreamingContent('');
     setIsTyping(false);
 
-    if (conversationsDb) {
-      conversationsDb
-        .from('conversations')
-        .update({
-          title: newTitle,
-          messages: finalMessages,
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', currentConversationId)
-        .eq('user_id', user.id)
-        .then(({ error }) => {
-          if (error) markTableUnavailable();
-        });
+      if (conversationsDb) {
+        conversationsDb
+          .from('conversations')
+          .update({
+            title: newTitle,
+            messages: finalMessages,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', currentConversationId)
+          .eq('user_id', user.id)
+          .then(({ error }) => {
+            if (error) markTableUnavailable();
+          });
+      }
+    } catch (error) {
+      console.error('[DSV] handleSend failed:', error);
+      appendMessagesToCurrentConversation([{
+        role: 'ai',
+        content: `❌ Request failed: ${getErrorMessage(error, 'Unexpected error')}`,
+        timestamp: new Date().toISOString()
+      }]);
+    } finally {
+      setIsTyping(false);
+      setStreamingContent('');
     }
   }, [
     input,
@@ -3959,6 +3919,7 @@ export default function DecisionSupportView({ user, addNotification }) {
     executeWorkflowFlow,
     executeWorkflowAFlow,
     executeWorkflowBFlow,
+    executeDigitalTwinFlow,
     handleRunTopology,
     topologyRunId,
     setActiveWorkflowRuns
@@ -4054,8 +4015,8 @@ export default function DecisionSupportView({ user, addNotification }) {
       );
     }
     if (message.type === 'workflow_progress_card') {
-      const runId = Number(message.payload?.run_id);
-      const snapshot = workflowSnapshots[runId] || null;
+      const runId = toPositiveRunId(message.payload?.run_id);
+      const snapshot = runId ? (workflowSnapshots[runId] || workflowSnapshots[String(runId)] || null) : null;
       return (
         <WorkflowProgressCard
           payload={message.payload}
@@ -4098,7 +4059,8 @@ export default function DecisionSupportView({ user, addNotification }) {
       );
     }
     if (message.type === 'topology_graph_card') {
-      const runId = Number(message?.payload?.run_id || message?.payload?.graph?.run_id || NaN);
+      const runId = toPositiveRunId(message?.payload?.run_id)
+        || toPositiveRunId(message?.payload?.graph?.run_id);
       return (
         <Card className="w-full border border-slate-200 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-900/30">
           <div className="flex items-center justify-between gap-3">
@@ -4227,11 +4189,66 @@ export default function DecisionSupportView({ user, addNotification }) {
         />
       );
     }
+    if (message.type === 'plan_comparison_card') {
+      return <PlanComparisonCard payload={message.payload} />;
+    }
+    if (message.type === 'enhanced_plan_approval_card') {
+      return (
+        <EnhancedPlanApprovalCard
+          payload={message.payload}
+          onApprove={(approvalId) => {
+            handleApprovePlanApproval(approvalId);
+            sessionCtx.resolveApproval(approvalId, 'APPROVED');
+          }}
+          onReject={(approvalId) => {
+            handleRejectPlanApproval(approvalId);
+            sessionCtx.resolveApproval(approvalId, 'REJECTED');
+          }}
+          onBatchApprove={async (ids) => {
+            await batchApprove({ approvalIds: ids, userId: user?.id, note: 'Batch approved via chat' });
+            ids.forEach((id) => sessionCtx.resolveApproval(id, 'APPROVED'));
+          }}
+          onBatchReject={async (ids) => {
+            await batchReject({ approvalIds: ids, userId: user?.id, note: 'Batch rejected via chat' });
+            ids.forEach((id) => sessionCtx.resolveApproval(id, 'REJECTED'));
+          }}
+        />
+      );
+    }
+    if (message.type === 'approval_reminder_card') {
+      return (
+        <ApprovalReminderCard
+          payload={message.payload}
+          onQuickApprove={(approvalId) => {
+            handleApprovePlanApproval(approvalId);
+            sessionCtx.resolveApproval(approvalId, 'APPROVED');
+          }}
+          onDismiss={(approvalId) => sessionCtx.dismissAlert(approvalId)}
+        />
+      );
+    }
+    if (message.type === 'digital_twin_simulation_card') {
+      return <DigitalTwinSimulationCard payload={message.payload} />;
+    }
     if (message.type === 'ai_error_card') {
       return (
         <AIErrorCard
           payload={message.payload}
           onConfigure={handleConfigureApiKey}
+        />
+      );
+    }
+    if (message.type === 'negotiation_card') {
+      return (
+        <NegotiationPanel
+          planRunId={message.payload?.planRunId}
+          trigger={message.payload?.trigger}
+          isGenerating={isNegotiationGenerating}
+          negotiationOptions={message.payload?.negotiation_options}
+          negotiationEval={message.payload?.negotiation_evaluation}
+          negotiationReport={message.payload?.negotiation_report}
+          onGenerateOptions={() => handleGenerateNegotiationOptions(message.payload)}
+          onApplyOption={(option, evalResult) => handleApplyNegotiationOption(option, evalResult, message.payload)}
         />
       );
     }
@@ -4263,7 +4280,10 @@ export default function DecisionSupportView({ user, addNotification }) {
     handleReviewReuseSuggestion,
     executeRiskAwarePlanFlow,
     handleRiskReplanDecision,
-    handleRequestRelax
+    handleRequestRelax,
+    isNegotiationGenerating,
+    handleGenerateNegotiationOptions,
+    handleApplyNegotiationOption
   ]);
 
   return (

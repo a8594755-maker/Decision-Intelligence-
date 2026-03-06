@@ -172,8 +172,8 @@ export const SidePanelRow = ({
     <div className={`flex justify-between text-sm ${className}`}>
       <span className="text-slate-600 dark:text-slate-400">{label}</span>
       <span className={`font-semibold ${
-        highlight 
-          ? 'text-blue-600 dark:text-blue-400' 
+        highlight
+          ? 'text-indigo-600 dark:text-indigo-400'
           : 'text-slate-900 dark:text-slate-100'
       }`}>
         {value}

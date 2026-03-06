@@ -51,7 +51,9 @@ export default function WorkflowProgressCard({
   const failed = String(run?.status || '').toLowerCase() === 'failed';
   const succeeded = String(run?.status || '').toLowerCase() === 'succeeded';
   const paused = String(run?.status || '').toLowerCase() === 'waiting_user';
-  const hasAsyncJob = Boolean(safePayload?.job_id);
+  const asyncJobId = safePayload?.job_id || run?.job_id || run?.meta?.job_id || run?.meta?.async_job_id || null;
+  const hasAsyncJob = Boolean(asyncJobId);
+  const resolvedRunId = payload?.run_id || run?.id || null;
   const workflowName = String(run?.workflow || payload?.workflow || '').toLowerCase();
   const workflowLabel = workflowName.includes('workflow_b')
     ? 'Workflow B Progress'
@@ -119,13 +121,18 @@ export default function WorkflowProgressCard({
             <span>Paused — waiting for user confirmation. Answer the questions above to resume.</span>
           </div>
         )}
+        {hasAsyncJob && (
+          <div className="rounded border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-900/40 px-3 py-2 text-xs text-slate-600 dark:text-slate-300">
+            This run is managed by async job <strong>{asyncJobId}</strong>. Resume/replay from this card is not available.
+          </div>
+        )}
 
         <div className="flex flex-wrap gap-2">
           <Button
             variant="secondary"
             className="text-xs"
-            onClick={() => onResume?.(payload?.run_id || run?.id)}
-            disabled={running || succeeded}
+            onClick={() => onResume?.(resolvedRunId, asyncJobId)}
+            disabled={running || succeeded || hasAsyncJob}
           >
             <PlayCircle className="w-3 h-3 mr-1" />
             {paused ? 'Resume after answering' : 'Resume'}
@@ -133,11 +140,11 @@ export default function WorkflowProgressCard({
           <Button
             variant="secondary"
             className="text-xs"
-            onClick={() => onReplay?.(payload?.run_id || run?.id, {
+            onClick={() => onReplay?.(resolvedRunId, {
               use_cached_forecast: supportsCacheReuse ? reuseCachedForecast : false,
               use_cached_plan: supportsCacheReuse ? reuseCachedPlan : false
-            })}
-            disabled={!run?.id || hasAsyncJob}
+            }, asyncJobId)}
+            disabled={!resolvedRunId || hasAsyncJob}
           >
             <RefreshCw className="w-3 h-3 mr-1" />
             Replay
@@ -146,7 +153,7 @@ export default function WorkflowProgressCard({
             <Button
               variant="secondary"
               className="text-xs"
-              onClick={() => onCancel?.(payload?.run_id || run?.id, payload?.job_id)}
+              onClick={() => onCancel?.(resolvedRunId, asyncJobId)}
             >
               Cancel
             </Button>

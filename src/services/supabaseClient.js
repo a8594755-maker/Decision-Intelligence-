@@ -55,10 +55,24 @@ if (!isSupabaseConfigured) {
   console.error('Please ensure .env file exists with VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY');
 }
 
+const SUPABASE_FETCH_TIMEOUT_MS = 8000;
+
+const supabaseFetchWithTimeout = (url, options = {}) => {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), SUPABASE_FETCH_TIMEOUT_MS);
+  // Listen to caller's signal so upstream aborts still propagate
+  if (options.signal) {
+    options.signal.addEventListener('abort', () => controller.abort(), { once: true });
+  }
+  return fetch(url, { ...options, signal: controller.signal })
+    .finally(() => clearTimeout(timeoutId));
+};
+
 export const supabase = isSupabaseConfigured
   ? createClient(supabaseUrl, supabaseKey, {
     global: {
-      headers: SUPABASE_JSON_HEADERS
+      headers: SUPABASE_JSON_HEADERS,
+      fetch: supabaseFetchWithTimeout
     }
   })
   : createDisabledSupabaseClient();

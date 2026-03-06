@@ -385,3 +385,55 @@ class TestMeInfeasibilityDiagnostics:
         analysis = proof.get("infeasibility_analysis", {})
         assert len(analysis.get("categories", [])) > 0
         assert len(proof.get("relaxation_analysis", [])) > 0
+
+
+# ── T9: multi-layer BOM coupling inside MILP (D1) ────────────────────────────
+
+class TestMeMultiLayerBomCoupling:
+    """
+    FG -> SUB -> RM chain should be coupled inside CP-SAT.
+    If RM is short and cannot arrive within horizon, FG output must be capped.
+    """
+
+    def _build_req(self):
+        series = _series("FG-A", "P1", 1, p50=10.0)
+        inv = [
+            _inventory("FG-A", "P1", on_hand=0.0, lead_time_days=0.0),
+            _inventory("SUB-1", "P1", on_hand=0.0, lead_time_days=0.0),
+            _inventory("RM-1", "P1", on_hand=5.0, lead_time_days=30.0),  # cannot replenish within horizon
+        ]
+        # Intentionally omit plant_id on BOM rows to verify parent-plant inference.
+        bom = [
+            _bom_usage("FG-A", "SUB-1", usage_qty=1.0),
+            _bom_usage("SUB-1", "RM-1", usage_qty=2.0),
+        ]
+        return _me_request(
+            series=series,
+            bom_usage=bom,
+            inventory=inv,
+            horizon_days=7,
+            stockout_penalty=50.0,
+            holding_cost=0.0,
+        )
+
+    def test_two_layer_chain_caps_fg_output_and_surfaces_rm_bottleneck(self):
+        req = self._build_req()
+        result = solve_replenishment_multi_echelon(req)
+
+        fg_total = sum(
+            float(row.get("order_qty", 0.0))
+            for row in (result.get("plan") or [])
+            if row.get("sku") == "FG-A"
+        )
+        # RM on_hand=5 with usage 2 => SUB (and FG) can be at most 2.5 units.
+        assert fg_total <= 2.5 + 1e-6, f"FG output should be capped by lower-tier RM, got {fg_total}"
+
+        projection_rows = result.get("component_inventory_projection", {}).get("rows", [])
+        rm_rows = [r for r in projection_rows if r.get("component_sku") == "RM-1"]
+        assert rm_rows, "Expected RM-1 rows in component projection for multi-layer coupling."
+        assert any(float(r.get("demand_dependent", 0.0)) > 0.0 for r in rm_rows)
+
+        bottlenecks = result.get("bottlenecks", {}).get("rows", [])
+        assert any(r.get("component_sku") == "RM-1" for r in bottlenecks), (
+            f"Expected RM-1 bottleneck from lower-tier shortage, got {bottlenecks}"
+        )

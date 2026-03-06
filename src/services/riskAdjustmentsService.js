@@ -8,9 +8,10 @@
  */
 
 // ─── Config constants ─────────────────────────────────────────────────────────
-// These are the single source of truth for all thresholds used in risk adjustment.
+// Default thresholds for risk adjustment. Can be overridden at runtime via
+// `applyRiskConfigOverrides()` to load tenant-specific or database-driven config.
 
-export const RISK_ADJ_CONFIG = {
+const RISK_ADJ_DEFAULTS = {
   // Rule R1: Lead time extension
   lead_time_p90_delay_threshold: 5.0,    // days; if p90_delay_days > this, extend lead time
   overdue_ratio_threshold: 0.20,          // fraction; if overdue_ratio > this, extend lead time
@@ -24,8 +25,46 @@ export const RISK_ADJ_CONFIG = {
   demand_uplift_alpha: 0.0,              // fraction of (p90-p50) added to demand (off by default)
 
   // High-demand-uplift alpha when supplier risk is high
-  high_risk_demand_uplift_alpha: 0.3
+  high_risk_demand_uplift_alpha: 0.3,
+
+  // Rule R3: Safety stock violation penalty multiplier
+  ss_penalty_beta: 0.8,                    // multiplier factor: ss_penalty *= (1 + beta * norm_risk)
+
+  // Rule R4: Dual sourcing preference
+  critical_risk_score_threshold: 120,      // risk_score above this triggers dual-source preference
+  dual_source_min_split_fraction: 0.2,     // each supplier must receive >= 20% of total orders
+
+  // Rule R5: Expedite mode
+  expedite_risk_score_threshold: 100,      // risk_score above this (AND p90 delay > threshold) triggers expedite
+  expedite_lead_time_reduction_days: 3,    // days to reduce lead time via expediting
+  expedite_cost_multiplier: 1.25           // 25% unit-cost premium for expedited orders
 };
+
+export let RISK_ADJ_CONFIG = { ...RISK_ADJ_DEFAULTS };
+
+/**
+ * Apply runtime overrides to the risk adjustment config.
+ * Merges partial overrides with defaults; ignores unknown keys.
+ * @param {Partial<typeof RISK_ADJ_DEFAULTS>} overrides
+ */
+export function applyRiskConfigOverrides(overrides = {}) {
+  const merged = { ...RISK_ADJ_DEFAULTS };
+  for (const key of Object.keys(RISK_ADJ_DEFAULTS)) {
+    if (overrides[key] !== undefined && typeof overrides[key] === 'number') {
+      merged[key] = overrides[key];
+    }
+  }
+  RISK_ADJ_CONFIG = merged;
+  return RISK_ADJ_CONFIG;
+}
+
+/**
+ * Reset config back to hardcoded defaults.
+ */
+export function resetRiskConfig() {
+  RISK_ADJ_CONFIG = { ...RISK_ADJ_DEFAULTS };
+  return RISK_ADJ_CONFIG;
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -76,8 +115,11 @@ export function computeRiskAdjustments({
   const rows = Array.isArray(riskScores) ? riskScores : [];
 
   // Collect per-key adjustments
-  const leadTimeDeltaByKey = {};   // key → additional days (integer)
-  const penaltyMultiplierByKey = {}; // key → multiplier (>= 1.0)
+  const leadTimeDeltaByKey = {};          // key → additional days (integer)
+  const penaltyMultiplierByKey = {};      // key → multiplier (>= 1.0)
+  const ssPenaltyMultiplierByKey = {};    // key → SS violation penalty multiplier (>= 1.0)
+  const dualSourceKeys = [];              // keys needing dual-source enforcement
+  const expediteKeys = [];                // keys needing expedite mode
   const rules = [];
 
   // Sort rows deterministically so rule ordering is stable
@@ -134,12 +176,70 @@ export function computeRiskAdjustments({
         evidence_refs: [`risk_score=${riskScore.toFixed(2)}`, `threshold=${config.high_risk_score_threshold}`]
       });
     }
+
+    // ── Rule R3: Safety stock violation penalty multiplier ─────────────────
+    if (riskScore > config.high_risk_score_threshold) {
+      const normalizedRisk = Math.min(1.0, riskScore / (config.high_risk_score_threshold * 3));
+      const ssMultiplier = 1 + (config.ss_penalty_beta || 0.8) * normalizedRisk;
+      const existingSS = ssPenaltyMultiplierByKey[key] || 1.0;
+      ssPenaltyMultiplierByKey[key] = Math.max(existingSS, Number(ssMultiplier.toFixed(6)));
+
+      rules.push({
+        rule_id: 'R3_safety_stock_penalty_uplift',
+        description: 'Increase safety stock violation penalty for high-risk SKU/supplier.',
+        applies_to: { sku: materialCode, plant_id: plantId || null },
+        params_delta: { safety_stock_penalty_multiplier: ssPenaltyMultiplierByKey[key] },
+        evidence_refs: [`risk_score=${riskScore.toFixed(2)}`, `threshold=${config.high_risk_score_threshold}`]
+      });
+    }
+
+    // ── Rule R4: Dual sourcing preference ─────────────────────────────────
+    if (riskScore > (config.critical_risk_score_threshold || 120)) {
+      dualSourceKeys.push(key);
+
+      rules.push({
+        rule_id: 'R4_dual_source_preference',
+        description: 'Prefer dual sourcing for critically high-risk SKU/supplier.',
+        applies_to: { sku: materialCode, plant_id: plantId || null },
+        params_delta: { dual_source: true },
+        evidence_refs: [
+          `risk_score=${riskScore.toFixed(2)}`,
+          `threshold=${config.critical_risk_score_threshold || 120}`
+        ]
+      });
+    }
+
+    // ── Rule R5: Expedite mode ────────────────────────────────────────────
+    const triggerExpedite = riskScore > (config.expedite_risk_score_threshold || 100)
+      && p90DelayDays > config.lead_time_p90_delay_threshold;
+
+    if (triggerExpedite) {
+      expediteKeys.push(key);
+
+      rules.push({
+        rule_id: 'R5_expedite_mode',
+        description: 'Enable expedite: reduce lead time with cost premium for high-risk delayed SKU.',
+        applies_to: { sku: materialCode, plant_id: plantId || null },
+        params_delta: {
+          expedite: true,
+          lead_time_reduction_days: config.expedite_lead_time_reduction_days || 3,
+          cost_multiplier: config.expedite_cost_multiplier || 1.25
+        },
+        evidence_refs: [
+          `risk_score=${riskScore.toFixed(2)}`,
+          `p90_delay_days=${p90DelayDays.toFixed(2)}`
+        ]
+      });
+    }
   });
 
   // Count impacted SKUs
   const impactedKeys = new Set([
     ...Object.keys(leadTimeDeltaByKey),
-    ...Object.keys(penaltyMultiplierByKey)
+    ...Object.keys(penaltyMultiplierByKey),
+    ...Object.keys(ssPenaltyMultiplierByKey),
+    ...dualSourceKeys,
+    ...expediteKeys
   ]);
   const numImpactedSkus = impactedKeys.size;
 
@@ -176,8 +276,14 @@ export function computeRiskAdjustments({
     adjusted_params: {
       lead_time_days: sortedObject(leadTimeDeltaByKey),      // key → delta days to ADD
       stockout_penalty_multiplier: sortedObject(penaltyMultiplierByKey),  // key → multiplier
+      safety_stock_penalty_multiplier: sortedObject(ssPenaltyMultiplierByKey), // key → SS penalty multiplier
       safety_stock_alpha: config.safety_stock_alpha,
-      demand_uplift_alpha: effectiveDemandUpliftAlpha
+      demand_uplift_alpha: effectiveDemandUpliftAlpha,
+      dual_source_keys: [...new Set(dualSourceKeys)].sort(),
+      dual_source_min_split_fraction: config.dual_source_min_split_fraction,
+      expedite_keys: [...new Set(expediteKeys)].sort(),
+      expedite_lead_time_reduction_days: config.expedite_lead_time_reduction_days,
+      expedite_cost_multiplier: config.expedite_cost_multiplier
     },
     summary: {
       num_impacted_skus: numImpactedSkus,
@@ -239,6 +345,34 @@ export function applyRiskAdjustmentsToObjective(objective = {}, adjustedParams =
     stockout_penalty: effectivePenalty,
     stockout_penalty_base: basePenalty,
     stockout_penalty_multiplier_applied: Number(maxMultiplier.toFixed(6))
+  };
+}
+
+/**
+ * applyRiskAdjustmentsToSafetyStockPenalty
+ *
+ * Apply per-SKU safety stock penalty multipliers to the objective.
+ * Since the MILP solver also reads per-SKU multipliers via risk_signals,
+ * this sets the global safety_stock_violation_penalty using the max multiplier
+ * as a conservative fallback for the heuristic solver path.
+ *
+ * @param {Object} objective        - Base objective config
+ * @param {Object} adjustedParams   - risk_adjustments.adjusted_params
+ * @returns {Object} effective objective with updated safety_stock_violation_penalty
+ */
+export function applyRiskAdjustmentsToSafetyStockPenalty(objective = {}, adjustedParams = {}) {
+  const multiplierByKey = adjustedParams.safety_stock_penalty_multiplier || {};
+  const multipliers = Object.values(multiplierByKey).map((v) => toNumber(v, 1.0));
+  const maxMultiplier = multipliers.length > 0 ? Math.max(...multipliers) : 1.0;
+
+  const basePenalty = toNumber(objective.safety_stock_violation_penalty, 10.0);
+  const effectivePenalty = Number((basePenalty * maxMultiplier).toFixed(6));
+
+  return {
+    ...objective,
+    safety_stock_violation_penalty: effectivePenalty,
+    safety_stock_violation_penalty_base: basePenalty,
+    safety_stock_penalty_multiplier_applied: Number(maxMultiplier.toFixed(6))
   };
 }
 
@@ -389,6 +523,7 @@ export default {
   computeRiskAdjustments,
   applyRiskAdjustmentsToInventory,
   applyRiskAdjustmentsToObjective,
+  applyRiskAdjustmentsToSafetyStockPenalty,
   applyDemandUplift,
   buildPlanComparison
 };

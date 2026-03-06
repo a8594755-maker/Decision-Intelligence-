@@ -33,6 +33,7 @@ const ViewDataModal = ({ isOpen, onClose, batch, user, addNotification }) => {
       console.log(`[ViewDataModal] Loading data with dataSource=${dataSource}, table=${batch?.target_table}`);
       loadData();
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, batch, user, currentPage, filters, activeTab, dataSource]);
 
   /**

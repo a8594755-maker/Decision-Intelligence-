@@ -157,27 +157,32 @@ export async function runNegotiation({
   planRunId,
   datasetProfileRow,
   forecastRunId = null,
-  config = {}
+  config = {},
+  bypassFeatureFlag = false
 }) {
   if (!userId) throw new Error('userId is required');
   if (!planRunId) throw new Error('planRunId is required');
 
   // Feature flag: auto-rerun gated by env var (default OFF)
-  const autoRerunEnabled =
-    typeof import.meta?.env?.VITE_DI_ENABLE_AUTO_RERUN === 'string'
-      ? import.meta.env.VITE_DI_ENABLE_AUTO_RERUN === 'true'
-      : typeof process !== 'undefined' && process.env?.DI_ENABLE_AUTO_RERUN === 'true';
+  // Bypass when explicitly triggered from UI (user clicked "Generate Options")
+  if (!bypassFeatureFlag) {
+    const autoRerunEnabled =
+      typeof import.meta?.env?.VITE_DI_ENABLE_AUTO_RERUN === 'string'
+        ? import.meta.env.VITE_DI_ENABLE_AUTO_RERUN === 'true'
+        // eslint-disable-next-line no-undef
+        : typeof process !== 'undefined' && process.env?.DI_ENABLE_AUTO_RERUN === 'true';
 
-  if (!autoRerunEnabled) {
-    return {
-      triggered: false,
-      trigger: null,
-      negotiation_options: null,
-      negotiation_evaluation: null,
-      negotiation_report: null,
-      artifact_refs: {},
-      suppressed_reason: 'feature_flag_off'
-    };
+    if (!autoRerunEnabled) {
+      return {
+        triggered: false,
+        trigger: null,
+        negotiation_options: null,
+        negotiation_evaluation: null,
+        negotiation_report: null,
+        artifact_refs: {},
+        suppressed_reason: 'feature_flag_off'
+      };
+    }
   }
 
   const runId = Number(planRunId);

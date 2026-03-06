@@ -72,6 +72,7 @@ class ArtifactRecord:
     git_sha: str = ""
     lifecycle_state: str = LifecycleState.CANDIDATE.value
     promotion_history: List[Dict] = field(default_factory=list)
+    tenant_id: str = ""
 
     def to_dict(self) -> Dict:
         return asdict(self)
@@ -142,23 +143,30 @@ class ModelLifecycleRegistry:
     with atomic writes for crash safety.
     """
 
-    def __init__(self, root: str = None):
+    def __init__(self, root: str = None, tenant_id: str = ""):
         self.root = os.path.abspath(root or DEFAULT_REGISTRY_ROOT)
-        os.makedirs(self.root, exist_ok=True)
+        self.tenant_id = str(tenant_id or "").strip()
+        os.makedirs(self._tenant_root, exist_ok=True)
 
     # ── File paths ──
 
     @property
+    def _tenant_root(self) -> str:
+        if self.tenant_id:
+            return os.path.join(self.root, "tenants", self.tenant_id)
+        return self.root
+
+    @property
     def _artifacts_path(self) -> str:
-        return os.path.join(self.root, "artifacts.json")
+        return os.path.join(self._tenant_root, "artifacts.json")
 
     @property
     def _pointers_path(self) -> str:
-        return os.path.join(self.root, "prod_pointers.json")
+        return os.path.join(self._tenant_root, "prod_pointers.json")
 
     @property
     def _promotion_log_path(self) -> str:
-        return os.path.join(self.root, "promotion_log.json")
+        return os.path.join(self._tenant_root, "promotion_log.json")
 
     # ── Core API ──
 
@@ -197,6 +205,7 @@ class ModelLifecycleRegistry:
             git_sha=metadata.get("git_sha", _get_git_sha()),
             lifecycle_state=LifecycleState.CANDIDATE.value,
             promotion_history=[],
+            tenant_id=self.tenant_id,
         )
 
         artifacts = _read_json(self._artifacts_path, {})
@@ -219,7 +228,7 @@ class ModelLifecycleRegistry:
         results = list(artifacts.values())
 
         if filters:
-            for key in ("series_id", "model_name", "lifecycle_state"):
+            for key in ("series_id", "model_name", "lifecycle_state", "tenant_id"):
                 if key in filters and filters[key]:
                     results = [r for r in results if r.get(key) == filters[key]]
 
@@ -279,14 +288,19 @@ class ModelLifecycleRegistry:
         approved_by: str = "",
         note: str = "",
         override: bool = False,
+        enforce_gates: bool = True,
     ) -> Dict:
         """
         Promote an artifact to PROD for a series.
 
-        If override=True, skips quality gate checks (but records the override).
+        If enforce_gates=True (default), runs promotion quality gates.
+        If override=True, skips gate enforcement (but records the override).
         Any previous PROD artifact for the series is set to DEPRECATED.
 
         Returns the updated artifact record.
+
+        Raises:
+            ValueError: If artifact not found or gates fail without override.
         """
         artifacts = _read_json(self._artifacts_path, {})
         record = artifacts.get(artifact_id)
@@ -298,6 +312,22 @@ class ModelLifecycleRegistry:
                 f"Artifact {artifact_id} belongs to series {record['series_id']}, "
                 f"not {series_id}"
             )
+
+        # --- Gate enforcement (defense in depth) ---
+        if enforce_gates and not override:
+            try:
+                from .promotion_gates import evaluate_promotion_gates
+
+                gate_result = evaluate_promotion_gates(record)
+                if not gate_result.can_promote:
+                    raise ValueError(
+                        f"Promotion gates failed for {artifact_id}: "
+                        + "; ".join(gate_result.reasons)
+                    )
+            except ImportError:
+                logger.warning(
+                    "promotion_gates module not available, skipping gate check"
+                )
 
         # Deprecate current PROD (if any)
         pointers = _read_json(self._pointers_path, {})

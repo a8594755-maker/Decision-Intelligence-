@@ -1,0 +1,78 @@
+{
+  "artifact_gate": {
+    "can_promote": true,
+    "config_used": {
+      "max_bias_abs": 60.0,
+      "max_mape": 60.0,
+      "max_pinball_loss": 120.0,
+      "min_coverage_10_90": 0.6,
+      "min_training_points": 30,
+      "min_val_points": 5,
+      "rollback_mape_degradation_pct": 20.0
+    },
+    "data_requirements_met": true,
+    "quality_passed": true,
+    "reasons": [
+      "All promotion gates passed"
+    ]
+  },
+  "artifact_quality_passed": true,
+  "can_promote": true,
+  "canary_gate": {
+    "config_used": {
+      "max_infeasible_rate": 0.3,
+      "max_solve_time_ms": 15000,
+      "max_timeout_rate": 0.0,
+      "min_endpoint_success_rate": 1.0,
+      "required_endpoints": [
+        "/health",
+        "/replenishment-plan"
+      ]
+    },
+    "endpoint_checks": [
+      {
+        "path": "/health",
+        "responded": true,
+        "schema_valid": true,
+        "status_code": 200
+      },
+      {
+        "path": "/replenishment-plan",
+        "responded": true,
+        "schema_valid": true,
+        "status_code": 200
+      }
+    ],
+    "endpoint_success_count": 2,
+    "endpoint_success_rate": 1.0,
+    "fixture_count": 1,
+    "fixture_results": [
+      {
+        "id": "stub",
+        "schema_valid": true,
+        "solve_time_ms": 100,
+        "status": "OPTIMAL"
+      }
+    ],
+    "infeasible_count": 0,
+    "infeasible_rate": 0.0,
+    "max_solve_time_ms": 100,
+    "passed": true,
+    "reasons": [
+      "Canary checks passed"
+    ],
+    "timeout_count": 0,
+    "timeout_rate": 0.0
+  },
+  "canary_passed": true,
+  "reasons": [
+    "All release gates passed (artifact + regression + canary)"
+  ],
+  "regression_gate": {
+    "failed": 0,
+    "passed": true,
+    "reasons": [],
+    "total": 25
+  },
+  "regression_passed": true
+}

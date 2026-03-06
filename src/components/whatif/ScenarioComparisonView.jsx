@@ -105,16 +105,7 @@ function TopChangesTable({ changes }) {
 }
 
 export default function ScenarioComparisonView({ comparison, scenarioName }) {
-  if (!comparison) {
-    return (
-      <div className="flex items-center gap-2 text-sm text-slate-400 py-6 justify-center">
-        <AlertTriangle className="w-4 h-4" />
-        Comparison data unavailable.
-      </div>
-    );
-  }
-
-  const { kpis = {}, top_changes = [], notes = [], overrides = {} } = comparison;
+  const { kpis = {}, top_changes = [], notes = [], overrides = {} } = comparison || {};
   const base = kpis.base || {};
   const scenario = kpis.scenario || {};
   const delta = kpis.delta || {};
@@ -124,6 +115,15 @@ export default function ScenarioComparisonView({ comparison, scenarioName }) {
       .filter(([, v]) => v !== null && v !== undefined)
       .map(([k, v]) => `${k}: ${v}`);
   }, [overrides]);
+
+  if (!comparison) {
+    return (
+      <div className="flex items-center gap-2 text-sm text-slate-400 py-6 justify-center">
+        <AlertTriangle className="w-4 h-4" />
+        Comparison data unavailable.
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">

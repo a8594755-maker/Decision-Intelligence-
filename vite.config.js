@@ -9,4 +9,8 @@ export default defineConfig({
     host: '0.0.0.0', // 監聽所有 IP 位址 (IPv4 和 IPv6)
     port: 5173,
   },
+  build: {
+    // Strip console.log and debugger statements in production builds
+    esbuild: { drop: ['console', 'debugger'] },
+  },
 })

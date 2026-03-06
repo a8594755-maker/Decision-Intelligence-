@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
-import { supabase } from '../services/supabaseClient';
+import { supabase, isSupabaseConfigured } from '../services/supabaseClient';
 import { PermissionsProvider } from '../hooks/usePermissions';
 
 const AuthContext = createContext(null);
@@ -45,9 +45,25 @@ export function AuthProvider({ children }) {
 
   // Bootstrap auth session
   useEffect(() => {
+    if (!isSupabaseConfigured) {
+      setLoading(false);
+      return;
+    }
+
+    // Safety timeout — if getSession() hangs (bad credentials, network), unblock UI
+    const timeout = setTimeout(() => {
+      console.warn('Auth session bootstrap timed out, proceeding without session');
+      setLoading(false);
+    }, 4000);
+
     supabase.auth.getSession().then(async ({ data: { session: s } }) => {
+      clearTimeout(timeout);
       setSession(s);
       await loadUserRole(s?.user?.id ?? null);
+      setLoading(false);
+    }).catch((err) => {
+      clearTimeout(timeout);
+      console.warn('Auth session bootstrap failed:', err?.message || err);
       setLoading(false);
     });
 
@@ -56,7 +72,10 @@ export function AuthProvider({ children }) {
       await loadUserRole(s?.user?.id ?? null);
       if (!s) setLoading(false);
     });
-    return () => subscription.unsubscribe();
+    return () => {
+      clearTimeout(timeout);
+      subscription.unsubscribe();
+    };
   }, [loadUserRole]);
 
   const handleLogin = useCallback(async (email, password, selectedRole) => {

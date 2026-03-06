@@ -34,12 +34,14 @@ export default function AdminJobControlCenter({ setView }) {
 
   useEffect(() => {
     checkAuth();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
     if (user) {
       loadJobs();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, filters]);
 
   async function checkAuth() {

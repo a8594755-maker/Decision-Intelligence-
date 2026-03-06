@@ -23,7 +23,9 @@
     "ci": "npm run lint && npm run test:run && npm run build"
   },
   "dependencies": {
+    "@sentry/react": "^10.42.0",
     "@supabase/supabase-js": "^2.86.0",
+    "@tanstack/react-virtual": "^3.13.20",
     "axios": "^1.13.4",
     "date-fns": "^3.6.0",
     "lucide-react": "^0.555.0",
@@ -55,6 +57,7 @@
     "jsdom": "^26.1.0",
     "postcss": "^8.5.6",
     "tailwindcss": "^4.1.17",
+    "typescript": "^5.9.3",
     "vite": "^7.2.4",
     "vitest": "^4.0.18"
   }

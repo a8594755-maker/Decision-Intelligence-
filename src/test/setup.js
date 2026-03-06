@@ -8,13 +8,18 @@ vi.mock('../services/supabaseClient', () => ({
       insert: vi.fn().mockReturnThis(),
       update: vi.fn().mockReturnThis(),
       delete: vi.fn().mockReturnThis(),
+      upsert: vi.fn().mockReturnThis(),
       eq: vi.fn().mockReturnThis(),
       in: vi.fn().mockReturnThis(),
       order: vi.fn().mockReturnThis(),
       limit: vi.fn().mockReturnThis(),
+      range: vi.fn().mockReturnThis(),
+      ilike: vi.fn().mockReturnThis(),
+      maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
       single: vi.fn().mockResolvedValue({ data: null, error: null }),
       then: vi.fn().mockResolvedValue({ data: [], error: null }),
     })),
+    rpc: vi.fn().mockResolvedValue({ data: null, error: null }),
     auth: {
       getUser: vi.fn().mockResolvedValue({ data: { user: null }, error: null }),
       onAuthStateChange: vi.fn(() => ({ data: { subscription: { unsubscribe: vi.fn() } } })),
@@ -27,17 +32,25 @@ vi.mock('../services/supabaseClient', () => ({
     })),
     removeChannel: vi.fn(),
   },
+  isSupabaseConfigured: false,
+  RPC_JSON_OPTIONS: Object.freeze({ headers: { 'Content-Type': 'application/json', Accept: 'application/json' } }),
+  userFilesService: {
+    getLatestFile: vi.fn().mockResolvedValue(null),
+    getFileById: vi.fn().mockResolvedValue(null),
+    saveFile: vi.fn().mockResolvedValue(null),
+    getAllFiles: vi.fn().mockResolvedValue([]),
+  },
 }));
 
 // DOM polyfills — only in jsdom environment
 if (typeof window !== 'undefined') {
-  global.ResizeObserver = class ResizeObserver {
+  globalThis.ResizeObserver = class ResizeObserver {
     observe() {}
     unobserve() {}
     disconnect() {}
   };
 
-  global.IntersectionObserver = class IntersectionObserver {
+  globalThis.IntersectionObserver = class IntersectionObserver {
     observe() {}
     unobserve() {}
     disconnect() {}

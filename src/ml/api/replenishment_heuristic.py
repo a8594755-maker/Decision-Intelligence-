@@ -79,6 +79,30 @@ def _key_of(sku: Any, plant_id: Any) -> Tuple[str, str]:
     return (str(sku or "").strip(), str(plant_id or "").strip())
 
 
+def _parse_sku_plant_key(raw_key: Any) -> Optional[Tuple[str, str]]:
+    text = str(raw_key or "").strip()
+    if not text:
+        return None
+    if "|" in text:
+        sku, plant = text.split("|", 1)
+    else:
+        sku, plant = text, ""
+    sku = sku.strip()
+    plant = plant.strip()
+    if not sku:
+        return None
+    return sku, plant
+
+
+def _lookup_keyed_value(mapping: Dict[Tuple[str, str], Any], key: Tuple[str, str]) -> Optional[Any]:
+    if key in mapping:
+        return mapping[key]
+    sku, plant = key
+    if plant and (sku, "") in mapping:
+        return mapping[(sku, "")]
+    return None
+
+
 def _build_sku_lookup(rows: Any, value_key: str) -> Dict[str, float]:
     lookup: Dict[str, float] = {}
     for row in rows or []:
@@ -288,8 +312,38 @@ def deterministic_replenishment_plan(payload: Any) -> Dict[str, Any]:
 
     infeasible_reasons: List[str] = []
 
-    forecast_by_key: Dict[Tuple[str, str], List[Tuple[date, float]]] = {}
+    forecast_by_key: Dict[Tuple[str, str], List[Tuple[date, float, Optional[float]]]] = {}
     priority_weights = _resolve_priority_weights(payload)
+    objective = _read_attr(payload, "objective", None)
+    forecast_uncertainty_cfg_raw = _read_path(payload, "settings.forecast_uncertainty", {}) or {}
+    forecast_uncertainty_cfg = (
+        forecast_uncertainty_cfg_raw if isinstance(forecast_uncertainty_cfg_raw, dict) else {}
+    )
+    closed_loop_patch_raw = _read_path(payload, "settings.closed_loop_meta.param_patch.patch", {}) or {}
+    closed_loop_patch = closed_loop_patch_raw if isinstance(closed_loop_patch_raw, dict) else {}
+    safety_stock_alpha_raw = _first_non_none(
+        _read_attr(objective, "safety_stock_alpha", None),
+        forecast_uncertainty_cfg.get("safety_stock_alpha"),
+        closed_loop_patch.get("safety_stock_alpha"),
+        1.0,
+    )
+    safety_stock_alpha = max(0.0, _to_float(safety_stock_alpha_raw, 1.0))
+    use_p90_for_safety_stock = _to_bool(
+        _first_non_none(
+            _read_attr(objective, "use_p90_for_safety_stock", None),
+            forecast_uncertainty_cfg.get("use_p90_for_safety_stock"),
+            True,
+        ),
+        True,
+    )
+    closed_loop_safety_stock_by_key: Dict[Tuple[str, str], float] = {}
+    raw_ss_map = closed_loop_patch.get("safety_stock_by_key")
+    if isinstance(raw_ss_map, dict):
+        for raw_key, raw_value in raw_ss_map.items():
+            parsed_key = _parse_sku_plant_key(raw_key)
+            if parsed_key is None:
+                continue
+            closed_loop_safety_stock_by_key[parsed_key] = max(0.0, _to_float(raw_value, 0.0))
     for point in _iter_forecast_points(payload):
         sku = str(_read_attr(point, "sku", "") or "").strip()
         if not sku:
@@ -298,7 +352,10 @@ def deterministic_replenishment_plan(payload: Any) -> Dict[str, Any]:
         if not date_val:
             continue
         key = _key_of(_read_attr(point, "sku", None), _read_attr(point, "plant_id", None))
-        forecast_by_key.setdefault(key, []).append((date_val, max(0.0, _to_float(_read_attr(point, "p50", 0.0), 0.0))))
+        p50 = max(0.0, _to_float(_read_attr(point, "p50", 0.0), 0.0))
+        p90_raw = _read_attr(point, "p90", None)
+        p90 = max(0.0, _to_float(p90_raw, p50)) if p90_raw is not None else None
+        forecast_by_key.setdefault(key, []).append((date_val, p50, p90))
 
     if not forecast_by_key:
         return _empty_response(
@@ -358,6 +415,17 @@ def deterministic_replenishment_plan(payload: Any) -> Dict[str, Any]:
     total_demand = 0.0
     stockout_units = 0.0
     holding_units = 0.0
+    keys_with_p90 = 0
+    keys_with_derived_safety_stock = 0
+    keys_with_closed_loop_safety_stock = 0
+
+    # Phase 4.3 – explain parity tracking
+    binding_constraints: List[Dict[str, Any]] = []
+    sku_stockout_flag: Dict[str, bool] = {}   # sku -> had stockouts?
+    sku_excess_flag: Dict[str, bool] = {}     # sku -> had excess inventory?
+    first_unfunded_sku: Optional[str] = None  # first SKU clipped/denied by budget
+    budget_was_binding = False
+    unique_skus_ordered: set = set()
 
     for key in ordered_keys:
         sku, plant_id = key
@@ -378,7 +446,26 @@ def deterministic_replenishment_plan(payload: Any) -> Dict[str, Any]:
         })
 
         on_hand = _to_float(inv.get("on_hand"), 0.0)
-        safety_stock = max(0.0, _to_float(inv.get("safety_stock"), 0.0))
+        base_safety_stock = max(0.0, _to_float(inv.get("safety_stock"), 0.0))
+        p90_values = [p90 for _, _, p90 in filtered_rows if p90 is not None]
+        if p90_values:
+            keys_with_p90 += 1
+        derived_safety_stock: Optional[float] = None
+        if use_p90_for_safety_stock and p90_values:
+            avg_p50 = sum(p50 for _, p50, _ in filtered_rows) / len(filtered_rows)
+            avg_p90 = sum((p90 if p90 is not None else p50) for _, p50, p90 in filtered_rows) / len(filtered_rows)
+            spread = max(0.0, avg_p90 - avg_p50)
+            derived_safety_stock = max(0.0, avg_p50 + safety_stock_alpha * spread)
+        closed_loop_override = _lookup_keyed_value(closed_loop_safety_stock_by_key, key)
+        if closed_loop_override is not None:
+            safety_stock = max(0.0, _to_float(closed_loop_override, 0.0))
+            keys_with_closed_loop_safety_stock += 1
+        elif derived_safety_stock is not None:
+            safety_stock = max(base_safety_stock, derived_safety_stock)
+            if safety_stock > base_safety_stock + 1e-9:
+                keys_with_derived_safety_stock += 1
+        else:
+            safety_stock = base_safety_stock
         lead_time_days = max(0, _to_int(inv.get("lead_time_days"), 0))
         inbound_calendar = inbound_by_key_day.get(key, {})
 
@@ -386,7 +473,7 @@ def deterministic_replenishment_plan(payload: Any) -> Dict[str, Any]:
         sku_pack = pack_map.get(sku, 0.0)
         sku_max = max_map.get(sku, 0.0)
 
-        for demand_day, demand_p50 in filtered_rows:
+        for demand_day, demand_p50, _demand_p90 in filtered_rows:
             inbound_today = _to_float(inbound_calendar.get(demand_day, 0.0), 0.0)
             on_hand += inbound_today
 
@@ -399,24 +486,33 @@ def deterministic_replenishment_plan(payload: Any) -> Dict[str, Any]:
             row_rounding_notes: List[str] = []
 
             if order_qty > 0.0:
+                period_str = demand_day.isoformat()
+
                 if sku_max > 0.0 and order_qty > sku_max:
                     order_qty = sku_max
                     row_rounding_notes.append("max_order_qty_cap")
+                    binding_constraints.append({"tag": "max_order_qty_cap", "sku": sku, "period": period_str, "binding": True})
 
                 if sku_moq > 0.0 and 0.0 < order_qty < sku_moq:
                     order_qty = sku_moq
                     row_rounding_notes.append("moq_floor")
+                    binding_constraints.append({"tag": "moq_floor", "sku": sku, "period": period_str, "binding": True})
 
                 if sku_pack > 1.0 and order_qty > 0.0:
                     rounded = math.ceil(order_qty / sku_pack) * sku_pack
                     if abs(rounded - order_qty) > 1e-9:
                         row_rounding_notes.append("pack_round_up")
+                        binding_constraints.append({"tag": "pack_round_up", "sku": sku, "period": period_str, "binding": True})
                     order_qty = rounded
 
                 if budget_cap is not None and order_qty > 0.0:
                     remaining_budget = budget_cap - total_order_qty
                     if remaining_budget <= 0.0:
                         order_qty = 0.0
+                        budget_was_binding = True
+                        if first_unfunded_sku is None:
+                            first_unfunded_sku = sku
+                        binding_constraints.append({"tag": "budget_cap_clipped", "sku": sku, "period": period_str, "binding": True})
                         infeasible_reasons.append(
                             f"Budget cap exhausted before covering demand for {sku} ({demand_day.isoformat()})."
                         )
@@ -428,6 +524,10 @@ def deterministic_replenishment_plan(payload: Any) -> Dict[str, Any]:
                             clipped = 0.0
                         if clipped < order_qty:
                             row_rounding_notes.append("budget_cap_clipped")
+                            budget_was_binding = True
+                            if first_unfunded_sku is None:
+                                first_unfunded_sku = sku
+                            binding_constraints.append({"tag": "budget_cap_clipped", "sku": sku, "period": period_str, "binding": True})
                         order_qty = max(0.0, clipped)
                         if order_qty == 0.0:
                             infeasible_reasons.append(
@@ -448,6 +548,7 @@ def deterministic_replenishment_plan(payload: Any) -> Dict[str, Any]:
                 )
                 total_order_qty += order_qty
                 projected_after_demand += order_qty
+                unique_skus_ordered.add(sku)
 
                 if row_rounding_notes:
                     rounding_events.append(
@@ -457,12 +558,66 @@ def deterministic_replenishment_plan(payload: Any) -> Dict[str, Any]:
             on_hand = projected_after_demand
             if on_hand < 0:
                 stockout_units += abs(on_hand)
+                sku_stockout_flag[sku] = True
+            if on_hand > 0:
+                sku_excess_flag[sku] = True
             holding_units += max(0.0, on_hand)
 
-    objective = _read_attr(payload, "objective", None)
     stockout_penalty = _to_float(_read_attr(objective, "stockout_penalty", 1.0), 1.0)
     holding_cost = _to_float(_read_attr(objective, "holding_cost", 0.0), 0.0)
     estimated_total_cost = total_order_qty + (stockout_penalty * stockout_units) + (holding_cost * holding_units)
+
+    # ── Phase 4.3: shadow_prices ──────────────────────────────────────────
+    shadow_prices: List[Dict[str, Any]] = []
+    all_skus = sorted({k[0] for k in ordered_keys})
+    for sp_sku in all_skus:
+        had_stockout = sku_stockout_flag.get(sp_sku, False)
+        had_excess = sku_excess_flag.get(sp_sku, False)
+        if had_stockout:
+            sp_value = stockout_penalty
+            sp_binding = True
+            sp_slack = 0.0
+        elif had_excess:
+            sp_value = -holding_cost
+            sp_binding = holding_cost > 0.0
+            sp_slack = 0.0 if holding_cost > 0.0 else 1.0
+        else:
+            sp_value = 0.0
+            sp_binding = False
+            sp_slack = 1.0
+        shadow_prices.append({
+            "constraint": f"demand_coverage[{sp_sku}]",
+            "shadow_price_approx": float(round(sp_value, 6)),
+            "binding": sp_binding,
+            "slack": float(round(sp_slack, 6)),
+        })
+    # Budget constraint shadow price
+    if budget_cap is not None:
+        budget_slack = max(0.0, budget_cap - total_order_qty)
+        budget_sp = 0.0
+        if budget_was_binding and first_unfunded_sku is not None:
+            # Shadow price = stockout penalty of the first SKU that could not be funded
+            budget_sp = stockout_penalty
+        shadow_prices.append({
+            "constraint": "budget_cap",
+            "shadow_price_approx": float(round(budget_sp, 6)),
+            "binding": budget_was_binding,
+            "slack": float(round(budget_slack, 6)),
+        })
+
+    # ── Phase 4.3: explain_summary ────────────────────────────────────────
+    num_binding = len([bc for bc in binding_constraints if bc.get("binding")])
+    num_periods = len({row["arrival_date"] for row in plan_rows}) if plan_rows else 0
+    num_skus = len(unique_skus_ordered)
+    budget_utilization_pct = 0.0
+    if budget_cap is not None and budget_cap > 0.0:
+        budget_utilization_pct = round(min(100.0, (total_order_qty / budget_cap) * 100.0), 1)
+    budget_str = f" Budget utilization: {budget_utilization_pct}%." if budget_cap is not None else ""
+    explain_summary = (
+        f"Heuristic plan: ordered {int(round(total_order_qty))} units across "
+        f"{num_skus} SKUs over {num_periods} periods. "
+        f"{num_binding} constraints were binding.{budget_str}"
+    )
 
     service_level: Optional[float] = None
     if total_demand > 0.0:
@@ -612,10 +767,20 @@ def deterministic_replenishment_plan(payload: Any) -> Dict[str, Any]:
                 "max_time_in_seconds": options["time_limit_seconds"],
                 "force_timeout_requested": bool(options.get("force_timeout", False)),
                 "time_limit_hit": False,
+                "uncertainty_bridge": {
+                    "safety_stock_alpha": round(safety_stock_alpha, 6),
+                    "use_p90_for_safety_stock": bool(use_p90_for_safety_stock),
+                    "keys_with_p90": int(keys_with_p90),
+                    "keys_with_derived_safety_stock": int(keys_with_derived_safety_stock),
+                    "keys_with_closed_loop_safety_stock": int(keys_with_closed_loop_safety_stock),
+                },
             },
             "infeasible_reasons": unique_reasons,
             "infeasible_reason_details": reason_details,
             "infeasible_reasons_detailed": reason_details,
+            "binding_constraints": binding_constraints,
+            "shadow_prices": shadow_prices if shadow_prices else None,
+            "relaxation_applied": None,
             "proof": {
                 "objective_terms": [
                     {
@@ -640,6 +805,9 @@ def deterministic_replenishment_plan(payload: Any) -> Dict[str, Any]:
                     },
                 ],
                 "constraints_checked": constraints_checked,
+                "shadow_prices": shadow_prices,
+                "binding_constraints": binding_constraints,
+                "explain_summary": explain_summary,
             },
         },
         default_engine="heuristic",

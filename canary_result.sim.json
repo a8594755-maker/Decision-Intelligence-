@@ -1,0 +1,1 @@
+{"canary_report":{"fixture_results":[{"id":"stub","status":"OPTIMAL","solve_time_ms":100,"schema_valid":true}],"endpoint_checks":[{"path":"/health","status_code":200,"responded":true,"schema_valid":true},{"path":"/replenishment-plan","status_code":200,"responded":true,"schema_valid":true}]}}

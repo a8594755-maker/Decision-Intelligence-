@@ -13,8 +13,8 @@ export const Modal = ({
   title,
   description,
   icon: Icon,
-  iconBgColor = "bg-blue-100 dark:bg-blue-900/30",
-  iconColor = "text-blue-600",
+  iconBgColor = "bg-indigo-50 dark:bg-indigo-900/30",
+  iconColor = "text-indigo-600",
   confirmText = "Confirm",
   cancelText = "Cancel",
   confirmVariant = "primary",
@@ -34,7 +34,7 @@ export const Modal = ({
             )}
             <div>
               {title && <h3 className="text-lg font-semibold">{title}</h3>}
-              {description && <p className="text-sm text-slate-500">{description}</p>}
+              {description && <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>{description}</p>}
             </div>
           </div>
         )}

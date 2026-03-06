@@ -1,0 +1,6 @@
+material_code,unit_margin,plant_id,unit_price,currency,valid_from,valid_to,notes
+FG-001,25.5,PLANT-01,125,USD,2024-01-01,2026-06-30,Standard product
+FG-002,30.0,PLANT-01,150,USD,2024-01-01,2026-12-31,Premium line
+FG-003,18.75,PLANT-02,95,USD,2024-01-01,2026-12-31,Volume product
+FG-004,45.0,PLANT-01,220,USD,2024-01-01,2026-12-31,High-margin specialty
+FG-005,22.0,PLANT-02,110,USD,2024-01-01,2026-12-31,Mid-range product

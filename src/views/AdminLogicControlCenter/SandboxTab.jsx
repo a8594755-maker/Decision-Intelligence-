@@ -48,15 +48,17 @@ export default function SandboxTab({ draftVersion, publishedVersion, canEdit }) 
   }, []);
 
   // Poll for test run updates
+  const testRunId = testRun?.id;
+  const testRunStatus = testRun?.status;
   useEffect(() => {
-    if (!testRun || testRun.status === 'completed' || testRun.status === 'failed') {
+    if (!testRunId || testRunStatus === 'completed' || testRunStatus === 'failed') {
       setPolling(false);
       return;
     }
 
     setPolling(true);
     const interval = setInterval(async () => {
-      const updated = await fetchTestRun(testRun.id);
+      const updated = await fetchTestRun(testRunId);
       if (updated) {
         setTestRun(updated);
         if (updated.status === 'completed' || updated.status === 'failed') {
@@ -67,7 +69,7 @@ export default function SandboxTab({ draftVersion, publishedVersion, canEdit }) 
     }, 3000);
 
     return () => clearInterval(interval);
-  }, [testRun?.id, testRun?.status]);
+  }, [testRunId, testRunStatus]);
 
   async function handleStartTest() {
     if (!draftVersion) {

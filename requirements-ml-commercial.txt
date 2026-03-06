@@ -1,0 +1,10 @@
+# Commercial Solver Dependencies (optional)
+# ==========================================
+# Install these only if you have a valid Gurobi or CPLEX license.
+# The solver engine will automatically detect availability at startup.
+
+# Gurobi — requires a valid license (academic, cloud, or commercial)
+gurobipy>=11.0.0
+
+# IBM CPLEX — via the DOcplex modeling layer
+docplex>=2.27.0

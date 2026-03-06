@@ -4,7 +4,10 @@ import { LineChart as LineChartIcon } from 'lucide-react';
 import { Card } from '../ui';
 
 export default function InventoryProjectionCard({ payload }) {
-  const groups = Array.isArray(payload?.groups) ? payload.groups : [];
+  const groups = useMemo(
+    () => Array.isArray(payload?.groups) ? payload.groups : [],
+    [payload]
+  );
   const [groupKey, setGroupKey] = useState('');
   const selectedKey = useMemo(() => {
     if (!groups.length) return '';

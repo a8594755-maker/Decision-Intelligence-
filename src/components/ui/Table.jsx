@@ -1,9 +1,13 @@
-import React from 'react';
+import React, { useRef } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
+
+const ROW_HEIGHT = 44;
+const VIRTUALIZE_THRESHOLD = 100;
 
 /**
  * Table Component
  * Basic table container with sticky header, hover, and selection styles
- * 
+ *
  * @param {Array} columns - Column definitions [{ key, label, align, sortable, width }]
  * @param {Array} data - Data array
  * @param {Function} onRowClick - Row click callback
@@ -13,6 +17,8 @@ import React from 'react';
  * @param {string} emptyMessage - Empty state message
  * @param {ReactNode} emptyIcon - Empty state icon
  * @param {string} className - Additional CSS class
+ * @param {boolean|number} virtualize - Enable virtualization (true = auto at 100+ rows, number = custom threshold)
+ * @param {number} maxHeight - Max height in px for virtualized table (default 600)
  */
 export const Table = ({
   columns = [],
@@ -23,8 +29,20 @@ export const Table = ({
   stickyHeader = true,
   emptyMessage = 'No data',
   emptyIcon,
-  className = ''
+  className = '',
+  virtualize = false,
+  maxHeight = 600,
 }) => {
+  const parentRef = useRef(null);
+  const threshold = typeof virtualize === 'number' ? virtualize : VIRTUALIZE_THRESHOLD;
+  const shouldVirtualize = virtualize !== false && data.length >= threshold;
+
+  const virtualizer = useVirtualizer({
+    count: shouldVirtualize ? data.length : 0,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => ROW_HEIGHT,
+    overscan: 10,
+  });
   // Get column alignment class
   const getAlignClass = (align) => {
     switch (align) {
@@ -75,59 +93,91 @@ export const Table = ({
     );
   }
 
+  const renderRow = (row, rowIndex) => {
+    const rowId = row.id || rowIndex;
+    const isSelected = selectedRowId === rowId;
+
+    return (
+      <tr
+        key={rowId}
+        onClick={() => onRowClick && onRowClick(row)}
+        className={`
+          transition-colors
+          ${onRowClick ? 'cursor-pointer' : ''}
+          ${isSelected
+            ? 'bg-indigo-50 dark:bg-indigo-900/20 border-l-4 border-indigo-500'
+            : 'hover:bg-stone-50 dark:hover:bg-stone-700/50'
+          }
+        `}
+      >
+        {columns.map((column) => {
+          const value = row[column.key];
+          return (
+            <td
+              key={`${rowId}-${column.key}`}
+              className={`px-4 py-3 text-slate-900 dark:text-slate-100 ${getAlignClass(column.align)}`}
+            >
+              {renderCell ? renderCell(column, row, value) : value}
+            </td>
+          );
+        })}
+      </tr>
+    );
+  };
+
+  const header = (
+    <thead className={`bg-slate-100 dark:bg-slate-800 ${stickyHeader ? 'sticky top-0 z-10' : ''}`}>
+      <tr>
+        {columns.map((column) => (
+          <th
+            key={column.key}
+            className={`px-4 py-3 text-xs font-semibold uppercase text-slate-700 dark:text-slate-300 ${getAlignClass(column.align)}`}
+            style={{ width: column.width }}
+          >
+            {column.label}
+          </th>
+        ))}
+      </tr>
+    </thead>
+  );
+
+  if (shouldVirtualize) {
+    const virtualRows = virtualizer.getVirtualItems();
+    return (
+      <div className={`w-full ${className}`}>
+        <div
+          ref={parentRef}
+          className="overflow-auto rounded-lg border border-slate-200 dark:border-slate-700"
+          style={{ maxHeight }}
+        >
+          <table className="w-full text-sm">
+            {header}
+            <tbody className="divide-y divide-slate-200 dark:divide-slate-700 bg-white dark:bg-slate-800">
+              {virtualRows.length > 0 && (
+                <tr style={{ height: virtualRows[0].start }}>
+                  <td colSpan={columns.length} style={{ padding: 0, border: 'none' }} />
+                </tr>
+              )}
+              {virtualRows.map((virtualRow) => renderRow(data[virtualRow.index], virtualRow.index))}
+              {virtualRows.length > 0 && (
+                <tr style={{ height: virtualizer.getTotalSize() - virtualRows[virtualRows.length - 1].end }}>
+                  <td colSpan={columns.length} style={{ padding: 0, border: 'none' }} />
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className={`w-full ${className}`}>
       <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700">
         <table className="w-full text-sm">
-          {/* Header */}
-          <thead className={`bg-slate-100 dark:bg-slate-800 ${stickyHeader ? 'sticky top-0 z-10' : ''}`}>
-            <tr>
-              {columns.map((column) => (
-                <th
-                  key={column.key}
-                  className={`px-4 py-3 text-xs font-semibold uppercase text-slate-700 dark:text-slate-300 ${getAlignClass(column.align)}`}
-                  style={{ width: column.width }}
-                >
-                  {column.label}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          
-          {/* Body */}
+          {header}
           <tbody className="divide-y divide-slate-200 dark:divide-slate-700 bg-white dark:bg-slate-800">
-            {data.map((row, rowIndex) => {
-              const rowId = row.id || rowIndex;
-              const isSelected = selectedRowId === rowId;
-              
-              return (
-                <tr
-                  key={rowId}
-                  onClick={() => onRowClick && onRowClick(row)}
-                  className={`
-                    transition-colors
-                    ${onRowClick ? 'cursor-pointer' : ''}
-                    ${isSelected 
-                      ? 'bg-blue-50 dark:bg-blue-900/20 border-l-4 border-blue-500' 
-                      : 'hover:bg-slate-50 dark:hover:bg-slate-700/50'
-                    }
-                  `}
-                >
-                  {columns.map((column) => {
-                    const value = row[column.key];
-                    
-                    return (
-                      <td
-                        key={`${rowId}-${column.key}`}
-                        className={`px-4 py-3 text-slate-900 dark:text-slate-100 ${getAlignClass(column.align)}`}
-                      >
-                        {renderCell ? renderCell(column, row, value) : value}
-                      </td>
-                    );
-                  })}
-                </tr>
-              );
-            })}
+            {data.map((row, rowIndex) => renderRow(row, rowIndex))}
           </tbody>
         </table>
       </div>

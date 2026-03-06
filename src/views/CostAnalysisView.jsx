@@ -3,14 +3,21 @@ import {
   DollarSign, TrendingUp, TrendingDown, AlertTriangle, Sparkles,
   Plus, Calendar, BarChart3, PieChart, Loader2, CheckCircle, X,
   AlertCircle, RefreshCw, Download, Package, Briefcase, Search,
-  ChevronDown, ChevronRight
+  ChevronDown, ChevronRight, Layers, Target
 } from 'lucide-react';
+import {
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
+  ResponsiveContainer, Cell, ComposedChart, Line
+} from 'recharts';
 import ReactMarkdown from 'react-markdown';
 import { Card, Button, Badge } from '../components/ui';
 import { SimpleLineChart, SimpleBarChart } from '../components/charts';
 import * as costAnalysisService from '../services/costAnalysisService';
 import * as materialCostService from '../services/materialCostService';
 import { analyzeCostAnomaly, generateCostOptimizationSuggestions, callGeminiAPI } from '../services/geminiAPI';
+
+const ABC_COLORS = { A: '#ef4444', B: '#f59e0b', C: '#22c55e' };
+const CHART_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4', '#6366f1', '#f43f5e'];
 
 /**
  * Cost Analysis View
@@ -51,6 +58,10 @@ export default function CostAnalysisView({ addNotification, user, setView }) {
   const [priceDisplayMode, setPriceDisplayMode] = useState('price'); // 'price' or 'index'
   const [topBySpend, setTopBySpend] = useState([]);
 
+  // Supplier Cost Analytics State
+  const [spendConcentration, setSpendConcentration] = useState(null);
+  const [priceAnomalies, setPriceAnomalies] = useState([]);
+  const [supplierConcentration, setSupplierConcentration] = useState(null);
 
   // Load data based on view mode
   useEffect(() => {
@@ -120,6 +131,18 @@ export default function CostAnalysisView({ addNotification, user, setView }) {
       // Load Top by Spend (if quantity data is available)
       const topSpend = await materialCostService.getTopBySpend(user.id, days, customRange, 10);
       setTopBySpend(topSpend);
+
+      // Load ABC Spend Concentration
+      const abcData = await materialCostService.getSpendConcentration(user.id, days, customRange);
+      setSpendConcentration(abcData);
+
+      // Load Price Anomalies
+      const anomalyData = await materialCostService.detectPriceAnomalies(user.id, days, customRange);
+      setPriceAnomalies(anomalyData);
+
+      // Load Supplier Spend Concentration
+      const supplierSpend = await materialCostService.getSupplierSpendConcentration(user.id, days, customRange);
+      setSupplierConcentration(supplierSpend);
 
       // Load data coverage
       const coverage = await materialCostService.checkDataCoverage(user.id, days, customRange);
@@ -279,7 +302,7 @@ Please provide in Chinese (Traditional):
     try {
       await costAnalysisService.updateAnomalyStatus(anomalyId, 'resolved', notes);
       addNotification('Anomaly marked as resolved', 'success');
-      loadAllData();
+      loadOperationalData();
       setSelectedAnomaly(null);
       setAiAnalysis('');
     } catch (error) {
@@ -909,6 +932,306 @@ Please provide in Chinese (Traditional):
                           item.priceChangePercent > 0 ? 'text-red-600' : 'text-green-600'
                         }`}>
                           {item.priceChangePercent > 0 ? '+' : ''}{item.priceChangePercent.toFixed(2)}%
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+          )}
+
+          {/* ABC Spend Concentration Analysis */}
+          {spendConcentration && spendConcentration.summary && (
+            <Card>
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-semibold flex items-center gap-2">
+                  <Layers className="w-5 h-5 text-blue-600" />
+                  ABC Spend Analysis
+                </h3>
+                <div className="flex gap-2">
+                  <Badge type="danger">A: {spendConcentration.summary.classA.count} items</Badge>
+                  <Badge type="warning">B: {spendConcentration.summary.classB.count} items</Badge>
+                  <Badge type="success">C: {spendConcentration.summary.classC.count} items</Badge>
+                </div>
+              </div>
+
+              {/* Summary cards */}
+              <div className="grid grid-cols-3 gap-4 mb-6">
+                {[
+                  { cls: 'A', data: spendConcentration.summary.classA, label: 'High Value',
+                    bg: 'bg-red-50 dark:bg-red-900/20', text: 'text-red-600' },
+                  { cls: 'B', data: spendConcentration.summary.classB, label: 'Medium Value',
+                    bg: 'bg-amber-50 dark:bg-amber-900/20', text: 'text-amber-600' },
+                  { cls: 'C', data: spendConcentration.summary.classC, label: 'Low Value',
+                    bg: 'bg-green-50 dark:bg-green-900/20', text: 'text-green-600' }
+                ].map(({ cls, data, label, bg, text }) => (
+                  <div key={cls} className={`p-3 rounded-lg ${bg} text-center`}>
+                    <div className={`text-2xl font-bold ${text}`}>Class {cls}</div>
+                    <div className="text-sm text-slate-600 dark:text-slate-300">
+                      {data.count} materials ({data.pct.toFixed(1)}% spend)
+                    </div>
+                    <div className="text-xs text-slate-500 mt-1">
+                      ${data.totalSpend.toLocaleString('en-US', { maximumFractionDigits: 0 })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Pareto Chart */}
+              <div className="mb-6">
+                <h4 className="text-sm font-medium text-slate-500 mb-2">Pareto Chart (Spend vs Cumulative %)</h4>
+                <ResponsiveContainer width="100%" height={300} minWidth={1} minHeight={1}>
+                  <ComposedChart data={spendConcentration.materials.slice(0, 20)}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                    <XAxis
+                      dataKey="material_code"
+                      tick={{ fontSize: 10 }}
+                      interval={0}
+                      angle={-45}
+                      textAnchor="end"
+                      height={60}
+                    />
+                    <YAxis yAxisId="spend" tick={{ fontSize: 11 }} />
+                    <YAxis yAxisId="cumulative" orientation="right" domain={[0, 100]}
+                      tick={{ fontSize: 11 }} unit="%" />
+                    <Tooltip
+                      formatter={(value, name) => {
+                        if (name === 'Spend') return ['$' + value.toLocaleString(), name];
+                        return [value.toFixed(1) + '%', name];
+                      }}
+                    />
+                    <Bar yAxisId="spend" dataKey="totalSpend" name="Spend" radius={[4, 4, 0, 0]}>
+                      {spendConcentration.materials.slice(0, 20).map((entry, i) => (
+                        <Cell key={`abc-cell-${i}`} fill={ABC_COLORS[entry.abcClass]} />
+                      ))}
+                    </Bar>
+                    <Line yAxisId="cumulative" dataKey="cumulativeShare" name="Cumulative %"
+                      stroke="#8b5cf6" strokeWidth={2} dot={{ r: 3 }} />
+                  </ComposedChart>
+                </ResponsiveContainer>
+              </div>
+
+              {/* ABC Detail Table */}
+              <div className="overflow-x-auto max-h-64 overflow-y-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-slate-50 dark:bg-slate-800 sticky top-0">
+                    <tr>
+                      <th className="px-4 py-2 text-left">Class</th>
+                      <th className="px-4 py-2 text-left">Material</th>
+                      <th className="px-4 py-2 text-left">Category</th>
+                      <th className="px-4 py-2 text-right">Total Spend</th>
+                      <th className="px-4 py-2 text-right">Share %</th>
+                      <th className="px-4 py-2 text-right">Cumulative %</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {spendConcentration.materials.map((mat, idx) => (
+                      <tr key={`abc-${mat.material_id}-${idx}`}
+                          className="border-t dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800">
+                        <td className="px-4 py-2">
+                          <Badge type={mat.abcClass === 'A' ? 'danger' : mat.abcClass === 'B' ? 'warning' : 'success'}>
+                            {mat.abcClass}
+                          </Badge>
+                        </td>
+                        <td className="px-4 py-2">
+                          <div className="font-medium">{mat.material_code}</div>
+                          <div className="text-xs text-slate-500 truncate max-w-xs">{mat.material_name}</div>
+                        </td>
+                        <td className="px-4 py-2 text-slate-600 dark:text-slate-400">{mat.category}</td>
+                        <td className="px-4 py-2 text-right font-semibold">
+                          ${mat.totalSpend.toLocaleString('en-US', { maximumFractionDigits: 0 })}
+                        </td>
+                        <td className="px-4 py-2 text-right">{mat.spendShare.toFixed(1)}%</td>
+                        <td className="px-4 py-2 text-right">{mat.cumulativeShare.toFixed(1)}%</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+          )}
+
+          {/* Price Anomaly Detection */}
+          {priceAnomalies.length > 0 && (
+            <Card>
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-semibold flex items-center gap-2">
+                  <AlertTriangle className="w-5 h-5 text-orange-500" />
+                  Price Anomaly Detection
+                </h3>
+                <div className="flex gap-2">
+                  <Badge type="danger">
+                    {priceAnomalies.filter(a => a.severity === 'high').length} High
+                  </Badge>
+                  <Badge type="warning">
+                    {priceAnomalies.filter(a => a.severity === 'medium').length} Medium
+                  </Badge>
+                  <Badge type="info">
+                    {priceAnomalies.filter(a => a.severity === 'low').length} Low
+                  </Badge>
+                </div>
+              </div>
+
+              <div className="overflow-x-auto max-h-80 overflow-y-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-slate-50 dark:bg-slate-800 sticky top-0">
+                    <tr>
+                      <th className="px-4 py-2 text-left">Severity</th>
+                      <th className="px-4 py-2 text-left">Material</th>
+                      <th className="px-4 py-2 text-left">Supplier</th>
+                      <th className="px-4 py-2 text-right">Date</th>
+                      <th className="px-4 py-2 text-right">Actual Price</th>
+                      <th className="px-4 py-2 text-right">Expected Price</th>
+                      <th className="px-4 py-2 text-right">Deviation</th>
+                      <th className="px-4 py-2 text-left">Type</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {priceAnomalies.slice(0, 30).map((anomaly, idx) => (
+                      <tr key={`anomaly-${idx}`}
+                          className={`border-t dark:border-slate-700 ${
+                            anomaly.severity === 'high'
+                              ? 'bg-red-50/50 dark:bg-red-900/10'
+                              : ''
+                          }`}>
+                        <td className="px-4 py-2">
+                          <Badge type={anomaly.severity === 'high' ? 'danger' : anomaly.severity === 'medium' ? 'warning' : 'info'}>
+                            {anomaly.severity}
+                          </Badge>
+                        </td>
+                        <td className="px-4 py-2">
+                          <div className="font-medium">{anomaly.material_code}</div>
+                          <div className="text-xs text-slate-500 truncate max-w-[150px]">{anomaly.material_name}</div>
+                        </td>
+                        <td className="px-4 py-2 text-slate-600 dark:text-slate-400">{anomaly.supplier_name}</td>
+                        <td className="px-4 py-2 text-right text-slate-500">{anomaly.order_date}</td>
+                        <td className="px-4 py-2 text-right font-semibold">
+                          ${anomaly.unit_price.toFixed(2)}
+                        </td>
+                        <td className="px-4 py-2 text-right text-slate-500">
+                          ${anomaly.expected_price.toFixed(2)}
+                        </td>
+                        <td className={`px-4 py-2 text-right font-bold ${
+                          anomaly.deviation_pct > 0 ? 'text-red-600' : 'text-green-600'
+                        }`}>
+                          {anomaly.deviation_pct > 0 ? '+' : ''}{anomaly.deviation_pct.toFixed(1)}%
+                        </td>
+                        <td className="px-4 py-2">
+                          <span className="px-2 py-0.5 rounded text-xs font-medium bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300">
+                            {anomaly.anomaly_type.replace('_', ' ')}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {priceAnomalies.length > 30 && (
+                <div className="text-center mt-3 text-sm text-slate-500">
+                  Showing top 30 of {priceAnomalies.length} anomalies
+                </div>
+              )}
+            </Card>
+          )}
+
+          {/* Supplier Spend Concentration */}
+          {supplierConcentration && supplierConcentration.concentration && (
+            <Card>
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-semibold flex items-center gap-2">
+                  <Target className="w-5 h-5 text-indigo-600" />
+                  Supplier Spend Concentration
+                </h3>
+                <Badge type={
+                  supplierConcentration.concentration.riskLevel === 'high' ? 'danger' :
+                  supplierConcentration.concentration.riskLevel === 'medium' ? 'warning' : 'success'
+                }>
+                  HHI: {supplierConcentration.concentration.hhi} ({supplierConcentration.concentration.riskLevel} concentration)
+                </Badge>
+              </div>
+
+              {/* Concentration Metrics */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
+                <div className="text-center p-3 rounded-lg bg-slate-50 dark:bg-slate-800">
+                  <div className="text-xl font-bold text-blue-600">
+                    {supplierConcentration.concentration.top1_pct.toFixed(1)}%
+                  </div>
+                  <div className="text-xs text-slate-500">Top 1 Supplier Share</div>
+                </div>
+                <div className="text-center p-3 rounded-lg bg-slate-50 dark:bg-slate-800">
+                  <div className="text-xl font-bold text-blue-600">
+                    {supplierConcentration.concentration.top3_pct.toFixed(1)}%
+                  </div>
+                  <div className="text-xs text-slate-500">Top 3 Suppliers Share</div>
+                </div>
+                <div className="text-center p-3 rounded-lg bg-slate-50 dark:bg-slate-800">
+                  <div className="text-xl font-bold text-blue-600">
+                    {supplierConcentration.concentration.top5_pct.toFixed(1)}%
+                  </div>
+                  <div className="text-xs text-slate-500">Top 5 Suppliers Share</div>
+                </div>
+                <div className="text-center p-3 rounded-lg bg-slate-50 dark:bg-slate-800">
+                  <div className={`text-xl font-bold ${
+                    supplierConcentration.concentration.riskLevel === 'high' ? 'text-red-600' :
+                    supplierConcentration.concentration.riskLevel === 'medium' ? 'text-amber-600' : 'text-green-600'
+                  }`}>
+                    {supplierConcentration.concentration.hhi}
+                  </div>
+                  <div className="text-xs text-slate-500">HHI Index</div>
+                </div>
+              </div>
+
+              {/* Supplier Spend Bar Chart */}
+              <div className="mb-6">
+                <ResponsiveContainer width="100%" height={280} minWidth={1} minHeight={1}>
+                  <BarChart data={supplierConcentration.suppliers.slice(0, 10)} layout="vertical">
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" horizontal={false} />
+                    <XAxis type="number" tick={{ fontSize: 11 }}
+                      tickFormatter={(val) => '$' + (val >= 1000 ? (val / 1000).toFixed(0) + 'k' : val)} />
+                    <YAxis dataKey="supplier_name" type="category" tick={{ fontSize: 11 }} width={120} />
+                    <Tooltip
+                      formatter={(value) => ['$' + value.toLocaleString(), 'Spend']}
+                    />
+                    <Bar dataKey="totalSpend" name="Spend" radius={[0, 4, 4, 0]}>
+                      {supplierConcentration.suppliers.slice(0, 10).map((_, i) => (
+                        <Cell key={`supp-cell-${i}`} fill={CHART_COLORS[i % CHART_COLORS.length]} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+
+              {/* Supplier Detail Table */}
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-slate-50 dark:bg-slate-800">
+                    <tr>
+                      <th className="px-4 py-2 text-left">Supplier</th>
+                      <th className="px-4 py-2 text-right">Total Spend</th>
+                      <th className="px-4 py-2 text-right">Share %</th>
+                      <th className="px-4 py-2 text-right">Materials</th>
+                      <th className="px-4 py-2 text-right">Avg Price Change</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {supplierConcentration.suppliers.map((supp, idx) => (
+                      <tr key={`supp-conc-${supp.supplier_id}-${idx}`}
+                          className="border-t dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800">
+                        <td className="px-4 py-2">
+                          <div className="font-medium">{supp.supplier_name}</div>
+                          <div className="text-xs text-slate-500">{supp.supplier_code}</div>
+                        </td>
+                        <td className="px-4 py-2 text-right font-semibold text-indigo-600">
+                          ${supp.totalSpend.toLocaleString('en-US', { maximumFractionDigits: 0 })}
+                        </td>
+                        <td className="px-4 py-2 text-right">{supp.spendShare.toFixed(1)}%</td>
+                        <td className="px-4 py-2 text-right">{supp.materialCount}</td>
+                        <td className={`px-4 py-2 text-right font-semibold ${
+                          supp.avgPriceChange > 0 ? 'text-red-600' : 'text-green-600'
+                        }`}>
+                          {supp.avgPriceChange > 0 ? '+' : ''}{supp.avgPriceChange.toFixed(2)}%
                         </td>
                       </tr>
                     ))}

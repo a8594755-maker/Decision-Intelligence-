@@ -52,6 +52,18 @@ export function useBasePlanResolver({
   // Prevent double-resolve on StrictMode double-invocation
   const resolveCalledRef = useRef(false);
 
+  // ── Recent plans loader ────────────────────────────────────────────────────
+
+  const loadRecentPlans = useCallback(async () => {
+    if (!userId) return;
+    try {
+      const plans = await fetchRecentPlans({ userId, datasetProfileId });
+      setRecentPlans(plans);
+    } catch {
+      // Non-fatal
+    }
+  }, [userId, datasetProfileId]);
+
   // ── Core resolve effect ────────────────────────────────────────────────────
 
   const doResolve = useCallback(async () => {
@@ -99,11 +111,12 @@ export function useBasePlanResolver({
       console.warn('[useBasePlanResolver] resolve error:', err?.message);
       setMode('no_plan');
     }
-  }, [userId, datasetProfileId, routeRunId, latestDataTs, latestContractTs]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [userId, datasetProfileId, routeRunId, latestDataTs, latestContractTs, loadRecentPlans]);
 
   useEffect(() => {
     if (resolveCalledRef.current) return;
     resolveCalledRef.current = true;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time resolve on mount; setState is inside an async callback
     doResolve();
   }, [doResolve]);
 
@@ -111,18 +124,6 @@ export function useBasePlanResolver({
     resolveCalledRef.current = false;
     doResolve();
   }, [doResolve]);
-
-  // ── Recent plans loader ────────────────────────────────────────────────────
-
-  const loadRecentPlans = useCallback(async () => {
-    if (!userId) return;
-    try {
-      const plans = await fetchRecentPlans({ userId, datasetProfileId });
-      setRecentPlans(plans);
-    } catch {
-      // Non-fatal
-    }
-  }, [userId, datasetProfileId]);
 
   // ── Auto-baseline ──────────────────────────────────────────────────────────
 

@@ -97,9 +97,10 @@ export function normalizeHeader(header) {
   if (!header || typeof header !== 'string') return '';
   
   return header
-    .toLowerCase()
     .trim()
-    .replace(/[\s\-]+/g, '_')  // spaces and dashes to underscore
+    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')  // camelCase/PascalCase to snake_case
+    .toLowerCase()
+    .replace(/[\s-]+/g, '_')  // spaces and dashes to underscore
     .replace(/_+/g, '_')        // collapse multiple underscores
     .replace(/^_|_$/g, '');     // remove leading/trailing underscores
 }

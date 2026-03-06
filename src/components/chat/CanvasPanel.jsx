@@ -1,8 +1,9 @@
 import React, { useState, useCallback } from 'react';
-import { CheckCircle2, AlertTriangle, Loader2, Download, Code2, BarChart3, Terminal, ChevronRight, X, ShieldAlert, Share2, FlaskConical, ExternalLink, PanelRightClose, TableProperties } from 'lucide-react';
+import { CheckCircle2, AlertTriangle, Loader2, Download, Code2, BarChart3, Terminal, ChevronRight, X, ShieldAlert, Share2, FlaskConical, ExternalLink, PanelRightClose, TableProperties, Database } from 'lucide-react';
 import { exportWorkbook } from '../../utils/exportWorkbook';
 import { Card, Button, Badge } from '../ui';
 import TopologyTab from './TopologyTab';
+import DataTab from './DataTab';
 import WhatIfPanel from '../whatif/WhatIfPanel';
 import {
   LineChart,
@@ -23,6 +24,7 @@ const TAB_OPTIONS = [
   { id: 'logs', label: 'Log View', icon: Terminal },
   { id: 'code', label: 'Code View', icon: Code2 },
   { id: 'charts', label: 'Charts', icon: BarChart3 },
+  { id: 'data', label: 'Data', icon: Database },
   { id: 'topology', label: 'Topology', icon: Share2 },
   { id: 'downloads', label: 'Downloads', icon: Download },
   { id: 'whatif', label: 'What-If', icon: FlaskConical }
@@ -281,6 +283,17 @@ export default function CanvasPanel({
       setExportStatus({ type: 'error', message: 'No run_id available. Run a planning workflow first.' });
       return;
     }
+
+    // Guard: warn if run is still in progress — artifacts may be incomplete
+    const runStatus = (run.status || '').toLowerCase();
+    if (['running', 'in_progress', 'pending'].includes(runStatus)) {
+      setExportStatus({
+        type: 'error',
+        message: `Run ${run.id} is still "${run.status}". Please wait for it to complete before exporting.`
+      });
+      return;
+    }
+
     setIsAIExporting(true);
     setExportStatus({ type: 'info', message: 'Connecting to ML API...' });
     try {
@@ -775,6 +788,10 @@ export default function CanvasPanel({
               <RiskComparisonCard comparison={chartPayload.plan_comparison} />
             )}
           </div>
+        )}
+
+        {activeTab === 'data' && (
+          <DataTab userId={userId} />
         )}
 
         {activeTab === 'topology' && (

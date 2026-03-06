@@ -1199,12 +1199,54 @@ async def export_workbook_endpoint(req: ExcelExportRequest, raw_request: Request
     if req.run_id is not None and _get_db_url():
         try:
             run_meta = load_run_meta(req.run_id)
+
+            # Check run status — warn if artifacts may be incomplete
+            run_status = run_meta.get("status", "unknown")
+            if run_status in ("running", "in_progress", "pending"):
+                notes.append(
+                    f"WARNING: Run {req.run_id} status is '{run_status}' — "
+                    "artifacts may be incomplete. Wait for the run to finish before exporting."
+                )
+                logger.warning(
+                    "Export triggered while run %s is still '%s'. Artifacts may be partial.",
+                    req.run_id, run_status,
+                )
+            elif run_status == "failed":
+                notes.append(
+                    f"WARNING: Run {req.run_id} status is 'failed'. "
+                    "Only partial artifacts may be available."
+                )
+
             artifacts = load_run_artifacts(int(req.run_id))
             db_notes = artifacts.pop("__notes__", [])
             notes.extend(db_notes)
             if artifacts:
                 data = _extract_data_from_db(artifacts, req.focus, notes)
                 notes.append("Data source: server-side DB (primary).")
+
+                # Validate that essential artifacts were loaded
+                essential_missing = []
+                if not data.get("plan_rows"):
+                    essential_missing.append("plan_table/plan_csv")
+                if not data.get("kpis"):
+                    essential_missing.append("replay_metrics")
+                if not data.get("forecast_groups"):
+                    essential_missing.append("forecast_series")
+                if essential_missing:
+                    notes.append(
+                        f"WARNING: Essential artifacts missing from DB: {', '.join(essential_missing)}. "
+                        "This usually means the planning run did not complete successfully, "
+                        "or export was triggered before all artifacts were saved."
+                    )
+                    logger.warning(
+                        "Run %s DB artifacts missing essential types: %s",
+                        req.run_id, essential_missing,
+                    )
+            else:
+                notes.append(
+                    f"WARNING: No artifacts found in DB for run_id={req.run_id}. "
+                    "The planning run may not have saved any outputs."
+                )
         except Exception as e:
             notes.append(f"DB loading failed, trying frontend fallback: {e}")
 
@@ -1216,7 +1258,10 @@ async def export_workbook_endpoint(req: ExcelExportRequest, raw_request: Request
         data = _extract_data_from_frontend(
             run_meta, req.chart_payload, req.downloads, req.focus, notes,
         )
-        notes.append("Data source: frontend-provided payload (fallback).")
+        notes.append(
+            "Data source: frontend-provided payload (fallback). "
+            "This means the DB path was unavailable — report may have limited data."
+        )
 
     # ── 3. No data at all ──
     if data is None:

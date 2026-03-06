@@ -41,7 +41,9 @@ const proofSchema = z.object({
     slack: z.number().optional().nullable(),
     slack_unit: z.string().optional().nullable(),
     shadow_price_approx: z.number().optional().nullable(),
+    shadow_price_dual: z.number().optional().nullable(),
     shadow_price_unit: z.string().optional().nullable(),
+    shadow_price_method: z.string().optional().nullable(),
     natural_language: z.string().optional().nullable()
   }).passthrough()).default([]),
   constraint_tags: z.array(z.object({}).passthrough()).default([]),
@@ -127,6 +129,7 @@ const forecastPointSchema = z.object({
   sku: z.string(),
   plant_id: z.string().nullable().optional(),
   date: z.string(),
+  p10: z.number().nullable().optional(),
   p50: z.number(),
   p90: z.number().nullable().optional()
 }).passthrough();
@@ -183,6 +186,7 @@ const solverOptionsSchema = z.object({
 const itemDemandPointSchema = z.object({
   date: z.string(),
   plant_id: z.string().nullable().optional(),
+  p10: z.number().nullable().optional(),
   p50: z.number().nullable().optional(),
   p90: z.number().nullable().optional(),
   demand: z.number().nullable().optional()

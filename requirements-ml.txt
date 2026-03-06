@@ -45,7 +45,7 @@ statsmodels==0.14.1
 
 # Optional: For enhanced performance
 # catboost==1.2.2
-# optuna==3.5.0
+optuna==3.5.0
 
 # Optional: Commercial solvers (Gurobi / CPLEX)
 # See requirements-ml-commercial.txt for details.

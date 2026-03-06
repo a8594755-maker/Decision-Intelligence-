@@ -205,6 +205,7 @@ export default function WhatIfPanel({
         console.warn('[WhatIfPanel] polling error:', err.message);
       }
     }, POLL_INTERVAL_MS);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId, stopPolling]);
 
   useEffect(() => () => stopPolling(), [stopPolling]);

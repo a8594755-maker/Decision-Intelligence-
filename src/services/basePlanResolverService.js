@@ -7,12 +7,14 @@
  * Fallback order:
  *   1. routeRunId (from URL/prop)
  *   2. localStorage.lastBasePlanId_{userId}
- *   3. Latest succeeded optimize run in DB for the given dataset_profile_id
- *   4. mode: 'none' (caller decides whether to auto-run baseline)
+ *   3. Latest approved baseline for the given dataset_profile_id
+ *   4. Latest succeeded optimize run in DB for the given dataset_profile_id
+ *   5. mode: 'none' (caller decides whether to auto-run baseline)
  */
 
 import { diRunsService } from './diRunsService';
 import { runPlanFromDatasetProfile } from './chatPlanningService';
+import { getLatestApprovedBaseline } from './planWritebackService';
 
 const LOCAL_STORAGE_KEY = (userId) => `lastBasePlanId_${userId}`;
 
@@ -113,7 +115,22 @@ export async function resolveBasePlan({ userId, datasetProfileId, routeRunId = n
     // Fall through
   }
 
-  // Step 3: Latest DB run for this dataset profile
+  // Step 3: Latest approved baseline for this dataset profile
+  if (datasetProfileId) {
+    try {
+      const approved = await getLatestApprovedBaseline({ userId, datasetProfileId: Number(datasetProfileId) });
+      if (approved?.run_id) {
+        const run = await diRunsService.getRunById(userId, Number(approved.run_id));
+        if (run && run.status === 'succeeded') {
+          return { mode: 'plan', basePlan: run, reason: 'approved_baseline' };
+        }
+      }
+    } catch {
+      // Fall through — approved baseline tables may not exist yet
+    }
+  }
+
+  // Step 4: Latest DB run for this dataset profile
   if (datasetProfileId) {
     try {
       const run = await diRunsService.getLatestRunByStage(userId, {

@@ -419,6 +419,78 @@ export const ruleBasedMapping = (originalColumns, uploadType) => {
         /^plant$/i, /^plant[-_ ]?id$/i, /^site$/i, /^factory$/i,
         /^工廠$/i, /^工厂$/i
       ]
+    },
+    fg_financials: {
+      material_code: [
+        /^material$/i, /^material[-_ ]?code$/i, /^item[-_ ]?code$/i, /^sku$/i, /^part[-_ ]?(no|number)$/i,
+        /^料號$/i, /^物料(編碼|代碼|编码|代码)$/i
+      ],
+      unit_margin: [
+        /^unit[-_ ]?margin$/i, /^margin$/i, /^gross[-_ ]?margin$/i,
+        /^單位毛利$/i, /^毛利$/i
+      ],
+      plant_id: [
+        /^plant$/i, /^plant[-_ ]?id$/i, /^site$/i, /^factory$/i,
+        /^工廠$/i, /^工厂$/i
+      ],
+      unit_price: [
+        /^unit[-_ ]?price$/i, /^price$/i, /^selling[-_ ]?price$/i,
+        /^單價$/i, /^售價$/i
+      ],
+      currency: [
+        /^currency$/i, /^curr$/i, /^currency[-_ ]?code$/i,
+        /^幣別$/i, /^貨幣$/i
+      ],
+      valid_from: [
+        /^valid[-_ ]?from$/i, /^start[-_ ]?date$/i, /^effective[-_ ]?from$/i,
+        /^生效日期$/i, /^起始日期$/i
+      ],
+      valid_to: [
+        /^valid[-_ ]?to$/i, /^end[-_ ]?date$/i, /^expiry[-_ ]?date$/i,
+        /^失效日期$/i, /^結束日期$/i
+      ],
+      notes: [
+        /^notes?$/i, /^remark$/i, /^comments?$/i,
+        /^備註$/i, /^備注$/i
+      ]
+    },
+    operational_costs: {
+      cost_date: [
+        /^cost[-_ ]?date$/i, /^date$/i, /^record[-_ ]?date$/i,
+        /^成本日期$/i, /^日期$/i
+      ],
+      direct_labor_hours: [
+        /^direct[-_ ]?labor[-_ ]?hours$/i, /^labor[-_ ]?hours$/i, /^work[-_ ]?hours$/i,
+        /^直接工時$/i, /^工時$/i
+      ],
+      direct_labor_rate: [
+        /^direct[-_ ]?labor[-_ ]?rate$/i, /^labor[-_ ]?rate$/i, /^hourly[-_ ]?rate$/i,
+        /^直接工資率$/i, /^工資率$/i
+      ],
+      production_output: [
+        /^production[-_ ]?output$/i, /^output$/i, /^production[-_ ]?qty$/i, /^produced[-_ ]?qty$/i,
+        /^產量$/i, /^生產量$/i
+      ],
+      indirect_labor_hours: [
+        /^indirect[-_ ]?labor[-_ ]?hours$/i, /^indirect[-_ ]?hours$/i,
+        /^間接工時$/i
+      ],
+      indirect_labor_rate: [
+        /^indirect[-_ ]?labor[-_ ]?rate$/i, /^indirect[-_ ]?rate$/i,
+        /^間接工資率$/i
+      ],
+      material_cost: [
+        /^material[-_ ]?cost$/i, /^raw[-_ ]?material[-_ ]?cost$/i,
+        /^材料成本$/i, /^物料成本$/i
+      ],
+      overhead_cost: [
+        /^overhead[-_ ]?cost$/i, /^overhead$/i, /^factory[-_ ]?overhead$/i,
+        /^製造費用$/i, /^間接費用$/i
+      ],
+      notes: [
+        /^notes?$/i, /^remark$/i, /^comments?$/i,
+        /^備註$/i, /^備注$/i
+      ]
     }
   };
 

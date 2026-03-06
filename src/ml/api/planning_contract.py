@@ -86,7 +86,9 @@ class ConstraintCheck(BaseModel):
     slack: Optional[float] = None
     slack_unit: Optional[str] = None
     shadow_price_approx: Optional[float] = None
+    shadow_price_dual: Optional[float] = None
     shadow_price_unit: Optional[str] = None
+    shadow_price_method: Optional[str] = None
     natural_language: Optional[str] = None
 
 

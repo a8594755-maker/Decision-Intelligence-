@@ -198,14 +198,22 @@ class QuantileEngine:
         n = len(pf)
 
         if not self._fitted:
-            # No calibration: return point forecast as p50, use ±10% heuristic
-            p10 = (pf * 0.9).tolist()
+            # No calibration data available: use heuristic confidence band.
+            # Use ±20% to produce a wider, more realistic uncertainty range.
+            # A narrow ±10% band can mislead planners into under-ordering safety stock.
+            logger.warning(
+                "QuantileEngine not calibrated (no backtest residuals). "
+                "Using ±20%% heuristic for %d point forecasts. "
+                "Run backtest calibration to get conformal intervals.",
+                n,
+            )
+            p10 = (pf * 0.80).tolist()
             p50 = pf.tolist()
-            p90 = (pf * 1.1).tolist()
+            p90 = (pf * 1.20).tolist()
             result = QuantileResult(
                 p10=p10, p50=p50, p90=p90,
                 calibration_scope="none",
-                uncertainty_method="heuristic_fallback",
+                uncertainty_method="heuristic_fallback_20pct",
             )
             return self._enforce_constraints(result)
 

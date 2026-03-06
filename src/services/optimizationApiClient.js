@@ -19,7 +19,7 @@ function withTimeout(promise, timeoutMs) {
   return Promise.race([promise, timeoutPromise]).finally(() => clearTimeout(timeoutId));
 }
 
-async function postJson(path, payload, timeoutMs = 20000) {
+async function postJson(path, payload, timeoutMs = 100000) {
   const baseUrl = normalizeBaseUrl(ML_API_BASE);
   if (!baseUrl) {
     throw new Error('VITE_ML_API_URL is not configured');
@@ -71,6 +71,29 @@ function addDays(base, days) {
 
 function keyOf(sku, plantId) {
   return `${String(sku || '').trim()}|${String(plantId || '').trim()}`;
+}
+
+function parseSkuPlantKey(rawKey) {
+  const text = String(rawKey || '').trim();
+  if (!text) return null;
+  const [sku, plant = ''] = text.split('|', 2);
+  const skuNorm = String(sku || '').trim();
+  const plantNorm = String(plant || '').trim();
+  if (!skuNorm) return null;
+  return [skuNorm, plantNorm];
+}
+
+function lookupKeyedValue(mapping, sku, plantId) {
+  if (!mapping || typeof mapping !== 'object') return null;
+  const exact = keyOf(sku, plantId);
+  if (Object.prototype.hasOwnProperty.call(mapping, exact)) {
+    return mapping[exact];
+  }
+  const skuOnly = keyOf(sku, '');
+  if (Object.prototype.hasOwnProperty.call(mapping, skuOnly)) {
+    return mapping[skuOnly];
+  }
+  return null;
 }
 
 function buildSkuMap(rows = [], valueKey) {
@@ -355,10 +378,43 @@ function buildComponentFallbackArtifacts({
 }
 
 function runLocalHeuristic(payload = {}) {
+  const started = Date.now();
   const demandSeries = Array.isArray(payload?.demand_forecast?.series)
     ? payload.demand_forecast.series
     : [];
   const planningHorizonDays = Math.max(1, Math.floor(toNumber(payload?.planning_horizon_days, 30)));
+  const objective = payload?.objective || {};
+  const forecastUncertainty = payload?.settings?.forecast_uncertainty || {};
+  const closedLoopPatch = payload?.settings?.closed_loop_meta?.param_patch?.patch || {};
+  const safetyStockAlpha = Math.max(
+    0,
+    toNumber(
+      objective?.safety_stock_alpha
+        ?? forecastUncertainty?.safety_stock_alpha
+        ?? closedLoopPatch?.safety_stock_alpha
+        ?? 1.0,
+      1.0
+    )
+  );
+  const useP90ForSafetyStock = (
+    objective?.use_p90_for_safety_stock
+    ?? forecastUncertainty?.use_p90_for_safety_stock
+    ?? true
+  ) !== false;
+  const rawSafetyStockMap = (
+    closedLoopPatch?.safety_stock_by_key
+    && typeof closedLoopPatch.safety_stock_by_key === 'object'
+    && !Array.isArray(closedLoopPatch.safety_stock_by_key)
+  )
+    ? closedLoopPatch.safety_stock_by_key
+    : {};
+  const closedLoopSafetyStockByKey = {};
+  Object.entries(rawSafetyStockMap).forEach(([rawKey, rawValue]) => {
+    const parsed = parseSkuPlantKey(rawKey);
+    if (!parsed) return;
+    const [sku, plant] = parsed;
+    closedLoopSafetyStockByKey[keyOf(sku, plant)] = Math.max(0, toNumber(rawValue, 0));
+  });
 
   const demandByKey = new Map();
   demandSeries.forEach((point) => {
@@ -457,6 +513,9 @@ function runLocalHeuristic(payload = {}) {
   let totalDemand = 0;
   let stockoutUnits = 0;
   let holdingUnits = 0;
+  let keysWithP90 = 0;
+  let keysWithDerivedSafetyStock = 0;
+  let keysWithClosedLoopSafetyStock = 0;
 
   const infeasibleReasons = [];
   const plan = [];
@@ -482,7 +541,33 @@ function runLocalHeuristic(payload = {}) {
 
     const [sku, plant] = key.split('|');
     let onHand = toNumber(inv.on_hand, 0);
-    const safetyStock = Math.max(0, toNumber(inv.safety_stock, 0));
+    const baseSafetyStock = Math.max(0, toNumber(inv.safety_stock, 0));
+    const p90Values = horizonSeries
+      .map((point) => point.p90)
+      .filter((value) => value !== null && value !== undefined && Number.isFinite(Number(value)));
+    if (p90Values.length > 0) {
+      keysWithP90 += 1;
+    }
+    let derivedSafetyStock = null;
+    if (useP90ForSafetyStock && p90Values.length > 0) {
+      const avgP50 = horizonSeries.reduce((acc, point) => acc + Math.max(0, toNumber(point.p50, 0)), 0) / horizonSeries.length;
+      const avgP90 = horizonSeries.reduce(
+        (acc, point) => acc + Math.max(0, toNumber(point.p90 ?? point.p50, 0)),
+        0
+      ) / horizonSeries.length;
+      derivedSafetyStock = Math.max(0, avgP50 + (safetyStockAlpha * Math.max(0, avgP90 - avgP50)));
+    }
+    const closedLoopSafetyStock = lookupKeyedValue(closedLoopSafetyStockByKey, sku, plant || '');
+    let safetyStock = baseSafetyStock;
+    if (closedLoopSafetyStock !== null && closedLoopSafetyStock !== undefined) {
+      safetyStock = Math.max(0, toNumber(closedLoopSafetyStock, baseSafetyStock));
+      keysWithClosedLoopSafetyStock += 1;
+    } else if (Number.isFinite(derivedSafetyStock)) {
+      safetyStock = Math.max(baseSafetyStock, Number(derivedSafetyStock));
+      if (safetyStock > baseSafetyStock + 1e-9) {
+        keysWithDerivedSafetyStock += 1;
+      }
+    }
     const leadTimeDays = Math.max(0, Math.floor(toNumber(inv.lead_time_days, 0)));
 
     const inboundMap = inboundByKey.get(key) || new Map();
@@ -684,16 +769,23 @@ function runLocalHeuristic(payload = {}) {
       estimated_holding_units: Number(holdingUnits.toFixed(6)),
       estimated_total_cost: Number(estimatedTotalCost.toFixed(6))
     },
-    solver_meta: {
-      solver: 'heuristic',
-      solve_time_ms: 0,
-      objective_value: Number(estimatedTotalCost.toFixed(6)),
-      gap: 0,
-      multi_echelon_mode: multiEchelonMode,
-      max_bom_depth: toNumber(payload?.multi_echelon?.max_bom_depth, 50),
-      bom_explosion_used: Boolean(payload?.multi_echelon?.bom_explosion_used),
-      bom_explosion_reused: Boolean(payload?.multi_echelon?.bom_explosion_reused)
-    },
+      solver_meta: {
+        solver: 'heuristic',
+        solve_time_ms: 0,
+        objective_value: Number(estimatedTotalCost.toFixed(6)),
+        gap: 0,
+        uncertainty_bridge: {
+          safety_stock_alpha: Number(safetyStockAlpha.toFixed(6)),
+          use_p90_for_safety_stock: Boolean(useP90ForSafetyStock),
+          keys_with_p90: keysWithP90,
+          keys_with_derived_safety_stock: keysWithDerivedSafetyStock,
+          keys_with_closed_loop_safety_stock: keysWithClosedLoopSafetyStock
+        },
+        multi_echelon_mode: multiEchelonMode,
+        max_bom_depth: toNumber(payload?.multi_echelon?.max_bom_depth, 50),
+        bom_explosion_used: Boolean(payload?.multi_echelon?.bom_explosion_used),
+        bom_explosion_reused: Boolean(payload?.multi_echelon?.bom_explosion_reused)
+      },
     infeasible_reasons: uniqueReasons,
     proof: {
       objective_terms: [

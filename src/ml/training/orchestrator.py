@@ -28,7 +28,7 @@ from .runner import TrainingRunConfig, TrainingRunResult, train_one_series
 logger = logging.getLogger(__name__)
 
 # Model complexity order for tie-breaking (lower = simpler = preferred)
-MODEL_COMPLEXITY = {"lightgbm": 1, "prophet": 2, "chronos": 3}
+MODEL_COMPLEXITY = {"lightgbm": 1, "xgboost": 2, "ets": 3, "prophet": 4, "chronos": 5}
 
 DEFAULT_CHAMPION_DIR = os.path.join(
     os.path.dirname(__file__), "..", "..", "..", "artifacts", "forecast", "_champions"
@@ -48,21 +48,27 @@ class LeaderboardEntry:
     run_id: str
     dataset_fingerprint: str
     elapsed_seconds: float
+    coverage_10_90: Optional[float] = None
+    composite_score: float = 999.0
     is_champion: bool = False
 
     def to_dict(self) -> Dict:
-        return {
+        d = {
             "rank": self.rank,
             "model_name": self.model_name,
             "val_mape": round(self.val_mape, 4),
             "val_bias": round(self.val_bias, 4),
             "train_mape": round(self.train_mape, 4),
+            "composite_score": round(self.composite_score, 4),
             "artifact_dir": self.artifact_dir,
             "run_id": self.run_id,
             "dataset_fingerprint": self.dataset_fingerprint,
             "elapsed_seconds": round(self.elapsed_seconds, 3),
             "is_champion": self.is_champion,
         }
+        if self.coverage_10_90 is not None:
+            d["coverage_10_90"] = round(self.coverage_10_90, 4)
+        return d
 
 
 @dataclass
@@ -93,12 +99,25 @@ class OrchestratorResult:
         }
 
 
+def _composite_score(mape: float, bias: float, coverage: Optional[float]) -> float:
+    """
+    Weighted composite score for champion selection.
+
+    Formula: 0.5*mape + 0.3*|bias| + 0.2*(100 - coverage_10_90)
+    Lower is better. If coverage is unavailable, uses 50% (neutral penalty).
+    """
+    cov = coverage if coverage is not None else 50.0
+    return 0.5 * mape + 0.3 * abs(bias) + 0.2 * (100.0 - cov)
+
+
 def _sort_key(result: TrainingRunResult):
-    """Deterministic sort key: mape → |bias| → complexity → name."""
+    """Deterministic sort key: composite_score → complexity → name."""
     mape = result.val_metrics.mape if result.val_metrics else 999.0
     bias = abs(result.val_metrics.bias) if result.val_metrics else 999.0
+    coverage = result.val_metrics.coverage_10_90 if result.val_metrics else None
+    composite = _composite_score(mape, bias, coverage)
     complexity = MODEL_COMPLEXITY.get(result.model_name, 99)
-    return (mape, bias, complexity, result.model_name)
+    return (composite, complexity, result.model_name)
 
 
 def run_orchestrator(
@@ -113,6 +132,13 @@ def run_orchestrator(
     run_id: str = "",
     artifact_root: str = "",
     champion_dir: str = "",
+    # HPO settings (opt-in)
+    hpo_enabled: bool = False,
+    hpo_n_trials: int = 30,
+    hpo_timeout_seconds: Optional[int] = None,
+    hpo_cv_splits: int = 3,
+    hpo_cv_mode: str = "timeseries_cv",
+    hpo_search_space: Optional[Dict] = None,
 ) -> OrchestratorResult:
     """
     Run the AutoML orchestrator.
@@ -146,7 +172,7 @@ def run_orchestrator(
         run_id = f"automl_{uuid.uuid4().hex[:8]}"
 
     if candidate_models is None:
-        candidate_models = ["lightgbm", "prophet"]
+        candidate_models = ["lightgbm", "prophet", "xgboost"]
 
     if hyperparam_grid is None:
         hyperparam_grid = {}
@@ -175,6 +201,12 @@ def run_orchestrator(
                 seed=seed,
                 run_id=variant_id,
                 artifact_root=artifact_root,
+                hpo_enabled=hpo_enabled,
+                hpo_n_trials=hpo_n_trials,
+                hpo_timeout_seconds=hpo_timeout_seconds,
+                hpo_cv_splits=hpo_cv_splits,
+                hpo_cv_mode=hpo_cv_mode,
+                hpo_search_space=hpo_search_space or {},
             )
 
             result = train_one_series(series, cfg)
@@ -194,16 +226,21 @@ def run_orchestrator(
     # --- Build leaderboard ---
     leaderboard = []
     for rank, r in enumerate(all_results, 1):
+        mape = r.val_metrics.mape if r.val_metrics else 999.0
+        bias = r.val_metrics.bias if r.val_metrics else 0.0
+        coverage = r.val_metrics.coverage_10_90 if r.val_metrics else None
         entry = LeaderboardEntry(
             rank=rank,
             model_name=r.model_name,
-            val_mape=r.val_metrics.mape if r.val_metrics else 999.0,
-            val_bias=r.val_metrics.bias if r.val_metrics else 0.0,
+            val_mape=mape,
+            val_bias=bias,
             train_mape=r.train_metrics.mape if r.train_metrics else 999.0,
             artifact_dir=r.artifact_dir,
             run_id=r.run_id,
             dataset_fingerprint=r.dataset_fingerprint,
             elapsed_seconds=r.elapsed_seconds,
+            coverage_10_90=coverage,
+            composite_score=_composite_score(mape, bias, coverage),
             is_champion=(rank == 1),
         )
         leaderboard.append(entry)

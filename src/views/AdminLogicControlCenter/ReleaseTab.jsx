@@ -18,6 +18,14 @@ import {
 import { fetchRegressionResults, runRegressionTests, calculateRegressionSummary } from '../../services/regressionTestService';
 import { supabase, RPC_JSON_OPTIONS } from '../../services/supabaseClient';
 
+function getRegressionStatusColor(status) {
+  switch (status) {
+    case 'passed': return 'bg-green-100 text-green-800';
+    case 'failed': return 'bg-red-100 text-red-800';
+    default: return 'bg-gray-100 text-gray-800';
+  }
+}
+
 export default function ReleaseTab({
   draftVersion,
   publishedVersion,
@@ -39,6 +47,7 @@ export default function ReleaseTab({
       loadChangeLog();
       loadRegressionResults();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draftVersion]);
 
   async function loadChangeLog() {

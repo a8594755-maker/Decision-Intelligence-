@@ -15,8 +15,8 @@
  * normalizeHeader('Plant_ID')         // → 'plant id'
  * normalizeHeader('Plant ID ')        // → 'plant id' (trailing whitespace)
  * normalizeHeader('Plant\nID')        // → 'plant id' (newline)
- * normalizeHeader('Plant\u00A0ID')    // → 'plant id' (NBSP)
- * normalizeHeader('Ｐｌａｎｔ　ＩＤ')  // → 'plant id' (fullwidth)
+ * normalizeHeader('Plant ID')     // → 'plant id' (NBSP, \u00A0)
+ * normalizeHeader('\uFF30\uFF4C\uFF41\uFF4E\uFF54\u3000\uFF29\uFF24')  // → 'plant id' (fullwidth)
  */
 export function normalizeHeader(str) {
   if (!str || typeof str !== 'string') return '';
@@ -45,7 +45,7 @@ export function normalizeHeader(str) {
   normalized = normalized.toLowerCase();
   
   // 7. Convert underscores, hyphens, dots to spaces
-  normalized = normalized.replace(/[_\-\.]/g, ' ');
+  normalized = normalized.replace(/[_\-.]/g, ' ');
   
   // 8. Collapse consecutive spaces to single space
   normalized = normalized.replace(/\s+/g, ' ');

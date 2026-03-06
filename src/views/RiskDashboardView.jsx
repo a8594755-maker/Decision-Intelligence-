@@ -138,10 +138,23 @@ const RiskDashboardView = ({ addNotification, user, setView, globalDataSource, s
   // ========== Data Loading ==========
 
   const loadRiskData = async () => {
-    if (!user?.id) return;
+    if (!user?.id) {
+      setLoading(false);
+      return;
+    }
 
     setLoading(true);
     setError(null);
+
+    // Safety timeout — if Supabase is paused/unreachable, don't spin forever
+    const timeoutId = setTimeout(() => {
+      setLoading(false);
+      setError({
+        type: 'error',
+        message: 'Connection timed out',
+        hint: 'Supabase may be paused or unreachable. Check your project at supabase.com/dashboard.'
+      });
+    }, 15000);
 
     try {
       // Step 0: Load Forecast Runs list and determine run_id for this load
@@ -474,6 +487,7 @@ const RiskDashboardView = ({ addNotification, user, setView, globalDataSource, s
       
       addNotification(`Loading failed: ${error.message}`, 'error');
     } finally {
+      clearTimeout(timeoutId);
       setLoading(false);
     }
   };

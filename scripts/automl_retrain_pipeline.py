@@ -60,6 +60,12 @@ DEFAULT_PROMOTION_MAPE_THRESHOLD = float(
     os.environ.get("AUTOML_PROMOTION_MAPE_THRESHOLD", "20.0")
 )
 DEFAULT_HORIZON = int(os.environ.get("AUTOML_HORIZON", "30"))
+DEFAULT_HPO_ENABLED = os.environ.get("AUTOML_HPO_ENABLED", "").strip().lower() in {
+    "1", "true", "yes", "on",
+}
+DEFAULT_HPO_TRIALS = int(os.environ.get("AUTOML_HPO_TRIALS", "30"))
+_hpo_timeout_raw = os.environ.get("AUTOML_HPO_TIMEOUT")
+DEFAULT_HPO_TIMEOUT: Optional[int] = int(_hpo_timeout_raw) if _hpo_timeout_raw else None
 
 
 def _now_iso() -> str:
@@ -225,12 +231,15 @@ def step_train(
     dry_run: bool,
     candidate_models: List[str],
     horizon: int,
+    hpo_enabled: bool = False,
+    hpo_n_trials: int = 30,
+    hpo_timeout_seconds: Optional[int] = None,
 ) -> Dict[str, Any]:
     if dry_run:
         logger.info("[Step 3/4] dry-run skip training for series=%s", series_id)
         return {"skipped": True, "reason": "dry_run"}
 
-    logger.info("[Step 3/4] training for series=%s models=%s", series_id, candidate_models)
+    logger.info("[Step 3/4] training for series=%s models=%s hpo=%s", series_id, candidate_models, hpo_enabled)
     series = _build_series_for_training(series_id, artifact_dir)
     run_id = f"ci_retrain_{uuid.uuid4().hex[:8]}"
     result = run_orchestrator(
@@ -242,6 +251,9 @@ def step_train(
         run_id=run_id,
         artifact_root=artifact_dir,
         champion_dir=champion_dir,
+        hpo_enabled=hpo_enabled,
+        hpo_n_trials=hpo_n_trials,
+        hpo_timeout_seconds=hpo_timeout_seconds,
     )
     payload = result.to_dict()
     champion = payload.get("champion")
@@ -326,6 +338,9 @@ def run_pipeline(
     candidate_models: Optional[List[str]] = None,
     horizon: int = DEFAULT_HORIZON,
     max_promote_mape: float = DEFAULT_PROMOTION_MAPE_THRESHOLD,
+    hpo_enabled: bool = DEFAULT_HPO_ENABLED,
+    hpo_n_trials: int = DEFAULT_HPO_TRIALS,
+    hpo_timeout_seconds: Optional[int] = DEFAULT_HPO_TIMEOUT,
 ) -> Dict[str, Any]:
     """
     Run the retrain pipeline over one or more series IDs.
@@ -384,6 +399,9 @@ def run_pipeline(
                         dry_run=dry_run,
                         candidate_models=candidate_models,
                         horizon=horizon,
+                        hpo_enabled=hpo_enabled,
+                        hpo_n_trials=hpo_n_trials,
+                        hpo_timeout_seconds=hpo_timeout_seconds,
                     )
                 else:
                     result["train"] = {"skipped": True, "reason": "trigger_not_fired"}
@@ -532,6 +550,24 @@ def main() -> None:
         default=DEFAULT_PROMOTION_MAPE_THRESHOLD,
         help="Promotion quality gate: val_mape must be below this threshold.",
     )
+    parser.add_argument(
+        "--hpo",
+        action="store_true",
+        default=DEFAULT_HPO_ENABLED,
+        help="Enable Optuna HPO for LightGBM training.",
+    )
+    parser.add_argument(
+        "--hpo-trials",
+        type=int,
+        default=DEFAULT_HPO_TRIALS,
+        help="Number of Optuna HPO trials (default: 30).",
+    )
+    parser.add_argument(
+        "--hpo-timeout",
+        type=int,
+        default=DEFAULT_HPO_TIMEOUT,
+        help="HPO wall-clock timeout in seconds (default: unlimited).",
+    )
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
 
@@ -555,6 +591,9 @@ def main() -> None:
         candidate_models=candidate_models,
         horizon=args.horizon,
         max_promote_mape=args.max_promote_mape,
+        hpo_enabled=args.hpo,
+        hpo_n_trials=args.hpo_trials,
+        hpo_timeout_seconds=args.hpo_timeout,
     )
     failed_series = [
         sid for sid, item in report.get("series_results", {}).items() if item.get("outcome") == "error"

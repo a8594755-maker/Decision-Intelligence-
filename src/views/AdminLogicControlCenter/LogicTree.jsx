@@ -17,10 +17,6 @@ export default function LogicTree({
   const [plants, setPlants] = useState([]);
   const [expanded, setExpanded] = useState({ bom_explosion: true });
 
-  useEffect(() => {
-    loadPlants();
-  }, []);
-
   async function loadPlants() {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
@@ -35,6 +31,11 @@ export default function LogicTree({
       setPlants(profile.accessible_plants.filter(p => p !== '*'));
     }
   }
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- load on mount
+    loadPlants();
+  }, []);
 
   function toggleExpand(logicId) {
     setExpanded(prev => ({

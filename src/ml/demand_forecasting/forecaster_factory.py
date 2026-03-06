@@ -22,15 +22,24 @@ except ImportError:
 from .prophet_trainer import ProphetTrainer
 from .lightgbm_trainer import LightGBMTrainer
 from .chronos_trainer import ChronosTrainer
+from .xgboost_trainer import XGBoostTrainer
+from .ets_trainer import ETSTrainer
 from .erp_connector import ERPConnector
 from .feature_engineer import FeatureEngineer, FEATURE_COLUMNS
 from .data_contract import SalesSeries
 from .data_validation import validate_and_clean_series
 
+try:
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+except ImportError:
+    ThreadPoolExecutor = None
+
 class ModelType(Enum):
     PROPHET = "prophet"
     LIGHTGBM = "lightgbm"
     CHRONOS = "chronos"
+    XGBOOST = "xgboost"
+    ETS = "ets"
 
 
 # ---------------------------------------------------------------------------
@@ -534,6 +543,249 @@ class ChronosStrategy(ForecasterStrategy):
                 "model_type": ModelType.CHRONOS.value
             }
 
+class XGBoostStrategy(ForecasterStrategy):
+    """XGBoost prediction strategy — mirrors LightGBM with recursive forecasting"""
+
+    MODEL_DIR = os.path.join(os.path.dirname(__file__), '..', 'models')
+
+    def __init__(self, model_type: ModelType, trainer):
+        super().__init__(model_type, trainer)
+        self._model = None
+        self._fe = FeatureEngineer()
+        self._load_model()
+
+    def _load_model(self):
+        model_path = os.path.join(self.MODEL_DIR, 'xgb_model.pkl')
+        if joblib and os.path.exists(model_path):
+            try:
+                self._model = joblib.load(model_path)
+                logging.info(f"XGBoost model loaded from {model_path}")
+            except Exception as e:
+                logging.warning(f"Failed to load XGBoost model: {e}")
+                self._model = None
+        else:
+            logging.info("No XGBoost .pkl model found — will use statistical fallback")
+
+    def reload_model(self):
+        self._load_model()
+
+    def predict(self, sku: str, erp_connector: ERPConnector = None, horizon_days: int = 30, inline_history: Optional[List[float]] = None, **kwargs) -> Dict:
+        try:
+            series = self._get_sales_series(
+                sku, erp_connector, inline_history,
+                base_date=kwargs.get('base_date'),
+                last_date=kwargs.get('last_date'),
+            )
+            sales_sequence = series.to_values_list()
+            n = series.n
+
+            if n < 10:
+                raise ValueError(f"XGBoost requires at least 10 data points, got {n}")
+
+            if self._model is not None:
+                return self._predict_real(sales_sequence, horizon_days, n, series=series)
+
+            return self._predict_fallback(sales_sequence, horizon_days, n)
+
+        except Exception as e:
+            logging.error(f"XGBoost prediction failed for SKU {sku}: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "model_type": ModelType.XGBOOST.value
+            }
+
+    def _predict_real(self, sales_sequence: list, horizon_days: int, n: int,
+                       series: SalesSeries = None) -> Dict:
+        predictions = []
+        current_history = list(sales_sequence)
+
+        if series is not None:
+            next_date = series.next_date
+        else:
+            next_date = pd.Timestamp.now().normalize() + pd.Timedelta(days=1)
+
+        try:
+            model_features = self._model.get_booster().feature_names
+            if not model_features:
+                model_features = FEATURE_COLUMNS
+        except Exception:
+            model_features = FEATURE_COLUMNS
+
+        for i in range(horizon_days):
+            X_next = self._fe.build_next_day_features(current_history, next_date)
+            X_next = X_next[model_features]
+            FeatureEngineer.assert_feature_schema(X_next, model_features)
+
+            pred = float(self._model.predict(X_next)[0])
+            pred = max(0, pred)
+
+            predictions.append(pred)
+            current_history.append(pred)
+            next_date += pd.Timedelta(days=1)
+
+        arr = np.array(sales_sequence)
+        residual_std = float(np.std(arr[-min(30, n):]))
+        ci = [[max(0, p - 1.645 * residual_std), p + 1.645 * residual_std] for p in predictions]
+        p10, p90 = _scale_ci_to_quantiles(predictions, ci)
+
+        rolling_mean = float(np.mean(arr[-7:])) if n >= 7 else float(np.mean(arr))
+        risk_score = min(100, max(0, float(residual_std / (rolling_mean + 1e-6) * 80)))
+
+        return {
+            "success": True,
+            "model_type": ModelType.XGBOOST.value,
+            "prediction": {
+                "predictions": predictions,
+                "confidence_interval": ci,
+                "p10": p10,
+                "p50": list(predictions),
+                "p90": p90,
+                "risk_score": risk_score,
+                "model_version": "xgboost-v1.0-recursive"
+            },
+            "metadata": {
+                "training_data_points": n,
+                "forecast_horizon": horizon_days,
+                "inference_mode": "recursive_real_model",
+                "features_used": model_features,
+                "generated_at": datetime.now().isoformat()
+            }
+        }
+
+    def _predict_fallback(self, sales_sequence: list, horizon_days: int, n: int) -> Dict:
+        arr = np.array(sales_sequence)
+        rolling_mean = float(np.mean(arr[-7:])) if n >= 7 else float(np.mean(arr))
+        rolling_std = float(np.std(arr[-7:])) if n >= 7 else float(np.std(arr))
+
+        if n >= 14:
+            recent_half = np.mean(arr[-n//2:])
+            older_half = np.mean(arr[:n//2])
+            trend = (recent_half - older_half) / max(n, 1)
+        else:
+            trend = 0
+
+        predictions = [max(0, rolling_mean + trend * i) for i in range(horizon_days)]
+        ci = [[max(0, p - 1.645 * rolling_std), p + 1.645 * rolling_std] for p in predictions]
+        p10, p90 = _scale_ci_to_quantiles(predictions, ci)
+        risk_score = min(100, max(0, float(rolling_std / (rolling_mean + 1e-6) * 80)))
+
+        return {
+            "success": True,
+            "model_type": ModelType.XGBOOST.value,
+            "prediction": {
+                "predictions": predictions,
+                "confidence_interval": ci,
+                "p10": p10,
+                "p50": list(predictions),
+                "p90": p90,
+                "risk_score": risk_score,
+                "model_version": "xgboost-v1.0-fallback"
+            },
+            "metadata": {
+                "training_data_points": n,
+                "forecast_horizon": horizon_days,
+                "inference_mode": "statistical_fallback_deterministic",
+                "features_used": ["rolling_mean", "rolling_std", "trend"],
+                "generated_at": datetime.now().isoformat()
+            }
+        }
+
+
+class ETSStrategy(ForecasterStrategy):
+    """ETS (Exponential Smoothing) prediction strategy — classical statistical model"""
+
+    def __init__(self, model_type: ModelType, trainer):
+        super().__init__(model_type, trainer)
+
+    def predict(self, sku: str, erp_connector: ERPConnector = None, horizon_days: int = 30, inline_history: Optional[List[float]] = None, **kwargs) -> Dict:
+        try:
+            from statsmodels.tsa.holtwinters import ExponentialSmoothing
+        except ImportError:
+            return {
+                "success": False,
+                "error": "statsmodels is not installed",
+                "model_type": ModelType.ETS.value,
+            }
+
+        try:
+            sales_sequence = self._get_sales_sequence(sku, erp_connector, inline_history)
+            n = len(sales_sequence)
+
+            if n < 14:
+                raise ValueError(f"ETS requires at least 14 data points, got {n}")
+
+            arr = np.array(sales_sequence, dtype=float)
+            # Ensure all values are positive for ETS stability
+            arr = np.maximum(arr, 0.01)
+
+            # Choose seasonal or non-seasonal based on data length
+            sp = 7  # daily seasonality (weekly)
+            try:
+                if n >= sp * 2:
+                    model = ExponentialSmoothing(
+                        arr,
+                        trend='add',
+                        seasonal='add',
+                        seasonal_periods=sp,
+                    ).fit(optimized=True)
+                else:
+                    model = ExponentialSmoothing(
+                        arr,
+                        trend='add',
+                        seasonal=None,
+                    ).fit(optimized=True)
+            except Exception:
+                # Fall back to simplest model
+                model = ExponentialSmoothing(
+                    arr,
+                    trend=None,
+                    seasonal=None,
+                ).fit(optimized=True)
+
+            forecast = model.forecast(horizon_days)
+            predictions = [max(0, float(v)) for v in forecast]
+
+            # Confidence interval from residuals
+            residuals = model.resid
+            residual_std = float(np.std(residuals)) if len(residuals) > 0 else float(np.std(arr))
+
+            ci = [[max(0, p - 1.645 * residual_std), p + 1.645 * residual_std] for p in predictions]
+            p10, p90 = _scale_ci_to_quantiles(predictions, ci)
+
+            mean_val = float(np.mean(arr))
+            risk_score = min(100, max(0, float(residual_std / (mean_val + 1e-6) * 100)))
+
+            return {
+                "success": True,
+                "model_type": ModelType.ETS.value,
+                "prediction": {
+                    "predictions": predictions,
+                    "confidence_interval": ci,
+                    "p10": p10,
+                    "p50": list(predictions),
+                    "p90": p90,
+                    "risk_score": risk_score,
+                    "model_version": "ets-v1.0-holtwinters"
+                },
+                "metadata": {
+                    "training_data_points": n,
+                    "forecast_horizon": horizon_days,
+                    "inference_mode": "ets_online_fit",
+                    "features_used": ["level", "trend", "seasonal"],
+                    "aic": float(model.aic) if hasattr(model, 'aic') else None,
+                    "generated_at": datetime.now().isoformat()
+                }
+            }
+        except Exception as e:
+            logging.error(f"ETS prediction failed for SKU {sku}: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "model_type": ModelType.ETS.value
+            }
+
+
 class ForecasterFactory:
     """预测器工厂 - 实现策略模式"""
 
@@ -542,12 +794,16 @@ class ForecasterFactory:
         self.prophet_trainer = ProphetTrainer()
         self.lightgbm_trainer = LightGBMTrainer()
         self.chronos_trainer = ChronosTrainer()
+        self.xgboost_trainer = XGBoostTrainer()
+        self.ets_trainer = ETSTrainer()
 
         # 初始化策略
         self.strategies = {
             ModelType.PROPHET: ProphetStrategy(ModelType.PROPHET, self.prophet_trainer),
             ModelType.LIGHTGBM: LightGBMStrategy(ModelType.LIGHTGBM, self.lightgbm_trainer),
-            ModelType.CHRONOS: ChronosStrategy(ModelType.CHRONOS, self.chronos_trainer)
+            ModelType.CHRONOS: ChronosStrategy(ModelType.CHRONOS, self.chronos_trainer),
+            ModelType.XGBOOST: XGBoostStrategy(ModelType.XGBOOST, self.xgboost_trainer),
+            ModelType.ETS: ETSStrategy(ModelType.ETS, self.ets_trainer),
         }
 
         # PR-B: Champion model cache {series_id -> (model_obj, meta, model_name)}
@@ -948,14 +1204,30 @@ class ForecasterFactory:
             logging.error(f"Model recommendation failed for SKU {sku}: {e}")
             return ModelType.PROPHET  # 默认回退
     
-    def predict_with_fallback(self, 
-                            sku: str, 
-                            erp_connector: ERPConnector = None, 
+    def predict_with_fallback(self,
+                            sku: str,
+                            erp_connector: ERPConnector = None,
                             horizon_days: int = 30,
                             preferred_model: Optional[str] = None,
                             inline_history: Optional[List[float]] = None) -> Dict:
         """带回退机制的预测"""
-        
+
+        # Ensemble race when auto mode and sufficient data
+        is_auto = not preferred_model or preferred_model.lower() == 'auto'
+        data_len = len(inline_history) if inline_history else 0
+        if is_auto and data_len >= 30:
+            try:
+                race_result = self.predict_ensemble_race(
+                    sku=sku,
+                    erp_connector=erp_connector,
+                    horizon_days=horizon_days,
+                    inline_history=inline_history,
+                )
+                if race_result.get("success"):
+                    return race_result
+            except Exception as e:
+                logging.warning(f"Ensemble race failed for {sku}, falling back: {e}")
+
         # 确定模型优先级
         if preferred_model and preferred_model.lower() != 'auto':
             try:
@@ -1022,9 +1294,114 @@ class ForecasterFactory:
         
         primary_result["fallback_used"] = len(results) > 1
         primary_result["attempted_models"] = [r["model_type"] for r in results]
-        
+
         return primary_result
-    
+
+    def predict_ensemble_race(
+        self,
+        sku: str,
+        erp_connector: ERPConnector = None,
+        horizon_days: int = 30,
+        inline_history: Optional[List[float]] = None,
+        models: Optional[List[str]] = None,
+    ) -> Dict:
+        """
+        Ensemble racing: run all models in parallel, score, pick the best.
+
+        Scoring criteria:
+          - Forecast stability (lower CV of predictions = better)
+          - P10/P90 interval width (tighter = better, within reason)
+          - Consensus with other models (closer to ensemble median = better)
+
+        Returns the winning model's result with ensemble metadata.
+        """
+        race_models = models or ["lightgbm", "prophet", "chronos", "xgboost", "ets"]
+        results = []
+
+        def _run_model(model_name):
+            try:
+                model_type = ModelType(model_name.lower())
+                strategy = self.get_strategy(model_type)
+                return strategy.predict(
+                    sku=sku,
+                    erp_connector=erp_connector,
+                    horizon_days=horizon_days,
+                    inline_history=inline_history,
+                )
+            except Exception as e:
+                return {"success": False, "error": str(e), "model_type": model_name}
+
+        # Run models in parallel if ThreadPoolExecutor is available
+        if ThreadPoolExecutor is not None:
+            with ThreadPoolExecutor(max_workers=len(race_models)) as executor:
+                futures = {executor.submit(_run_model, m): m for m in race_models}
+                for future in as_completed(futures):
+                    result = future.result()
+                    if result.get("success"):
+                        results.append(result)
+        else:
+            for model_name in race_models:
+                result = _run_model(model_name)
+                if result.get("success"):
+                    results.append(result)
+
+        if not results:
+            return {
+                "success": False,
+                "error": "All models failed in ensemble race",
+                "sku": sku,
+            }
+
+        if len(results) == 1:
+            results[0]["metadata"]["inference_mode"] = "ensemble_race_single"
+            return results[0]
+
+        # Score each model
+        all_means = []
+        scored = []
+        for r in results:
+            preds = r["prediction"]["predictions"]
+            mean_pred = float(np.mean(preds))
+            all_means.append(mean_pred)
+            std_pred = float(np.std(preds)) if len(preds) > 1 else 0.0
+            cv = std_pred / (mean_pred + 1e-6)
+
+            # Interval width (tighter is better)
+            p10 = r["prediction"].get("p10", preds)
+            p90 = r["prediction"].get("p90", preds)
+            avg_width = float(np.mean([p90[i] - p10[i] for i in range(len(preds))]))
+            rel_width = avg_width / (mean_pred + 1e-6)
+
+            scored.append({
+                "result": r,
+                "mean_pred": mean_pred,
+                "cv": cv,
+                "rel_width": rel_width,
+            })
+
+        ensemble_median = float(np.median(all_means))
+
+        for s in scored:
+            consensus_dist = abs(s["mean_pred"] - ensemble_median) / (ensemble_median + 1e-6)
+            # Combined score: lower is better
+            # 40% consensus + 30% stability + 30% interval tightness
+            s["score"] = 0.4 * consensus_dist + 0.3 * s["cv"] + 0.3 * s["rel_width"]
+
+        scored.sort(key=lambda x: x["score"])
+        winner = scored[0]
+
+        winner_result = winner["result"]
+        winner_result["metadata"]["inference_mode"] = "ensemble_race"
+        winner_result["metadata"]["ensemble_race"] = {
+            "models_raced": len(results),
+            "models_names": [r["model_type"] for r in results],
+            "winner_score": round(winner["score"], 4),
+            "ensemble_median": round(ensemble_median, 2),
+            "scores": {s["result"]["model_type"]: round(s["score"], 4) for s in scored},
+        }
+
+        return winner_result
+
     def _compare_predictions(self, results: List[Dict]) -> Dict:
         """比较多个模型的预测结果"""
         if len(results) < 2:
@@ -1154,7 +1531,7 @@ class ForecasterFactory:
         actual_values = full_history[-test_days:]
 
         # 2. 準備測試模型
-        models_to_test = models or ["lightgbm", "chronos", "prophet"]
+        models_to_test = models or ["lightgbm", "chronos", "prophet", "xgboost", "ets"]
         results = []
 
         for model_name in models_to_test:
@@ -1313,7 +1690,7 @@ class ForecasterFactory:
         actual_values = full_history[-test_days:]
         actual_mean = float(np.mean([abs(v) for v in actual_values])) if actual_values else 1.0
 
-        models_to_test = models or ["lightgbm", "chronos", "prophet"]
+        models_to_test = models or ["lightgbm", "chronos", "prophet", "xgboost", "ets"]
         results = []
         all_residuals = []  # Global residual pool
 

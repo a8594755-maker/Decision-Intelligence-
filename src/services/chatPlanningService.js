@@ -18,6 +18,7 @@ import {
   computeRiskAdjustments,
   applyRiskAdjustmentsToInventory,
   applyRiskAdjustmentsToObjective,
+  applyRiskAdjustmentsToSafetyStockPenalty,
   applyDemandUplift,
   buildPlanComparison
 } from './riskAdjustmentsService';
@@ -423,10 +424,12 @@ const toForecastDemandSeries = (forecastArtifact = {}) => {
       if (!Number.isFinite(p50)) return;
 
       const p90Candidate = toNumber(point.p90 ?? point.upper, NaN);
+      const p10Candidate = toNumber(point.p10 ?? point.lower, NaN);
       rows.push({
         sku,
         plant_id: plant || null,
         date,
+        p10: Number.isFinite(p10Candidate) ? Math.max(0, Number(p10Candidate)) : null,
         p50: Math.max(0, Number(p50)),
         p90: Number.isFinite(p90Candidate) ? Math.max(0, Number(p90Candidate)) : null
       });
@@ -533,7 +536,16 @@ const buildObjective = (objectiveOverride = {}) => ({
     : 0,
   service_level_target: Number.isFinite(toNumber(objectiveOverride.service_level_target, NaN))
     ? Number(objectiveOverride.service_level_target)
-    : null
+    : null,
+  ...(Number.isFinite(toNumber(objectiveOverride.safety_stock_alpha, NaN))
+    ? { safety_stock_alpha: Number(objectiveOverride.safety_stock_alpha) }
+    : {}),
+  ...(objectiveOverride.use_p90_for_safety_stock === true || objectiveOverride.use_p90_for_safety_stock === false
+    ? { use_p90_for_safety_stock: objectiveOverride.use_p90_for_safety_stock }
+    : {}),
+  ...(objectiveOverride.use_p90_for_service_level === true || objectiveOverride.use_p90_for_service_level === false
+    ? { use_p90_for_service_level: objectiveOverride.use_p90_for_service_level }
+    : {})
 });
 
 const mergeProjectionForChart = (withPlanProjection = [], withoutPlanProjection = []) => {
@@ -1774,6 +1786,7 @@ export async function runPlanFromDatasetProfile({
         bom_explosion_used: Boolean(bomExplosionResult.used),
         bom_explosion_reused: Boolean(bomExplosionResult.reused)
       },
+      settings: settings || {},
       bom_usage: Array.isArray(bomExplosionResult.usage_rows) ? bomExplosionResult.usage_rows : [],
       bom_explosion: bomExplosionResult.artifact || null
     };
@@ -1921,6 +1934,7 @@ export async function runPlanFromDatasetProfile({
     });
 
     if (!constraintResult.passed) {
+      // Save plan_table even on constraint failure so the user can inspect the plan
       await saveJsonArtifact(run.id, 'plan_table', {
         total_rows: normalizedPlan.length,
         rows: normalizedPlan.slice(0, MAX_PLAN_ROWS_IN_ARTIFACT),
@@ -1929,6 +1943,63 @@ export async function runPlanFromDatasetProfile({
         user_id: userId,
         filename: `plan_table_run_${run.id}.json`
       });
+
+      // Also save replay_metrics and inventory_projection on constraint failure
+      // so the Excel export can still produce KPI and projection data for diagnosis.
+      try {
+        const failReplayWithPlan = replaySimulator({
+          forecast_series: demandForecastSeries,
+          inventory: optimizationPayload.inventory,
+          open_pos: optimizationPayload.open_pos,
+          plan: normalizedPlan,
+          use_p90: false
+        });
+        const failReplayWithout = replaySimulator({
+          forecast_series: demandForecastSeries,
+          inventory: optimizationPayload.inventory,
+          open_pos: optimizationPayload.open_pos,
+          plan: [],
+          use_p90: false
+        });
+        const failReplayMetrics = {
+          with_plan: failReplayWithPlan.metrics,
+          without_plan: failReplayWithout.metrics,
+          delta: {
+            service_level_proxy: (
+              Number.isFinite(failReplayWithPlan.metrics?.service_level_proxy)
+              && Number.isFinite(failReplayWithout.metrics?.service_level_proxy)
+            )
+              ? Number((failReplayWithPlan.metrics.service_level_proxy - failReplayWithout.metrics.service_level_proxy).toFixed(6))
+              : null,
+            stockout_units: (
+              Number.isFinite(failReplayWithPlan.metrics?.stockout_units)
+              && Number.isFinite(failReplayWithout.metrics?.stockout_units)
+            )
+              ? Number((failReplayWithPlan.metrics.stockout_units - failReplayWithout.metrics.stockout_units).toFixed(6))
+              : null
+          },
+          constraint_failure: true
+        };
+        await saveJsonArtifact(run.id, 'replay_metrics', failReplayMetrics, ARTIFACT_SIZE_THRESHOLD, {
+          user_id: userId,
+          filename: `replay_metrics_run_${run.id}.json`
+        });
+
+        const failProjection = mergeProjectionForChart(
+          failReplayWithPlan.inventory_projection,
+          failReplayWithout.inventory_projection
+        );
+        await saveJsonArtifact(run.id, 'inventory_projection', {
+          total_rows: failProjection.length,
+          rows: failProjection.slice(0, MAX_PROJECTION_ROWS_IN_ARTIFACT),
+          truncated: failProjection.length > MAX_PROJECTION_ROWS_IN_ARTIFACT
+        }, ARTIFACT_SIZE_THRESHOLD, {
+          user_id: userId,
+          filename: `inventory_projection_run_${run.id}.json`
+        });
+      } catch (replayErr) {
+        console.warn('[chatPlanningService] Failed to save replay metrics on constraint failure:', replayErr.message);
+      }
 
       const failMessage = `Constraint check failed (${constraintResult.violations.length} violations).`;
       await diRunsService.updateRunStatus({
@@ -2022,16 +2093,28 @@ export async function runPlanFromDatasetProfile({
           objective,
           riskAdjustments.adjusted_params
         );
+        const adjustedObjectiveWithSS = applyRiskAdjustmentsToSafetyStockPenalty(
+          adjustedObjective,
+          riskAdjustments.adjusted_params
+        );
         const adjustedDemandSeries = applyDemandUplift(
           demandForecastSeries,
           riskAdjustments.adjusted_params.demand_uplift_alpha
         );
 
-        // 4. Run solver with risk-adjusted inputs
+        // 4. Run solver with risk-adjusted inputs + risk_signals for MILP
         const riskOptimizationPayload = {
           ...optimizationPayload,
           inventory: adjustedInventory,
-          objective: adjustedObjective,
+          objective: adjustedObjectiveWithSS,
+          risk_signals: {
+            ss_penalty_by_key: riskAdjustments.adjusted_params.safety_stock_penalty_multiplier || {},
+            dual_source_keys: riskAdjustments.adjusted_params.dual_source_keys || [],
+            dual_source_min_split_fraction: riskAdjustments.adjusted_params.dual_source_min_split_fraction || 0.2,
+            expedite_keys: riskAdjustments.adjusted_params.expedite_keys || [],
+            expedite_lead_time_reduction_days: riskAdjustments.adjusted_params.expedite_lead_time_reduction_days || 0,
+            expedite_cost_multiplier: riskAdjustments.adjusted_params.expedite_cost_multiplier || 1.0,
+          },
           demand_forecast: {
             ...optimizationPayload.demand_forecast,
             series: adjustedDemandSeries

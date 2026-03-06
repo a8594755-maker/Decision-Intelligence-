@@ -247,8 +247,82 @@ export const getTopBySpend = async (userId, days = null, customRange = null, lim
 
   // Sort by total spend descending
   materialsWithSpend.sort((a, b) => b.totalSpend - a.totalSpend);
-  
+
   return materialsWithSpend.slice(0, limit);
+};
+
+/**
+ * ABC Spend Concentration Analysis
+ * Classifies materials into A/B/C categories by cumulative spend
+ * A: top materials accounting for ~80% spend
+ * B: next materials accounting for ~15% spend
+ * C: remaining materials accounting for ~5% spend
+ * @param {string} userId
+ * @param {number|null} days
+ * @param {Object|null} customRange
+ * @returns {Promise<Object>} { materials, summary }
+ */
+export const getSpendConcentration = async (userId, days = null, customRange = null) => {
+  const priceHistory = await getMaterialPriceHistory(userId, days, customRange);
+
+  if (priceHistory.length === 0) {
+    return { materials: [], summary: null };
+  }
+
+  const quantityField = detectQuantityField(priceHistory[0]);
+  if (!quantityField) {
+    return { materials: [], summary: null };
+  }
+
+  // Group by material_id, accumulate spend
+  const materialSpendMap = {};
+  priceHistory.forEach(record => {
+    const matId = record.material_id;
+    const qty = parseFloat(record[quantityField]) || 0;
+    const price = parseFloat(record.unit_price) || 0;
+    const spend = qty * price;
+
+    if (!materialSpendMap[matId]) {
+      materialSpendMap[matId] = {
+        material_id: matId,
+        material_code: record.materials?.material_code || 'N/A',
+        material_name: record.materials?.material_name || 'N/A',
+        category: record.materials?.category || 'N/A',
+        totalSpend: 0
+      };
+    }
+    materialSpendMap[matId].totalSpend += spend;
+  });
+
+  const sorted = Object.values(materialSpendMap)
+    .sort((a, b) => b.totalSpend - a.totalSpend);
+
+  const grandTotal = sorted.reduce((sum, m) => sum + m.totalSpend, 0);
+
+  // Compute cumulative shares and assign ABC class
+  let cumulative = 0;
+  const materials = sorted.map(mat => {
+    const spendShare = grandTotal > 0 ? (mat.totalSpend / grandTotal) * 100 : 0;
+    cumulative += spendShare;
+    const abcClass = cumulative <= 80 ? 'A' : cumulative <= 95 ? 'B' : 'C';
+    return { ...mat, spendShare, cumulativeShare: cumulative, abcClass };
+  });
+
+  // Build summary
+  const groups = { A: { count: 0, totalSpend: 0 }, B: { count: 0, totalSpend: 0 }, C: { count: 0, totalSpend: 0 } };
+  materials.forEach(m => {
+    groups[m.abcClass].count += 1;
+    groups[m.abcClass].totalSpend += m.totalSpend;
+  });
+
+  const summary = {
+    grandTotal,
+    classA: { ...groups.A, pct: grandTotal > 0 ? (groups.A.totalSpend / grandTotal) * 100 : 0 },
+    classB: { ...groups.B, pct: grandTotal > 0 ? (groups.B.totalSpend / grandTotal) * 100 : 0 },
+    classC: { ...groups.C, pct: grandTotal > 0 ? (groups.C.totalSpend / grandTotal) * 100 : 0 }
+  };
+
+  return { materials, summary };
 };
 
 /**
@@ -681,6 +755,216 @@ export const generateAIContext = async (userId, days = null, customRange = null)
   };
 };
 
+/**
+ * Detect price anomalies across material price history
+ * Uses statistical deviation (sigma) and period-over-period change detection
+ * @param {string} userId
+ * @param {number|null} days
+ * @param {Object|null} customRange
+ * @returns {Promise<Array>} Anomaly records sorted by severity
+ */
+export const detectPriceAnomalies = async (userId, days = null, customRange = null) => {
+  const priceHistory = await getMaterialPriceHistory(userId, days, customRange);
+
+  if (priceHistory.length === 0) {
+    return [];
+  }
+
+  // Group by material_id
+  const materialGroups = {};
+  priceHistory.forEach(record => {
+    const matId = record.material_id;
+    if (!materialGroups[matId]) {
+      materialGroups[matId] = {
+        material_code: record.materials?.material_code || 'N/A',
+        material_name: record.materials?.material_name || 'N/A',
+        records: []
+      };
+    }
+    materialGroups[matId].records.push({
+      supplier_name: record.suppliers?.supplier_name || 'Unknown',
+      order_date: record.order_date,
+      unit_price: parseFloat(record.unit_price)
+    });
+  });
+
+  const anomalies = [];
+
+  Object.entries(materialGroups).forEach(([matId, group]) => {
+    const records = group.records.sort((a, b) => new Date(a.order_date) - new Date(b.order_date));
+
+    if (records.length < 3) return; // Need minimum data points
+
+    const prices = records.map(r => r.unit_price);
+    const mean = prices.reduce((a, b) => a + b, 0) / prices.length;
+    const variance = prices.reduce((sum, p) => sum + Math.pow(p - mean, 2), 0) / prices.length;
+    const stddev = Math.sqrt(variance);
+
+    if (stddev === 0) return; // All prices identical
+
+    let consecutiveIncreases = 0;
+    let cumulativeIncreasePct = 0;
+
+    records.forEach((record, i) => {
+      const deviationFromMean = Math.abs(record.unit_price - mean);
+      const sigmaCount = deviationFromMean / stddev;
+      const deviationPct = mean > 0 ? ((record.unit_price - mean) / mean) * 100 : 0;
+
+      let pctChange = 0;
+      if (i > 0) {
+        const prevPrice = records[i - 1].unit_price;
+        pctChange = prevPrice > 0 ? ((record.unit_price - prevPrice) / prevPrice) * 100 : 0;
+      }
+
+      // Track consecutive increases
+      if (pctChange > 0) {
+        consecutiveIncreases++;
+        cumulativeIncreasePct += pctChange;
+      } else {
+        consecutiveIncreases = 0;
+        cumulativeIncreasePct = 0;
+      }
+
+      const isStatOutlier = sigmaCount > 1.5;
+      const isSuddenJump = Math.abs(pctChange) > 15;
+      const isPersistentIncrease = consecutiveIncreases >= 3 && cumulativeIncreasePct > 20;
+
+      if (!isStatOutlier && !isSuddenJump && !isPersistentIncrease) return;
+
+      // Determine anomaly_type
+      let anomaly_type = 'outlier';
+      if (isPersistentIncrease) {
+        anomaly_type = 'persistent_increase';
+      } else if (record.unit_price > mean && pctChange > 15) {
+        anomaly_type = 'spike';
+      } else if (record.unit_price < mean && pctChange < -15) {
+        anomaly_type = 'drop';
+      }
+
+      // Determine severity
+      let severity = 'low';
+      if (sigmaCount > 3 || Math.abs(pctChange) > 30) {
+        severity = 'high';
+      } else if (sigmaCount > 2 || Math.abs(pctChange) > 20) {
+        severity = 'medium';
+      }
+
+      anomalies.push({
+        material_code: group.material_code,
+        material_name: group.material_name,
+        material_id: matId,
+        supplier_name: record.supplier_name,
+        order_date: record.order_date,
+        unit_price: record.unit_price,
+        expected_price: parseFloat(mean.toFixed(4)),
+        deviation_pct: parseFloat(deviationPct.toFixed(2)),
+        anomaly_type,
+        severity
+      });
+    });
+  });
+
+  // Sort: high first, then medium, then low; within same severity, by date desc
+  const severityOrder = { high: 0, medium: 1, low: 2 };
+  anomalies.sort((a, b) => {
+    if (severityOrder[a.severity] !== severityOrder[b.severity]) {
+      return severityOrder[a.severity] - severityOrder[b.severity];
+    }
+    return new Date(b.order_date) - new Date(a.order_date);
+  });
+
+  return anomalies;
+};
+
+/**
+ * Supplier Spend Concentration Analysis
+ * Groups spend by supplier with HHI concentration index
+ * @param {string} userId
+ * @param {number|null} days
+ * @param {Object|null} customRange
+ * @returns {Promise<Object>} { suppliers, concentration }
+ */
+export const getSupplierSpendConcentration = async (userId, days = null, customRange = null) => {
+  const priceHistory = await getMaterialPriceHistory(userId, days, customRange);
+
+  if (priceHistory.length === 0) {
+    return { suppliers: [], concentration: null };
+  }
+
+  const quantityField = detectQuantityField(priceHistory[0]);
+  if (!quantityField) {
+    return { suppliers: [], concentration: null };
+  }
+
+  // Group by supplier_id
+  const supplierMap = {};
+  priceHistory.forEach(record => {
+    const suppId = record.supplier_id;
+    const qty = parseFloat(record[quantityField]) || 0;
+    const price = parseFloat(record.unit_price) || 0;
+    const spend = qty * price;
+
+    if (!supplierMap[suppId]) {
+      supplierMap[suppId] = {
+        supplier_id: suppId,
+        supplier_name: record.suppliers?.supplier_name || 'Unknown',
+        supplier_code: record.suppliers?.supplier_code || 'N/A',
+        totalSpend: 0,
+        materialIds: new Set(),
+        prices: []
+      };
+    }
+    supplierMap[suppId].totalSpend += spend;
+    supplierMap[suppId].materialIds.add(record.material_id);
+    supplierMap[suppId].prices.push(price);
+  });
+
+  const sorted = Object.values(supplierMap)
+    .sort((a, b) => b.totalSpend - a.totalSpend);
+
+  const grandTotal = sorted.reduce((sum, s) => sum + s.totalSpend, 0);
+
+  const suppliers = sorted.map(s => {
+    const spendShare = grandTotal > 0 ? (s.totalSpend / grandTotal) * 100 : 0;
+    // Avg price change: compare first half avg to second half avg
+    const mid = Math.floor(s.prices.length / 2);
+    const firstHalfAvg = mid > 0 ? s.prices.slice(0, mid).reduce((a, b) => a + b, 0) / mid : 0;
+    const secondHalfAvg = (s.prices.length - mid) > 0
+      ? s.prices.slice(mid).reduce((a, b) => a + b, 0) / (s.prices.length - mid)
+      : 0;
+    const avgPriceChange = firstHalfAvg > 0 ? ((secondHalfAvg - firstHalfAvg) / firstHalfAvg) * 100 : 0;
+
+    return {
+      supplier_id: s.supplier_id,
+      supplier_name: s.supplier_name,
+      supplier_code: s.supplier_code,
+      totalSpend: s.totalSpend,
+      spendShare,
+      materialCount: s.materialIds.size,
+      avgPriceChange
+    };
+  });
+
+  // Concentration metrics
+  const shares = suppliers.map(s => s.spendShare);
+  const top1_pct = shares[0] || 0;
+  const top3_pct = shares.slice(0, 3).reduce((a, b) => a + b, 0);
+  const top5_pct = shares.slice(0, 5).reduce((a, b) => a + b, 0);
+  const hhi = shares.reduce((sum, s) => sum + Math.pow(s, 2), 0);
+  const riskLevel = hhi > 2500 ? 'high' : hhi > 1500 ? 'medium' : 'low';
+
+  return {
+    suppliers,
+    concentration: {
+      top1_pct,
+      top3_pct,
+      top5_pct,
+      hhi: parseFloat(hhi.toFixed(0)),
+      riskLevel
+    }
+  };
+};
+
 export default {
   getMaterialPriceHistory,
   getMaterialCostKPIs,
@@ -690,6 +974,9 @@ export default {
   getSupplierComparison,
   getTopBySpend,
   checkDataCoverage,
-  generateAIContext
+  generateAIContext,
+  getSpendConcentration,
+  detectPriceAnomalies,
+  getSupplierSpendConcentration
 };
 

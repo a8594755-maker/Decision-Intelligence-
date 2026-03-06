@@ -8,7 +8,7 @@ import logging
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from ml.demand_forecasting.data_contract import SalesSeries
 from ml.demand_forecasting.feature_engineer import FeatureEngineer
@@ -37,6 +37,13 @@ class TrainingRunConfig:
     seed: int = 42
     run_id: str = ""
     artifact_root: str = ""
+    # HPO settings (opt-in)
+    hpo_enabled: bool = False
+    hpo_n_trials: int = 30
+    hpo_timeout_seconds: Optional[int] = None
+    hpo_cv_splits: int = 3
+    hpo_cv_mode: str = "timeseries_cv"
+    hpo_search_space: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self):
         if not self.run_id:
@@ -55,6 +62,11 @@ class TrainingRunConfig:
             "warmup_rows": self.warmup_rows,
             "seed": self.seed,
             "run_id": self.run_id,
+            "hpo_enabled": self.hpo_enabled,
+            "hpo_n_trials": self.hpo_n_trials,
+            "hpo_timeout_seconds": self.hpo_timeout_seconds,
+            "hpo_cv_splits": self.hpo_cv_splits,
+            "hpo_cv_mode": self.hpo_cv_mode,
         }
 
 
@@ -130,9 +142,17 @@ def train_one_series(
 
         # 2. Train
         strategy = get_strategy(config.model_name)
-        trained: TrainedModel = strategy.fit(
-            bundle, {**config.hyperparams, "seed": config.seed}
-        )
+        fit_config = {
+            **config.hyperparams,
+            "seed": config.seed,
+            "hpo_enabled": config.hpo_enabled,
+            "hpo_n_trials": config.hpo_n_trials,
+            "hpo_timeout_seconds": config.hpo_timeout_seconds,
+            "hpo_cv_splits": config.hpo_cv_splits,
+            "hpo_cv_mode": config.hpo_cv_mode,
+            "hpo_search_space": config.hpo_search_space,
+        }
+        trained: TrainedModel = strategy.fit(bundle, fit_config)
 
         # 3. Validate feature spec (prevent train/serve skew)
         fe = FeatureEngineer()
@@ -223,6 +243,12 @@ def train_many_series(
             seed=config.seed,
             run_id=config.run_id,
             artifact_root=config.artifact_root,
+            hpo_enabled=config.hpo_enabled,
+            hpo_n_trials=config.hpo_n_trials,
+            hpo_timeout_seconds=config.hpo_timeout_seconds,
+            hpo_cv_splits=config.hpo_cv_splits,
+            hpo_cv_mode=config.hpo_cv_mode,
+            hpo_search_space=config.hpo_search_space,
         )
         results.append(train_one_series(series, cfg))
     return results

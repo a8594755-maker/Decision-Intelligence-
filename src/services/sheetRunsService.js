@@ -5,22 +5,43 @@
 
 import { supabase, RPC_JSON_OPTIONS } from './supabaseClient';
 
+// Cache for ingest key support check (avoid repeated slow RPCs)
+let _ingestKeySupportCache = null;
+let _ingestKeySupportCacheTime = 0;
+const INGEST_KEY_CACHE_TTL = 60_000; // 1 minute
+const INGEST_KEY_CHECK_TIMEOUT = 3_000; // 3 seconds max
+
 /**
  * Check if ingest_key migration is deployed
+ * Uses cache + fast timeout to avoid blocking import flow
  * @returns {Promise<boolean>}
  */
 export async function checkIngestKeySupport() {
+  // Return cached result if fresh
+  if (_ingestKeySupportCache !== null && Date.now() - _ingestKeySupportCacheTime < INGEST_KEY_CACHE_TTL) {
+    return _ingestKeySupportCache;
+  }
+
   try {
-    const { data, error } = await supabase.rpc('check_ingest_key_support', {}, RPC_JSON_OPTIONS);
-    
-    if (error) {
-      console.warn('[SheetRuns] Failed to check ingest_key support:', error);
+    const result = await Promise.race([
+      supabase.rpc('check_ingest_key_support', {}, RPC_JSON_OPTIONS),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), INGEST_KEY_CHECK_TIMEOUT))
+    ]);
+
+    if (result.error) {
+      console.warn('[SheetRuns] Failed to check ingest_key support:', result.error);
+      _ingestKeySupportCache = false;
+      _ingestKeySupportCacheTime = Date.now();
       return false;
     }
-    
-    return data === true;
+
+    _ingestKeySupportCache = result.data === true;
+    _ingestKeySupportCacheTime = Date.now();
+    return _ingestKeySupportCache;
   } catch (error) {
-    console.warn('[SheetRuns] check_ingest_key_support RPC not available:', error);
+    console.warn('[SheetRuns] check_ingest_key_support RPC not available:', error.message);
+    _ingestKeySupportCache = false;
+    _ingestKeySupportCacheTime = Date.now();
     return false;
   }
 }

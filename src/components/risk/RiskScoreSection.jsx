@@ -55,6 +55,7 @@ const RiskScoreSection = ({
     };
 
     loadScore();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId, forecastRunId, materialCode, plantId]);
 
   // If no score data and not loading

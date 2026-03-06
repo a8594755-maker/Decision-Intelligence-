@@ -15,6 +15,50 @@ import {
 import { TrendingUp, Brain, Calendar, Info } from 'lucide-react';
 import { Badge } from '../ui/Badge';
 
+const CustomTooltip = ({ active, payload, label }) => {
+  if (!active || !payload || payload.length === 0) return null;
+
+  return (
+    <div className="bg-white p-3 border border-gray-200 rounded-lg shadow-lg">
+      <p className="text-sm font-medium text-gray-900 mb-2">
+        Day {label}
+      </p>
+
+      {payload.map((entry, index) => {
+        const value = entry.value;
+        const name = entry.name;
+
+        return (
+          <div key={index} className="flex items-center justify-between space-x-4 text-xs">
+            <div className="flex items-center space-x-1">
+              <div
+                className="w-2 h-2 rounded-full"
+                style={{ backgroundColor: entry.color }}
+              />
+              <span className="font-medium capitalize">{name}:</span>
+            </div>
+            <span className="font-mono">
+              {typeof value === 'number' ? value.toFixed(0) : value}
+            </span>
+          </div>
+        );
+      })}
+
+      {payload.find(p => p.name === 'forecast') &&
+       payload.find(p => p.name === 'comparison') && (
+        <div className="mt-2 pt-2 border-t border-gray-200">
+          <div className="text-xs text-gray-600">
+            Deviation: {Math.abs(
+              (payload.find(p => p.name === 'forecast')?.value || 0) -
+              (payload.find(p => p.name === 'comparison')?.value || 0)
+            ).toFixed(0)} units
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 const ConfidenceOverlayChart = ({ 
   forecastData, 
   comparisonData, 
@@ -119,50 +163,6 @@ const ConfidenceOverlayChart = ({
 
   const primaryModelColor = getModelColor(forecastData?.model);
   const comparisonModelColor = getModelColor(comparisonData?.secondary_model);
-
-  const CustomTooltip = ({ active, payload, label }) => {
-    if (!active || !payload || payload.length === 0) return null;
-
-    return (
-      <div className="bg-white p-3 border border-gray-200 rounded-lg shadow-lg">
-        <p className="text-sm font-medium text-gray-900 mb-2">
-          Day {label}
-        </p>
-        
-        {payload.map((entry, index) => {
-          const value = entry.value;
-          const name = entry.name;
-          
-          return (
-            <div key={index} className="flex items-center justify-between space-x-4 text-xs">
-              <div className="flex items-center space-x-1">
-                <div 
-                  className="w-2 h-2 rounded-full" 
-                  style={{ backgroundColor: entry.color }}
-                />
-                <span className="font-medium capitalize">{name}:</span>
-              </div>
-              <span className="font-mono">
-                {typeof value === 'number' ? value.toFixed(0) : value}
-              </span>
-            </div>
-          );
-        })}
-        
-        {payload.find(p => p.name === 'forecast') && 
-         payload.find(p => p.name === 'comparison') && (
-          <div className="mt-2 pt-2 border-t border-gray-200">
-            <div className="text-xs text-gray-600">
-              Deviation: {Math.abs(
-                (payload.find(p => p.name === 'forecast')?.value || 0) - 
-                (payload.find(p => p.name === 'comparison')?.value || 0)
-              ).toFixed(0)} units
-            </div>
-          </div>
-        )}
-      </div>
-    );
-  };
 
   if (compact) {
     return (

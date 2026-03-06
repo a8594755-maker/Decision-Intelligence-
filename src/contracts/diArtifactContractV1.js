@@ -25,7 +25,14 @@ const V1_VALIDATORS = {
   component_inventory_projection: validateComponentInventoryProjection,
   bottlenecks: validateBottlenecks,
   // Decision Narrative v1
-  decision_narrative: validateDecisionNarrative
+  decision_narrative: validateDecisionNarrative,
+  // Supplier Event Connector v0
+  supplier_event_log: validateSupplierEventLog,
+  // Phase 3: Proactive Alerts & Risk Deltas
+  proactive_alerts: validateProactiveAlerts,
+  risk_delta_summary: validateRiskDeltaSummary,
+  // Plan Baseline Comparison (approved plan write-back)
+  plan_baseline_comparison: validatePlanBaselineComparison
 };
 
 const MAX_ISSUES = 50;
@@ -616,6 +623,86 @@ function validateBottlenecks(payload, issues) {
     requireArrayField(issues, row, 'affected_fg_skus', p);
     requireArrayField(issues, row, 'evidence_refs', p);
   });
+}
+
+function validateSupplierEventLog(payload, issues) {
+  const root = ensureObjectPayload(issues, payload);
+  if (!root) return;
+
+  requireStringField(issues, root, 'version', 'payload');
+  requireStringField(issues, root, 'generated_at', 'payload');
+  requireNumberField(issues, root, 'total_events', 'payload');
+
+  const events = requireArrayField(issues, root, 'events', 'payload');
+  if (!events) return;
+
+  events.slice(0, 5).forEach((event, i) => {
+    const p = `payload.events[${i}]`;
+    if (!isObject(event)) { addTypeIssue(issues, p, 'object', event); return; }
+    requireStringField(issues, event, 'event_id', p);
+    requireStringField(issues, event, 'event_type', p);
+    requireStringField(issues, event, 'supplier_id', p);
+    requireStringField(issues, event, 'occurred_at', p);
+  });
+}
+
+function validateProactiveAlerts(payload, issues) {
+  const root = ensureObjectPayload(issues, payload);
+  if (!root) return;
+
+  requireStringField(issues, root, 'version', 'payload');
+  requireStringField(issues, root, 'generated_at', 'payload');
+
+  const alerts = requireArrayField(issues, root, 'alerts', 'payload');
+  if (!alerts) return;
+
+  alerts.slice(0, 5).forEach((alert, i) => {
+    const p = `payload.alerts[${i}]`;
+    if (!isObject(alert)) { addTypeIssue(issues, p, 'object', alert); return; }
+    requireStringField(issues, alert, 'alert_id', p);
+    requireStringField(issues, alert, 'alert_type', p);
+    requireStringField(issues, alert, 'severity', p);
+    requireStringField(issues, alert, 'material_code', p);
+    requireStringField(issues, alert, 'title', p);
+    requireNumberField(issues, alert, 'impact_score', p);
+  });
+
+  requireObjectField(issues, root, 'summary', 'payload');
+}
+
+function validateRiskDeltaSummary(payload, issues) {
+  const root = ensureObjectPayload(issues, payload);
+  if (!root) return;
+
+  requireStringField(issues, root, 'version', 'payload');
+  requireStringField(issues, root, 'generated_at', 'payload');
+  requireNumberField(issues, root, 'total_deltas', 'payload');
+
+  const deltas = requireArrayField(issues, root, 'deltas', 'payload');
+  if (!deltas) return;
+
+  deltas.slice(0, 5).forEach((delta, i) => {
+    const p = `payload.deltas[${i}]`;
+    if (!isObject(delta)) { addTypeIssue(issues, p, 'object', delta); return; }
+    requireStringField(issues, delta, 'supplier_id', p);
+    requireNumberField(issues, delta, 'risk_score_delta', p);
+    requireArrayField(issues, delta, 'evidence_refs', p);
+  });
+}
+
+function validatePlanBaselineComparison(payload, issues) {
+  const root = ensureObjectPayload(issues, payload);
+  if (!root) return;
+
+  requireNumberField(issues, root, 'current_run_id', 'payload');
+
+  if (hasOwn(root, 'previous_run_id') && root.previous_run_id !== null) {
+    requireNumberField(issues, root, 'previous_run_id', 'payload');
+  }
+
+  if (hasOwn(root, 'skus_added')) requireArrayField(issues, root, 'skus_added', 'payload');
+  if (hasOwn(root, 'skus_removed')) requireArrayField(issues, root, 'skus_removed', 'payload');
+  if (hasOwn(root, 'qty_changes')) requireArrayField(issues, root, 'qty_changes', 'payload');
 }
 
 const buildValidationErrorMessage = (artifactType, issues) => {

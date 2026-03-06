@@ -15,7 +15,7 @@
  *   driver        - Primary driving factor (which constraint is most impactful)
  *   recommendation - Recommended action (evidence-based)
  *   trade_offs[]  - Alternative options with cost/service delta
- *   constraint_binding_summary[] - Each constraint's binding status + approximate marginal impact
+ *   constraint_binding_summary[] - Each constraint's binding status + marginal impact evidence
  *   evidence_refs[] - Provenance reference for every claim
  */
 
@@ -39,6 +39,7 @@ const CONSTRAINT_PRIORITY = {
 };
 
 const safeNum = (v, fallback = null) => {
+  if (v === null || v === undefined || v === '') return fallback;
   const n = Number(v);
   return Number.isFinite(n) ? n : fallback;
 };
@@ -61,11 +62,8 @@ function classifyServiceLevel(sl) {
 }
 
 /**
- * Approximate marginal impact for a binding constraint.
- *
- * CP-SAT does not produce LP shadow prices. Instead we estimate the
- * marginal benefit of relaxing a constraint using KPI deltas from the
- * replay simulator (with_plan vs without_plan).
+ * Build a replay-based fallback marginal impact for a binding constraint.
+ * Solver-provided LP dual shadow prices (if present) take precedence elsewhere.
  */
 function estimateMarginalImpact({
   constraintName,
@@ -140,8 +138,10 @@ function buildConstraintBindingSummary({
         details: constraint.details || '',
         slack: safeNum(constraint.slack),
         slack_unit: constraint.slack_unit || null,
+        shadow_price_dual: safeNum(constraint.shadow_price_dual),
         shadow_price_approx: safeNum(constraint.shadow_price_approx),
         shadow_price_unit: constraint.shadow_price_unit || null,
+        shadow_price_method: constraint.shadow_price_method || null,
         natural_language: constraint.natural_language || null,
         marginal_impact: marginalImpact,
         priority: CONSTRAINT_PRIORITY[constraint.name] ?? 0,
@@ -247,7 +247,9 @@ function buildDriver({
   if (topBinding) {
     const nl = topBinding.natural_language;
     const slack = safeNum(topBinding.slack);
-    const sp = safeNum(topBinding.shadow_price_approx);
+    const spDual = safeNum(topBinding.shadow_price_dual);
+    const spApprox = safeNum(topBinding.shadow_price_approx);
+    const sp = spDual ?? spApprox;
     const slackUnit = topBinding.slack_unit || '';
 
     // Prefer solver-provided natural_language, fall back to template
@@ -257,7 +259,11 @@ function buildDriver({
     // Append slack and shadow price details when available
     if (sp != null && slack != null) {
       text += ` (remaining slack: ${formatSlack(slack, slackUnit)}, marginal value: ${money(sp)}/unit relaxed)`;
-      evidenceRefs.push(`proof.constraints_checked[name=${topBinding.name}].shadow_price_approx`);
+      evidenceRefs.push(
+        spDual != null
+          ? `proof.constraints_checked[name=${topBinding.name}].shadow_price_dual`
+          : `proof.constraints_checked[name=${topBinding.name}].shadow_price_approx`
+      );
     } else if (slack != null) {
       text += ` (remaining slack: ${formatSlack(slack, slackUnit)})`;
     }

@@ -166,3 +166,31 @@ class TestClosedLoopRun:
         assert resp.status_code == 200
         body = resp.json()
         assert body["closed_loop_status"] == "NO_TRIGGER"
+
+    def test_auto_run_reports_delegated_execution_state(self, client):
+        resp = client.post("/closed-loop/run", json={
+            "user_id": "u1",
+            "dataset_profile_id": 1,
+            "forecast_run_id": 100,
+            "forecast_series": STABLE_SERIES,
+            "calibration_meta": LOW_CALIBRATION,
+            "mode": "auto_run",
+        })
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["closed_loop_status"] == "TRIGGERED_DRY_RUN"
+        assert body["mode"] == "auto_run"
+        assert body["execution_state"] == "AUTO_RUN_DELEGATED"
+        assert body["auto_run_executed"] is False
+        assert any("delegated" in msg.lower() for msg in body["explanation"])
+
+    def test_invalid_mode_is_rejected(self, client):
+        resp = client.post("/closed-loop/run", json={
+            "user_id": "u1",
+            "dataset_profile_id": 1,
+            "forecast_run_id": 100,
+            "forecast_series": STABLE_SERIES,
+            "calibration_meta": LOW_CALIBRATION,
+            "mode": "manual_approve",
+        })
+        assert resp.status_code == 422
