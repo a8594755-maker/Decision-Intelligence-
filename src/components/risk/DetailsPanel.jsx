@@ -514,13 +514,25 @@ const DetailsPanel = ({
             <div className="bg-slate-50 dark:bg-slate-900/50 rounded-lg p-3 space-y-2">
               {details.assumptions.map((a, idx) => (
                 <div key={a.field} className={`flex items-start gap-2 text-xs ${idx > 0 ? 'pt-2 border-t border-slate-200 dark:border-slate-700' : ''}`}>
-                  <span className={`mt-0.5 w-2 h-2 rounded-full flex-shrink-0 ${a.isDefault ? 'bg-amber-500' : 'bg-green-500'}`} />
+                  <span className={`mt-0.5 w-2 h-2 rounded-full flex-shrink-0 ${
+                    a.source === 'missing' ? 'bg-red-500' : a.isDefault ? 'bg-amber-500' : 'bg-green-500'
+                  }`} />
                   <div className="flex-1">
                     <div className="font-medium text-slate-700 dark:text-slate-300">
                       {a.field} = {a.value ?? 'N/A'}
-                      {a.isDefault && <span className="ml-1 text-amber-600 dark:text-amber-400">(default)</span>}
+                      {a.source === 'missing' && <span className="ml-1 text-red-600 dark:text-red-400">(missing)</span>}
+                      {a.isDefault && a.source !== 'missing' && <span className="ml-1 text-amber-600 dark:text-amber-400">(default)</span>}
                     </div>
                     <div className="text-slate-500 dark:text-slate-400">{a.note}</div>
+                    {a.impact && a.impact.sensitivityNote && (
+                      <div className={`mt-0.5 ${
+                        a.impact.severity === 'high' ? 'text-red-600 dark:text-red-400' :
+                        a.impact.severity === 'medium' ? 'text-amber-600 dark:text-amber-400' :
+                        'text-slate-400 dark:text-slate-500'
+                      }`}>
+                        {a.impact.sensitivityNote}
+                      </div>
+                    )}
                   </div>
                 </div>
               ))}

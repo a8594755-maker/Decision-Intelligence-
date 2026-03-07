@@ -62,16 +62,34 @@ const ComputationTraceSection = ({ trace }) => {
                   To improve this row&apos;s data quality:
                 </span>
               </div>
-              {trace.what_if_hints.map((hint, idx) => (
-                <div key={idx} className="text-xs bg-amber-50 dark:bg-amber-900/10 rounded p-2 mb-1">
-                  <div className="font-medium text-amber-800 dark:text-amber-200">
-                    {hint.action}
+              {trace.what_if_hints.map((hint, idx) => {
+                const isCritical = hint.urgency === 'critical';
+                const bgClass = isCritical
+                  ? 'bg-red-50 dark:bg-red-900/10'
+                  : 'bg-amber-50 dark:bg-amber-900/10';
+                const titleClass = isCritical
+                  ? 'text-red-800 dark:text-red-200'
+                  : 'text-amber-800 dark:text-amber-200';
+                const bodyClass = isCritical
+                  ? 'text-red-600 dark:text-red-400'
+                  : 'text-amber-600 dark:text-amber-400';
+
+                return (
+                  <div key={idx} className={`text-xs ${bgClass} rounded p-2 mb-1`}>
+                    <div className={`font-medium ${titleClass}`}>
+                      {hint.action}
+                    </div>
+                    <div className={`${bodyClass} mt-0.5`}>
+                      {hint.currentState} &rarr; {hint.potentialState}
+                    </div>
+                    {hint.estimatedImpact && (
+                      <div className="text-indigo-600 dark:text-indigo-400 mt-0.5 font-medium">
+                        Impact: {hint.estimatedImpact}
+                      </div>
+                    )}
                   </div>
-                  <div className="text-amber-600 dark:text-amber-400 mt-0.5">
-                    {hint.currentState} &rarr; {hint.potentialState}
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>

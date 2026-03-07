@@ -956,7 +956,7 @@ const enrichBlockingQuestionsWithPrompt = async ({
     const promptQuestions = normalizeBlockingQuestionsStructured(result?.parsed?.questions || []);
     return promptQuestions.length > 0 ? promptQuestions : fallback;
   } catch (error) {
-    console.warn('[chatPlanningService] Prompt 5 blocking question fallback:', error.message);
+    logger.warn('planning-pipeline', `Prompt 5 blocking question fallback: ${error.message}`);
     return fallback;
   }
 };
@@ -1472,7 +1472,7 @@ const loadRiskScoresForProfile = async (userId, datasetProfileId, riskRunId = nu
     const rows = Array.isArray(payload?.rows) ? payload.rows : (Array.isArray(payload) ? payload : []);
     return { rows, runId: riskRun.id };
   } catch (err) {
-    console.warn('[chatPlanningService] Failed to load risk scores:', err.message);
+    logger.warn('planning-pipeline', `Failed to load risk scores: ${err.message}`);
     return { rows: [], runId: null };
   }
 };
@@ -1780,7 +1780,7 @@ export async function runPlanFromDatasetProfile({
         };
       }
     } catch (error) {
-      console.warn('[chatPlanningService] Prompt 3 readiness fallback:', error.message);
+      logger.warn('planning-pipeline', `Prompt 3 readiness fallback: ${error.message}`, { _traceId: planSpan.traceId });
     }
 
     const optimizationPayload = {
@@ -2067,7 +2067,7 @@ export async function runPlanFromDatasetProfile({
           filename: `inventory_projection_run_${run.id}.json`
         });
       } catch (replayErr) {
-        console.warn('[chatPlanningService] Failed to save replay metrics on constraint failure:', replayErr.message);
+        logger.warn('planning-pipeline', `Failed to save replay metrics on constraint failure: ${replayErr.message}`, { _traceId: planSpan.traceId });
       }
 
       const failMessage = `Constraint check failed (${constraintResult.violations.length} violations).`;
@@ -2142,7 +2142,7 @@ export async function runPlanFromDatasetProfile({
         );
 
         if (riskScoreRows.length === 0) {
-          console.info('[chatPlanningService] Risk-aware mode enabled but no risk scores found — skipping risk-adjusted plan.');
+          logger.info('planning-pipeline', 'Risk-aware mode enabled but no risk scores found — skipping risk-adjusted plan', { _traceId: planSpan.traceId });
         }
 
         if (riskScoreRows.length > 0) {
@@ -2351,11 +2351,11 @@ export async function runPlanFromDatasetProfile({
           }
         };
 
-        console.info(`[chatPlanningService] Risk-aware plan produced: ${riskNormalizedPlan.length} rows, ${riskAdjustments.summary.num_impacted_skus} impacted SKUs.`);
+        logger.info('planning-pipeline', `Risk-aware plan produced: ${riskNormalizedPlan.length} rows, ${riskAdjustments.summary.num_impacted_skus} impacted SKUs`, { _traceId: planSpan.traceId });
         } // end if (riskScoreRows.length > 0)
       } catch (riskErr) {
         // Risk-aware planning failure must NOT fail the base plan run.
-        console.warn('[chatPlanningService] Risk-aware planning failed (base plan unaffected):', riskErr.message);
+        logger.warn('planning-pipeline', `Risk-aware planning failed (base plan unaffected): ${riskErr.message}`, { _traceId: planSpan.traceId });
       }
     }
     // ── End risk-aware block ─────────────────────────────────────────────────
@@ -2395,7 +2395,7 @@ export async function runPlanFromDatasetProfile({
         );
         artifactRefs.workflow_a_readiness = readinessSaved.ref;
       } catch (error) {
-        console.warn('[chatPlanningService] Failed to persist readiness artifact:', error.message);
+        logger.warn('planning-pipeline', `Failed to persist readiness artifact: ${error.message}`, { _traceId: planSpan.traceId });
       }
     }
 
@@ -2551,7 +2551,7 @@ export async function runPlanFromDatasetProfile({
         };
       }
     } catch (error) {
-      console.warn('[chatPlanningService] Prompt 4 report fallback:', error.message);
+      logger.warn('planning-pipeline', `Prompt 4 report fallback: ${error.message}`, { _traceId: planSpan.traceId });
     }
 
     const reportSaved = await saveJsonArtifact(run.id, 'report_json', finalReport, ARTIFACT_SIZE_THRESHOLD, {
@@ -2573,7 +2573,7 @@ export async function runPlanFromDatasetProfile({
         solver_status: solverResult?.status || 'unknown'
       }
     }).catch((error) => {
-      console.warn('[chatPlanningService] audit trail write failed (non-fatal):', error.message);
+      logger.warn('planning-pipeline', `Audit trail write failed (non-fatal): ${error.message}`, { _traceId: planSpan.traceId });
     });
 
     const planCsv = toCsv(normalizedPlan);
@@ -2623,7 +2623,7 @@ export async function runPlanFromDatasetProfile({
           replayMetrics
         })
       }).catch((error) => {
-        console.warn('[chatPlanningService] Failed to update run settings template:', error.message);
+        logger.warn('planning-pipeline', `Failed to update run settings template: ${error.message}`);
       });
     }
 

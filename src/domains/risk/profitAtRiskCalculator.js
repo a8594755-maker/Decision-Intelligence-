@@ -114,6 +114,10 @@ export const calculateProfitAtRiskForRow = (riskRow, financialIndex = {}, useFal
   const ssSource = riskRow.safetyStockSource || ((riskRow.safetyStock || 0) > 0 ? 'real' : 'fallback');
   const hasDemand = typeof riskRow.daysToStockout === 'number' && riskRow.daysToStockout !== Infinity;
 
+  // Industry benchmark for impact estimation
+  const BENCHMARK_PROFIT = 50;
+  const benchmarkProfitAtRisk = exposureQty * BENCHMARK_PROFIT;
+
   const assumptions = [
     {
       field: 'profitPerUnit',
@@ -124,7 +128,17 @@ export const calculateProfitAtRiskForRow = (riskRow, financialIndex = {}, useFal
         ? `Matched ${item} in fg_financials (${currency})`
         : profitAtRiskReason === 'ASSUMPTION'
           ? `No financial data for ${item}; using default $${DEFAULT_PROFIT_PER_UNIT}/unit`
-          : `No financial data and fallback disabled`
+          : `No financial data and fallback disabled — profitAtRisk = $0`,
+      impact: profitAtRiskReason !== 'REAL' ? {
+        affectedMetric: 'profitAtRisk',
+        currentValue: profitAtRisk,
+        estimatedWithRealData: benchmarkProfitAtRisk,
+        changeRatio: profitPerUnit > 0 ? Math.round(BENCHMARK_PROFIT / profitPerUnit) : null,
+        severity: exposureQty > 0 ? 'high' : 'low',
+        sensitivityNote: exposureQty > 0
+          ? `If real profit/unit is $${BENCHMARK_PROFIT}, profitAtRisk would be $${benchmarkProfitAtRisk.toLocaleString()} (${Math.round(BENCHMARK_PROFIT / (profitPerUnit || 1))}x current)`
+          : 'No exposure — impact is zero regardless of profit/unit'
+      } : null
     },
     {
       field: 'leadTimeDays',
@@ -133,7 +147,14 @@ export const calculateProfitAtRiskForRow = (riskRow, financialIndex = {}, useFal
       isDefault: riskRow.leadTimeDaysSource !== 'supplier',
       note: riskRow.leadTimeDaysSource === 'supplier'
         ? `Lead time from suppliers: ${riskRow.leadTimeDaysUsed} days`
-        : 'Using system default lead time (7 days)'
+        : 'Using system default lead time (7 days)',
+      impact: riskRow.leadTimeDaysSource !== 'supplier' ? {
+        affectedMetric: 'daysToStockout',
+        currentValue: riskRow.leadTimeDaysUsed ?? 7,
+        estimatedWithRealData: null,
+        severity: 'medium',
+        sensitivityNote: 'If real lead time is longer, stockout risk window widens proportionally'
+      } : null
     },
     {
       field: 'safetyStock',
@@ -142,7 +163,16 @@ export const calculateProfitAtRiskForRow = (riskRow, financialIndex = {}, useFal
       isDefault: ssSource !== 'real',
       note: ssSource === 'real'
         ? `Safety stock from inventory: ${riskRow.safetyStock}`
-        : 'No safety stock data; using 0'
+        : 'No safety stock data; using 0',
+      impact: ssSource !== 'real' ? {
+        affectedMetric: 'gapQty',
+        currentValue: gapQty,
+        estimatedWithRealData: null,
+        severity: gapQty > 0 ? 'medium' : 'low',
+        sensitivityNote: gapQty > 0
+          ? 'With real safety stock thresholds, gap quantity and risk classification may change'
+          : 'No gap currently — safety stock assumption has low impact'
+      } : null
     },
     {
       field: 'demandCoverage',
@@ -151,24 +181,31 @@ export const calculateProfitAtRiskForRow = (riskRow, financialIndex = {}, useFal
       isDefault: !hasDemand,
       note: hasDemand
         ? `Demand data present; daysToStockout = ${riskRow.daysToStockout}`
-        : 'No component_demand data for this item/plant'
+        : 'No component_demand data — cannot calculate daysToStockout or P(stockout)',
+      impact: !hasDemand ? {
+        affectedMetric: 'daysToStockout',
+        currentValue: null,
+        estimatedWithRealData: null,
+        severity: 'high',
+        sensitivityNote: 'Without demand data, stockout probability and days-to-stockout are unavailable. Upload BOM + demand forecast to enable full risk analysis.'
+      } : null
     }
   ];
 
-  // Compute confidence_score (0-1 weighted average)
+  // Compute confidence_score (0-1 weighted average) with differentiated fallback penalties
   const WEIGHTS = { financial: 0.4, leadTime: 0.25, safetyStock: 0.2, demand: 0.15 };
   const signals = {
-    financial: profitAtRiskReason === 'REAL' ? 1.0 : profitAtRiskReason === 'ASSUMPTION' ? 0.3 : 0.0,
-    leadTime: riskRow.leadTimeDaysSource === 'supplier' ? 1.0 : 0.3,
-    safetyStock: ssSource === 'real' ? 1.0 : 0.3,
+    financial: profitAtRiskReason === 'REAL' ? 1.0 : profitAtRiskReason === 'ASSUMPTION' ? 0.15 : 0.0,
+    leadTime: riskRow.leadTimeDaysSource === 'supplier' ? 1.0 : 0.35,
+    safetyStock: ssSource === 'real' ? 1.0 : 0.25,
     demand: hasDemand ? 1.0 : 0.0
   };
-  const confidence_score = Math.round((
-    signals.financial * WEIGHTS.financial +
+  const rawScore = signals.financial * WEIGHTS.financial +
     signals.leadTime * WEIGHTS.leadTime +
     signals.safetyStock * WEIGHTS.safetyStock +
-    signals.demand * WEIGHTS.demand
-  ) * 100) / 100;
+    signals.demand * WEIGHTS.demand;
+  // Non-linear scaling to spread the 0.2-0.8 range apart
+  const confidence_score = Math.round(Math.pow(rawScore, 0.75) * 100) / 100;
 
   // Build computation trace
   const computationTrace = {
@@ -210,15 +247,46 @@ export const calculateProfitAtRiskForRow = (riskRow, financialIndex = {}, useFal
     });
   }
 
-  // Generate what-if hints from default assumptions
-  const hintMap = {
-    profitPerUnit: { action: `Upload financials for ${item}`, currentState: `Using fallback ($${DEFAULT_PROFIT_PER_UNIT}/unit)`, potentialState: 'Real profit/unit from fg_financials', impactField: 'profitAtRisk' },
-    leadTimeDays: { action: `Add lead_time_days to suppliers for ${item}`, currentState: 'Using system default (7 days)', potentialState: 'Supplier-specific lead time', impactField: 'daysToStockout' },
-    safetyStock: { action: `Set safety_stock in inventory for ${item}`, currentState: 'Using 0 (no safety stock)', potentialState: 'Real safety stock threshold', impactField: 'gapQty' },
-    demandCoverage: { action: `Run BOM explosion forecast including ${item}`, currentState: 'No demand forecast data', potentialState: 'daysToStockout and P(stockout) calculated', impactField: 'daysToStockout' }
-  };
+  // Generate what-if hints from assumptions (both fallback and missing sources)
   assumptions.filter(a => a.isDefault).forEach(a => {
-    if (hintMap[a.field]) computationTrace.what_if_hints.push(hintMap[a.field]);
+    const isMissing = a.source === 'missing';
+    const impact = a.impact;
+    const hint = {
+      field: a.field,
+      urgency: isMissing ? 'critical' : 'improvement',
+      impactField: impact?.affectedMetric || a.field,
+      impactSeverity: impact?.severity || 'medium',
+    };
+
+    if (a.field === 'profitPerUnit') {
+      hint.action = isMissing
+        ? `[CRITICAL] Upload fg_financials with profit_per_unit for ${item} — currently profitAtRisk = $0`
+        : `Upload financials for ${item} to replace $${DEFAULT_PROFIT_PER_UNIT}/unit fallback`;
+      hint.currentState = isMissing ? 'No financial data (profitAtRisk = $0)' : `Using fallback ($${DEFAULT_PROFIT_PER_UNIT}/unit)`;
+      hint.potentialState = `Real profit/unit from fg_financials`;
+      if (impact?.estimatedWithRealData) {
+        hint.estimatedImpact = `profitAtRisk could be ~$${impact.estimatedWithRealData.toLocaleString()} (${impact.changeRatio}x current)`;
+      }
+    } else if (a.field === 'leadTimeDays') {
+      hint.action = `Add lead_time_days to suppliers for ${item}`;
+      hint.currentState = 'Using system default (7 days)';
+      hint.potentialState = 'Supplier-specific lead time';
+      hint.estimatedImpact = 'Longer real lead time would widen the risk window';
+    } else if (a.field === 'safetyStock') {
+      hint.action = `Set safety_stock in inventory for ${item}`;
+      hint.currentState = 'Using 0 (no safety stock)';
+      hint.potentialState = 'Real safety stock threshold — gap calculation becomes accurate';
+      hint.estimatedImpact = gapQty > 0 ? 'May change risk classification from critical→warning or warning→OK' : 'Low impact — no gap currently';
+    } else if (a.field === 'demandCoverage') {
+      hint.action = isMissing
+        ? `[CRITICAL] Upload BOM + demand forecast for ${item} — daysToStockout and P(stockout) are unavailable`
+        : `Run BOM explosion forecast including ${item}`;
+      hint.currentState = 'No demand forecast data';
+      hint.potentialState = 'daysToStockout and P(stockout) calculated';
+      hint.estimatedImpact = 'Enables stockout probability, required for full risk scoring';
+    }
+
+    computationTrace.what_if_hints.push(hint);
   });
 
   return {

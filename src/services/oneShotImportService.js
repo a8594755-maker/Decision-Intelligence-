@@ -136,7 +136,7 @@ export function generateSheetPlans(workbook, fileName = 'unknown', fileSize = 0,
           mappingMeta,
         });
 
-        console.log(`[generateSheetPlans] ${sheetName} (${uploadType}): coverage=${Math.round(mappingStatus.coverage * 100)}%, missing=[${mappingStatus.missingRequired.join(', ')}], typeConfidence=${Math.round(classification.confidence * 100)}%`);
+        logger.info('import-classify', `${sheetName} (${uploadType}): coverage=${Math.round(mappingStatus.coverage * 100)}%, typeConfidence=${Math.round(classification.confidence * 100)}%`, { sheetName, uploadType, coverage: mappingStatus.coverage, missingRequired: mappingStatus.missingRequired });
       }
       
       // ✅ B) Fix auto-enable rule: only check mapping completeness, not type confidence
@@ -178,7 +178,7 @@ export function generateSheetPlans(workbook, fileName = 'unknown', fileSize = 0,
       plans.push(planPayload);
       
     } catch (error) {
-      console.error(`[One-shot] Failed to analyze sheet "${sheetName}":`, error);
+      logger.error('import-classify', `Failed to analyze sheet "${sheetName}": ${error.message}`, { sheetName, error: error.message });
       plans.push({
         sheetId,
         sheetName,
@@ -200,13 +200,7 @@ export function generateSheetPlans(workbook, fileName = 'unknown', fileSize = 0,
     }
   }
   
-  console.log('[One-shot] Generated sheet plans:', plans.map(p => ({ 
-    sheetId: p.sheetId, 
-    name: p.sheetName, 
-    type: p.uploadType, 
-    confidence: Math.round(p.confidence * 100) + '%',
-    enabled: p.enabled 
-  })));
+  logger.info('import-classify', `Generated ${plans.length} sheet plans`, { plans: plans.map(p => ({ name: p.sheetName, type: p.uploadType, enabled: p.enabled })) });
   
   return plans;
 }
@@ -294,7 +288,7 @@ export function generateSheetPlansFromParsed(parsed, fileName = 'unknown', fileS
         reviewRequired: mappingStatus.reviewRequired || false,
       });
     } catch (error) {
-      console.error(`[One-shot] Failed to analyze sheet "${sheetName}":`, error);
+      logger.error('import-classify', `Failed to analyze sheet "${sheetName}": ${error.message}`, { sheetName, error: error.message });
       plans.push({
         sheetId, sheetName, uploadType: null, suggestedType: null, confidence: 0,
         enabled: false, disabledReason: `Analysis failed: ${error.message}`, rowCount: 0,
@@ -304,10 +298,7 @@ export function generateSheetPlansFromParsed(parsed, fileName = 'unknown', fileS
     }
   }
 
-  console.log('[One-shot] Generated sheet plans (from parsed):', plans.map(p => ({
-    sheetId: p.sheetId, name: p.sheetName, type: p.uploadType,
-    confidence: Math.round(p.confidence * 100) + '%', enabled: p.enabled
-  })));
+  logger.info('import-classify', `Generated ${plans.length} sheet plans (from parsed)`, { plans: plans.map(p => ({ name: p.sheetName, type: p.uploadType, enabled: p.enabled })) });
 
   return plans;
 }
@@ -348,10 +339,10 @@ export async function importWorkbookSheets({ userId, workbook, fileName, sheetPl
   const hasIngestKeySupport = await checkIngestKeySupport();
   
   if (!hasIngestKeySupport) {
-    console.warn('[One-shot] Ingest key support not deployed, using fallback mode');
+    logger.warn('import-pipeline', 'Ingest key support not deployed, using fallback mode');
     // All-or-nothing mode requires ingest_key support
     if (mode === 'all-or-nothing') {
-      console.warn('[One-shot] All-or-nothing mode requires ingest_key support, falling back to best-effort');
+      logger.warn('import-pipeline', 'All-or-nothing mode requires ingest_key support, falling back to best-effort');
     }
   }
   
@@ -382,11 +373,11 @@ export async function importWorkbookSheets({ userId, workbook, fileName, sheetPl
     const plan = enabledPlans[i];
     const { sheetName, suggestedType: uploadType } = plan;
     
-    console.log(`[One-shot] Processing sheet ${i + 1}/${enabledPlans.length}: ${sheetName} (${uploadType})`);
+    logger.info('import-pipeline', `Processing sheet ${i + 1}/${enabledPlans.length}: ${sheetName} (${uploadType})`, { _traceId: pipelineSpan.traceId, sheetName, uploadType });
     
     // Check abort
     if (signal?.aborted) {
-      console.log('[One-shot] Aborted by user');
+      logger.warn('import-pipeline', 'Aborted by user', { _traceId: pipelineSpan.traceId });
       report.sheetReports.push({
         sheetName,
         uploadType,
@@ -396,7 +387,7 @@ export async function importWorkbookSheets({ userId, workbook, fileName, sheetPl
       
       // All-or-nothing: rollback on abort
       if (mode === 'all-or-nothing' && hasIngestKeySupport && succeededSheetsForRollback.length > 0) {
-        console.log('[One-shot] All-or-nothing mode: Rolling back succeeded sheets due to abort');
+        logger.warn('import-pipeline', 'All-or-nothing: rolling back due to abort', { _traceId: pipelineSpan.traceId });
         await rollbackSucceededSheets(succeededSheetsForRollback, userId);
         report.rolledBack = true;
       }
@@ -406,7 +397,7 @@ export async function importWorkbookSheets({ userId, workbook, fileName, sheetPl
     
     // ✅ Two-step Gate: Hard gate check for mappingFinal
     if (!plan.mappingFinal || Object.keys(plan.mappingFinal).length === 0) {
-      console.log(`[One-shot] Sheet "${sheetName}" NEEDS_REVIEW: no mappingFinal`);
+      logger.info('import-pipeline', `Sheet "${sheetName}" NEEDS_REVIEW: no mappingFinal`, { _traceId: pipelineSpan.traceId, sheetName });
       report.needsReviewSheets++;
       report.sheetReports.push({
         sheetName,
@@ -437,11 +428,11 @@ export async function importWorkbookSheets({ userId, workbook, fileName, sheetPl
             columnMapping
           });
           
-          console.log(`[One-shot] Pre-import check for ${sheetName}: coverage=${Math.round(mappingStatus.coverage * 100)}%, missing=${mappingStatus.missingRequired.join(',')}`);
-          
+          logger.info('import-pipeline', `Pre-import check for ${sheetName}: coverage=${Math.round(mappingStatus.coverage * 100)}%`, { _traceId: pipelineSpan.traceId, sheetName, coverage: mappingStatus.coverage, missingRequired: mappingStatus.missingRequired });
+
           if (!mappingStatus.isComplete) {
             // Hard block: import not allowed
-            console.warn(`[One-shot] BLOCKED: ${sheetName} mapping incomplete`);
+            logger.warn('import-pipeline', `BLOCKED: ${sheetName} mapping incomplete`, { _traceId: pipelineSpan.traceId, sheetName, missingRequired: mappingStatus.missingRequired });
             
             report.needsReviewSheets++;
             report.sheetReports.push({
@@ -467,7 +458,7 @@ export async function importWorkbookSheets({ userId, workbook, fileName, sheetPl
         }
       }
     } catch (preCheckError) {
-      console.error(`[One-shot] Pre-check error for ${sheetName}:`, preCheckError);
+      logger.error('import-pipeline', `Pre-check error for ${sheetName}: ${preCheckError.message}`, { _traceId: pipelineSpan.traceId, sheetName, error: preCheckError.message });
       report.needsReviewSheets++;
       report.sheetReports.push({
         sheetName,
@@ -526,7 +517,7 @@ export async function importWorkbookSheets({ userId, workbook, fileName, sheetPl
         
         // All-or-nothing: rollback on any failure
         if (mode === 'all-or-nothing' && hasIngestKeySupport && succeededSheetsForRollback.length > 0) {
-          console.log('[One-shot] All-or-nothing mode: Rolling back succeeded sheets due to failure');
+          logger.warn('import-pipeline', 'All-or-nothing: rolling back due to failure', { _traceId: pipelineSpan.traceId });
           await rollbackSucceededSheets(succeededSheetsForRollback, userId);
           report.rolledBack = true;
         }
@@ -562,7 +553,7 @@ export async function importWorkbookSheets({ userId, workbook, fileName, sheetPl
       }
 
     } catch (error) {
-      console.error(`[One-shot] Failed to import sheet "${sheetName}":`, error);
+      logger.error('import-pipeline', `Failed to import sheet "${sheetName}": ${error.message}`, { _traceId: pipelineSpan.traceId, sheetName, error: error.message });
       
       report.sheetReports.push({
         sheetName,
@@ -575,7 +566,7 @@ export async function importWorkbookSheets({ userId, workbook, fileName, sheetPl
       
       // All-or-nothing: rollback on exception
       if (mode === 'all-or-nothing' && hasIngestKeySupport && succeededSheetsForRollback.length > 0) {
-        console.log('[One-shot] All-or-nothing mode: Rolling back succeeded sheets due to exception');
+        logger.warn('import-pipeline', 'All-or-nothing: rolling back due to exception', { _traceId: pipelineSpan.traceId });
         await rollbackSucceededSheets(succeededSheetsForRollback, userId);
         report.rolledBack = true;
       }
@@ -613,11 +604,11 @@ export async function importWorkbookSheets({ userId, workbook, fileName, sheetPl
  * @returns {Promise<void>}
  */
 async function rollbackSucceededSheets(succeededSheets, userId) {
-  console.log(`[One-shot] Rolling back ${succeededSheets.length} succeeded sheets...`);
+  logger.warn('import-rollback', `Rolling back ${succeededSheets.length} succeeded sheets`);
   
   for (const sheet of succeededSheets) {
     try {
-      console.log(`[One-shot] Rolling back "${sheet.sheetName}" (${sheet.uploadType}), ingest_key: ${sheet.idempotencyKey}`);
+      logger.info('import-rollback', `Rolling back "${sheet.sheetName}" (${sheet.uploadType})`, { sheetName: sheet.sheetName, uploadType: sheet.uploadType });
       
       const deletedCount = await deletePreviousDataByIngestKey(
         userId,
@@ -625,15 +616,15 @@ async function rollbackSucceededSheets(succeededSheets, userId) {
         sheet.uploadType
       );
       
-      console.log(`[One-shot] Rolled back "${sheet.sheetName}": ${deletedCount} rows deleted`);
+      logger.info('import-rollback', `Rolled back "${sheet.sheetName}": ${deletedCount} rows deleted`, { sheetName: sheet.sheetName, deletedCount });
       
     } catch (error) {
-      console.error(`[One-shot] Failed to rollback "${sheet.sheetName}":`, error);
+      logger.error('import-rollback', `Failed to rollback "${sheet.sheetName}": ${error.message}`, { sheetName: sheet.sheetName, error: error.message });
       // Continue rolling back other sheets, don't interrupt
     }
   }
   
-  console.log('[One-shot] Rollback completed');
+  logger.info('import-rollback', 'Rollback completed');
 }
 
 /**
@@ -669,7 +660,7 @@ async function importSingleSheet({
         const { extractSheetInWorker } = await import('../utils/xlsxParserWorkerClient');
         sheetData = await extractSheetInWorker(sheetName);
       } catch (workerErr) {
-        console.warn(`[One-shot] Worker extract failed for "${sheetName}":`, workerErr.message);
+        logger.warn('import-ingest', `Worker extract failed for "${sheetName}": ${workerErr.message}`, { sheetName });
         // If workbook is available, try direct parse
         if (workbook?.Sheets?.[sheetName]) {
           sheetData = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { defval: '' });
@@ -704,7 +695,7 @@ async function importSingleSheet({
     
     // ✅ Two-step Gate: Only use providedMapping (mappingFinal), no fallback allowed
     if (!providedMapping || Object.keys(providedMapping).length === 0) {
-      console.log(`[importSingleSheet] GATE: No providedMapping for ${sheetName}, marking NEEDS_REVIEW`);
+      logger.info('import-ingest', `No providedMapping for ${sheetName}, marking NEEDS_REVIEW`, { sheetName });
       return {
         sheetName,
         uploadType,
@@ -715,7 +706,7 @@ async function importSingleSheet({
     
     // ✅ Use providedMapping (mappingFinal from Step 2)
     const columnMapping = providedMapping;
-    console.log(`[importSingleSheet] ✅ Using mappingFinal:`, Object.keys(columnMapping).length, 'mappings');
+    logger.info('import-ingest', `Using mappingFinal: ${Object.keys(columnMapping).length} mappings`, { sheetName, mappingCount: Object.keys(columnMapping).length });
     
     // 4. Check required fields coverage
     const mappingStatus = getRequiredMappingStatus({
@@ -724,7 +715,7 @@ async function importSingleSheet({
       columnMapping
     });
     
-    console.log(`[importSingleSheet] Final coverage: ${Math.round(mappingStatus.coverage * 100)}%, missing:`, mappingStatus.missingRequired);
+    logger.info('import-ingest', `Final coverage: ${Math.round(mappingStatus.coverage * 100)}%`, { sheetName, coverage: mappingStatus.coverage, missingRequired: mappingStatus.missingRequired });
     
     // If mapping insufficient, mark as NEEDS_REVIEW (import not allowed)
     if (!mappingStatus.isComplete) {
@@ -751,7 +742,7 @@ async function importSingleSheet({
     
     // Log auto-fill summary
     if (autoFillResult.autoFillCount > 0) {
-      console.log(`[One-shot] Auto-filled ${autoFillResult.autoFillCount} rows:`, autoFillResult.autoFillSummary.join(', '));
+      logger.info('import-ingest', `Auto-filled ${autoFillResult.autoFillCount} rows`, { sheetName, autoFillCount: autoFillResult.autoFillCount, summary: autoFillResult.autoFillSummary });
     }
     
     if (strictMode && validationResult.errorRows && validationResult.errorRows.length > 0) {
@@ -809,7 +800,7 @@ async function importSingleSheet({
       );
       batchId = batchRecord.id;
     } catch (batchErr) {
-      console.warn(`[One-shot] createBatch failed or timed out (non-blocking):`, batchErr?.message);
+      logger.warn('import-ingest', `createBatch failed (non-blocking): ${batchErr?.message}`, { sheetName });
       batchId = `local-batch-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     }
     
@@ -821,7 +812,7 @@ async function importSingleSheet({
     if (hasIngestKeySupport && !forceRerun) {
       const existingRun = await withTimeout(findSucceededRun(userId, idempotencyKey), 5000, null);
       if (existingRun) {
-        console.log(`[One-shot] Sheet "${sheetName}" already imported (run: ${existingRun.id}), skipping`);
+        logger.info('import-ingest', `Sheet "${sheetName}" already imported (run: ${existingRun.id}), skipping`, { sheetName, existingRunId: existingRun.id });
         return {
           sheetName,
           uploadType,
@@ -853,7 +844,7 @@ async function importSingleSheet({
         );
         sheetRunId = sheetRun.id;
       } catch (runErr) {
-        console.warn(`[One-shot] upsertSheetRun failed or timed out (non-blocking):`, runErr?.message);
+        logger.warn('import-ingest', `upsertSheetRun failed (non-blocking): ${runErr?.message}`, { sheetName });
       }
 
       // Delete previous data (idempotent)
@@ -863,9 +854,9 @@ async function importSingleSheet({
           8000,
           0
         );
-        console.log(`[One-shot] Deleted ${deletedCount} previous rows for sheet "${sheetName}"`);
+        logger.info('import-ingest', `Deleted ${deletedCount} previous rows for "${sheetName}"`, { sheetName, deletedCount });
       } catch (deleteError) {
-        console.warn(`[One-shot] Failed to delete previous data:`, deleteError);
+        logger.warn('import-ingest', `Failed to delete previous data: ${deleteError?.message}`, { sheetName });
         // Continue anyway (may be first import)
       }
     }
@@ -880,11 +871,11 @@ async function importSingleSheet({
       );
       uploadFileId = fileRecord?.id;
     } catch (saveErr) {
-      console.warn(`[One-shot] saveFile failed (non-blocking):`, saveErr?.message);
+      logger.warn('import-ingest', `saveFile failed (non-blocking): ${saveErr?.message}`, { sheetName });
     }
     if (!uploadFileId) {
       uploadFileId = `local-file-${Date.now()}`;
-      console.warn(`[One-shot] Using local file ID: ${uploadFileId}`);
+      logger.warn('import-ingest', `Using local file ID: ${uploadFileId}`, { sheetName, uploadFileId });
     }
     
     // 11. Use already validated and auto-filled rows (rowsToIngest already defined above)
@@ -892,7 +883,7 @@ async function importSingleSheet({
     // 11.5. Final validation of critical required fields
     const finalValidation = validateRequiredFields(rowsToIngest, uploadType);
     if (!finalValidation.isValid) {
-      console.error(`[One-shot] Critical required fields still missing:`, finalValidation.missingFields);
+      logger.error('import-ingest', `Critical required fields still missing`, { sheetName, missingFields: finalValidation.missingFields });
       return {
         sheetName,
         uploadType,
@@ -952,7 +943,7 @@ async function importSingleSheet({
         5000
       );
     } catch (updateErr) {
-      console.warn(`[One-shot] updateBatch failed or timed out (non-blocking):`, updateErr?.message);
+      logger.warn('import-ingest', `updateBatch failed (non-blocking): ${updateErr?.message}`, { sheetName });
     }
 
     // 14. Update sheet run status (succeeded) — non-blocking
@@ -969,7 +960,7 @@ async function importSingleSheet({
           5000
         );
       } catch (runUpdateErr) {
-        console.warn(`[One-shot] updateSheetRun failed or timed out (non-blocking):`, runUpdateErr?.message);
+        logger.warn('import-ingest', `updateSheetRun failed (non-blocking): ${runUpdateErr?.message}`, { sheetName });
       }
     }
     
@@ -990,7 +981,7 @@ async function importSingleSheet({
     };
     
   } catch (error) {
-    console.error(`[One-shot] Import error for sheet "${sheetName}":`, error);
+    logger.error('import-ingest', `Import error for sheet "${sheetName}": ${error.message}`, { sheetName, error: error.message });
     
     // Update sheet run status (failed)
     if (hasIngestKeySupport && sheetRunId) {
@@ -1002,7 +993,7 @@ async function importSingleSheet({
           error: { message: error.message, stack: error.stack }
         });
       } catch (updateError) {
-        console.error('[One-shot] Failed to update sheet run status:', updateError);
+        logger.error('import-ingest', `Failed to update sheet run status: ${updateError.message}`, { sheetName, error: updateError.message });
       }
     }
     

@@ -105,4 +105,118 @@ describe('calculateProfitAtRiskBatch integration', () => {
     expect(typeof summary.itemsWithRealFinancials).toBe('number');
     expect(summary.itemsWithRealFinancials).toBeGreaterThanOrEqual(1);
   });
+
+  // ─── Explainability Tests ─────────────────────────────────────────────
+
+  it('assumptions have impact field for fallback rows', () => {
+    const { rows } = calculateProfitAtRiskBatch({
+      riskRows: [makeRow({
+        item: 'MAT-NOFIN', material_code: 'MAT-NOFIN',
+        leadTimeDaysSource: 'fallback', safetyStockSource: 'fallback',
+        daysToStockout: undefined, // no demand data
+      })],
+      financials: [],
+    });
+
+    const row = rows[0];
+    // All 4 assumptions should be default
+    expect(row.assumptions.every(a => a.isDefault)).toBe(true);
+    // profitPerUnit impact should show estimated value
+    const profitAssumption = row.assumptions.find(a => a.field === 'profitPerUnit');
+    expect(profitAssumption.impact).toBeTruthy();
+    expect(profitAssumption.impact.severity).toBe('high');
+    expect(profitAssumption.impact.estimatedWithRealData).toBeGreaterThan(profitAssumption.impact.currentValue);
+    expect(profitAssumption.impact.sensitivityNote).toContain('$');
+    // demand missing → high severity
+    const demandAssumption = row.assumptions.find(a => a.field === 'demandCoverage');
+    expect(demandAssumption.source).toBe('missing');
+    expect(demandAssumption.impact.severity).toBe('high');
+    expect(demandAssumption.impact.sensitivityNote).toContain('demand');
+  });
+
+  it('assumptions have null impact for real-data rows', () => {
+    const { rows } = calculateProfitAtRiskBatch({
+      riskRows: [makeRow()], financials: makeFinancials(),
+    });
+    const row = rows[0];
+    const profitAssumption = row.assumptions.find(a => a.field === 'profitPerUnit');
+    expect(profitAssumption.impact).toBeNull();
+    expect(profitAssumption.isDefault).toBe(false);
+  });
+
+  it('confidence_score varies meaningfully across data quality scenarios', () => {
+    // All real data
+    const best = calculateProfitAtRiskBatch({
+      riskRows: [makeRow()], financials: makeFinancials(),
+    }).rows[0].confidence_score;
+
+    // All fallback
+    const worst = calculateProfitAtRiskBatch({
+      riskRows: [makeRow({
+        item: 'MAT-X', material_code: 'MAT-X',
+        leadTimeDaysSource: 'fallback', safetyStockSource: 'fallback',
+        daysToStockout: undefined,
+      })],
+      financials: [],
+    }).rows[0].confidence_score;
+
+    // Mixed: real financials, fallback lead time
+    const mixed = calculateProfitAtRiskBatch({
+      riskRows: [makeRow({ leadTimeDaysSource: 'fallback', safetyStockSource: 'fallback' })],
+      financials: makeFinancials(),
+    }).rows[0].confidence_score;
+
+    // Scores should be distinct and well-separated
+    expect(best).toBe(1); // all real → 1.0
+    expect(worst).toBeLessThan(0.35); // all missing/fallback → very low
+    expect(mixed).toBeGreaterThan(worst);
+    expect(mixed).toBeLessThan(best);
+    // The gap between best and worst should be wide
+    expect(best - worst).toBeGreaterThanOrEqual(0.7);
+  });
+
+  it('what_if_hints differentiate missing vs fallback urgency', () => {
+    const { rows } = calculateProfitAtRiskBatch({
+      riskRows: [makeRow({
+        item: 'MAT-NOFIN', material_code: 'MAT-NOFIN',
+        daysToStockout: undefined,
+      })],
+      financials: [],
+    });
+
+    const hints = rows[0].computationTrace.what_if_hints;
+    // Should have hints for profitPerUnit (fallback), leadTime, safetyStock, demandCoverage (missing)
+    expect(hints.length).toBeGreaterThanOrEqual(2);
+
+    // profitPerUnit is ASSUMPTION (not missing, because useFallback=true)
+    const profitHint = hints.find(h => h.field === 'profitPerUnit');
+    expect(profitHint).toBeTruthy();
+    expect(profitHint.estimatedImpact).toBeTruthy();
+
+    // demandCoverage is MISSING → critical urgency
+    const demandHint = hints.find(h => h.field === 'demandCoverage');
+    expect(demandHint).toBeTruthy();
+    expect(demandHint.urgency).toBe('critical');
+    expect(demandHint.action).toContain('CRITICAL');
+  });
+
+  it('computationTrace includes all steps even with partial data', () => {
+    const { rows } = calculateProfitAtRiskBatch({
+      riskRows: [makeRow({ daysToStockout: undefined })],
+      financials: makeFinancials(),
+    });
+
+    const trace = rows[0].computationTrace;
+    // Without demand data, should have 4 steps (no Inventory Risk step)
+    expect(trace.steps.length).toBe(4);
+    expect(trace.steps.map(s => s.label)).toEqual([
+      'Inventory Lookup', 'Supply Coverage', 'Gap Calculation', 'Profit at Risk'
+    ]);
+    // With demand data
+    const { rows: rows2 } = calculateProfitAtRiskBatch({
+      riskRows: [makeRow()], financials: makeFinancials(),
+    });
+    expect(rows2[0].computationTrace.steps.length).toBe(5);
+    expect(rows2[0].computationTrace.steps[4].label).toBe('Inventory Risk');
+  });
 });
