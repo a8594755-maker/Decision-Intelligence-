@@ -84,6 +84,368 @@ __all__ = ['SCALE', 'OBJ_SCALE', 'SolverRunSettings', 'SolverStatusInfo', 'Suppl
            'solve_replenishment', 'solve_replenishment_multi_echelon', 'ortools_available']
 
 
+# ── local helpers for post-solve verification ──────────────────────────────────
+
+def _compute_capacity_binding(
+    cap_by_day_s: Dict[date, int],
+    usage_by_day: Dict[date, Any],
+    label: str,
+    *,
+    scale_divisor: int = 1,
+    threshold: float = 1.0,
+) -> Tuple[Optional[float], bool, Optional[str]]:
+    """Compute (min_slack, is_binding, natural_language) for a period-capacity family."""
+    if not cap_by_day_s:
+        return None, False, None
+    slacks: List[float] = []
+    for day, cap_s in cap_by_day_s.items():
+        cap_real = cap_s / scale_divisor if scale_divisor > 1 else _us(cap_s)
+        used = usage_by_day.get(day, 0)
+        used_real = used / scale_divisor if scale_divisor > 1 else _us(used)
+        slacks.append(cap_real - used_real)
+    min_slack = round(min(slacks), 4) if slacks else None
+    binding = min_slack is not None and min_slack < threshold
+    nl = f"{label} is binding (tightest period slack: {min_slack:,.1f})." if binding else None
+    return min_slack, binding, nl
+
+
+def _build_period_capacity_kpi(
+    cap_by_day_s: Dict[date, int],
+    usage_by_day: Dict[date, Any],
+    *,
+    scale_divisor: int = 1,
+    extra_fields: Optional[Dict[str, Any]] = None,
+) -> Optional[Dict[str, Any]]:
+    """Build a shared KPI dict with per-period utilization breakdown."""
+    if not cap_by_day_s:
+        return None
+    rows: List[Dict[str, Any]] = []
+    utils: List[float] = []
+    for day in sorted(cap_by_day_s.keys()):
+        cap_real = cap_by_day_s[day] / scale_divisor if scale_divisor > 1 else _us(cap_by_day_s[day])
+        used = usage_by_day.get(day, 0)
+        used_real = used / scale_divisor if scale_divisor > 1 else _us(used)
+        util = None if cap_real <= 0 else used_real / cap_real
+        if util is not None:
+            utils.append(util)
+        rows.append({
+            "period": day.isoformat(),
+            "used": round(used_real, 6),
+            "cap": round(cap_real, 6),
+            "utilization": None if util is None else round(util, 6),
+        })
+    result: Dict[str, Any] = {
+        "avg_utilization": None if not utils else round(sum(utils) / len(utils), 6),
+        "max_utilization": None if not utils else round(max(utils), 6),
+        "binding_periods": [r["period"] for r in rows if (r["utilization"] or 0.0) >= 0.999],
+        "periods": rows,
+    }
+    if extra_fields:
+        result.update(extra_fields)
+    return result
+
+
+def _make_tag_collector(echelon: str = "single") -> Tuple[List[Dict[str, Any]], Callable]:
+    """Return (tag_list, tag_fn) for recording constraint metadata."""
+    tags: List[Dict[str, Any]] = []
+    def _tag(
+        tag: str, description: str, *,
+        severity: str = "hard", scope: str = "global",
+        period: Optional[str] = None, sku: Optional[str] = None,
+        echelon_override: Optional[str] = None,
+    ) -> None:
+        tags.append({
+            "tag": tag, "description": description, "severity": severity,
+            "scope": scope, "period": period, "sku": sku,
+            "echelon": echelon_override or echelon,
+        })
+    return tags, _tag
+
+
+def _determine_final_status(
+    status_info: SolverStatusInfo,
+    constraints_checked: List[Dict[str, Any]],
+) -> "PlanningStatus":
+    """Compute the final status from CP-SAT status and constraint-check results."""
+    all_passed = all(c["passed"] for c in constraints_checked)
+    if status_info.status == PlanningStatus.TIMEOUT:
+        return PlanningStatus.TIMEOUT
+    if not all_passed:
+        return PlanningStatus.INFEASIBLE
+    return status_info.status if status_info.status in {
+        PlanningStatus.OPTIMAL, PlanningStatus.FEASIBLE,
+    } else PlanningStatus.FEASIBLE
+
+
+def _build_proof_and_diagnostics(
+    infeasible_reasons_detailed: List[Dict[str, Any]],
+    diagnose_mode: bool,
+    internal_diagnose: bool,
+    payload: Any,
+    *,
+    multi_echelon: bool = False,
+    infeasible_reasons: Optional[List[str]] = None,
+) -> Tuple[Dict, List, Dict, Dict]:
+    """Return (infeasibility_analysis, relaxation_analysis, relaxation_applied, diagnostics)."""
+    proof_tags = []
+    for row in infeasible_reasons_detailed:
+        proof_tags.extend(_as_list(row.get("top_offending_tags")))
+    infeasibility_analysis = (
+        _summarize_infeasibility(proof_tags) if proof_tags
+        else {"categories": [], "top_offending_tags": [], "suggestions": []}
+    )
+    relaxation_analysis: List[Dict[str, Any]] = []
+    if diagnose_mode and not internal_diagnose:
+        if multi_echelon:
+            if infeasible_reasons:
+                relaxation_analysis = [
+                    {"relaxed_tags": [t], "feasible_after_relaxation": None, "delta_cost_proxy": None}
+                    for t in ["CAP_PROD", "CAP_INV", "BUDGET_GLOBAL"]
+                ]
+        else:
+            relaxation_analysis = _run_relaxation_analysis_single(payload)
+    relaxation_applied = _build_relaxation_summary(relaxation_analysis)
+    diagnostics: Dict[str, Any] = {}
+    if diagnose_mode and not internal_diagnose:
+        diagnostics = {"mode": "progressive_relaxation", "relaxation_analysis": relaxation_analysis}
+    return infeasibility_analysis, relaxation_analysis, relaxation_applied, diagnostics
+
+
+def _build_base_constraint_checks(
+    nonneg_failed: int, moq_failed: int, pack_failed: int, max_failed: int,
+    budget_passed: bool, budget_detail: str,
+    *,
+    echelon: str = "single",
+    budget_binding: Any = None, budget_slack: Any = None,
+    budget_slack_unit: Any = None, budget_nl: Any = None,
+    moq_binding: Any = None, moq_nl: Any = None,
+    item_label: str = "SKU-period",
+) -> List[Dict[str, Any]]:
+    """Return the five base constraint checks shared by both solvers."""
+    return [
+        _mk_constraint_check(
+            name="order_qty_non_negative", tag="NONNEG",
+            passed=nonneg_failed == 0,
+            details=f"Negative quantity rows: {nonneg_failed}.",
+            description="All planned order quantities must be non-negative.",
+            scope="row", echelon=echelon,
+            binding=nonneg_failed > 0,
+        ),
+        _mk_constraint_check(
+            name="moq", tag="MOQ", passed=moq_failed == 0,
+            details=f"Rows violating MOQ: {moq_failed}.",
+            description=f"MOQ enforcement across {item_label} rows.",
+            scope="sku_period", echelon=echelon,
+            binding=moq_binding, slack=0.0 if moq_binding else None,
+            slack_unit="units", natural_language=moq_nl,
+        ),
+        _mk_constraint_check(
+            name="pack_size_multiple", tag="PACK", passed=pack_failed == 0,
+            details=f"Rows violating pack-size multiple: {pack_failed}.",
+            description=f"Pack-size multiple enforcement across {item_label} rows.",
+            scope="sku_period", echelon=echelon,
+            binding=pack_failed > 0,
+        ),
+        _mk_constraint_check(
+            name="budget_cap", tag="BUDGET_GLOBAL",
+            passed=budget_passed, details=budget_detail,
+            description="Shared budget cap across all SKUs.",
+            echelon=echelon,
+            binding=budget_binding, slack=budget_slack,
+            slack_unit=budget_slack_unit, natural_language=budget_nl,
+        ),
+        _mk_constraint_check(
+            name="max_order_qty", tag="MAXQ", passed=max_failed == 0,
+            details=f"Rows violating max_order_qty: {max_failed}.",
+            description=f"Max order quantity per {item_label}.",
+            scope="sku_period", echelon=echelon,
+            binding=max_failed > 0,
+        ),
+    ]
+
+
+def _propagate_bom_demand(
+    seed: Dict[Tuple[str, str], float],
+    children_by_parent: Dict[Tuple[str, str], List[Tuple[Tuple[str, str], int, float]]],
+    max_depth: int,
+    cap: float = 1e9,
+) -> Tuple[Dict[Tuple[str, str], float], Dict[Tuple[str, str], float], bool]:
+    """BFS BOM demand propagation. Returns (total_need, frontier_remainder, truncated)."""
+    total = dict(seed)
+    frontier = {k: v for k, v in total.items() if v > 0.0}
+    for _ in range(max_depth):
+        if not frontier:
+            break
+        nxt: Dict[Tuple[str, str], float] = {}
+        for pk, pq in frontier.items():
+            if pq <= 0.0:
+                continue
+            for ck, _, uq in children_by_parent.get(pk, []):
+                add = min(pq * uq, cap)
+                if add <= 0.0:
+                    continue
+                new = min(cap, total.get(ck, 0.0) + add)
+                delta = max(0.0, new - total.get(ck, 0.0))
+                if delta <= 0.0:
+                    continue
+                total[ck] = new
+                nxt[ck] = min(cap, nxt.get(ck, 0.0) + delta)
+        frontier = nxt
+    return total, frontier, bool(frontier)
+
+
+def _propagate_bom_demand_by_period(
+    seed: Dict[Tuple[str, str], Dict[int, float]],
+    children_by_parent: Dict[Tuple[str, str], List[Tuple[Tuple[str, str], int, float]]],
+    max_depth: int,
+    cap: float = 1e9,
+) -> Tuple[Dict[Tuple[str, str], Dict[int, float]], bool]:
+    """BFS BOM demand propagation per-period. Returns (need_by_key_idx, truncated)."""
+    need = {k: dict(v) for k, v in seed.items()}
+    frontier = {k: dict(v) for k, v in seed.items() if any(vv > 0 for vv in v.values())}
+    for _ in range(max_depth):
+        if not frontier:
+            break
+        nxt: Dict[Tuple[str, str], Dict[int, float]] = {}
+        for pk, pq in frontier.items():
+            for ck, _, uq in children_by_parent.get(pk, []):
+                cb = need.setdefault(ck, {})
+                fb = nxt.setdefault(ck, {})
+                for t, pqt in pq.items():
+                    add = pqt * uq
+                    if add <= 0.0:
+                        continue
+                    prev = cb.get(t, 0.0)
+                    new = min(cap, prev + add)
+                    delta = max(0.0, new - prev)
+                    if delta <= 0.0:
+                        continue
+                    cb[t] = new
+                    fb[t] = min(cap, fb.get(t, 0.0) + delta)
+        frontier = {k: b for k, b in nxt.items() if any(v > 0 for v in b.values())}
+    return need, bool(frontier)
+
+
+def _build_infeasible_response_single(
+    *,
+    t0: datetime,
+    status_info: SolverStatusInfo,
+    solver_settings: SolverRunSettings,
+    solve_time_ms: int,
+    constraint_tags: List[Dict[str, Any]],
+    diagnose_mode: bool,
+    internal_diagnose: bool,
+    payload: Any,
+    production_cap_by_day_s: Dict,
+    inventory_cap_by_day_s: Dict,
+    budget_cap: Optional[float],
+    service_level_target: Optional[float],
+) -> Dict[str, Any]:
+    """Build the full infeasible-case response for single-echelon solver."""
+    suspected_tags: List[str] = []
+    if production_cap_by_day_s:
+        suspected_tags.append("CAP_PROD")
+    if inventory_cap_by_day_s:
+        suspected_tags.append("CAP_INV")
+    if budget_cap is not None:
+        suspected_tags.append("BUDGET_GLOBAL")
+    if service_level_target is not None:
+        suspected_tags.append("SERVICE_LEVEL_GLOBAL")
+    if not suspected_tags:
+        suspected_tags.extend(["BALANCE_INV", "MOQ", "PACK", "MAXQ"])
+
+    infeasibility_analysis = _summarize_infeasibility(suspected_tags)
+    relaxation_analysis: List[Dict[str, Any]] = []
+    if diagnose_mode and not internal_diagnose:
+        relaxation_analysis = _run_relaxation_analysis_single(payload)
+        restoring = [r["relaxed_tags"][0] for r in relaxation_analysis if r.get("feasible_after_relaxation")]
+        if restoring:
+            infeasibility_analysis = _summarize_infeasibility(restoring)
+    relaxation_applied = _build_relaxation_summary(relaxation_analysis)
+
+    diagnostics: Dict[str, Any] = {}
+    if diagnose_mode and not internal_diagnose:
+        diagnostics = {"mode": "progressive_relaxation", "relaxation_analysis": relaxation_analysis}
+
+    reasons_detailed = [{
+        "category": c,
+        "top_offending_tags": infeasibility_analysis["top_offending_tags"][:8],
+        "suggested_actions": infeasibility_analysis["suggestions"][:4],
+        "message": (
+            f"Infeasible category '{c}'. "
+            f"Likely conflicting tags: {', '.join(infeasibility_analysis['top_offending_tags'][:5])}."
+        ),
+    } for c in infeasibility_analysis["categories"]]
+
+    constraints_checked: List[Dict[str, Any]] = [
+        _mk_constraint_check(
+            name="model_feasibility", tag="CP_FEASIBILITY", passed=False,
+            details=f"CP-SAT status '{status_info.status_name}' ({status_info.termination_reason}).",
+            description="Overall model feasibility status.",
+        ),
+    ]
+    _infeasible_cap_checks = [
+        (budget_cap is not None, "budget_cap", "BUDGET_GLOBAL",
+         "Budget family participates in infeasibility candidate set.", "Shared budget cap across SKUs.", None),
+        (bool(production_cap_by_day_s), "shared_production_cap", "CAP_PROD",
+         "Shared production capacity family participates in infeasibility candidate set.",
+         "Shared production capacity per period.", sorted(production_cap_by_day_s.keys()) if production_cap_by_day_s else []),
+        (bool(inventory_cap_by_day_s), "shared_inventory_cap", "CAP_INV",
+         "Shared inventory capacity family participates in infeasibility candidate set.",
+         "Shared inventory capacity per period.", sorted(inventory_cap_by_day_s.keys()) if inventory_cap_by_day_s else []),
+    ]
+    for active, cname, ctag, cdetails, cdesc, days_list in _infeasible_cap_checks:
+        if not active:
+            continue
+        kwargs: Dict[str, Any] = {"name": cname, "tag": ctag, "passed": False, "details": cdetails, "description": cdesc}
+        if days_list is not None:
+            kwargs["scope"] = "period"
+            kwargs["tags"] = [f"{ctag}[{day.isoformat()}]" for day in days_list]
+        constraints_checked.append(_mk_constraint_check(**kwargs))
+    if service_level_target is not None:
+        constraints_checked.append(_mk_constraint_check(
+            name="service_level_target", tag="SERVICE_LEVEL_GLOBAL", passed=False,
+            details="Hard service-level target may conflict with other constraints.",
+            description="Hard end-of-horizon service-level target.",
+        ))
+
+    return finalize_planning_response(
+        {
+            "status": status_info.status.value,
+            "plan_lines": [],
+            "kpis": {
+                "estimated_service_level": None, "estimated_stockout_units": None,
+                "estimated_holding_units": None, "estimated_total_cost": None,
+            },
+            "shared_kpis": {
+                "total_cost": None, "total_stockout_units": None,
+                "budget": None, "production_capacity": None, "inventory_capacity": None,
+            },
+            "binding_constraints": [],
+            "shadow_prices": None,
+            "relaxation_applied": relaxation_applied,
+            "solver_meta": _build_solver_meta(
+                status_info=status_info, settings=solver_settings,
+                solve_time_ms=solve_time_ms, objective_value=None, best_bound=None, gap=None,
+            ),
+            "infeasible_reasons": [r["message"] for r in reasons_detailed],
+            "infeasible_reason_details": reasons_detailed,
+            "infeasible_reasons_detailed": reasons_detailed,
+            "diagnostics": diagnostics,
+            "proof": {
+                "objective_terms": [],
+                "constraints_checked": constraints_checked,
+                "constraint_tags": constraint_tags,
+                "infeasibility_analysis": infeasibility_analysis,
+                "relaxation_analysis": relaxation_analysis,
+                "diagnose_mode": bool(diagnose_mode),
+            },
+        },
+        default_engine="cp_sat",
+        default_status=status_info.status,
+    )
+
+
 # ── public API ─────────────────────────────────────────────────────────────────
 
 def ortools_available() -> bool:
@@ -236,27 +598,7 @@ def solve_replenishment(
         _read_attr(_rs, "expedite_cost_multiplier", 1.0), 1.0
     ))
 
-    constraint_tags: List[Dict[str, Any]] = []
-
-    def _tag(
-        tag: str,
-        description: str,
-        *,
-        severity: str = "hard",
-        scope: str = "global",
-        period: Optional[str] = None,
-        sku: Optional[str] = None,
-        echelon: str = "single",
-    ) -> None:
-        constraint_tags.append({
-            "tag": tag,
-            "description": description,
-            "severity": severity,
-            "scope": scope,
-            "period": period,
-            "sku": sku,
-            "echelon": echelon,
-        })
+    constraint_tags, _tag = _make_tag_collector("single")
 
     moq_s: Dict[str, int] = _build_qty_map(_read_attr(constraints, "moq", None), "min_qty")
     pack_s: Dict[str, int] = _build_qty_map(_read_attr(constraints, "pack_size", None), "pack_qty")
@@ -335,79 +677,42 @@ def solve_replenishment(
             forecast_by_key.setdefault(key, []).append((d, p50_s, p90_s))
             p10_by_key.setdefault(key, []).append(p10_s)
 
-        item_constraints = _read_attr(item, "constraints", None)
-        item_costs = _read_attr(item, "costs", None)
-
-        moq_val = _first_non_none(
-            _read_attr(item_constraints, "moq", None),
-            _read_attr(item_constraints, "min_qty", None),
-            _read_attr(item, "moq", None),
-            _read_attr(item, "min_qty", None),
-        )
-        if moq_val is not None:
-            moq_s[sku] = _s(max(0.0, _to_float(moq_val, 0.0)))
-
-        pack_val = _first_non_none(
-            _read_attr(item_constraints, "pack_size", None),
-            _read_attr(item_constraints, "pack_qty", None),
-            _read_attr(item, "pack_size", None),
-            _read_attr(item, "pack_qty", None),
-        )
-        if pack_val is not None:
-            pack_s[sku] = _s(max(0.0, _to_float(pack_val, 0.0)))
-
-        max_val = _first_non_none(
-            _read_attr(item_constraints, "max_order_qty", None),
-            _read_attr(item_constraints, "max_qty", None),
-            _read_attr(item, "max_order_qty", None),
-            _read_attr(item, "max_qty", None),
-        )
-        if max_val is not None:
-            maxq_s[sku] = _s(max(0.0, _to_float(max_val, 0.0)))
-
-        unit_cost = _first_non_none(
-            _read_attr(item_costs, "unit_cost", None),
-            _read_attr(item_constraints, "unit_cost", None),
-            _read_attr(item, "unit_cost", None),
-        )
-        if unit_cost is not None:
-            unit_cost_map[sku] = max(0.0, _to_float(unit_cost, 0.0))
-
-        priority = _first_non_none(_read_attr(item, "service_level_weight", None), _read_attr(item, "priority_weight", None))
-        if priority is not None:
-            sku_priority_map[sku] = max(0.01, _to_float(priority, 1.0))
-
-        # V2: volume/weight per unit (for capacity constraints)
-        volume_per_unit = _first_non_none(
-            _read_attr(item, "volume_per_unit", None),
-            _read_attr(item_constraints, "volume_per_unit", None),
-        )
-        if volume_per_unit is not None:
-            sku_volume_map[sku] = max(0.0, _to_float(volume_per_unit, 0.0))
-        weight_per_unit = _first_non_none(
-            _read_attr(item, "weight_per_unit", None),
-            _read_attr(item_constraints, "weight_per_unit", None),
-        )
-        if weight_per_unit is not None:
-            sku_weight_map[sku] = max(0.0, _to_float(weight_per_unit, 0.0))
+        ic = _read_attr(item, "constraints", None)
+        icost = _read_attr(item, "costs", None)
+        # Per-item constraint overrides: (target_dict, names_to_search, scale_fn)
+        for tgt, names, sources in [
+            (moq_s, ["moq", "min_qty"], [ic, item]),
+            (pack_s, ["pack_size", "pack_qty"], [ic, item]),
+            (maxq_s, ["max_order_qty", "max_qty"], [ic, item]),
+        ]:
+            v = _first_non_none(*(
+                _read_attr(src, n, None) for src in sources for n in names))
+            if v is not None:
+                tgt[sku] = _s(max(0.0, _to_float(v, 0.0)))
+        uc = _first_non_none(_read_attr(icost, "unit_cost", None),
+                             _read_attr(ic, "unit_cost", None), _read_attr(item, "unit_cost", None))
+        if uc is not None:
+            unit_cost_map[sku] = max(0.0, _to_float(uc, 0.0))
+        pr = _first_non_none(_read_attr(item, "service_level_weight", None),
+                             _read_attr(item, "priority_weight", None))
+        if pr is not None:
+            sku_priority_map[sku] = max(0.01, _to_float(pr, 1.0))
+        for per_unit_map, attr_name in [(sku_volume_map, "volume_per_unit"), (sku_weight_map, "weight_per_unit")]:
+            wv = _first_non_none(_read_attr(item, attr_name, None), _read_attr(ic, attr_name, None))
+            if wv is not None:
+                per_unit_map[sku] = max(0.0, _to_float(wv, 0.0))
 
         # V2 Feature 1: Parse suppliers for multi-supplier optimization
-        supplier_rows = _as_list(_read_attr(item, "suppliers", None))
-        if supplier_rows:
-            key = _key(sku, item_plant)
-            for sup in supplier_rows:
-                sup_id = str(_read_attr(sup, "supplier_id", "") or "").strip()
-                if not sup_id:
-                    continue
-                suppliers_by_key.setdefault(key, []).append(SupplierInfo(
-                    supplier_id=sup_id,
-                    lead_time_days=max(0, int(round(_to_float(_read_attr(sup, "lead_time_days", 0.0), 0.0)))),
-                    unit_cost=max(0.0, _to_float(_read_attr(sup, "unit_cost", 0.0), 0.0)),
-                    moq_s=_s(max(0.0, _to_float(_read_attr(sup, "moq", 0.0), 0.0))),
-                    pack_s=_s(max(0.0, _to_float(_read_attr(sup, "pack_size", 0.0), 0.0))),
-                    max_order_qty_s=_s(max(0.0, _to_float(_read_attr(sup, "max_order_qty", 0.0), 0.0))),
-                    fixed_order_cost=max(0.0, _to_float(_read_attr(sup, "fixed_order_cost", 0.0), 0.0)),
-                ))
+        for sup in _as_list(_read_attr(item, "suppliers", None)):
+            sup_id = str(_read_attr(sup, "supplier_id", "") or "").strip()
+            if not sup_id:
+                continue
+            _sf = lambda a, d=0.0: max(0.0, _to_float(_read_attr(sup, a, d), d))  # noqa: E731
+            suppliers_by_key.setdefault(_key(sku, item_plant), []).append(SupplierInfo(
+                supplier_id=sup_id, lead_time_days=max(0, int(round(_sf("lead_time_days")))),
+                unit_cost=_sf("unit_cost"), moq_s=_s(_sf("moq")), pack_s=_s(_sf("pack_size")),
+                max_order_qty_s=_s(_sf("max_order_qty")), fixed_order_cost=_sf("fixed_order_cost"),
+            ))
 
     if not forecast_by_key:
         return _empty_response(
@@ -858,55 +1163,36 @@ def solve_replenishment(
                     budget_per_period_cap_s[day] = cap_s_pp
             _tag(f"BUDGET_PERIOD[{day.isoformat()}]", "Per-period budget cap.", scope="period", period=day.isoformat())
 
-    # V2 Feature 5: Volume-based inventory capacity
-    volume_cap_by_day_s: Dict[date, int] = {}
-    if volume_cap_raw is not None and sku_volume_map:
+    # V2 Feature 5: Volume/weight-based inventory capacity (unified builder)
+    def _add_weighted_inv_cap(raw: Any, per_unit_map: Dict[str, float], tag_prefix: str, desc: str) -> Dict[date, int]:
+        cap_dict: Dict[date, int] = {}
+        if raw is None or not per_unit_map:
+            return cap_dict
         for idx, day in enumerate(all_days):
-            cap = _capacity_for_period(volume_cap_raw, idx, day)
+            cap = _capacity_for_period(raw, idx, day)
             if cap is None:
                 continue
             cap_s2 = int(round(cap * SCALE * SCALE))
-            vol_terms: List[Any] = []
+            terms: List[Any] = []
             for k2 in ordered_keys:
                 if k2 not in sku_var_maps:
                     continue
-                vol = sku_volume_map.get(k2[0], 0.0)
-                if vol <= 0.0:
+                w = per_unit_map.get(k2[0], 0.0)
+                if w <= 0.0:
                     continue
-                vol_coeff = max(0, int(round(vol * SCALE)))
+                w_coeff = max(0, int(round(w * SCALE)))
                 m2 = sku_meta[k2]
                 for t_idx, d in enumerate(m2["days"]):
                     if d == day:
-                        vol_terms.append(vol_coeff * sku_var_maps[k2]["inv"][t_idx])
-            if vol_terms:
-                model.Add(sum(vol_terms) <= cap_s2)
-                volume_cap_by_day_s[day] = cap_s2
-                _tag(f"CAP_VOL[{day.isoformat()}]", "Volume-based inventory capacity.", scope="period", period=day.isoformat())
+                        terms.append(w_coeff * sku_var_maps[k2]["inv"][t_idx])
+            if terms:
+                model.Add(sum(terms) <= cap_s2)
+                cap_dict[day] = cap_s2
+                _tag(f"{tag_prefix}[{day.isoformat()}]", desc, scope="period", period=day.isoformat())
+        return cap_dict
 
-    # V2 Feature 5: Weight-based inventory capacity
-    weight_cap_by_day_s: Dict[date, int] = {}
-    if weight_cap_raw is not None and sku_weight_map:
-        for idx, day in enumerate(all_days):
-            cap = _capacity_for_period(weight_cap_raw, idx, day)
-            if cap is None:
-                continue
-            cap_s2 = int(round(cap * SCALE * SCALE))
-            wt_terms: List[Any] = []
-            for k2 in ordered_keys:
-                if k2 not in sku_var_maps:
-                    continue
-                wt = sku_weight_map.get(k2[0], 0.0)
-                if wt <= 0.0:
-                    continue
-                wt_coeff = max(0, int(round(wt * SCALE)))
-                m2 = sku_meta[k2]
-                for t_idx, d in enumerate(m2["days"]):
-                    if d == day:
-                        wt_terms.append(wt_coeff * sku_var_maps[k2]["inv"][t_idx])
-            if wt_terms:
-                model.Add(sum(wt_terms) <= cap_s2)
-                weight_cap_by_day_s[day] = cap_s2
-                _tag(f"CAP_WEIGHT[{day.isoformat()}]", "Weight-based inventory capacity.", scope="period", period=day.isoformat())
+    volume_cap_by_day_s = _add_weighted_inv_cap(volume_cap_raw, sku_volume_map, "CAP_VOL", "Volume-based inventory capacity.")
+    weight_cap_by_day_s = _add_weighted_inv_cap(weight_cap_raw, sku_weight_map, "CAP_WEIGHT", "Weight-based inventory capacity.")
 
     if obj_terms:
         model.Minimize(sum(obj_terms))
@@ -925,135 +1211,13 @@ def solve_replenishment(
     )
 
     if not status_info.has_feasible_solution:
-        suspected_tags: List[str] = []
-        if production_cap_by_day_s:
-            suspected_tags.append("CAP_PROD")
-        if inventory_cap_by_day_s:
-            suspected_tags.append("CAP_INV")
-        if budget_cap is not None:
-            suspected_tags.append("BUDGET_GLOBAL")
-        if service_level_target is not None:
-            suspected_tags.append("SERVICE_LEVEL_GLOBAL")
-        if not suspected_tags:
-            suspected_tags.extend(["BALANCE_INV", "MOQ", "PACK", "MAXQ"])
-
-        infeasibility_analysis = _summarize_infeasibility(suspected_tags)
-        relaxation_analysis: List[Dict[str, Any]] = []
-        if diagnose_mode and not internal_diagnose:
-            relaxation_analysis = _run_relaxation_analysis_single(payload)
-            restoring = [r["relaxed_tags"][0] for r in relaxation_analysis if r.get("feasible_after_relaxation")]
-            if restoring:
-                infeasibility_analysis = _summarize_infeasibility(restoring)
-        relaxation_applied = _build_relaxation_summary(relaxation_analysis)
-
-        diagnostics: Dict[str, Any] = {}
-        if diagnose_mode and not internal_diagnose:
-            diagnostics = {
-                "mode": "progressive_relaxation",
-                "relaxation_analysis": relaxation_analysis,
-            }
-
-        reasons_detailed = [{
-            "category": c,
-            "top_offending_tags": infeasibility_analysis["top_offending_tags"][:8],
-            "suggested_actions": infeasibility_analysis["suggestions"][:4],
-            "message": (
-                f"Infeasible category '{c}'. "
-                f"Likely conflicting tags: {', '.join(infeasibility_analysis['top_offending_tags'][:5])}."
-            ),
-        } for c in infeasibility_analysis["categories"]]
-
-        constraints_checked: List[Dict[str, Any]] = [
-            _mk_constraint_check(
-                name="model_feasibility",
-                tag="CP_FEASIBILITY",
-                passed=False,
-                details=f"CP-SAT status '{status_info.status_name}' ({status_info.termination_reason}).",
-                description="Overall model feasibility status.",
-            ),
-        ]
-        if budget_cap is not None:
-            constraints_checked.append(_mk_constraint_check(
-                name="budget_cap",
-                tag="BUDGET_GLOBAL",
-                passed=False,
-                details="Budget family participates in infeasibility candidate set.",
-                description="Shared budget cap across SKUs.",
-            ))
-        if production_cap_by_day_s:
-            prod_period_tags = [f"CAP_PROD[{day.isoformat()}]" for day in sorted(production_cap_by_day_s.keys())]
-            constraints_checked.append(_mk_constraint_check(
-                name="shared_production_cap",
-                tag="CAP_PROD",
-                passed=False,
-                details="Shared production capacity family participates in infeasibility candidate set.",
-                description="Shared production capacity per period.",
-                scope="period",
-                tags=prod_period_tags,
-            ))
-        if inventory_cap_by_day_s:
-            inv_period_tags = [f"CAP_INV[{day.isoformat()}]" for day in sorted(inventory_cap_by_day_s.keys())]
-            constraints_checked.append(_mk_constraint_check(
-                name="shared_inventory_cap",
-                tag="CAP_INV",
-                passed=False,
-                details="Shared inventory capacity family participates in infeasibility candidate set.",
-                description="Shared inventory capacity per period.",
-                scope="period",
-                tags=inv_period_tags,
-            ))
-        if service_level_target is not None:
-            constraints_checked.append(_mk_constraint_check(
-                name="service_level_target",
-                tag="SERVICE_LEVEL_GLOBAL",
-                passed=False,
-                details="Hard service-level target may conflict with other constraints.",
-                description="Hard end-of-horizon service-level target.",
-            ))
-
-        return finalize_planning_response(
-            {
-                "status": status_info.status.value,
-                "plan_lines": [],
-                "kpis": {
-                    "estimated_service_level": None,
-                    "estimated_stockout_units": None,
-                    "estimated_holding_units": None,
-                    "estimated_total_cost": None,
-                },
-                "shared_kpis": {
-                    "total_cost": None,
-                    "total_stockout_units": None,
-                    "budget": None,
-                    "production_capacity": None,
-                    "inventory_capacity": None,
-                },
-                "binding_constraints": [],
-                "shadow_prices": None,
-                "relaxation_applied": relaxation_applied,
-                "solver_meta": _build_solver_meta(
-                    status_info=status_info,
-                    settings=solver_settings,
-                    solve_time_ms=solve_time_ms,
-                    objective_value=None,
-                    best_bound=None,
-                    gap=None,
-                ),
-                "infeasible_reasons": [r["message"] for r in reasons_detailed],
-                "infeasible_reason_details": reasons_detailed,
-                "infeasible_reasons_detailed": reasons_detailed,
-                "diagnostics": diagnostics,
-                "proof": {
-                    "objective_terms": [],
-                    "constraints_checked": constraints_checked,
-                    "constraint_tags": constraint_tags,
-                    "infeasibility_analysis": infeasibility_analysis,
-                    "relaxation_analysis": relaxation_analysis,
-                    "diagnose_mode": bool(diagnose_mode),
-                },
-            },
-            default_engine="cp_sat",
-            default_status=status_info.status,
+        return _build_infeasible_response_single(
+            t0=t0, status_info=status_info, solver_settings=solver_settings,
+            solve_time_ms=solve_time_ms, constraint_tags=constraint_tags,
+            diagnose_mode=diagnose_mode, internal_diagnose=internal_diagnose,
+            payload=payload, production_cap_by_day_s=production_cap_by_day_s,
+            inventory_cap_by_day_s=inventory_cap_by_day_s,
+            budget_cap=budget_cap, service_level_target=service_level_target,
         )
 
     plan_rows: List[Dict[str, Any]] = []
@@ -1189,46 +1353,30 @@ def solve_replenishment(
             if cap_real > cap_limit + 1e-6:
                 budget_pp_failed += 1
 
-    # V2 Feature 5: Volume/weight verification
-    volume_usage_by_day: Dict[date, float] = {}
-    volume_failed = 0
-    if volume_cap_by_day_s:
-        for day in sorted(volume_cap_by_day_s.keys()):
+    # V2 Feature 5: Volume/weight verification (unified loop)
+    def _verify_weighted_cap(cap_dict: Dict[date, int], per_unit_map: Dict[str, float]) -> Tuple[Dict[date, float], int]:
+        usage: Dict[date, float] = {}
+        failed = 0
+        for day in sorted(cap_dict.keys()):
             used_s2 = 0
             for k2 in ordered_keys:
                 if k2 not in sku_var_maps:
                     continue
-                vol = sku_volume_map.get(k2[0], 0.0)
-                if vol <= 0.0:
+                w = per_unit_map.get(k2[0], 0.0)
+                if w <= 0.0:
                     continue
-                vol_coeff = max(0, int(round(vol * SCALE)))
+                w_coeff = max(0, int(round(w * SCALE)))
                 m2 = sku_meta[k2]
                 for t_idx, d in enumerate(m2["days"]):
                     if d == day:
-                        used_s2 += vol_coeff * int(solver.Value(sku_var_maps[k2]["inv"][t_idx]))
-            volume_usage_by_day[day] = used_s2 / (SCALE * SCALE) if SCALE else 0.0
-            if used_s2 > volume_cap_by_day_s[day] + 1:
-                volume_failed += 1
+                        used_s2 += w_coeff * int(solver.Value(sku_var_maps[k2]["inv"][t_idx]))
+            usage[day] = used_s2 / (SCALE * SCALE) if SCALE else 0.0
+            if used_s2 > cap_dict[day] + 1:
+                failed += 1
+        return usage, failed
 
-    weight_usage_by_day: Dict[date, float] = {}
-    weight_failed = 0
-    if weight_cap_by_day_s:
-        for day in sorted(weight_cap_by_day_s.keys()):
-            used_s2 = 0
-            for k2 in ordered_keys:
-                if k2 not in sku_var_maps:
-                    continue
-                wt = sku_weight_map.get(k2[0], 0.0)
-                if wt <= 0.0:
-                    continue
-                wt_coeff = max(0, int(round(wt * SCALE)))
-                m2 = sku_meta[k2]
-                for t_idx, d in enumerate(m2["days"]):
-                    if d == day:
-                        used_s2 += wt_coeff * int(solver.Value(sku_var_maps[k2]["inv"][t_idx]))
-            weight_usage_by_day[day] = used_s2 / (SCALE * SCALE) if SCALE else 0.0
-            if used_s2 > weight_cap_by_day_s[day] + 1:
-                weight_failed += 1
+    volume_usage_by_day, volume_failed = _verify_weighted_cap(volume_cap_by_day_s, sku_volume_map) if volume_cap_by_day_s else ({}, 0)
+    weight_usage_by_day, weight_failed = _verify_weighted_cap(weight_cap_by_day_s, sku_weight_map) if weight_cap_by_day_s else ({}, 0)
 
     service_level: Optional[float] = None
     if total_demand > 0.0:
@@ -1308,78 +1456,20 @@ def solve_replenishment(
         else:
             budget_nl = f"Budget utilization is healthy with {budget_slack:,.1f} {budget_slack_unit} remaining."
 
-    # Production cap: min slack across all periods
-    prod_min_slack: Optional[float] = None
-    prod_binding = False
-    prod_nl: Optional[str] = None
-    if production_cap_by_day_s:
-        slacks = []
-        for day, cap_s in production_cap_by_day_s.items():
-            used_s = production_usage_s_by_day.get(day, 0)
-            slacks.append(_us(cap_s - used_s))
-        prod_min_slack = round(min(slacks), 4) if slacks else None
-        prod_binding = prod_min_slack is not None and prod_min_slack < 1.0
-        if prod_binding:
-            prod_nl = f"Production capacity is binding (tightest period slack: {prod_min_slack:,.1f} units)."
-
-    # Inventory cap: min slack across all periods
-    inv_min_slack: Optional[float] = None
-    inv_binding = False
-    inv_nl: Optional[str] = None
-    if inventory_cap_by_day_s:
-        slacks = []
-        for day, cap_s in inventory_cap_by_day_s.items():
-            used_s = inventory_usage_s_by_day.get(day, 0)
-            slacks.append(_us(cap_s - used_s))
-        inv_min_slack = round(min(slacks), 4) if slacks else None
-        inv_binding = inv_min_slack is not None and inv_min_slack < 1.0
-        if inv_binding:
-            inv_nl = f"Inventory capacity is binding (tightest period slack: {inv_min_slack:,.1f} units)."
-
-    # V2: Per-period budget binding detection
-    budget_pp_min_slack: Optional[float] = None
-    budget_pp_binding = False
-    budget_pp_nl: Optional[str] = None
-    if budget_per_period_cap_s:
-        slacks = []
-        for day in sorted(budget_per_period_cap_s.keys()):
-            cap_real = budget_per_period_cap_s[day] / (SCALE * SCALE) if budget_per_period_mode == "spend" else _us(budget_per_period_cap_s[day])
-            used_real = budget_pp_usage_by_day.get(day, 0.0)
-            slacks.append(round(cap_real - used_real, 4))
-        budget_pp_min_slack = min(slacks) if slacks else None
-        budget_pp_binding = budget_pp_min_slack is not None and budget_pp_min_slack < max(1.0, (cap_real * 0.03 if cap_real else 1.0))
-        if budget_pp_binding:
-            budget_pp_nl = f"Per-period budget is binding (tightest slack: {budget_pp_min_slack:,.1f})."
-
-    # V2: Volume capacity binding detection
-    vol_min_slack: Optional[float] = None
-    vol_binding = False
-    vol_nl: Optional[str] = None
-    if volume_cap_by_day_s:
-        slacks = []
-        for day in sorted(volume_cap_by_day_s.keys()):
-            cap_real = volume_cap_by_day_s[day] / (SCALE * SCALE)
-            used_real = volume_usage_by_day.get(day, 0.0)
-            slacks.append(round(cap_real - used_real, 4))
-        vol_min_slack = min(slacks) if slacks else None
-        vol_binding = vol_min_slack is not None and vol_min_slack < 1.0
-        if vol_binding:
-            vol_nl = f"Volume capacity is binding (tightest slack: {vol_min_slack:,.1f})."
-
-    # V2: Weight capacity binding detection
-    wt_min_slack: Optional[float] = None
-    wt_binding = False
-    wt_nl: Optional[str] = None
-    if weight_cap_by_day_s:
-        slacks = []
-        for day in sorted(weight_cap_by_day_s.keys()):
-            cap_real = weight_cap_by_day_s[day] / (SCALE * SCALE)
-            used_real = weight_usage_by_day.get(day, 0.0)
-            slacks.append(round(cap_real - used_real, 4))
-        wt_min_slack = min(slacks) if slacks else None
-        wt_binding = wt_min_slack is not None and wt_min_slack < 1.0
-        if wt_binding:
-            wt_nl = f"Weight capacity is binding (tightest slack: {wt_min_slack:,.1f})."
+    prod_min_slack, prod_binding, prod_nl = _compute_capacity_binding(
+        production_cap_by_day_s, production_usage_s_by_day, "Production capacity")
+    inv_min_slack, inv_binding, inv_nl = _compute_capacity_binding(
+        inventory_cap_by_day_s, inventory_usage_s_by_day, "Inventory capacity")
+    _pp_div = (SCALE * SCALE) if budget_per_period_mode == "spend" else 1
+    budget_pp_min_slack, budget_pp_binding, budget_pp_nl = _compute_capacity_binding(
+        budget_per_period_cap_s, budget_pp_usage_by_day, "Per-period budget",
+        scale_divisor=_pp_div)
+    vol_min_slack, vol_binding, vol_nl = _compute_capacity_binding(
+        volume_cap_by_day_s, volume_usage_by_day, "Volume capacity",
+        scale_divisor=SCALE * SCALE)
+    wt_min_slack, wt_binding, wt_nl = _compute_capacity_binding(
+        weight_cap_by_day_s, weight_usage_by_day, "Weight capacity",
+        scale_divisor=SCALE * SCALE)
 
     # V2: Safety stock binding detection
     ss_binding = total_ss_violation_periods > 0
@@ -1388,160 +1478,49 @@ def solve_replenishment(
     moq_binding = moq_failed > 0
     moq_nl = f"MOQ violations on {moq_failed} rows." if moq_binding else None
 
-    constraints_checked: List[Dict[str, Any]] = [
-        _mk_constraint_check(
-            name="order_qty_non_negative",
-            tag="NONNEG",
-            passed=nonneg_failed == 0,
-            details=f"Negative quantity rows: {nonneg_failed}.",
-            description="All planned order quantities must be non-negative.",
-            scope="row",
-            binding=nonneg_failed > 0,
-        ),
-        _mk_constraint_check(
-            name="moq",
-            tag="MOQ",
-            passed=moq_failed == 0,
-            details=f"Rows violating MOQ: {moq_failed}.",
-            description="MOQ enforcement across SKU-period rows.",
-            scope="sku_period",
-            binding=moq_binding,
-            slack=0.0 if moq_binding else None,
-            slack_unit="units",
-            natural_language=moq_nl,
-        ),
-        _mk_constraint_check(
-            name="pack_size_multiple",
-            tag="PACK",
-            passed=pack_failed == 0,
-            details=f"Rows violating pack-size multiple: {pack_failed}.",
-            description="Pack-size multiple enforcement across SKU-period rows.",
-            scope="sku_period",
-            binding=pack_failed > 0,
-        ),
-        _mk_constraint_check(
-            name="budget_cap",
-            tag="BUDGET_GLOBAL",
-            passed=budget_passed,
-            details=budget_detail,
-            description="Shared budget cap across all SKUs.",
-            binding=budget_binding if budget_cap is not None else None,
-            slack=budget_slack,
-            slack_unit=budget_slack_unit,
-            natural_language=budget_nl,
-        ),
-        _mk_constraint_check(
-            name="max_order_qty",
-            tag="MAXQ",
-            passed=max_failed == 0,
-            details=f"Rows violating max_order_qty: {max_failed}.",
-            description="Max order quantity per SKU-period.",
-            scope="sku_period",
-            binding=max_failed > 0,
-        ),
+    constraints_checked = _build_base_constraint_checks(
+        nonneg_failed, moq_failed, pack_failed, max_failed,
+        budget_passed, budget_detail,
+        budget_binding=budget_binding if budget_cap is not None else None,
+        budget_slack=budget_slack, budget_slack_unit=budget_slack_unit, budget_nl=budget_nl,
+        moq_binding=moq_binding, moq_nl=moq_nl,
+    )
+    # Capacity constraint checks (production, inventory, budget_pp, volume, weight)
+    _cap_checks = [
+        (production_cap_by_day_s, "shared_production_cap", "CAP_PROD", prod_failed,
+         "Shared production/order capacity per period.", "units", prod_binding, prod_min_slack, prod_nl),
+        (inventory_cap_by_day_s, "shared_inventory_cap", "CAP_INV", inv_failed,
+         "Shared inventory capacity per period.", "units", inv_binding, inv_min_slack, inv_nl),
+        (budget_per_period_cap_s, "budget_per_period", "BUDGET_PERIOD", budget_pp_failed,
+         "Per-period budget cap.", "USD" if budget_per_period_mode == "spend" else "units",
+         budget_pp_binding, budget_pp_min_slack, budget_pp_nl),
+        (volume_cap_by_day_s, "volume_capacity", "CAP_VOL", volume_failed,
+         "Volume-based inventory capacity per period.", "volume_units", vol_binding, vol_min_slack, vol_nl),
+        (weight_cap_by_day_s, "weight_capacity", "CAP_WEIGHT", weight_failed,
+         "Weight-based inventory capacity per period.", "weight_units", wt_binding, wt_min_slack, wt_nl),
     ]
-    if production_cap_by_day_s:
-        prod_period_tags = [f"CAP_PROD[{day.isoformat()}]" for day in sorted(production_cap_by_day_s.keys())]
-        constraints_checked.append(_mk_constraint_check(
-            name="shared_production_cap",
-            tag="CAP_PROD",
-            passed=prod_failed == 0,
-            details=f"Periods violating shared production cap: {prod_failed}.",
-            description="Shared production/order capacity per period.",
-            scope="period",
-            tags=prod_period_tags,
-            binding=prod_binding,
-            slack=prod_min_slack,
-            slack_unit="units",
-            natural_language=prod_nl,
-        ))
-    if inventory_cap_by_day_s:
-        inv_period_tags = [f"CAP_INV[{day.isoformat()}]" for day in sorted(inventory_cap_by_day_s.keys())]
-        constraints_checked.append(_mk_constraint_check(
-            name="shared_inventory_cap",
-            tag="CAP_INV",
-            passed=inv_failed == 0,
-            details=f"Periods violating shared inventory cap: {inv_failed}.",
-            description="Shared inventory capacity per period.",
-            scope="period",
-            tags=inv_period_tags,
-            binding=inv_binding,
-            slack=inv_min_slack,
-            slack_unit="units",
-            natural_language=inv_nl,
-        ))
+    for cap_dict, cname, ctag, cfailed, cdesc, cunit, cbinding, cslack, cnl in _cap_checks:
+        if cap_dict:
+            ptags = [f"{ctag}[{day.isoformat()}]" for day in sorted(cap_dict.keys())]
+            constraints_checked.append(_mk_constraint_check(
+                name=cname, tag=ctag, passed=cfailed == 0,
+                details=f"Periods violating {cname}: {cfailed}.",
+                description=cdesc, scope="period", tags=ptags,
+                binding=cbinding, slack=cslack, slack_unit=cunit, natural_language=cnl,
+            ))
     if service_level_target is not None:
         constraints_checked.append(_mk_constraint_check(
-            name="service_level_target",
-            tag="SERVICE_LEVEL_GLOBAL",
-            passed=service_target_passed,
-            details=service_target_details,
+            name="service_level_target", tag="SERVICE_LEVEL_GLOBAL",
+            passed=service_target_passed, details=service_target_details,
             description="Hard end-of-horizon service-level target.",
         ))
-
-    # V2: Safety stock constraint check
     constraints_checked.append(_mk_constraint_check(
-        name="safety_stock",
-        tag="SAFETY_STOCK",
+        name="safety_stock", tag="SAFETY_STOCK",
         passed=total_ss_violation_periods == 0,
         details=f"Safety stock violations across {total_ss_violation_periods} SKU-periods.",
-        description="Soft safety stock floor on inventory.",
-        severity="soft",
-        scope="sku_period",
-        binding=ss_binding,
-        natural_language=ss_nl,
+        description="Soft safety stock floor on inventory.", severity="soft",
+        scope="sku_period", binding=ss_binding, natural_language=ss_nl,
     ))
-
-    # V2: Per-period budget constraint check
-    if budget_per_period_cap_s:
-        pp_tags = [f"BUDGET_PERIOD[{day.isoformat()}]" for day in sorted(budget_per_period_cap_s.keys())]
-        constraints_checked.append(_mk_constraint_check(
-            name="budget_per_period",
-            tag="BUDGET_PERIOD",
-            passed=budget_pp_failed == 0,
-            details=f"Periods violating per-period budget: {budget_pp_failed}.",
-            description="Per-period budget cap.",
-            scope="period",
-            tags=pp_tags,
-            binding=budget_pp_binding,
-            slack=budget_pp_min_slack,
-            slack_unit="USD" if budget_per_period_mode == "spend" else "units",
-            natural_language=budget_pp_nl,
-        ))
-
-    # V2: Volume capacity constraint check
-    if volume_cap_by_day_s:
-        vol_tags = [f"CAP_VOL[{day.isoformat()}]" for day in sorted(volume_cap_by_day_s.keys())]
-        constraints_checked.append(_mk_constraint_check(
-            name="volume_capacity",
-            tag="CAP_VOL",
-            passed=volume_failed == 0,
-            details=f"Periods violating volume capacity: {volume_failed}.",
-            description="Volume-based inventory capacity per period.",
-            scope="period",
-            tags=vol_tags,
-            binding=vol_binding,
-            slack=vol_min_slack,
-            slack_unit="volume_units",
-            natural_language=vol_nl,
-        ))
-
-    # V2: Weight capacity constraint check
-    if weight_cap_by_day_s:
-        wt_tags = [f"CAP_WEIGHT[{day.isoformat()}]" for day in sorted(weight_cap_by_day_s.keys())]
-        constraints_checked.append(_mk_constraint_check(
-            name="weight_capacity",
-            tag="CAP_WEIGHT",
-            passed=weight_failed == 0,
-            details=f"Periods violating weight capacity: {weight_failed}.",
-            description="Weight-based inventory capacity per period.",
-            scope="period",
-            tags=wt_tags,
-            binding=wt_binding,
-            slack=wt_min_slack,
-            slack_unit="weight_units",
-            natural_language=wt_nl,
-        ))
 
     if total_stockout > 1e-9:
         infeasible_reasons.append(
@@ -1563,16 +1542,7 @@ def solve_replenishment(
             "message": "Backlog remains under active hard constraints.",
         })
 
-    all_passed = all(c["passed"] for c in constraints_checked)
-    if status_info.status == PlanningStatus.TIMEOUT:
-        status = PlanningStatus.TIMEOUT
-    elif not all_passed:
-        status = PlanningStatus.INFEASIBLE
-    else:
-        status = status_info.status if status_info.status in {
-            PlanningStatus.OPTIMAL,
-            PlanningStatus.FEASIBLE,
-        } else PlanningStatus.FEASIBLE
+    status = _determine_final_status(status_info, constraints_checked)
 
     obj_int = float(solver.ObjectiveValue())
     bound_int = float(solver.BestObjectiveBound())
@@ -1590,109 +1560,18 @@ def solve_replenishment(
             "utilization": None if budget_cap <= 0 else round(used / budget_cap, 6),
         }
 
-    production_shared_kpi = None
-    if production_cap_by_day_s:
-        period_rows: List[Dict[str, Any]] = []
-        util_values: List[float] = []
-        for day in sorted(production_cap_by_day_s.keys()):
-            cap = _us(production_cap_by_day_s[day])
-            used = _us(production_usage_s_by_day.get(day, 0))
-            util = None if cap <= 0 else used / cap
-            if util is not None:
-                util_values.append(util)
-            period_rows.append({
-                "period": day.isoformat(),
-                "used": round(used, 6),
-                "cap": round(cap, 6),
-                "utilization": None if util is None else round(util, 6),
-            })
-        production_shared_kpi = {
-            "avg_utilization": None if not util_values else round(sum(util_values) / len(util_values), 6),
-            "max_utilization": None if not util_values else round(max(util_values), 6),
-            "binding_periods": [r["period"] for r in period_rows if (r["utilization"] or 0.0) >= 0.999],
-            "periods": period_rows,
-        }
-
-    inventory_shared_kpi = None
-    if inventory_cap_by_day_s:
-        period_rows = []
-        util_values = []
-        for day in sorted(inventory_cap_by_day_s.keys()):
-            cap = _us(inventory_cap_by_day_s[day])
-            used = _us(inventory_usage_s_by_day.get(day, 0))
-            util = None if cap <= 0 else used / cap
-            if util is not None:
-                util_values.append(util)
-            period_rows.append({
-                "period": day.isoformat(),
-                "used": round(used, 6),
-                "cap": round(cap, 6),
-                "utilization": None if util is None else round(util, 6),
-            })
-        inventory_shared_kpi = {
-            "avg_utilization": None if not util_values else round(sum(util_values) / len(util_values), 6),
-            "max_utilization": None if not util_values else round(max(util_values), 6),
-            "binding_periods": [r["period"] for r in period_rows if (r["utilization"] or 0.0) >= 0.999],
-            "periods": period_rows,
-        }
-
-    # V2: Per-period budget shared KPI
-    budget_pp_shared_kpi = None
-    if budget_per_period_cap_s:
-        pp_rows: List[Dict[str, Any]] = []
-        pp_utils: List[float] = []
-        for day in sorted(budget_per_period_cap_s.keys()):
-            cap_real = budget_per_period_cap_s[day] / (SCALE * SCALE) if budget_per_period_mode == "spend" else _us(budget_per_period_cap_s[day])
-            used_real = budget_pp_usage_by_day.get(day, 0.0)
-            util_v = None if cap_real <= 0 else used_real / cap_real
-            if util_v is not None:
-                pp_utils.append(util_v)
-            pp_rows.append({"period": day.isoformat(), "used": round(used_real, 6), "cap": round(cap_real, 6), "utilization": None if util_v is None else round(util_v, 6)})
-        budget_pp_shared_kpi = {
-            "mode": budget_per_period_mode or "quantity",
-            "avg_utilization": None if not pp_utils else round(sum(pp_utils) / len(pp_utils), 6),
-            "max_utilization": None if not pp_utils else round(max(pp_utils), 6),
-            "binding_periods": [r["period"] for r in pp_rows if (r["utilization"] or 0.0) >= 0.999],
-            "periods": pp_rows,
-        }
-
-    # V2: Volume capacity shared KPI
-    volume_shared_kpi = None
-    if volume_cap_by_day_s:
-        v_rows: List[Dict[str, Any]] = []
-        v_utils: List[float] = []
-        for day in sorted(volume_cap_by_day_s.keys()):
-            cap_real = volume_cap_by_day_s[day] / (SCALE * SCALE)
-            used_real = volume_usage_by_day.get(day, 0.0)
-            util_v = None if cap_real <= 0 else used_real / cap_real
-            if util_v is not None:
-                v_utils.append(util_v)
-            v_rows.append({"period": day.isoformat(), "used": round(used_real, 6), "cap": round(cap_real, 6), "utilization": None if util_v is None else round(util_v, 6)})
-        volume_shared_kpi = {
-            "avg_utilization": None if not v_utils else round(sum(v_utils) / len(v_utils), 6),
-            "max_utilization": None if not v_utils else round(max(v_utils), 6),
-            "binding_periods": [r["period"] for r in v_rows if (r["utilization"] or 0.0) >= 0.999],
-            "periods": v_rows,
-        }
-
-    # V2: Weight capacity shared KPI
-    weight_shared_kpi = None
-    if weight_cap_by_day_s:
-        w_rows: List[Dict[str, Any]] = []
-        w_utils: List[float] = []
-        for day in sorted(weight_cap_by_day_s.keys()):
-            cap_real = weight_cap_by_day_s[day] / (SCALE * SCALE)
-            used_real = weight_usage_by_day.get(day, 0.0)
-            util_v = None if cap_real <= 0 else used_real / cap_real
-            if util_v is not None:
-                w_utils.append(util_v)
-            w_rows.append({"period": day.isoformat(), "used": round(used_real, 6), "cap": round(cap_real, 6), "utilization": None if util_v is None else round(util_v, 6)})
-        weight_shared_kpi = {
-            "avg_utilization": None if not w_utils else round(sum(w_utils) / len(w_utils), 6),
-            "max_utilization": None if not w_utils else round(max(w_utils), 6),
-            "binding_periods": [r["period"] for r in w_rows if (r["utilization"] or 0.0) >= 0.999],
-            "periods": w_rows,
-        }
+    production_shared_kpi = _build_period_capacity_kpi(
+        production_cap_by_day_s, production_usage_s_by_day)
+    inventory_shared_kpi = _build_period_capacity_kpi(
+        inventory_cap_by_day_s, inventory_usage_s_by_day)
+    budget_pp_shared_kpi = _build_period_capacity_kpi(
+        budget_per_period_cap_s, budget_pp_usage_by_day,
+        scale_divisor=(SCALE * SCALE) if budget_per_period_mode == "spend" else 1,
+        extra_fields={"mode": budget_per_period_mode or "quantity"})
+    volume_shared_kpi = _build_period_capacity_kpi(
+        volume_cap_by_day_s, volume_usage_by_day, scale_divisor=SCALE * SCALE)
+    weight_shared_kpi = _build_period_capacity_kpi(
+        weight_cap_by_day_s, weight_usage_by_day, scale_divisor=SCALE * SCALE)
 
     # V2 Feature 7: Binding constraints list
     binding_constraints = [c["name"] for c in constraints_checked if c.get("binding") is True]
@@ -1712,142 +1591,95 @@ def solve_replenishment(
                 if sp_entry.get("method"):
                     check["shadow_price_method"] = sp_entry["method"]
 
-    proof_infeasibility_tags = []
-    for row in infeasible_reasons_detailed:
-        proof_infeasibility_tags.extend(_as_list(row.get("top_offending_tags")))
-    infeasibility_analysis = (
-        _summarize_infeasibility(proof_infeasibility_tags)
-        if proof_infeasibility_tags
-        else {"categories": [], "top_offending_tags": [], "suggestions": []}
-    )
-    relaxation_analysis: List[Dict[str, Any]] = []
-    if diagnose_mode and not internal_diagnose:
-        relaxation_analysis = _run_relaxation_analysis_single(payload)
-    relaxation_applied = _build_relaxation_summary(relaxation_analysis)
-    diagnostics: Dict[str, Any] = {}
-    if diagnose_mode and not internal_diagnose:
-        diagnostics = {
-            "mode": "progressive_relaxation",
-            "relaxation_analysis": relaxation_analysis,
-        }
+    infeasibility_analysis, relaxation_analysis, relaxation_applied, diagnostics = \
+        _build_proof_and_diagnostics(
+            infeasible_reasons_detailed, diagnose_mode, internal_diagnose, payload)
 
-    return finalize_planning_response(
-        {
-            "status": status.value,
-            "plan_lines": plan_rows,
-            "kpis": {
-                "estimated_service_level": None if service_level is None else round(service_level, 6),
-                "estimated_stockout_units": round(total_stockout, 6),
-                "estimated_holding_units": round(total_holding, 6),
-                "estimated_total_cost": round(est_cost, 6),
-            },
-            "shared_kpis": {
-                "total_cost": round(est_cost, 6),
-                "total_stockout_units": round(total_stockout, 6),
-                "budget": budget_shared_kpi,
-                "production_capacity": production_shared_kpi,
-                "inventory_capacity": inventory_shared_kpi,
-                "budget_per_period": budget_pp_shared_kpi,
-                "volume_capacity": volume_shared_kpi,
-                "weight_capacity": weight_shared_kpi,
-                "safety_stock_violations": ss_violations if ss_violations else None,
-            },
-            "binding_constraints": binding_constraints,
-            "shadow_prices": shadow_prices if shadow_prices else None,
-            "relaxation_applied": relaxation_applied,
-            "solver_meta": _build_solver_meta(
-                status_info=SolverStatusInfo(
-                    status=status,
-                    termination_reason=status_info.termination_reason,
-                    status_name=status_info.status_name,
-                    has_feasible_solution=True,
-                    time_limit_hit=status_info.time_limit_hit,
-                ),
-                settings=solver_settings,
-                solve_time_ms=solve_time_ms,
-                objective_value=obj_real,
-                best_bound=bound_real,
-                gap=gap,
-                extra={
-                    "deterministic_mode": bool(solver_settings.deterministic_mode),
-                    "uncertainty_bridge": {
-                        "safety_stock_alpha": round(safety_stock_alpha, 6),
-                        "use_p90_for_safety_stock": bool(use_p90_for_safety_stock),
-                        "use_p90_for_service_level": bool(use_p90_for_service_level),
-                        "use_p90_demand_model": bool(use_p90_demand_model),
-                        "service_level_demand_basis": service_level_basis_label,
-                        "keys_with_p90": int(keys_with_p90),
-                        "keys_with_derived_safety_stock": int(keys_with_derived_safety_stock),
-                        "keys_with_closed_loop_safety_stock": int(keys_with_closed_loop_safety_stock),
-                    },
-                    "v2_features": {
-                        "multi_supplier": bool(any(m.get("suppliers") for m in sku_meta.values())),
-                        "shadow_prices": bool(shadow_prices),
-                        "safety_stock_soft": bool(any(m.get("safety_stock_s", 0) > 0 for m in sku_meta.values())),
-                        "per_period_budget": bool(budget_per_period_cap_s),
-                        "volume_weight_capacity": bool(volume_cap_by_day_s or weight_cap_by_day_s),
-                    },
-                },
-            ),
-            "infeasible_reasons": sorted(set(infeasible_reasons)),
-            "infeasible_reason_details": infeasible_reasons_detailed,
-            "infeasible_reasons_detailed": infeasible_reasons_detailed,
-            "diagnostics": diagnostics,
-            "proof": {
-                "objective_terms": [
-                    {
-                        "name": "ordered_units",
-                        "value": round(total_order_qty, 6),
-                        "note": "Total planned replenishment quantity.",
-                        "units": "units",
-                        "business_label": "Procurement volume",
-                    },
-                    {
-                        "name": "stockout_units",
-                        "value": round(total_stockout, 6),
-                        "note": "Projected unmet demand units (backlog).",
-                        "units": "units",
-                        "business_label": "Shortage exposure",
-                        "qty_driver": round(total_stockout, 6),
-                        "unit_cost_driver": round(stockout_penalty, 6) if stockout_penalty else None,
-                    },
-                    {
-                        "name": "holding_units",
-                        "value": round(total_holding, 6),
-                        "note": "Projected positive inventory accumulation.",
-                        "units": "units",
-                        "business_label": "Inventory holding",
-                        "qty_driver": round(total_holding, 6),
-                        "unit_cost_driver": round(holding_cost, 6) if holding_cost else None,
-                    },
-                    {
-                        "name": "estimated_total_cost",
-                        "value": round(est_cost, 6),
-                        "note": "ordering_qty + stockout_penalty × backlog + holding_cost × inventory.",
-                        "units": "cost_units",
-                        "business_label": "Total plan cost",
-                    },
-                ],
-                "constraints_checked": constraints_checked,
-                "constraint_tags": constraint_tags,
-                "infeasibility_analysis": infeasibility_analysis,
-                "relaxation_analysis": relaxation_analysis,
-                "diagnose_mode": bool(diagnose_mode),
-            },
-            "explain_summary": _build_explain_summary(
-                status=status,
-                constraints_checked=constraints_checked,
-                objective_terms=[],
-                total_stockout=total_stockout,
-                stockout_penalty=stockout_penalty,
-                total_spend=total_spend,
-                budget_cap=budget_cap,
-                budget_mode_effective=budget_mode_effective,
-            ),
+    _obj_terms = [
+        {"name": "ordered_units", "value": round(total_order_qty, 6),
+         "note": "Total planned replenishment quantity.", "units": "units", "business_label": "Procurement volume"},
+        {"name": "stockout_units", "value": round(total_stockout, 6),
+         "note": "Projected unmet demand units (backlog).", "units": "units", "business_label": "Shortage exposure",
+         "qty_driver": round(total_stockout, 6),
+         "unit_cost_driver": round(stockout_penalty, 6) if stockout_penalty else None},
+        {"name": "holding_units", "value": round(total_holding, 6),
+         "note": "Projected positive inventory accumulation.", "units": "units", "business_label": "Inventory holding",
+         "qty_driver": round(total_holding, 6),
+         "unit_cost_driver": round(holding_cost, 6) if holding_cost else None},
+        {"name": "estimated_total_cost", "value": round(est_cost, 6),
+         "note": "ordering_qty + stockout_penalty * backlog + holding_cost * inventory.",
+         "units": "cost_units", "business_label": "Total plan cost"},
+    ]
+
+    return finalize_planning_response({
+        "status": status.value,
+        "plan_lines": plan_rows,
+        "kpis": {
+            "estimated_service_level": None if service_level is None else round(service_level, 6),
+            "estimated_stockout_units": round(total_stockout, 6),
+            "estimated_holding_units": round(total_holding, 6),
+            "estimated_total_cost": round(est_cost, 6),
         },
-        default_engine="cp_sat",
-        default_status=status,
-    )
+        "shared_kpis": {
+            "total_cost": round(est_cost, 6),
+            "total_stockout_units": round(total_stockout, 6),
+            "budget": budget_shared_kpi,
+            "production_capacity": production_shared_kpi,
+            "inventory_capacity": inventory_shared_kpi,
+            "budget_per_period": budget_pp_shared_kpi,
+            "volume_capacity": volume_shared_kpi,
+            "weight_capacity": weight_shared_kpi,
+            "safety_stock_violations": ss_violations if ss_violations else None,
+        },
+        "binding_constraints": binding_constraints,
+        "shadow_prices": shadow_prices if shadow_prices else None,
+        "relaxation_applied": relaxation_applied,
+        "solver_meta": _build_solver_meta(
+            status_info=SolverStatusInfo(
+                status=status, termination_reason=status_info.termination_reason,
+                status_name=status_info.status_name,
+                has_feasible_solution=True, time_limit_hit=status_info.time_limit_hit),
+            settings=solver_settings, solve_time_ms=solve_time_ms,
+            objective_value=obj_real, best_bound=bound_real, gap=gap,
+            extra={
+                "deterministic_mode": bool(solver_settings.deterministic_mode),
+                "uncertainty_bridge": {
+                    "safety_stock_alpha": round(safety_stock_alpha, 6),
+                    "use_p90_for_safety_stock": bool(use_p90_for_safety_stock),
+                    "use_p90_for_service_level": bool(use_p90_for_service_level),
+                    "use_p90_demand_model": bool(use_p90_demand_model),
+                    "service_level_demand_basis": service_level_basis_label,
+                    "keys_with_p90": int(keys_with_p90),
+                    "keys_with_derived_safety_stock": int(keys_with_derived_safety_stock),
+                    "keys_with_closed_loop_safety_stock": int(keys_with_closed_loop_safety_stock),
+                },
+                "v2_features": {
+                    "multi_supplier": bool(any(m.get("suppliers") for m in sku_meta.values())),
+                    "shadow_prices": bool(shadow_prices),
+                    "safety_stock_soft": bool(any(m.get("safety_stock_s", 0) > 0 for m in sku_meta.values())),
+                    "per_period_budget": bool(budget_per_period_cap_s),
+                    "volume_weight_capacity": bool(volume_cap_by_day_s or weight_cap_by_day_s),
+                },
+            },
+        ),
+        "infeasible_reasons": sorted(set(infeasible_reasons)),
+        "infeasible_reason_details": infeasible_reasons_detailed,
+        "infeasible_reasons_detailed": infeasible_reasons_detailed,
+        "diagnostics": diagnostics,
+        "proof": {
+            "objective_terms": _obj_terms,
+            "constraints_checked": constraints_checked,
+            "constraint_tags": constraint_tags,
+            "infeasibility_analysis": infeasibility_analysis,
+            "relaxation_analysis": relaxation_analysis,
+            "diagnose_mode": bool(diagnose_mode),
+        },
+        "explain_summary": _build_explain_summary(
+            status=status, constraints_checked=constraints_checked, objective_terms=[],
+            total_stockout=total_stockout, stockout_penalty=stockout_penalty,
+            total_spend=total_spend, budget_cap=budget_cap,
+            budget_mode_effective=budget_mode_effective),
+    }, default_engine="cp_sat", default_status=status)
 
 
 def _empty_response(
@@ -1858,12 +1690,16 @@ def _empty_response(
     settings: Optional[SolverRunSettings] = None,
     termination_reason: str = "NO_FEASIBLE_SOLUTION",
     status_name: str = "UNKNOWN",
+    *,
+    multi_echelon: bool = False,
 ) -> Dict[str, Any]:
+    """Empty response for single or multi-echelon (superset shape when multi_echelon=True)."""
     if solve_time_ms is None:
         solve_time_ms = int((datetime.now(timezone.utc) - t0).total_seconds() * 1000)
     normalized_status = normalize_status(status, PlanningStatus.ERROR)
+    default_tl = DEFAULT_SOLVER_MULTI_TIME_LIMIT_SECONDS if multi_echelon else DEFAULT_SOLVER_SINGLE_TIME_LIMIT_SECONDS
     solver_settings = settings or SolverRunSettings(
-        time_limit_seconds=DEFAULT_SOLVER_SINGLE_TIME_LIMIT_SECONDS,
+        time_limit_seconds=default_tl,
         random_seed=DEFAULT_SOLVER_RANDOM_SEED,
         num_search_workers=DEFAULT_SOLVER_NUM_SEARCH_WORKERS,
         log_search_progress=DEFAULT_SOLVER_LOG_PROGRESS,
@@ -1876,7 +1712,8 @@ def _empty_response(
         has_feasible_solution=False,
         time_limit_hit=normalized_status == PlanningStatus.TIMEOUT,
     )
-    return finalize_planning_response({
+    extra = {"multi_echelon_mode": "bom_v0"} if multi_echelon else None
+    body: Dict[str, Any] = {
         "status": status,
         "plan_lines": [],
         "kpis": {
@@ -1889,13 +1726,20 @@ def _empty_response(
             status_info=status_info,
             settings=solver_settings,
             solve_time_ms=solve_time_ms,
-            objective_value=None,
-            best_bound=None,
-            gap=None,
+            objective_value=None, best_bound=None, gap=None,
+            **({"extra": extra} if extra else {}),
         ),
         "infeasible_reasons": reasons,
         "proof": {"objective_terms": [], "constraints_checked": []},
-    }, default_engine="cp_sat", default_status=normalize_status(status, PlanningStatus.ERROR))
+    }
+    if multi_echelon:
+        body["component_plan"] = []
+        body["component_inventory_projection"] = {"total_rows": 0, "rows": [], "truncated": False}
+        body["bottlenecks"] = {
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "items": [], "rows": [], "total_rows": 0,
+        }
+    return finalize_planning_response(body, default_engine="cp_sat", default_status=normalized_status)
 
 
 # ── multi-echelon private helpers ──────────────────────────────────────────────
@@ -1904,11 +1748,9 @@ def _infer_period_days_me(sorted_dates: List[Any]) -> int:
     """Return the median gap (in days) between consecutive planning-horizon dates."""
     if len(sorted_dates) <= 1:
         return 1
-    deltas = []
-    for i in range(1, len(sorted_dates)):
-        days = int((sorted_dates[i] - sorted_dates[i - 1]).days)
-        if days > 0:
-            deltas.append(days)
+    deltas = [int((sorted_dates[i] - sorted_dates[i - 1]).days)
+              for i in range(1, len(sorted_dates))
+              if int((sorted_dates[i] - sorted_dates[i - 1]).days) > 0]
     if not deltas:
         return 1
     deltas.sort()
@@ -1927,64 +1769,6 @@ def _build_qty_map_me(rows: Any, attr: str) -> Dict[str, float]:
             continue
         out[sku] = max(0.0, _to_float(v, 0.0))
     return out
-
-
-def _empty_response_me(
-    t0: datetime,
-    status: str,
-    reasons: List[str],
-    solve_time_ms: Optional[int] = None,
-    settings: Optional[SolverRunSettings] = None,
-    termination_reason: str = "NO_FEASIBLE_SOLUTION",
-    status_name: str = "UNKNOWN",
-) -> Dict[str, Any]:
-    """Empty multi-echelon response (superset of single-echelon shape)."""
-    if solve_time_ms is None:
-        solve_time_ms = int((datetime.now(timezone.utc) - t0).total_seconds() * 1000)
-    normalized_status = normalize_status(status, PlanningStatus.ERROR)
-    solver_settings = settings or SolverRunSettings(
-        time_limit_seconds=DEFAULT_SOLVER_MULTI_TIME_LIMIT_SECONDS,
-        random_seed=DEFAULT_SOLVER_RANDOM_SEED,
-        num_search_workers=DEFAULT_SOLVER_NUM_SEARCH_WORKERS,
-        log_search_progress=DEFAULT_SOLVER_LOG_PROGRESS,
-        deterministic_mode=DEFAULT_SOLVER_NUM_SEARCH_WORKERS == 1,
-    )
-    status_info = SolverStatusInfo(
-        status=normalized_status,
-        termination_reason=termination_reason,
-        status_name=status_name,
-        has_feasible_solution=False,
-        time_limit_hit=normalized_status == PlanningStatus.TIMEOUT,
-    )
-    return finalize_planning_response({
-        "status": status,
-        "plan_lines": [],
-        "component_plan": [],
-        "component_inventory_projection": {"total_rows": 0, "rows": [], "truncated": False},
-        "bottlenecks": {
-            "generated_at": datetime.now(timezone.utc).isoformat(),
-            "items": [],
-            "rows": [],
-            "total_rows": 0,
-        },
-        "kpis": {
-            "estimated_service_level": None,
-            "estimated_stockout_units": None,
-            "estimated_holding_units": None,
-            "estimated_total_cost": None,
-        },
-        "solver_meta": _build_solver_meta(
-            status_info=status_info,
-            settings=solver_settings,
-            solve_time_ms=solve_time_ms,
-            objective_value=None,
-            best_bound=None,
-            gap=None,
-            extra={"multi_echelon_mode": "bom_v0"},
-        ),
-        "infeasible_reasons": reasons,
-        "proof": {"objective_terms": [], "constraints_checked": []},
-    }, default_engine="cp_sat", default_status=normalize_status(status, PlanningStatus.ERROR))
 
 
 # ── public multi-echelon API ───────────────────────────────────────────────────
@@ -2047,37 +1831,18 @@ def solve_replenishment_multi_echelon(
 
     t0 = datetime.now(timezone.utc)
     if bool(getattr(solver_settings, "force_timeout", False)):
-        return _empty_response_me(
+        return _empty_response(
             t0,
             "TIMEOUT",
             ["Forced timeout via settings.solver.force_timeout=true."],
             settings=solver_settings,
             termination_reason="FORCED_TIMEOUT",
             status_name="FORCED_TIMEOUT",
+            multi_echelon=True,
         )
     qty_scale: int = 1_000   # quantities: 1 real unit = qty_scale integer units
     cost_scale: int = 100    # cost coefficients (different from OBJ_SCALE in single-echelon)
-    constraint_tags: List[Dict[str, Any]] = []
-
-    def _tag(
-        tag: str,
-        description: str,
-        *,
-        severity: str = "hard",
-        scope: str = "global",
-        period: Optional[str] = None,
-        sku: Optional[str] = None,
-        echelon: str = "multi",
-    ) -> None:
-        constraint_tags.append({
-            "tag": tag,
-            "description": description,
-            "severity": severity,
-            "scope": scope,
-            "period": period,
-            "sku": sku,
-            "echelon": echelon,
-        })
+    constraint_tags, _tag = _make_tag_collector("multi")
 
     # ── 1. parse FG demand ────────────────────────────────────────────────────
     horizon_days = max(1, int(payload.planning_horizon_days or 1))
@@ -2106,23 +1871,25 @@ def solve_replenishment_multi_echelon(
             del demand_rows_by_fg[key]
 
     if not demand_rows_by_fg:
-        return _empty_response_me(
+        return _empty_response(
             t0,
             "INFEASIBLE",
             ["No valid demand_forecast.series rows within horizon."],
             settings=solver_settings,
             termination_reason="INVALID_INPUT",
+            multi_echelon=True,
         )
 
     fg_keys = sorted(demand_rows_by_fg.keys(), key=lambda k: (k[0], k[1]))
     horizon_dates = sorted({d for rows in demand_rows_by_fg.values() for d, _ in rows})
     if not horizon_dates:
-        return _empty_response_me(
+        return _empty_response(
             t0,
             "INFEASIBLE",
             ["No horizon dates could be derived from demand series."],
             settings=solver_settings,
             termination_reason="INVALID_INPUT",
+            multi_echelon=True,
         )
 
     period_days = _infer_period_days_me(horizon_dates)
@@ -2151,12 +1918,13 @@ def solve_replenishment_multi_echelon(
         )
 
     if not raw_bom_rows:
-        return _empty_response_me(
+        return _empty_response(
             t0,
             "INFEASIBLE",
             ["No valid BOM usage rows were provided; multi-echelon requires bom_usage."],
             settings=solver_settings,
             termination_reason="INVALID_INPUT",
+            multi_echelon=True,
         )
 
     # ── 3. inventory seed ─────────────────────────────────────────────────────
@@ -2249,12 +2017,13 @@ def solve_replenishment_multi_echelon(
                 "BOM rows could not be resolved to plant-scoped items. "
                 "Provide plant_id on bom_usage rows or include matching parent inventory/demand context."
             )
-        return _empty_response_me(
+        return _empty_response(
             t0,
             "INFEASIBLE",
             [message],
             settings=solver_settings,
             termination_reason="INVALID_INPUT",
+            multi_echelon=True,
         )
 
     usage_scaled: Dict[Tuple[Tuple[str, str], Tuple[str, str]], int] = {}
@@ -2308,97 +2077,39 @@ def solve_replenishment_multi_echelon(
         key: sum(q for _, q in demand_rows_by_fg.get(key, []))
         for key in fg_keys
     }
-    expected_total_need_float: Dict[Tuple[str, str], float] = {
-        key: external_demand_float.get(key, 0.0)
+    seed_need = {key: external_demand_float.get(key, 0.0) for key in item_keys}
+    expected_total_need_float, demand_frontier, _ = _propagate_bom_demand(
+        seed_need, children_by_parent, max_bom_depth)
+    expected_internal_demand_scaled: Dict[Tuple[str, str], int] = {
+        key: max(0, int(round(max(0.0, expected_total_need_float.get(key, 0.0) - external_demand_float.get(key, 0.0)) * qty_scale)))
         for key in item_keys
     }
-    demand_frontier: Dict[Tuple[str, str], float] = {
-        key: qty for key, qty in expected_total_need_float.items() if qty > 0.0
-    }
-    expected_need_cap = 1_000_000_000.0
-    expected_depth_used = 0
-    while demand_frontier and expected_depth_used < max_bom_depth:
-        next_frontier: Dict[Tuple[str, str], float] = {}
-        for parent_key, parent_qty in demand_frontier.items():
-            if parent_qty <= 0.0:
-                continue
-            for child_key, _, usage_qty in children_by_parent.get(parent_key, []):
-                add = parent_qty * usage_qty
-                if add <= 0.0:
-                    continue
-                capped_add = min(add, expected_need_cap)
-                new_total = min(
-                    expected_need_cap,
-                    expected_total_need_float.get(child_key, 0.0) + capped_add,
-                )
-                delta = max(0.0, new_total - expected_total_need_float.get(child_key, 0.0))
-                if delta <= 0.0:
-                    continue
-                expected_total_need_float[child_key] = new_total
-                next_frontier[child_key] = min(
-                    expected_need_cap,
-                    next_frontier.get(child_key, 0.0) + delta,
-                )
-        demand_frontier = next_frontier
-        expected_depth_used += 1
 
-    expected_internal_demand_scaled: Dict[Tuple[str, str], int] = {}
-    for key in item_keys:
-        total_need = expected_total_need_float.get(key, 0.0)
-        external_need = external_demand_float.get(key, 0.0)
-        internal_need = max(0.0, total_need - external_need)
-        expected_internal_demand_scaled[key] = max(0, int(round(internal_need * qty_scale)))
-
-    # Demand-by-period propagation used for diagnostics/projection visibility.
-    expected_need_by_key_idx: Dict[Tuple[str, str], Dict[int, float]] = {key: {} for key in item_keys}
-    period_frontier: Dict[Tuple[str, str], Dict[int, float]] = {}
+    # Demand-by-period propagation for diagnostics/projection visibility.
+    period_seed: Dict[Tuple[str, str], Dict[int, float]] = {}
     for fg_key in fg_keys:
         bucket: Dict[int, float] = {}
-        for t, demand_s in demand_by_fg_idx_scaled.get(fg_key, {}).items():
-            qty = max(0.0, demand_s / qty_scale)
-            if qty <= 0.0:
-                continue
-            bucket[t] = bucket.get(t, 0.0) + qty
-            expected_need_by_key_idx[fg_key][t] = expected_need_by_key_idx[fg_key].get(t, 0.0) + qty
+        for t, ds in demand_by_fg_idx_scaled.get(fg_key, {}).items():
+            qty = max(0.0, ds / qty_scale)
+            if qty > 0.0:
+                bucket[t] = bucket.get(t, 0.0) + qty
         if bucket:
-            period_frontier[fg_key] = bucket
-
-    period_depth_used = 0
-    while period_frontier and period_depth_used < max_bom_depth:
-        next_frontier: Dict[Tuple[str, str], Dict[int, float]] = {}
-        for parent_key, period_qty in period_frontier.items():
-            for child_key, _, usage_qty in children_by_parent.get(parent_key, []):
-                child_total_bucket = expected_need_by_key_idx.setdefault(child_key, {})
-                child_frontier_bucket = next_frontier.setdefault(child_key, {})
-                for t, parent_qty in period_qty.items():
-                    add = parent_qty * usage_qty
-                    if add <= 0.0:
-                        continue
-                    prev_total = child_total_bucket.get(t, 0.0)
-                    new_total = min(expected_need_cap, prev_total + add)
-                    delta = max(0.0, new_total - prev_total)
-                    if delta <= 0.0:
-                        continue
-                    child_total_bucket[t] = new_total
-                    child_frontier_bucket[t] = min(
-                        expected_need_cap,
-                        child_frontier_bucket.get(t, 0.0) + delta,
-                    )
-        period_frontier = {
-            key: bucket for key, bucket in next_frontier.items() if any(v > 0.0 for v in bucket.values())
-        }
-        period_depth_used += 1
+            period_seed[fg_key] = bucket
+    # ensure all item_keys have entries
+    for k in item_keys:
+        period_seed.setdefault(k, {})
+    expected_need_by_key_idx, period_frontier_trunc = _propagate_bom_demand_by_period(
+        period_seed, children_by_parent, max_bom_depth)
+    period_frontier = period_frontier_trunc  # for me_meta flag
 
     expected_dependent_need_by_key_idx: Dict[Tuple[str, str], Dict[int, float]] = {}
     for key in component_keys:
-        total_bucket = expected_need_by_key_idx.get(key, {})
-        ext_bucket = demand_by_fg_idx_scaled.get(key, {})
-        dep_bucket: Dict[int, float] = {}
-        for t, total in total_bucket.items():
-            dep = max(0.0, total - (ext_bucket.get(t, 0) / qty_scale))
-            if dep > 1e-12:
-                dep_bucket[t] = dep
-        expected_dependent_need_by_key_idx[key] = dep_bucket
+        tb = expected_need_by_key_idx.get(key, {})
+        eb = demand_by_fg_idx_scaled.get(key, {})
+        expected_dependent_need_by_key_idx[key] = {
+            t: dep for t, total in tb.items()
+            if (dep := max(0.0, total - (eb.get(t, 0) / qty_scale))) > 1e-12
+        }
 
     # ── 7. constraint maps (float, unscaled — scaled inline at point of use) ──
     moq_map = _build_qty_map_me(payload.constraints.moq, "min_qty")
@@ -2691,85 +2402,44 @@ def solve_replenishment_multi_echelon(
     if not status_info.has_feasible_solution:
         reasons = ["CP-SAT did not find a feasible BOM-aware plan under current constraints."]
         suspected_tags = ["BOM_LINK", "COMP_FEAS"]
-        constraints_checked: List[Dict[str, Any]] = [
-            _mk_constraint_check(
-                name="bom_coupling",
-                tag="BOM_LINK",
-                passed=False,
-                details="No feasible solution found with hard BOM coupling constraints.",
-                description="BOM-coupled flow feasibility.",
-                echelon="multi",
-            ),
-        ]
-        if prod_capacity_refs:
-            reasons.append("Production capacity constraints CAP_PROD[*] were active in this run.")
-            suspected_tags.append("CAP_PROD")
-            prod_period_tags = sorted({f"CAP_PROD[{ref['day'].isoformat()}]" for ref in prod_capacity_refs})
-            constraints_checked.append(_mk_constraint_check(
-                name="production_capacity",
-                tag="CAP_PROD",
-                passed=False,
-                details="No feasible solution found with CAP_PROD[*] constraints enabled.",
-                description="Shared production capacity per period.",
-                scope="period",
-                echelon="multi",
-                tags=prod_period_tags,
-            ))
-        if inv_capacity_refs_me:
-            reasons.append("Inventory capacity constraints CAP_INV[*] were active in this run.")
-            suspected_tags.append("CAP_INV")
-            inv_period_tags = sorted({f"CAP_INV[{ref['day'].isoformat()}]" for ref in inv_capacity_refs_me})
-            constraints_checked.append(_mk_constraint_check(
-                name="inventory_capacity",
-                tag="CAP_INV",
-                passed=False,
-                details="No feasible solution found with CAP_INV[*] constraints enabled.",
-                description="Shared inventory capacity per period.",
-                scope="period",
-                echelon="multi",
-                tags=inv_period_tags,
-            ))
+        checks: List[Dict[str, Any]] = [_mk_constraint_check(
+            name="bom_coupling", tag="BOM_LINK", passed=False,
+            details="No feasible solution found with hard BOM coupling constraints.",
+            description="BOM-coupled flow feasibility.", echelon="multi")]
+        for refs, cname, ctag in [
+            (prod_capacity_refs, "production_capacity", "CAP_PROD"),
+            (inv_capacity_refs_me, "inventory_capacity", "CAP_INV"),
+        ]:
+            if refs:
+                reasons.append(f"{ctag}[*] constraints were active in this run.")
+                suspected_tags.append(ctag)
+                checks.append(_mk_constraint_check(
+                    name=cname, tag=ctag, passed=False,
+                    details=f"No feasible solution found with {ctag}[*] constraints enabled.",
+                    description=f"Shared {cname.replace('_', ' ')} per period.",
+                    scope="period", echelon="multi",
+                    tags=sorted({f"{ctag}[{r['day'].isoformat()}]" for r in refs})))
         if service_level_target is not None:
             suspected_tags.append("SERVICE_LEVEL_GLOBAL")
-            constraints_checked.append(_mk_constraint_check(
-                name="service_level_target",
-                tag="SERVICE_LEVEL_GLOBAL",
-                passed=False,
+            checks.append(_mk_constraint_check(
+                name="service_level_target", tag="SERVICE_LEVEL_GLOBAL", passed=False,
                 details="Hard service-level target may conflict with supply/capacity constraints.",
-                description="Hard FG service-level target.",
-                echelon="multi",
-            ))
+                description="Hard FG service-level target.", echelon="multi"))
         infeasibility_analysis = _summarize_infeasibility(suspected_tags)
-        relaxation_analysis: List[Dict[str, Any]] = []
-        if diagnose_mode and not internal_diagnose:
-            # Keep diagnose mode fast for multi-echelon: report candidate relaxations.
-            relaxation_analysis = [
-                {"relaxed_tags": [tag], "feasible_after_relaxation": None, "delta_cost_proxy": None}
-                for tag in sorted(set(suspected_tags))
-            ]
-        return finalize_planning_response(
-            {
-                **_empty_response_me(
-                    t0,
-                    status_info.status.value,
-                    reasons,
-                    solve_time_ms=solve_time_ms,
-                    settings=solver_settings,
-                    termination_reason=status_info.termination_reason,
-                    status_name=status_info.status_name,
-                ),
-                "proof": {
-                    "objective_terms": [],
-                    "constraints_checked": constraints_checked,
-                    "constraint_tags": constraint_tags,
-                    "infeasibility_analysis": infeasibility_analysis,
-                    "relaxation_analysis": relaxation_analysis,
-                    "diagnose_mode": bool(diagnose_mode),
-                },
-            },
-            default_engine="cp_sat",
-            default_status=status_info.status,
-        )
+        relaxation_analysis: List[Dict[str, Any]] = (
+            [{"relaxed_tags": [t], "feasible_after_relaxation": None, "delta_cost_proxy": None}
+             for t in sorted(set(suspected_tags))]
+            if diagnose_mode and not internal_diagnose else [])
+        base = _empty_response(
+            t0, status_info.status.value, reasons, solve_time_ms=solve_time_ms,
+            settings=solver_settings, termination_reason=status_info.termination_reason,
+            status_name=status_info.status_name, multi_echelon=True)
+        base["proof"] = {
+            "objective_terms": [], "constraints_checked": checks,
+            "constraint_tags": constraint_tags,
+            "infeasibility_analysis": infeasibility_analysis,
+            "relaxation_analysis": relaxation_analysis, "diagnose_mode": bool(diagnose_mode)}
+        return finalize_planning_response(base, default_engine="cp_sat", default_status=status_info.status)
 
     # ── 17. extract plan rows ─────────────────────────────────────────────────
     plan_rows: List[Dict[str, Any]] = []
@@ -2925,38 +2595,23 @@ def solve_replenishment_multi_echelon(
             if cons_s > qty_scale * (prev_inv_s + arrival_s) + 1:
                 bom_coupling_failed += 1
 
-    prod_cap_failed = 0
-    prod_cap_binding = 0
-    prod_cap_tags: List[str] = []
-    for ref in prod_capacity_refs:
-        produced_s = 0
-        for term in ref["expr_terms"]:
-            produced_s += int(round(solver.Value(term))) if not isinstance(term, int) else int(term)
-        cap_s = int(ref["cap_s"])
-        tag = f"CAP_PROD[{ref['day'].isoformat()}]"
-        if produced_s > cap_s + 1:
-            prod_cap_failed += 1
-            prod_cap_tags.append(tag)
-        elif abs(produced_s - cap_s) <= 1:
-            prod_cap_binding += 1
-            prod_cap_tags.append(tag)
+    def _check_me_cap(refs, tag_prefix, usage_fn):
+        failed = binding = 0
+        for ref in refs:
+            used_s = usage_fn(ref)
+            cap_s = int(ref["cap_s"])
+            if used_s > cap_s + 1:
+                failed += 1
+            elif abs(used_s - cap_s) <= 1:
+                binding += 1
+        return failed, binding
 
-    inv_cap_failed = 0
-    inv_cap_binding = 0
-    inv_cap_tags: List[str] = []
-    for ref in inv_capacity_refs_me:
-        inv_total_s = 0
-        t = int(ref["t"])
-        for key in ref["keys"]:
-            inv_total_s += int(round(solver.Value(inv_vars[(key, t)])))
-        cap_s = int(ref["cap_s"])
-        tag = f"CAP_INV[{ref['day'].isoformat()}]"
-        if inv_total_s > cap_s + 1:
-            inv_cap_failed += 1
-            inv_cap_tags.append(tag)
-        elif abs(inv_total_s - cap_s) <= 1:
-            inv_cap_binding += 1
-            inv_cap_tags.append(tag)
+    prod_cap_failed, prod_cap_binding = _check_me_cap(
+        prod_capacity_refs, "CAP_PROD",
+        lambda ref: sum(int(round(solver.Value(t))) if not isinstance(t, int) else int(t) for t in ref["expr_terms"]))
+    inv_cap_failed, inv_cap_binding = _check_me_cap(
+        inv_capacity_refs_me, "CAP_INV",
+        lambda ref: sum(int(round(solver.Value(inv_vars[(k, int(ref["t"]))]))) for k in ref["keys"]))
 
     # ── 21. bottleneck diagnostics ────────────────────────────────────────────
     bottleneck_items: List[Dict[str, Any]] = []
@@ -3027,140 +2682,58 @@ def solve_replenishment_multi_echelon(
             "suggested_actions": _suggestions_for_categories({"bom_shortage"}),
             "message": "Component shortages constrained feasible FG output.",
         })
-    if inv_capacity_refs_me and (end_fg_backlog > 1e-9 or bottleneck_items):
-        infeasible_reasons.append("Inventory capacity constraints CAP_INV[*] contributed to infeasibility.")
-        infeasible_reasons_detailed.append({
-            "category": "capacity",
-            "top_offending_tags": ["CAP_INV"],
-            "suggested_actions": _suggestions_for_categories({"capacity"}),
-            "message": "Shared inventory capacity is binding under current demand.",
-        })
-    if prod_capacity_refs and (end_fg_backlog > 1e-9 or bottleneck_items):
-        infeasible_reasons.append("Production capacity constraints CAP_PROD[*] contributed to infeasibility.")
-        infeasible_reasons_detailed.append({
-            "category": "capacity",
-            "top_offending_tags": ["CAP_PROD"],
-            "suggested_actions": _suggestions_for_categories({"capacity"}),
-            "message": "Shared production capacity is binding under current demand.",
-        })
+    if end_fg_backlog > 1e-9 or bottleneck_items:
+        for refs, ctag, clabel in [(inv_capacity_refs_me, "CAP_INV", "inventory"), (prod_capacity_refs, "CAP_PROD", "production")]:
+            if refs:
+                infeasible_reasons.append(f"{ctag}[*] constraints contributed to infeasibility.")
+                infeasible_reasons_detailed.append({
+                    "category": "capacity", "top_offending_tags": [ctag],
+                    "suggested_actions": _suggestions_for_categories({"capacity"}),
+                    "message": f"Shared {clabel} capacity is binding under current demand."})
 
-    constraints_checked = [
+    constraints_checked = _build_base_constraint_checks(
+        nonneg_failed, moq_failed, pack_failed, max_failed,
+        budget_passed, budget_detail, echelon="multi", item_label="item-period",
+    )
+    constraints_checked.extend([
         _mk_constraint_check(
-            name="order_qty_non_negative",
-            tag="NONNEG",
-            passed=nonneg_failed == 0,
-            details=f"Negative quantity rows: {nonneg_failed}.",
-            description="All plan quantities are non-negative.",
-            scope="row",
-            echelon="multi",
-        ),
-        _mk_constraint_check(
-            name="moq",
-            tag="MOQ",
-            passed=moq_failed == 0,
-            details=f"Rows violating MOQ: {moq_failed}.",
-            description="MOQ enforcement across item-period rows.",
-            scope="sku_period",
-            echelon="multi",
-        ),
-        _mk_constraint_check(
-            name="pack_size_multiple",
-            tag="PACK",
-            passed=pack_failed == 0,
-            details=f"Rows violating pack-size multiple: {pack_failed}.",
-            description="Pack-size multiple enforcement across item-period rows.",
-            scope="sku_period",
-            echelon="multi",
-        ),
-        _mk_constraint_check(
-            name="budget_cap",
-            tag="BUDGET_GLOBAL",
-            passed=budget_passed,
-            details=budget_detail,
-            description="Shared budget cap across all items.",
-            echelon="multi",
-        ),
-        _mk_constraint_check(
-            name="max_order_qty",
-            tag="MAXQ",
-            passed=max_failed == 0,
-            details=f"Rows violating max_order_qty: {max_failed}.",
-            description="Max order quantity per item-period.",
-            scope="sku_period",
-            echelon="multi",
-        ),
-        _mk_constraint_check(
-            name="bom_coupling",
-            tag="BOM_LINK",
+            name="bom_coupling", tag="BOM_LINK",
             passed=bom_coupling_failed == 0,
             details=f"BOM coupling violations: {bom_coupling_failed}.",
             description="Component consumption linked to parent item production via BOM usage.",
-            scope="sku_period",
-            echelon="multi",
+            scope="sku_period", echelon="multi",
         ),
         _mk_constraint_check(
-            name="component_feasibility",
-            tag="COMP_FEAS",
+            name="component_feasibility", tag="COMP_FEAS",
             passed=len(bottleneck_items) == 0,
             details=f"Detected component bottlenecks: {len(bottleneck_items)}.",
             description="Component availability supports requested FG production.",
-            scope="sku_period",
-            echelon="multi",
+            scope="sku_period", echelon="multi",
         ),
+    ])
+    _me_cap_checks = [
+        (prod_capacity_refs, "production_capacity", "CAP_PROD", prod_cap_failed,
+         f"CAP_PROD checks={len(prod_capacity_refs)}, violations={prod_cap_failed}, binding={prod_cap_binding}."),
+        (inv_capacity_refs_me, "inventory_capacity", "CAP_INV", inv_cap_failed,
+         f"CAP_INV checks={len(inv_capacity_refs_me)}, violations={inv_cap_failed}, binding={inv_cap_binding}."),
     ]
-    if prod_capacity_refs:
-        prod_period_tags = sorted({f"CAP_PROD[{ref['day'].isoformat()}]" for ref in prod_capacity_refs})
-        constraints_checked.append(_mk_constraint_check(
-            name="production_capacity",
-            tag="CAP_PROD",
-            passed=prod_cap_failed == 0,
-            details=(
-                f"CAP_PROD checks={len(prod_capacity_refs)}, "
-                f"violations={prod_cap_failed}, binding={prod_cap_binding}."
-            ),
-            description="Shared production capacity per period.",
-            scope="period",
-            echelon="multi",
-            tags=prod_period_tags,
-        ))
-    if inv_capacity_refs_me:
-        inv_period_tags = sorted({f"CAP_INV[{ref['day'].isoformat()}]" for ref in inv_capacity_refs_me})
-        constraints_checked.append(_mk_constraint_check(
-            name="inventory_capacity",
-            tag="CAP_INV",
-            passed=inv_cap_failed == 0,
-            details=(
-                f"CAP_INV checks={len(inv_capacity_refs_me)}, "
-                f"violations={inv_cap_failed}, binding={inv_cap_binding}."
-            ),
-            description="Shared inventory capacity per period.",
-            scope="period",
-            echelon="multi",
-            tags=inv_period_tags,
-        ))
+    for refs, cname, ctag, cfailed, cdetails in _me_cap_checks:
+        if refs:
+            ptags = sorted({f"{ctag}[{ref['day'].isoformat()}]" for ref in refs})
+            constraints_checked.append(_mk_constraint_check(
+                name=cname, tag=ctag, passed=cfailed == 0, details=cdetails,
+                description=f"Shared {cname.replace('_', ' ')} per period.",
+                scope="period", echelon="multi", tags=ptags,
+            ))
     if service_level_target is not None:
         allowed_backlog_f = (service_level_allowed_fg_backlog_s or 0) / qty_scale
         constraints_checked.append(_mk_constraint_check(
-            name="service_level_target",
-            tag="SERVICE_LEVEL_GLOBAL",
+            name="service_level_target", tag="SERVICE_LEVEL_GLOBAL",
             passed=end_fg_backlog <= allowed_backlog_f + 1e-9,
-            details=(
-                f"End FG backlog {round(end_fg_backlog, 6)} vs allowed "
-                f"{round(allowed_backlog_f, 6)}."
-            ),
-            description="Hard FG service-level target.",
-            echelon="multi",
+            details=f"End FG backlog {round(end_fg_backlog, 6)} vs allowed {round(allowed_backlog_f, 6)}.",
+            description="Hard FG service-level target.", echelon="multi",
         ))
-    all_checks_passed = all(check.get("passed") is True for check in constraints_checked)
-    if status_info.status == PlanningStatus.TIMEOUT:
-        solve_status = PlanningStatus.TIMEOUT
-    elif not all_checks_passed:
-        solve_status = PlanningStatus.INFEASIBLE
-    else:
-        solve_status = status_info.status if status_info.status in {
-            PlanningStatus.OPTIMAL,
-            PlanningStatus.FEASIBLE,
-        } else PlanningStatus.FEASIBLE
+    solve_status = _determine_final_status(status_info, constraints_checked)
 
     me_meta = {
         "multi_echelon_mode": str(getattr(payload.multi_echelon, "mode", None) or "bom_v0"),
@@ -3178,6 +2751,29 @@ def solve_replenishment_multi_echelon(
         "bom_expected_need_truncated": bool(demand_frontier),
         "bom_expected_need_by_period_truncated": bool(period_frontier),
         "bom_shortages_impacted_fg": bool(bottleneck_items),
+    }
+
+    me_infeas_analysis, me_relax_analysis, _, _ = _build_proof_and_diagnostics(
+        infeasible_reasons_detailed, diagnose_mode, internal_diagnose, payload,
+        multi_echelon=True, infeasible_reasons=infeasible_reasons)
+    _me_proof_block = {
+        "objective_terms": [
+            {"name": "fg_holding_units", "value": round(holding_units, 6),
+             "note": "Total FG inventory holding quantity."},
+            {"name": "fg_stockout_units", "value": round(stockout_units, 6),
+             "note": "Total FG backlog quantity over horizon."},
+            {"name": "component_holding_units", "value": round(comp_holding, 6),
+             "note": "Total component inventory holding quantity."},
+            {"name": "component_stockout_units", "value": round(comp_stockout, 6),
+             "note": "Total component backlog quantity over horizon."},
+            {"name": "estimated_total_cost", "value": round(est_cost, 6),
+             "note": "CP-SAT weighted objective value proxy."},
+        ],
+        "constraints_checked": constraints_checked,
+        "constraint_tags": constraint_tags,
+        "infeasibility_analysis": me_infeas_analysis,
+        "relaxation_analysis": me_relax_analysis,
+        "diagnose_mode": bool(diagnose_mode),
     }
 
     return finalize_planning_response(
@@ -3215,43 +2811,7 @@ def solve_replenishment_multi_echelon(
             "infeasible_reasons": sorted(set(infeasible_reasons)),
             "infeasible_reason_details": infeasible_reasons_detailed,
             "infeasible_reasons_detailed": infeasible_reasons_detailed,
-            "proof": {
-                "objective_terms": [
-                    {"name": "fg_holding_units", "value": round(holding_units, 6),
-                     "note": "Total FG inventory holding quantity."},
-                    {"name": "fg_stockout_units", "value": round(stockout_units, 6),
-                     "note": "Total FG backlog quantity over horizon."},
-                    {"name": "component_holding_units", "value": round(comp_holding, 6),
-                     "note": "Total component inventory holding quantity."},
-                    {"name": "component_stockout_units", "value": round(comp_stockout, 6),
-                     "note": "Total component backlog quantity over horizon."},
-                    {"name": "estimated_total_cost", "value": round(est_cost, 6),
-                     "note": "CP-SAT weighted objective value proxy."},
-                ],
-                "constraints_checked": constraints_checked,
-                "constraint_tags": constraint_tags,
-                "infeasibility_analysis": (
-                    _summarize_infeasibility(
-                        [
-                            tag
-                            for reason in infeasible_reasons_detailed
-                            for tag in _as_list(reason.get("top_offending_tags"))
-                        ]
-                    )
-                    if infeasible_reasons_detailed
-                    else {"categories": [], "top_offending_tags": [], "suggestions": []}
-                ),
-                "relaxation_analysis": (
-                    [
-                        {"relaxed_tags": ["CAP_PROD"], "feasible_after_relaxation": None, "delta_cost_proxy": None},
-                        {"relaxed_tags": ["CAP_INV"], "feasible_after_relaxation": None, "delta_cost_proxy": None},
-                        {"relaxed_tags": ["BUDGET_GLOBAL"], "feasible_after_relaxation": None, "delta_cost_proxy": None},
-                    ]
-                    if diagnose_mode and not internal_diagnose and bool(infeasible_reasons)
-                    else []
-                ),
-                "diagnose_mode": bool(diagnose_mode),
-            },
+            "proof": _me_proof_block,
         },
         default_engine="cp_sat",
         default_status=solve_status,

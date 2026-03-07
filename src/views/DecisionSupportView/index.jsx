@@ -24,14 +24,14 @@ import {
 } from '../../services/chatPlanningService';
 import {
   generateTopologyGraphForRun,
-  loadTopologyGraphForRun,
+  loadTopologyGraphForRun
 } from '../../services/topology/topologyService';
-import { WORKFLOW_NAMES } from '../../workflows/workflowRegistry';
 import { buildSignature } from '../../utils/datasetSimilarity';
 import { buildReusePlan, applyContractTemplateToProfile } from '../../utils/reusePlanner';
 import { APP_NAME } from '../../config/branding';
 import { executeChatCanvasRun } from '../../services/chatCanvasWorkflowService';
 import CanvasPanel from '../../components/chat/CanvasPanel';
+import { checkNegotiationTrigger, runNegotiation } from '../../services/negotiation/negotiationOrchestrator';
 import SplitShell from '../../components/chat/SplitShell';
 import ConversationSidebar from '../../components/chat/ConversationSidebar';
 import ChatThread from '../../components/chat/ChatThread';
@@ -41,7 +41,6 @@ import { parseIntent, routeIntent } from '../../services/chatIntentService';
 import { handleParameterChange, handlePlanComparison, buildComparisonSummaryText } from '../../services/chatRefinementService';
 import { createAlertMonitor, buildAlertChatMessage, isAlertMonitorEnabled } from '../../services/alertMonitorService';
 import { batchApprove, batchReject } from '../../services/approvalWorkflowService';
-import { runNegotiation, checkNegotiationTrigger } from '../../services/negotiation/negotiationOrchestrator';
 import {
   SIDEBAR_COLLAPSED_KEY_PREFIX,
   CANVAS_SPLIT_RATIO_KEY_PREFIX,
@@ -53,12 +52,10 @@ import {
   getErrorMessage,
   buildFingerprintFromUpload,
   getWorkflowFromProfile,
-  buildRuntimeWorkflowSettings,
   buildValidationPayload,
   buildDownloadsPayload,
   buildConfirmationPayload,
   applyContractOverrides,
-  buildExecutionGateResult,
   buildEvidenceSummaryText,
   deriveCanvasChartPatchFromCard,
   findLatestRunIdFromMessages,
@@ -67,19 +64,15 @@ import {
   buildSystemPrompt,
   isExecutionIntent,
   initTableAvailability,
-  isTableUnavailable,
   markTableUnavailable,
   toPositiveRunId,
-  buildActualVsForecastRowsFromForecastCard,
-  buildInventoryProjectionRowsFromCard,
-  buildCostBreakdownRowsFromPlanSummary,
 } from './helpers.js';
 
-// ── Extracted hooks & component ────────────────────────────────────────────
+// Extracted hooks and renderer
 import useConversationManager from './useConversationManager.js';
-import useWorkflowExecutor from './useWorkflowExecutor.js';
-import usePlanExecutor from './usePlanExecutor.js';
 import useForecastExecutor from './useForecastExecutor.js';
+import usePlanExecutor from './usePlanExecutor.js';
+import useWorkflowExecutor from './useWorkflowExecutor.js';
 import MessageCardRenderer from './MessageCardRenderer.jsx';
 
 const tableAvailable = initTableAvailability();
@@ -90,8 +83,6 @@ const _rawRowsCache = new Map();
 
 export default function DecisionSupportView({ user, addNotification }) {
   const userStorageSuffix = user?.id || 'anon';
-  const sidebarKey = `${SIDEBAR_COLLAPSED_KEY_PREFIX}${userStorageSuffix}`;
-  const splitRatioKey = `${CANVAS_SPLIT_RATIO_KEY_PREFIX}${userStorageSuffix}`;
   const [input, setInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const [streamingContent, setStreamingContent] = useState('');
@@ -102,14 +93,14 @@ export default function DecisionSupportView({ user, addNotification }) {
   const [uploadStatusText, setUploadStatusText] = useState('');
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => {
     try {
-      return localStorage.getItem(sidebarKey) === '1';
+      return localStorage.getItem(`${SIDEBAR_COLLAPSED_KEY_PREFIX}${userStorageSuffix}`) === '1';
     } catch {
       return false;
     }
   });
   const [splitRatio, setSplitRatio] = useState(() => {
     try {
-      return clampSplitRatio(localStorage.getItem(splitRatioKey) ?? 0.5);
+      return clampSplitRatio(localStorage.getItem(`${CANVAS_SPLIT_RATIO_KEY_PREFIX}${userStorageSuffix}`) ?? 0.5);
     } catch {
       return 0.5;
     }
@@ -118,10 +109,13 @@ export default function DecisionSupportView({ user, addNotification }) {
   const [isCanvasDetached, setIsCanvasDetached] = useState(false);
   const [isNegotiationGenerating, setIsNegotiationGenerating] = useState(false);
 
+  const alertMonitorRef = useRef(null);
   const textareaRef = useRef(null);
   const fileInputRef = useRef(null);
   const topologyAutoLoadRef = useRef({});
-  const alertMonitorRef = useRef(null);
+
+  // Stable ref for canvas state updater used by useConversationManager
+  const canvasStateByConversationRef = useRef(null);
 
   const sidebarCollapseStorageKey = useMemo(
     () => `${SIDEBAR_COLLAPSED_KEY_PREFIX}${user?.id || 'anon'}`,
@@ -132,26 +126,30 @@ export default function DecisionSupportView({ user, addNotification }) {
     [user?.id]
   );
 
-  // ── Canvas state management ──────────────────────────────────────────────
+  // ── Canvas state updater ────────────────────────────────────────────────
   const updateCanvasState = useCallback((conversationId, updater) => {
     if (!conversationId) return;
-    conversationManager.setCanvasStateByConversation((prev) => {
+    const setter = canvasStateByConversationRef.current;
+    if (!setter) return;
+    setter((prev) => {
       const existing = prev[conversationId] || DEFAULT_CANVAS_STATE;
       const nextValue = typeof updater === 'function' ? updater(existing) : { ...existing, ...(updater || {}) };
       return {
         ...prev,
-        [conversationId]: nextValue,
+        [conversationId]: nextValue
       };
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── Conversation Manager hook ────────────────────────────────────────────
-  const conversationManager = useConversationManager({
+  // ── Conversation manager hook ──────────────────────────────────────────
+  const convManager = useConversationManager({
     user,
     addNotification,
     updateCanvasState,
   });
+
+  // Wire the ref so updateCanvasState can access the setter
+  canvasStateByConversationRef.current = convManager.setCanvasStateByConversation;
 
   const {
     conversations,
@@ -172,12 +170,12 @@ export default function DecisionSupportView({ user, addNotification }) {
     appendMessagesToCurrentConversation,
     handleNewConversation,
     handleDeleteConversation,
-  } = conversationManager;
+  } = convManager;
 
   // SmartOps 2.0: Session context for stateful conversations
   const sessionCtx = useSessionContext(user?.id, currentConversationId);
 
-  // ── Supabase connectivity pre-flight check ────────────────────────────────
+  // ── Supabase connectivity pre-flight check ────────────────────────────
   useEffect(() => {
     if (!user?.id) return;
     (async () => {
@@ -247,7 +245,7 @@ export default function DecisionSupportView({ user, addNotification }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id, currentConversationId, domainContext]);
 
-  // ── Derived canvas/chart state ───────────────────────────────────────────
+  // ── Derived state from messages ─────────────────────────────────────────
   const forecastSeriesGroups = useMemo(() => {
     const msgs = currentMessages;
     for (let i = msgs.length - 1; i >= 0; i--) {
@@ -268,14 +266,13 @@ export default function DecisionSupportView({ user, addNotification }) {
       actual_vs_forecast: [],
       inventory_projection: [],
       cost_breakdown: [],
-      topology_graph: null,
+      topology_graph: null
     };
 
     (currentMessages || []).forEach((message) => {
       if (!message?.type) return;
       const patch = deriveCanvasChartPatchFromCard(message.type, message.payload || {});
       if (!patch) return;
-
       if (Array.isArray(patch.actual_vs_forecast) && patch.actual_vs_forecast.length > 0) {
         seed.actual_vs_forecast = patch.actual_vs_forecast;
       }
@@ -299,10 +296,7 @@ export default function DecisionSupportView({ user, addNotification }) {
     const liveActual = toArray(live.actual_vs_forecast);
     const liveInventory = toArray(live.inventory_projection);
     const liveCost = toArray(live.cost_breakdown);
-    const liveTopology = live.topology_graph && typeof live.topology_graph === 'object'
-      ? live.topology_graph
-      : null;
-
+    const liveTopology = live.topology_graph && typeof live.topology_graph === 'object' ? live.topology_graph : null;
     const liveGroups = toArray(live.series_groups);
     const derivedGroups = toArray(derivedChartPayloadFromMessages.series_groups);
     return {
@@ -310,7 +304,7 @@ export default function DecisionSupportView({ user, addNotification }) {
       series_groups: liveGroups.length > 0 ? liveGroups : derivedGroups,
       inventory_projection: liveInventory.length > 0 ? liveInventory : derivedChartPayloadFromMessages.inventory_projection,
       cost_breakdown: liveCost.length > 0 ? liveCost : derivedChartPayloadFromMessages.cost_breakdown,
-      topology_graph: liveTopology || derivedChartPayloadFromMessages.topology_graph || null,
+      topology_graph: liveTopology || derivedChartPayloadFromMessages.topology_graph || null
     };
   }, [activeCanvasState?.chartPayload, derivedChartPayloadFromMessages]);
 
@@ -319,39 +313,53 @@ export default function DecisionSupportView({ user, addNotification }) {
       || effectiveCanvasChartPayload?.topology_graph?.runId;
     const graphRunId = toPositiveRunId(rawGraphRunId);
     if (graphRunId) return graphRunId;
-
     const workflowRunId = findLatestWorkflowRunIdFromMessages(currentMessages);
     if (workflowRunId) return workflowRunId;
-
     const canvasRunId = toPositiveRunId(activeCanvasState?.run?.id || activeCanvasState?.run?.run_id);
     if (canvasRunId) return canvasRunId;
-
     const fallbackRunId = findLatestRunIdFromMessages(currentMessages);
     return fallbackRunId || null;
   }, [effectiveCanvasChartPayload?.topology_graph, currentMessages, activeCanvasState?.run]);
 
-  // ── Canvas run helpers ───────────────────────────────────────────────────
+  // ── UI handlers ─────────────────────────────────────────────────────────
+  const handleSidebarToggle = useCallback(() => {
+    setIsSidebarCollapsed((prev) => {
+      const next = !prev;
+      try { localStorage.setItem(sidebarCollapseStorageKey, next ? '1' : '0'); } catch { /* noop */ }
+      return next;
+    });
+  }, [sidebarCollapseStorageKey]);
+
+  const handleExpandSidebar = useCallback(() => {
+    setIsSidebarCollapsed(false);
+    try { localStorage.setItem(sidebarCollapseStorageKey, '0'); } catch { /* noop */ }
+  }, [sidebarCollapseStorageKey]);
+
+  const handleSplitRatioCommit = useCallback((nextRatio) => {
+    const clamped = clampSplitRatio(nextRatio);
+    setSplitRatio(clamped);
+    try { localStorage.setItem(splitRatioStorageKey, String(clamped)); } catch { /* noop */ }
+  }, [splitRatioStorageKey]);
+
+  const handleCanvasToggle = useCallback(() => {
+    if (!currentConversationId) return;
+    updateCanvasState(currentConversationId, (prev) => ({ ...prev, isOpen: !prev.isOpen }));
+  }, [currentConversationId, updateCanvasState]);
+
+  const systemPrompt = useMemo(() => {
+    if (!domainContext) return '';
+    return buildSystemPrompt(domainContext, activeDatasetContext);
+  }, [domainContext, activeDatasetContext]);
+
+  // ── Canvas run helpers ──────────────────────────────────────────────────
   const markCanvasRunStarted = useCallback((label) => {
     if (!currentConversationId) return;
     updateCanvasState(currentConversationId, (prev) => ({
       ...prev,
       isOpen: true,
       activeTab: 'logs',
-      run: {
-        ...(prev.run || {}),
-        status: 'running',
-        label,
-        started_at: new Date().toISOString(),
-      },
-      logs: [
-        ...(prev.logs || []),
-        {
-          id: `run_${Date.now()}`,
-          step: 'profile',
-          message: `✅ ${label} started`,
-          timestamp: new Date().toISOString(),
-        },
-      ],
+      run: { ...(prev.run || {}), status: 'running', label, started_at: new Date().toISOString() },
+      logs: [...(prev.logs || []), { id: `run_${Date.now()}`, step: 'profile', message: `✅ ${label} started`, timestamp: new Date().toISOString() }]
     }));
   }, [currentConversationId, updateCanvasState]);
 
@@ -359,25 +367,14 @@ export default function DecisionSupportView({ user, addNotification }) {
     if (!currentConversationId) return;
     updateCanvasState(currentConversationId, (prev) => ({
       ...prev,
-      run: {
-        ...(prev.run || {}),
-        status,
-      },
+      run: { ...(prev.run || {}), status },
       logs: message
-        ? [
-            ...(prev.logs || []),
-            {
-              id: `${status}_${Date.now()}`,
-              step,
-              message,
-              timestamp: new Date().toISOString(),
-            },
-          ]
-        : (prev.logs || []),
+        ? [...(prev.logs || []), { id: `${status}_${Date.now()}`, step, message, timestamp: new Date().toISOString() }]
+        : (prev.logs || [])
     }));
   }, [currentConversationId, updateCanvasState]);
 
-  // ── Resolve dataset profile ──────────────────────────────────────────────
+  // ── Profile resolution ──────────────────────────────────────────────────
   const resolveDatasetProfileRow = useCallback(async (profileId = null) => {
     if (!user?.id) return null;
 
@@ -386,187 +383,77 @@ export default function DecisionSupportView({ user, addNotification }) {
     const numericProfileId = Number.isFinite(Number(profileId)) ? Number(profileId) : null;
     const activeProfileIdRaw = activeDatasetContext?.dataset_profile_id;
     const activeProfileIdStr = activeProfileIdRaw != null ? String(activeProfileIdRaw) : null;
-    const activeProfileId = Number.isFinite(Number(activeProfileIdRaw))
-      ? Number(activeProfileIdRaw)
-      : null;
+    const activeProfileId = Number.isFinite(Number(activeProfileIdRaw)) ? Number(activeProfileIdRaw) : null;
     const isActiveLocal = activeProfileIdStr && activeProfileIdStr.startsWith('local-');
 
     if (isLocalId && activeProfileIdStr === profileIdStr) {
       return {
-        id: activeProfileIdStr,
-        user_file_id: activeDatasetContext?.user_file_id || null,
-        profile_json: activeDatasetContext?.profileJson || {},
-        contract_json: activeDatasetContext?.contractJson || {},
-        _inlineRawRows: activeDatasetContext?.rawRowsForStorage || _rawRowsCache.get(activeProfileIdStr) || null,
-        _local: true,
+        id: activeProfileIdStr, user_file_id: activeDatasetContext?.user_file_id || null,
+        profile_json: activeDatasetContext?.profileJson || {}, contract_json: activeDatasetContext?.contractJson || {},
+        _inlineRawRows: activeDatasetContext?.rawRowsForStorage || _rawRowsCache.get(activeProfileIdStr) || null, _local: true
       };
     }
-
     if (numericProfileId && activeProfileId && numericProfileId === activeProfileId) {
       return {
-        id: activeProfileId,
-        user_file_id: activeDatasetContext?.user_file_id || null,
-        profile_json: activeDatasetContext?.profileJson || {},
-        contract_json: activeDatasetContext?.contractJson || {},
+        id: activeProfileId, user_file_id: activeDatasetContext?.user_file_id || null,
+        profile_json: activeDatasetContext?.profileJson || {}, contract_json: activeDatasetContext?.contractJson || {}
       };
     }
-
     if (numericProfileId) {
       const row = await datasetProfilesService.getDatasetProfileById(user.id, numericProfileId);
       if (row) return row;
     }
-
     if (isActiveLocal) {
       return {
-        id: activeProfileIdStr,
-        user_file_id: activeDatasetContext?.user_file_id || null,
-        profile_json: activeDatasetContext?.profileJson || {},
-        contract_json: activeDatasetContext?.contractJson || {},
-        _inlineRawRows: activeDatasetContext?.rawRowsForStorage || _rawRowsCache.get(activeProfileIdStr) || null,
-        _local: true,
+        id: activeProfileIdStr, user_file_id: activeDatasetContext?.user_file_id || null,
+        profile_json: activeDatasetContext?.profileJson || {}, contract_json: activeDatasetContext?.contractJson || {},
+        _inlineRawRows: activeDatasetContext?.rawRowsForStorage || _rawRowsCache.get(activeProfileIdStr) || null, _local: true
       };
     }
-
     if (activeProfileId) {
       return {
-        id: activeProfileId,
-        user_file_id: activeDatasetContext?.user_file_id || null,
-        profile_json: activeDatasetContext?.profileJson || {},
-        contract_json: activeDatasetContext?.contractJson || {},
+        id: activeProfileId, user_file_id: activeDatasetContext?.user_file_id || null,
+        profile_json: activeDatasetContext?.profileJson || {}, contract_json: activeDatasetContext?.contractJson || {}
       };
     }
-
     return datasetProfilesService.getLatestDatasetProfile(user.id);
   }, [user?.id, activeDatasetContext]);
 
-  // ── Forecast Executor hook ───────────────────────────────────────────────
-  const forecastExecutor = useForecastExecutor({
-    user,
-    currentConversationId,
-    activeDatasetContext,
-    appendMessagesToCurrentConversation,
-    addNotification,
-    resolveDatasetProfileRow,
-    markCanvasRunStarted,
-    markCanvasRunFinished,
-    updateCanvasState,
-    setConversationDatasetContext,
+  // ── Extracted executor hooks ────────────────────────────────────────────
+  const forecastExec = useForecastExecutor({
+    user, currentConversationId, activeDatasetContext,
+    appendMessagesToCurrentConversation, addNotification, resolveDatasetProfileRow,
+    markCanvasRunStarted, markCanvasRunFinished, updateCanvasState, setConversationDatasetContext,
   });
 
-  const {
-    runningForecastProfiles,
-    executeForecastFlow,
-  } = forecastExecutor;
-
-  // ── Plan Executor hook ───────────────────────────────────────────────────
-  const planExecutor = usePlanExecutor({
-    user,
-    currentConversationId,
-    activeDatasetContext,
-    appendMessagesToCurrentConversation,
-    addNotification,
-    resolveDatasetProfileRow,
-    markCanvasRunStarted,
-    markCanvasRunFinished,
-    updateCanvasState,
-    setDomainContext,
+  const planExec = usePlanExecutor({
+    user, currentConversationId, activeDatasetContext,
+    appendMessagesToCurrentConversation, addNotification, resolveDatasetProfileRow,
+    markCanvasRunStarted, markCanvasRunFinished, updateCanvasState, setDomainContext,
   });
 
-  const {
-    runningPlanKeys,
-    latestPlanRunId,
-    setLatestPlanRunId,
-    setRunningPlanKeys,
-    executePlanFlow,
-    executeRiskAwarePlanFlow,
-    handleRequestPlanApproval,
-    handleApprovePlanApproval,
-    handleRejectPlanApproval,
-    handleRiskReplanDecision,
-  } = planExecutor;
-
-  // ── Workflow Executor hook ───────────────────────────────────────────────
-  const workflowExecutor = useWorkflowExecutor({
-    user,
-    currentConversationId,
-    activeDatasetContext,
-    appendMessagesToCurrentConversation,
-    addNotification,
-    resolveDatasetProfileRow,
-    markCanvasRunStarted,
-    markCanvasRunFinished,
-    updateCanvasState,
-    setConversationDatasetContext,
+  const workflowExec = useWorkflowExecutor({
+    user, currentConversationId, activeDatasetContext,
+    appendMessagesToCurrentConversation, addNotification, resolveDatasetProfileRow,
+    markCanvasRunStarted, markCanvasRunFinished, updateCanvasState, setConversationDatasetContext,
   });
 
+  // Destructure commonly used values from hooks
+  const { executeForecastFlow } = forecastExec;
+  const { executePlanFlow, executeRiskAwarePlanFlow, latestPlanRunId, setLatestPlanRunId } = planExec;
   const {
-    workflowSnapshots,
-    setWorkflowSnapshots,
-    activeWorkflowRuns,
-    setActiveWorkflowRuns,
-    executeWorkflowFlow,
-    executeWorkflowAFlow,
-    executeWorkflowBFlow,
-    executeDigitalTwinFlow,
-    handleResumeWorkflowA,
-    handleReplayWorkflowA,
-    handleBlockingQuestionsSubmit,
-    handleSubmitBlockingAnswers,
-    handleCancelAsyncWorkflow,
-  } = workflowExecutor;
+    executeWorkflowFlow, executeWorkflowAFlow, executeWorkflowBFlow, executeDigitalTwinFlow,
+    handleResumeWorkflowA, handleBlockingQuestionsSubmit, handleSubmitBlockingAnswers,
+    handleReplayWorkflowA, handleCancelAsyncWorkflow,
+  } = workflowExec;
 
+  // ── Topology auto-load effect ──────────────────────────────────────────
   const topologyRunStatus = useMemo(() => {
     if (!topologyRunId) return '';
-    const snapshot = workflowSnapshots[topologyRunId] || workflowSnapshots[String(topologyRunId)] || null;
+    const snapshot = workflowExec.workflowSnapshots[topologyRunId] || workflowExec.workflowSnapshots[String(topologyRunId)] || null;
     return String(snapshot?.run?.status || '').toLowerCase();
-  }, [topologyRunId, workflowSnapshots]);
+  }, [topologyRunId, workflowExec.workflowSnapshots]);
 
-  // ── Sidebar / split-ratio handlers ───────────────────────────────────────
-  const handleSidebarToggle = useCallback(() => {
-    setIsSidebarCollapsed((prev) => {
-      const next = !prev;
-      try {
-        localStorage.setItem(sidebarCollapseStorageKey, next ? '1' : '0');
-      } catch {
-        // Ignore storage write failures.
-      }
-      return next;
-    });
-  }, [sidebarCollapseStorageKey]);
-
-  const handleExpandSidebar = useCallback(() => {
-    setIsSidebarCollapsed(false);
-    try {
-      localStorage.setItem(sidebarCollapseStorageKey, '0');
-    } catch {
-      // Ignore storage write failures.
-    }
-  }, [sidebarCollapseStorageKey]);
-
-  const handleSplitRatioCommit = useCallback((nextRatio) => {
-    const clamped = clampSplitRatio(nextRatio);
-    setSplitRatio(clamped);
-    try {
-      localStorage.setItem(splitRatioStorageKey, String(clamped));
-    } catch {
-      // Ignore storage write failures.
-    }
-  }, [splitRatioStorageKey]);
-
-  const handleCanvasToggle = useCallback(() => {
-    if (!currentConversationId) return;
-    updateCanvasState(currentConversationId, (prev) => ({
-      ...prev,
-      isOpen: !prev.isOpen,
-    }));
-  }, [currentConversationId, updateCanvasState]);
-
-  const systemPrompt = useMemo(() => {
-    if (!domainContext) return '';
-    return buildSystemPrompt(domainContext, activeDatasetContext);
-  }, [domainContext, activeDatasetContext]);
-
-  // ── Topology auto-load effect ────────────────────────────────────────────
   useEffect(() => {
     if (!currentConversationId) return;
     const targetRunId = Number(topologyRunId);
@@ -579,66 +466,36 @@ export default function DecisionSupportView({ user, addNotification }) {
     if (Number.isFinite(existingGraphRunId) && existingGraphRunId === targetRunId) return;
 
     const cacheKey = `${currentConversationId}:${targetRunId}`;
-    const cacheEntry = topologyAutoLoadRef.current[cacheKey] || {
-      loaded: false,
-      inFlight: false,
-      lastAttemptAt: 0,
-    };
+    const cacheEntry = topologyAutoLoadRef.current[cacheKey] || { loaded: false, inFlight: false, lastAttemptAt: 0 };
     if (cacheEntry.loaded || cacheEntry.inFlight) return;
     if ((Date.now() - Number(cacheEntry.lastAttemptAt || 0)) < 2000) return;
-    topologyAutoLoadRef.current[cacheKey] = {
-      ...cacheEntry,
-      inFlight: true,
-      lastAttemptAt: Date.now(),
-    };
+    topologyAutoLoadRef.current[cacheKey] = { ...cacheEntry, inFlight: true, lastAttemptAt: Date.now() };
 
     let cancelled = false;
     loadTopologyGraphForRun({ runId: targetRunId })
       .then((loaded) => {
         const current = topologyAutoLoadRef.current[cacheKey] || {};
         if (cancelled || !loaded?.graph) {
-          topologyAutoLoadRef.current[cacheKey] = {
-            ...current,
-            inFlight: false,
-          };
+          topologyAutoLoadRef.current[cacheKey] = { ...current, inFlight: false };
           return;
         }
         updateCanvasState(currentConversationId, (prev) => ({
           ...prev,
-          chartPayload: {
-            ...(prev.chartPayload || {}),
-            topology_graph: loaded.graph,
-          },
+          chartPayload: { ...(prev.chartPayload || {}), topology_graph: loaded.graph }
         }));
-        topologyAutoLoadRef.current[cacheKey] = {
-          ...current,
-          loaded: true,
-          inFlight: false,
-        };
+        topologyAutoLoadRef.current[cacheKey] = { ...current, loaded: true, inFlight: false };
       })
       .catch(() => {
         const current = topologyAutoLoadRef.current[cacheKey] || {};
-        topologyAutoLoadRef.current[cacheKey] = {
-          ...current,
-          inFlight: false,
-        };
+        topologyAutoLoadRef.current[cacheKey] = { ...current, inFlight: false };
       });
 
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    currentConversationId,
-    topologyRunId,
-    topologyRunStatus,
-    activeCanvasState?.chartPayload?.topology_graph,
-    updateCanvasState,
-  ]);
+    return () => { cancelled = true; };
+  }, [currentConversationId, topologyRunId, topologyRunStatus, activeCanvasState?.chartPayload?.topology_graph, updateCanvasState]);
 
-  // ── Dataset context from card ────────────────────────────────────────────
+  // ── Dataset context handler ─────────────────────────────────────────────
   const handleUseDatasetContextFromCard = useCallback((cardPayload) => {
     if (!currentConversationId || !cardPayload?.dataset_profile_id) return;
-
     setConversationDatasetContext((prev) => ({
       ...prev,
       [currentConversationId]: {
@@ -653,40 +510,23 @@ export default function DecisionSupportView({ user, addNotification }) {
         minimalQuestions: cardPayload.minimal_questions || [],
         reuse_enabled: prev[currentConversationId]?.reuse_enabled !== false,
         force_retrain: Boolean(prev[currentConversationId]?.force_retrain),
-        reused_settings_template: prev[currentConversationId]?.reused_settings_template || null,
-      },
+        reused_settings_template: prev[currentConversationId]?.reused_settings_template || null
+      }
     }));
-
     appendMessagesToCurrentConversation([{
-      role: 'ai',
-      content: `Dataset context attached: profile #${cardPayload.dataset_profile_id}.`,
-      timestamp: new Date().toISOString(),
+      role: 'ai', content: `Dataset context attached: profile #${cardPayload.dataset_profile_id}.`, timestamp: new Date().toISOString()
     }]);
-
     addNotification?.('Dataset context attached to this conversation.', 'success');
   }, [currentConversationId, appendMessagesToCurrentConversation, addNotification, setConversationDatasetContext]);
 
-  // ── Contract confirmation ────────────────────────────────────────────────
-  const handleContractConfirmation = useCallback(async ({
-    dataset_profile_id,
-    selections,
-    mapping_selections,
-  }) => {
+  // ── Contract confirmation handler ───────────────────────────────────────
+  const handleContractConfirmation = useCallback(async ({ dataset_profile_id, selections, mapping_selections }) => {
     if (!currentConversationId) return;
     const ctx = conversationDatasetContext[currentConversationId];
     if (!ctx) return;
 
-    const draftContract = applyContractOverrides(
-      ctx.contractJson || {},
-      ctx.profileJson || {},
-      selections || {},
-      mapping_selections || {}
-    );
-    const applied = applyContractTemplateToProfile({
-      profile_json: ctx.profileJson || {},
-      contract_template_json: draftContract,
-      sheetsRaw: ctx.sheetsRaw || [],
-    });
+    const draftContract = applyContractOverrides(ctx.contractJson || {}, ctx.profileJson || {}, selections || {}, mapping_selections || {});
+    const applied = applyContractTemplateToProfile({ profile_json: ctx.profileJson || {}, contract_template_json: draftContract, sheetsRaw: ctx.sheetsRaw || [] });
     const nextProfileJson = applied?.profile_json || (ctx.profileJson || {});
     const updatedContract = applied?.contract_json || draftContract;
     const validationPassed = applied?.validation_passed === true;
@@ -694,7 +534,7 @@ export default function DecisionSupportView({ user, addNotification }) {
       status: validationPassed ? 'pass' : 'fail',
       reasons: Array.isArray(updatedContract?.validation?.reasons) && updatedContract.validation.reasons.length > 0
         ? updatedContract.validation.reasons
-        : (validationPassed ? [] : ['One or more sheets failed required field coverage']),
+        : (validationPassed ? [] : ['One or more sheets failed required field coverage'])
     };
 
     let nextProfileId = dataset_profile_id || ctx.dataset_profile_id;
@@ -704,62 +544,35 @@ export default function DecisionSupportView({ user, addNotification }) {
         const hasExistingProfileId = Number.isFinite(Number(nextProfileId));
         const stored = hasExistingProfileId
           ? await datasetProfilesService.updateDatasetProfile(user.id, Number(nextProfileId), {
-              user_file_id: ctx.user_file_id || null,
-              fingerprint: ctx.dataset_fingerprint,
-              profile_json: nextProfileJson,
-              contract_json: updatedContract,
+              user_file_id: ctx.user_file_id || null, fingerprint: ctx.dataset_fingerprint,
+              profile_json: nextProfileJson, contract_json: updatedContract
             })
           : await datasetProfilesService.createDatasetProfile({
-              user_id: user.id,
-              user_file_id: ctx.user_file_id || null,
-              fingerprint: ctx.dataset_fingerprint,
-              profile_json: nextProfileJson,
-              contract_json: updatedContract,
+              user_id: user.id, user_file_id: ctx.user_file_id || null, fingerprint: ctx.dataset_fingerprint,
+              profile_json: nextProfileJson, contract_json: updatedContract
             });
         persistedProfile = stored;
         nextProfileId = stored?.id || nextProfileId;
       }
-    } catch {
-      // Best effort persistence; continue with local confirmation state.
-    }
+    } catch { /* Best effort persistence */ }
 
     if (validationPassed && user?.id && ctx.dataset_fingerprint) {
       reuseMemoryService.upsertContractTemplate({
-        user_id: user.id,
-        fingerprint: ctx.dataset_fingerprint,
-        workflow: getWorkflowFromProfile(nextProfileJson || {}),
-        contract_json: updatedContract,
-        quality_delta: -0.05,
-      }).catch((error) => {
-        console.warn('[DecisionSupportView] Failed to update contract template after correction:', error.message);
-      });
+        user_id: user.id, fingerprint: ctx.dataset_fingerprint,
+        workflow: getWorkflowFromProfile(nextProfileJson || {}), contract_json: updatedContract, quality_delta: -0.05
+      }).catch((error) => { console.warn('[DecisionSupportView] Failed to update contract template after correction:', error.message); });
 
       if (persistedProfile?.id) {
         const signature = buildSignature(nextProfileJson || {}, updatedContract || {});
         reuseMemoryService.upsertDatasetSimilarityIndex({
-          user_id: user.id,
-          dataset_profile_id: persistedProfile.id,
-          fingerprint: ctx.dataset_fingerprint,
-          signature_json: signature,
-        }).catch((error) => {
-          console.warn('[DecisionSupportView] Failed to persist similarity index after correction:', error.message);
-        });
+          user_id: user.id, dataset_profile_id: persistedProfile.id, fingerprint: ctx.dataset_fingerprint, signature_json: signature
+        }).catch((error) => { console.warn('[DecisionSupportView] Failed to persist similarity index after correction:', error.message); });
       }
     }
 
     const mergedProfileRow = persistedProfile
-      ? {
-          ...persistedProfile,
-          profile_json: nextProfileJson,
-          contract_json: updatedContract,
-        }
-      : {
-          id: nextProfileId || null,
-          user_file_id: ctx.user_file_id || null,
-          fingerprint: ctx.dataset_fingerprint || null,
-          profile_json: nextProfileJson,
-          contract_json: updatedContract,
-        };
+      ? { ...persistedProfile, profile_json: nextProfileJson, contract_json: updatedContract }
+      : { id: nextProfileId || null, user_file_id: ctx.user_file_id || null, fingerprint: ctx.dataset_fingerprint || null, profile_json: nextProfileJson, contract_json: updatedContract };
     const summaryPayload = buildDataSummaryCardPayload(mergedProfileRow);
 
     setConversationDatasetContext((prev) => ({
@@ -768,51 +581,26 @@ export default function DecisionSupportView({ user, addNotification }) {
         ...(prev[currentConversationId] || {}),
         dataset_profile_id: nextProfileId,
         user_file_id: mergedProfileRow.user_file_id || prev[currentConversationId]?.user_file_id || null,
-        profileJson: nextProfileJson,
-        contractJson: updatedContract,
+        profileJson: nextProfileJson, contractJson: updatedContract,
         summary: summaryPayload.context_summary || prev[currentConversationId]?.summary || '',
-        validationPayload,
-        contractOverrides: selections || {},
-        contractConfirmed: validationPassed,
-        minimalQuestions: nextProfileJson?.global?.minimal_questions || [],
-        pending_reuse_plan: null,
-      },
+        validationPayload, contractOverrides: selections || {}, contractConfirmed: validationPassed,
+        minimalQuestions: nextProfileJson?.global?.minimal_questions || [], pending_reuse_plan: null
+      }
     }));
 
     appendMessagesToCurrentConversation([
-      {
-        role: 'ai',
-        content: validationPassed
-          ? 'Contract confirmed and saved for fingerprint-based reuse.'
-          : 'Contract draft saved, but required mapping is still incomplete. Please fix missing fields before running execution.',
-        timestamp: new Date().toISOString(),
-      },
-      {
-        role: 'ai',
-        type: 'dataset_summary_card',
-        payload: summaryPayload,
-        timestamp: new Date().toISOString(),
-      },
-      {
-        role: 'ai',
-        type: 'validation_card',
-        payload: validationPayload,
-        timestamp: new Date().toISOString(),
-      },
+      { role: 'ai', content: validationPassed ? 'Contract confirmed and saved for fingerprint-based reuse.' : 'Contract draft saved, but required mapping is still incomplete. Please fix missing fields before running execution.', timestamp: new Date().toISOString() },
+      { role: 'ai', type: 'dataset_summary_card', payload: summaryPayload, timestamp: new Date().toISOString() },
+      { role: 'ai', type: 'validation_card', payload: validationPayload, timestamp: new Date().toISOString() }
     ]);
-
-    addNotification?.(
-      validationPassed ? 'Contract confirmed.' : 'Contract saved but still has missing required mappings.',
-      validationPassed ? 'success' : 'error'
-    );
+    addNotification?.(validationPassed ? 'Contract confirmed.' : 'Contract saved but still has missing required mappings.', validationPassed ? 'success' : 'error');
   }, [conversationDatasetContext, currentConversationId, user?.id, appendMessagesToCurrentConversation, addNotification, setConversationDatasetContext]);
 
-  // ── Reuse suggestion handlers ────────────────────────────────────────────
+  // ── Reuse handlers ──────────────────────────────────────────────────────
   const handleApplyReuseSuggestion = useCallback(async (reusePayload) => {
     if (!user?.id || !currentConversationId) return;
     const ctx = conversationDatasetContext[currentConversationId];
     if (!ctx?.dataset_profile_id) return;
-
     const effectivePayload = reusePayload || ctx.pending_reuse_plan || null;
     if (!effectivePayload) return;
 
@@ -827,29 +615,16 @@ export default function DecisionSupportView({ user, addNotification }) {
       if (effectivePayload.contract_template_id) {
         const template = await reuseMemoryService.getContractTemplateById(user.id, effectivePayload.contract_template_id);
         if (template?.contract_json) {
-          const applied = applyContractTemplateToProfile({
-            profile_json: nextProfileJson,
-            contract_template_json: template.contract_json,
-            sheetsRaw: ctx.sheetsRaw || [],
-          });
+          const applied = applyContractTemplateToProfile({ profile_json: nextProfileJson, contract_template_json: template.contract_json, sheetsRaw: ctx.sheetsRaw || [] });
           nextProfileJson = applied.profile_json;
           nextContractJson = applied.contract_json;
           validationPassed = applied.validation_passed === true;
-
-          await datasetProfilesService.updateDatasetProfile(user.id, profileRow.id, {
-            profile_json: nextProfileJson,
-            contract_json: nextContractJson,
-          });
-
+          await datasetProfilesService.updateDatasetProfile(user.id, profileRow.id, { profile_json: nextProfileJson, contract_json: nextContractJson });
           reuseMemoryService.upsertContractTemplate({
-            user_id: user.id,
-            fingerprint: ctx.dataset_fingerprint || profileRow.fingerprint,
-            workflow: getWorkflowFromProfile(nextProfileJson),
-            contract_json: nextContractJson,
-            quality_delta: validationPassed ? 0.08 : -0.03,
-          }).catch((error) => {
-            console.warn('[DecisionSupportView] Failed to update contract template after reuse apply:', error.message);
-          });
+            user_id: user.id, fingerprint: ctx.dataset_fingerprint || profileRow.fingerprint,
+            workflow: getWorkflowFromProfile(nextProfileJson), contract_json: nextContractJson,
+            quality_delta: validationPassed ? 0.08 : -0.03
+          }).catch((error) => { console.warn('[DecisionSupportView] Failed to update contract template after reuse apply:', error.message); });
         }
       }
 
@@ -859,87 +634,44 @@ export default function DecisionSupportView({ user, addNotification }) {
         if (settingsTemplate?.settings_json) {
           reusedSettingsTemplate = settingsTemplate.settings_json;
           reuseMemoryService.upsertRunSettingsTemplate({
-            user_id: user.id,
-            fingerprint: ctx.dataset_fingerprint || profileRow.fingerprint,
-            workflow: getWorkflowFromProfile(nextProfileJson),
-            settings_json: settingsTemplate.settings_json,
-            quality_delta: 0.02,
-          }).catch((error) => {
-            console.warn('[DecisionSupportView] Failed to update run settings template after reuse apply:', error.message);
-          });
+            user_id: user.id, fingerprint: ctx.dataset_fingerprint || profileRow.fingerprint,
+            workflow: getWorkflowFromProfile(nextProfileJson), settings_json: settingsTemplate.settings_json, quality_delta: 0.02
+          }).catch((error) => { console.warn('[DecisionSupportView] Failed to update run settings template after reuse apply:', error.message); });
         }
       }
 
-      const mergedProfileRow = {
-        ...profileRow,
-        profile_json: nextProfileJson,
-        contract_json: nextContractJson,
-      };
+      const mergedProfileRow = { ...profileRow, profile_json: nextProfileJson, contract_json: nextContractJson };
       const mergedFingerprint = ctx.dataset_fingerprint || profileRow.fingerprint || null;
       if (mergedFingerprint) {
         reuseMemoryService.upsertDatasetSimilarityIndex({
-          user_id: user.id,
-          dataset_profile_id: profileRow.id,
-          fingerprint: mergedFingerprint,
-          signature_json: buildSignature(nextProfileJson, nextContractJson),
-        }).catch((error) => {
-          console.warn('[DecisionSupportView] Failed to refresh similarity index after reuse apply:', error.message);
-        });
+          user_id: user.id, dataset_profile_id: profileRow.id, fingerprint: mergedFingerprint,
+          signature_json: buildSignature(nextProfileJson, nextContractJson)
+        }).catch((error) => { console.warn('[DecisionSupportView] Failed to refresh similarity index after reuse apply:', error.message); });
       }
       const cardPayload = buildDataSummaryCardPayload(mergedProfileRow);
-      const validationPayloadObj = buildValidationPayload(mergedProfileRow);
+      const validationPayload = buildValidationPayload(mergedProfileRow);
 
       setConversationDatasetContext((prev) => ({
         ...prev,
         [currentConversationId]: {
           ...(prev[currentConversationId] || {}),
-          profileJson: nextProfileJson,
-          contractJson: nextContractJson,
-          summary: cardPayload.context_summary || '',
-          validationPayload: validationPayloadObj,
-          contractConfirmed: validationPassed,
-          pending_reuse_plan: null,
-          reused_settings_template: reusedSettingsTemplate,
-        },
+          profileJson: nextProfileJson, contractJson: nextContractJson,
+          summary: cardPayload.context_summary || '', validationPayload, contractConfirmed: validationPassed,
+          pending_reuse_plan: null, reused_settings_template: reusedSettingsTemplate
+        }
       }));
 
       appendMessagesToCurrentConversation([
-        {
-          role: 'ai',
-          content: 'Reused contract + settings successfully.',
-          timestamp: new Date().toISOString(),
-        },
-        {
-          role: 'ai',
-          type: 'dataset_summary_card',
-          payload: cardPayload,
-          timestamp: new Date().toISOString(),
-        },
-        {
-          role: 'ai',
-          type: 'validation_card',
-          payload: validationPayloadObj,
-          timestamp: new Date().toISOString(),
-        },
+        { role: 'ai', content: 'Reused contract + settings successfully.', timestamp: new Date().toISOString() },
+        { role: 'ai', type: 'dataset_summary_card', payload: cardPayload, timestamp: new Date().toISOString() },
+        { role: 'ai', type: 'validation_card', payload: validationPayload, timestamp: new Date().toISOString() }
       ]);
       addNotification?.('Reuse applied successfully.', 'success');
     } catch (error) {
-      appendMessagesToCurrentConversation([{
-        role: 'ai',
-        content: `Reuse apply failed: ${error.message}`,
-        timestamp: new Date().toISOString(),
-      }]);
+      appendMessagesToCurrentConversation([{ role: 'ai', content: `Reuse apply failed: ${error.message}`, timestamp: new Date().toISOString() }]);
       addNotification?.(`Reuse apply failed: ${error.message}`, 'error');
     }
-  }, [
-    user?.id,
-    currentConversationId,
-    conversationDatasetContext,
-    resolveDatasetProfileRow,
-    appendMessagesToCurrentConversation,
-    addNotification,
-    setConversationDatasetContext,
-  ]);
+  }, [user?.id, currentConversationId, conversationDatasetContext, resolveDatasetProfileRow, appendMessagesToCurrentConversation, addNotification, setConversationDatasetContext]);
 
   const handleReviewReuseSuggestion = useCallback(() => {
     if (!currentConversationId) return;
@@ -947,220 +679,59 @@ export default function DecisionSupportView({ user, addNotification }) {
     const validationStatus = String(ctx?.validationPayload?.status || '').toLowerCase();
     setConversationDatasetContext((prev) => ({
       ...prev,
-      [currentConversationId]: {
-        ...(prev[currentConversationId] || {}),
-        pending_reuse_plan: null,
-        contractConfirmed: validationStatus === 'pass',
-      },
+      [currentConversationId]: { ...(prev[currentConversationId] || {}), pending_reuse_plan: null, contractConfirmed: validationStatus === 'pass' }
     }));
     appendMessagesToCurrentConversation([{
       role: 'ai',
-      content: validationStatus === 'pass'
-        ? 'Reuse skipped. Continuing with current validated mapping draft.'
-        : 'Reuse skipped. Current draft needs mapping review before execution.',
-      timestamp: new Date().toISOString(),
+      content: validationStatus === 'pass' ? 'Reuse skipped. Continuing with current validated mapping draft.' : 'Reuse skipped. Current draft needs mapping review before execution.',
+      timestamp: new Date().toISOString()
     }]);
   }, [currentConversationId, conversationDatasetContext, appendMessagesToCurrentConversation, setConversationDatasetContext]);
 
-  // ── Topology handler ─────────────────────────────────────────────────────
-  const handleRunTopology = useCallback(async (requestedRunId = null) => {
-    if (!user?.id) {
-      addNotification?.('Please sign in before running topology.', 'error');
-      return;
-    }
-    if (!currentConversationId) {
-      addNotification?.('Please start a conversation first.', 'error');
-      return;
-    }
+  // ── Constraint relax handler ────────────────────────────────────────────
+  const handleRequestRelax = useCallback((optionId) => {
+    if (!optionId) return;
+    appendMessagesToCurrentConversation([{
+      role: 'ai', content: `Constraint relaxation requested: option ${optionId}. Use the Negotiation panel to evaluate and apply this option.`, timestamp: new Date().toISOString()
+    }]);
+  }, [appendMessagesToCurrentConversation]);
 
-    const explicitRunId = Number(requestedRunId);
-    const fallbackRunId = findLatestWorkflowRunIdFromMessages(currentMessages);
-    const runId = Number.isFinite(explicitRunId) ? explicitRunId : fallbackRunId;
-    if (!Number.isFinite(runId)) {
-      appendMessagesToCurrentConversation([{
-        role: 'ai',
-        content: 'No workflow run id found for topology. Run Workflow A/B first or use `/topology <run_id>`.',
-        timestamp: new Date().toISOString(),
-      }]);
-      addNotification?.('No workflow run id available for topology.', 'warning');
-      return;
-    }
-
-    updateCanvasState(currentConversationId, (prev) => ({
-      ...prev,
-      isOpen: true,
-      activeTab: 'topology',
-      topologyRunning: true,
-      logs: [
-        ...(prev.logs || []),
-        {
-          id: `topology_start_${Date.now()}`,
-          step: 'topology',
-          message: `Running topology graph build for run #${runId}...`,
-          timestamp: new Date().toISOString(),
-        },
-      ],
-    }));
-
-    try {
-      const result = await generateTopologyGraphForRun({
-        userId: user.id,
-        runId,
-        scope: {},
-        forceRebuild: false,
-        reuse: true,
-        manageRunStep: true,
-      });
-
-      if (!result?.graph) {
-        throw new Error('Topology graph payload is empty.');
-      }
-
-      const noticeText = result.reused
-        ? `Topology graph ready for run #${runId} (reused from run #${result.reused_from_run_id}).`
-        : `Topology graph generated for run #${runId}.`;
-
-      appendMessagesToCurrentConversation([
-        {
-          role: 'ai',
-          content: noticeText,
-          timestamp: new Date().toISOString(),
-        },
-        {
-          role: 'ai',
-          type: 'topology_graph_card',
-          payload: {
-            run_id: runId,
-            graph: result.graph,
-            ref: result.ref || null,
-            reused: Boolean(result.reused),
-            reused_from_run_id: result.reused_from_run_id || null,
-          },
-          timestamp: new Date().toISOString(),
-        },
-      ]);
-
-      updateCanvasState(currentConversationId, (prev) => ({
-        ...prev,
-        activeTab: 'topology',
-        topologyRunning: false,
-        chartPayload: {
-          ...(prev.chartPayload || {}),
-          topology_graph: result.graph,
-        },
-        logs: [
-          ...(prev.logs || []),
-          {
-            id: `topology_done_${Date.now()}`,
-            step: 'topology',
-            message: `✅ Topology graph ready for run #${runId}.`,
-            timestamp: new Date().toISOString(),
-          },
-        ],
-      }));
-
-      addNotification?.(`Topology graph ready for run #${runId}.`, 'success');
-    } catch (error) {
-      updateCanvasState(currentConversationId, (prev) => ({
-        ...prev,
-        topologyRunning: false,
-        logs: [
-          ...(prev.logs || []),
-          {
-            id: `topology_failed_${Date.now()}`,
-            step: 'topology',
-            message: `❌ Topology generation failed: ${error.message}`,
-            timestamp: new Date().toISOString(),
-          },
-        ],
-      }));
-      appendMessagesToCurrentConversation([{
-        role: 'ai',
-        content: `Topology generation failed: ${error.message}`,
-        timestamp: new Date().toISOString(),
-      }]);
-      addNotification?.(`Topology generation failed: ${error.message}`, 'error');
-    }
-  }, [
-    user?.id,
-    currentConversationId,
-    currentMessages,
-    updateCanvasState,
-    appendMessagesToCurrentConversation,
-    addNotification,
-  ]);
-
-  // ── Negotiation handlers ─────────────────────────────────────────────────
+  // ── Negotiation handlers ────────────────────────────────────────────────
   const handleGenerateNegotiationOptions = useCallback(async (cardPayload) => {
     if (!user?.id || !cardPayload?.planRunId) return;
-
     setIsNegotiationGenerating(true);
 
     try {
       const profileId = activeDatasetContext?.dataset_profile_id;
       if (!profileId) {
-        appendMessagesToCurrentConversation([{
-          role: 'ai',
-          content: 'No dataset profile is linked to this session. Please upload a dataset first, then rerun forecast + plan.',
-          timestamp: new Date().toISOString(),
-        }]);
+        appendMessagesToCurrentConversation([{ role: 'ai', content: 'No dataset profile is linked to this session. Please upload a dataset first, then rerun forecast + plan.', timestamp: new Date().toISOString() }]);
         return;
       }
 
       let resolvedProfileRow = null;
-      try {
-        resolvedProfileRow = await datasetProfilesService.getProfile(profileId);
-      } catch (profileErr) {
+      try { resolvedProfileRow = await datasetProfilesService.getProfile(profileId); } catch (profileErr) {
         console.error('[DSV] Failed to load dataset profile for negotiation:', profileErr?.message);
       }
 
       if (!resolvedProfileRow?.user_file_id) {
-        appendMessagesToCurrentConversation([{
-          role: 'ai',
-          content: 'Dataset profile has no linked source file. Re-upload the dataset from chat and rerun forecast + plan.',
-          timestamp: new Date().toISOString(),
-        }]);
+        appendMessagesToCurrentConversation([{ role: 'ai', content: 'Dataset profile has no linked source file. Re-upload the dataset from chat and rerun forecast + plan.', timestamp: new Date().toISOString() }]);
         return;
       }
 
-      const result = await runNegotiation({
-        userId: user.id,
-        planRunId: cardPayload.planRunId,
-        datasetProfileRow: resolvedProfileRow,
-        forecastRunId: sessionCtx.lastForecastRunId,
-        config: {},
-        bypassFeatureFlag: true,
-      });
+      const result = await runNegotiation({ userId: user.id, planRunId: cardPayload.planRunId, datasetProfileRow: resolvedProfileRow, forecastRunId: sessionCtx.lastForecastRunId, config: {}, bypassFeatureFlag: true });
 
       if (result.triggered && result.negotiation_options) {
         sessionCtx.updateNegotiation(result, cardPayload.planRunId);
-
         appendMessagesToCurrentConversation([{
-          role: 'ai',
-          type: 'negotiation_card',
-          payload: {
-            planRunId: cardPayload.planRunId,
-            trigger: result.trigger,
-            negotiation_options: result.negotiation_options,
-            negotiation_evaluation: result.negotiation_evaluation,
-            negotiation_report: result.negotiation_report,
-            round: sessionCtx.context?.negotiation?.round || 1,
-          },
-          timestamp: new Date().toISOString(),
+          role: 'ai', type: 'negotiation_card',
+          payload: { planRunId: cardPayload.planRunId, trigger: result.trigger, negotiation_options: result.negotiation_options, negotiation_evaluation: result.negotiation_evaluation, negotiation_report: result.negotiation_report, round: sessionCtx.context?.negotiation?.round || 1 },
+          timestamp: new Date().toISOString()
         }]);
       } else {
-        appendMessagesToCurrentConversation([{
-          role: 'ai',
-          content: `Negotiation analysis complete but no actionable options found${result.suppressed_reason ? ` (${result.suppressed_reason})` : ''}.`,
-          timestamp: new Date().toISOString(),
-        }]);
+        appendMessagesToCurrentConversation([{ role: 'ai', content: `Negotiation analysis complete but no actionable options found${result.suppressed_reason ? ` (${result.suppressed_reason})` : ''}.`, timestamp: new Date().toISOString() }]);
       }
     } catch (err) {
-      appendMessagesToCurrentConversation([{
-        role: 'ai',
-        content: `Negotiation option generation failed: ${err.message}`,
-        timestamp: new Date().toISOString(),
-      }]);
+      appendMessagesToCurrentConversation([{ role: 'ai', content: `Negotiation option generation failed: ${err.message}`, timestamp: new Date().toISOString() }]);
     } finally {
       setIsNegotiationGenerating(false);
     }
@@ -1168,60 +739,35 @@ export default function DecisionSupportView({ user, addNotification }) {
 
   const handleApplyNegotiationOption = useCallback(async (option, _evalResult, _cardPayload) => {
     if (!user?.id || !option?.option_id) return;
-
     const optionId = option.option_id;
     const overrides = option.overrides || {};
 
-    appendMessagesToCurrentConversation([{
-      role: 'ai',
-      content: `Applying negotiation option ${optionId}: "${option.title}"...`,
-      timestamp: new Date().toISOString(),
-    }]);
-
+    appendMessagesToCurrentConversation([{ role: 'ai', content: `Applying negotiation option ${optionId}: "${option.title}"...`, timestamp: new Date().toISOString() }]);
     sessionCtx.rotatePlan();
 
     try {
       const profileId = activeDatasetContext?.dataset_profile_id;
       if (!profileId) {
-        appendMessagesToCurrentConversation([{
-          role: 'ai',
-          content: 'No dataset profile is linked to this session. Please upload a dataset first, then rerun forecast + plan before applying negotiation options.',
-          timestamp: new Date().toISOString(),
-        }]);
+        appendMessagesToCurrentConversation([{ role: 'ai', content: 'No dataset profile is linked to this session. Please upload a dataset first, then rerun forecast + plan before applying negotiation options.', timestamp: new Date().toISOString() }]);
         return;
       }
 
       let resolvedProfileRow = null;
-      try {
-        resolvedProfileRow = await datasetProfilesService.getProfile(profileId);
-      } catch (profileErr) {
+      try { resolvedProfileRow = await datasetProfilesService.getProfile(profileId); } catch (profileErr) {
         console.error('[DSV] Failed to load dataset profile for negotiation apply:', profileErr?.message);
       }
 
       if (!resolvedProfileRow?.user_file_id) {
-        appendMessagesToCurrentConversation([{
-          role: 'ai',
-          content: 'Dataset profile has no linked source file. Re-upload the dataset from chat and rerun forecast + plan before applying negotiation options.',
-          timestamp: new Date().toISOString(),
-        }]);
+        appendMessagesToCurrentConversation([{ role: 'ai', content: 'Dataset profile has no linked source file. Re-upload the dataset from chat and rerun forecast + plan before applying negotiation options.', timestamp: new Date().toISOString() }]);
         return;
       }
 
-      const constraintsOverride = overrides.constraints && Object.keys(overrides.constraints).length > 0
-        ? overrides.constraints : null;
-      const objectiveOverride = overrides.objective && Object.keys(overrides.objective).length > 0
-        ? overrides.objective : null;
+      const constraintsOverride = overrides.constraints && Object.keys(overrides.constraints).length > 0 ? overrides.constraints : null;
+      const objectiveOverride = overrides.objective && Object.keys(overrides.objective).length > 0 ? overrides.objective : null;
 
-      const planResult = await runPlanFromDatasetProfile({
-        userId: user.id,
-        datasetProfileRow: resolvedProfileRow,
-        forecastRunId: sessionCtx.lastForecastRunId,
-        constraintsOverride,
-        objectiveOverride,
-      });
+      const planResult = await runPlanFromDatasetProfile({ userId: user.id, datasetProfileRow: resolvedProfileRow, forecastRunId: sessionCtx.lastForecastRunId, constraintsOverride, objectiveOverride });
 
       sessionCtx.updatePlan(planResult);
-
       const newKpis = planResult?.solver_result?.kpis || {};
       sessionCtx.recordNegOptionApplied(optionId, planResult?.run?.id, newKpis);
 
@@ -1229,44 +775,16 @@ export default function DecisionSupportView({ user, addNotification }) {
       const tablePayload = buildPlanTableCardPayload(planResult);
       const projectionPayload = buildInventoryProjectionCardPayload(planResult);
       const downloadsPayload = buildPlanDownloadsPayload(planResult);
-
       const comparison = handlePlanComparison(sessionCtx.context);
       const comparisonText = comparison ? buildComparisonSummaryText(comparison) : '';
 
       const messages = [
-        ...(comparison ? [{
-          role: 'ai',
-          type: 'plan_comparison_card',
-          payload: comparison,
-          content: comparisonText,
-          timestamp: new Date().toISOString(),
-        }] : []),
-        {
-          role: 'ai',
-          type: 'plan_summary_card',
-          payload: summaryPayload,
-          timestamp: new Date().toISOString(),
-        },
-        {
-          role: 'ai',
-          type: 'plan_table_card',
-          payload: tablePayload,
-          timestamp: new Date().toISOString(),
-        },
-        {
-          role: 'ai',
-          type: 'inventory_projection_card',
-          payload: projectionPayload,
-          timestamp: new Date().toISOString(),
-        },
-        {
-          role: 'ai',
-          type: 'downloads_card',
-          payload: downloadsPayload,
-          timestamp: new Date().toISOString(),
-        },
+        ...(comparison ? [{ role: 'ai', type: 'plan_comparison_card', payload: comparison, content: comparisonText, timestamp: new Date().toISOString() }] : []),
+        { role: 'ai', type: 'plan_summary_card', payload: summaryPayload, timestamp: new Date().toISOString() },
+        { role: 'ai', type: 'plan_table_card', payload: tablePayload, timestamp: new Date().toISOString() },
+        { role: 'ai', type: 'inventory_projection_card', payload: projectionPayload, timestamp: new Date().toISOString() },
+        { role: 'ai', type: 'downloads_card', payload: downloadsPayload, timestamp: new Date().toISOString() },
       ];
-
       appendMessagesToCurrentConversation(messages);
 
       try {
@@ -1274,31 +792,11 @@ export default function DecisionSupportView({ user, addNotification }) {
         if (newTrigger) {
           const nextRound = (sessionCtx.context?.negotiation?.round || 1) + 1;
           appendMessagesToCurrentConversation([
-            {
-              role: 'ai',
-              content: `Plan still has issues (${newTrigger}). Starting negotiation round ${nextRound}...`,
-              timestamp: new Date().toISOString(),
-            },
-            {
-              role: 'ai',
-              type: 'negotiation_card',
-              payload: {
-                planRunId: planResult?.run?.id,
-                trigger: newTrigger,
-                negotiation_options: null,
-                negotiation_evaluation: null,
-                negotiation_report: null,
-                round: nextRound,
-              },
-              timestamp: new Date().toISOString(),
-            },
+            { role: 'ai', content: `Plan still has issues (${newTrigger}). Starting negotiation round ${nextRound}...`, timestamp: new Date().toISOString() },
+            { role: 'ai', type: 'negotiation_card', payload: { planRunId: planResult?.run?.id, trigger: newTrigger, negotiation_options: null, negotiation_evaluation: null, negotiation_report: null, round: nextRound }, timestamp: new Date().toISOString() },
           ]);
         } else {
-          appendMessagesToCurrentConversation([{
-            role: 'ai',
-            content: 'Negotiation option applied successfully. The new plan is feasible.',
-            timestamp: new Date().toISOString(),
-          }]);
+          appendMessagesToCurrentConversation([{ role: 'ai', content: 'Negotiation option applied successfully. The new plan is feasible.', timestamp: new Date().toISOString() }]);
           sessionCtx.clearNegotiation();
         }
       } catch (checkErr) {
@@ -1308,42 +806,66 @@ export default function DecisionSupportView({ user, addNotification }) {
       addNotification?.(`Plan re-run #${planResult?.run?.id || ''} with option ${optionId} completed.`, 'success');
       if (planResult?.run?.id) setLatestPlanRunId(planResult.run.id);
     } catch (err) {
-      appendMessagesToCurrentConversation([{
-        role: 'ai',
-        content: `Failed to apply option ${optionId}: ${err.message}`,
-        timestamp: new Date().toISOString(),
-      }]);
+      appendMessagesToCurrentConversation([{ role: 'ai', content: `Failed to apply option ${optionId}: ${err.message}`, timestamp: new Date().toISOString() }]);
     }
   }, [user?.id, activeDatasetContext, sessionCtx, appendMessagesToCurrentConversation, addNotification, setLatestPlanRunId]);
 
-  // ── Constraint relaxation ────────────────────────────────────────────────
-  const handleRequestRelax = useCallback((optionId) => {
-    if (!optionId) return;
-    appendMessagesToCurrentConversation([{
-      role: 'ai',
-      content: `Constraint relaxation requested: option ${optionId}. Use the Negotiation panel to evaluate and apply this option.`,
-      timestamp: new Date().toISOString(),
-    }]);
-  }, [appendMessagesToCurrentConversation]);
+  // ── Topology handler ────────────────────────────────────────────────────
+  const handleRunTopology = useCallback(async (requestedRunId = null) => {
+    if (!user?.id) { addNotification?.('Please sign in before running topology.', 'error'); return; }
+    if (!currentConversationId) { addNotification?.('Please start a conversation first.', 'error'); return; }
 
-  // ── Dataset upload ───────────────────────────────────────────────────────
+    const explicitRunId = Number(requestedRunId);
+    const fallbackRunId = findLatestWorkflowRunIdFromMessages(currentMessages);
+    const runId = Number.isFinite(explicitRunId) ? explicitRunId : fallbackRunId;
+    if (!Number.isFinite(runId)) {
+      appendMessagesToCurrentConversation([{ role: 'ai', content: 'No workflow run id found for topology. Run Workflow A/B first or use `/topology <run_id>`.', timestamp: new Date().toISOString() }]);
+      addNotification?.('No workflow run id available for topology.', 'warning');
+      return;
+    }
+
+    updateCanvasState(currentConversationId, (prev) => ({
+      ...prev, isOpen: true, activeTab: 'topology', topologyRunning: true,
+      logs: [...(prev.logs || []), { id: `topology_start_${Date.now()}`, step: 'topology', message: `Running topology graph build for run #${runId}...`, timestamp: new Date().toISOString() }]
+    }));
+
+    try {
+      const result = await generateTopologyGraphForRun({ userId: user.id, runId, scope: {}, forceRebuild: false, reuse: true, manageRunStep: true });
+      if (!result?.graph) throw new Error('Topology graph payload is empty.');
+
+      const noticeText = result.reused
+        ? `Topology graph ready for run #${runId} (reused from run #${result.reused_from_run_id}).`
+        : `Topology graph generated for run #${runId}.`;
+
+      appendMessagesToCurrentConversation([
+        { role: 'ai', content: noticeText, timestamp: new Date().toISOString() },
+        { role: 'ai', type: 'topology_graph_card', payload: { run_id: runId, graph: result.graph, ref: result.ref || null, reused: Boolean(result.reused), reused_from_run_id: result.reused_from_run_id || null }, timestamp: new Date().toISOString() }
+      ]);
+
+      updateCanvasState(currentConversationId, (prev) => ({
+        ...prev, activeTab: 'topology', topologyRunning: false,
+        chartPayload: { ...(prev.chartPayload || {}), topology_graph: result.graph },
+        logs: [...(prev.logs || []), { id: `topology_done_${Date.now()}`, step: 'topology', message: `✅ Topology graph ready for run #${runId}.`, timestamp: new Date().toISOString() }]
+      }));
+      addNotification?.(`Topology graph ready for run #${runId}.`, 'success');
+    } catch (error) {
+      updateCanvasState(currentConversationId, (prev) => ({
+        ...prev, topologyRunning: false,
+        logs: [...(prev.logs || []), { id: `topology_failed_${Date.now()}`, step: 'topology', message: `❌ Topology generation failed: ${error.message}`, timestamp: new Date().toISOString() }]
+      }));
+      appendMessagesToCurrentConversation([{ role: 'ai', content: `Topology generation failed: ${error.message}`, timestamp: new Date().toISOString() }]);
+      addNotification?.(`Topology generation failed: ${error.message}`, 'error');
+    }
+  }, [user?.id, currentConversationId, currentMessages, updateCanvasState, appendMessagesToCurrentConversation, addNotification]);
+
+  // ── Dataset upload handler ──────────────────────────────────────────────
   const handleDatasetUpload = useCallback(async (file) => {
     if (!file) return;
-    if (!user?.id) {
-      addNotification?.('Please sign in before uploading files.', 'error');
-      return;
-    }
-    if (!currentConversationId) {
-      addNotification?.('Please start a conversation first.', 'error');
-      return;
-    }
+    if (!user?.id) { addNotification?.('Please sign in before uploading files.', 'error'); return; }
+    if (!currentConversationId) { addNotification?.('Please start a conversation first.', 'error'); return; }
     if (Number(file.size || 0) > MAX_UPLOAD_BYTES) {
       addNotification?.(MAX_UPLOAD_MESSAGE, 'error');
-      appendMessagesToCurrentConversation([{
-        role: 'ai',
-        content: `❌ ${MAX_UPLOAD_MESSAGE}`,
-        timestamp: new Date().toISOString(),
-      }]);
+      appendMessagesToCurrentConversation([{ role: 'ai', content: `❌ ${MAX_UPLOAD_MESSAGE}`, timestamp: new Date().toISOString() }]);
       return;
     }
 
@@ -1352,16 +874,8 @@ export default function DecisionSupportView({ user, addNotification }) {
     setUploadStatusText('Uploaded. Profiling...');
 
     appendMessagesToCurrentConversation([
-      {
-        role: 'user',
-        content: `📎 Uploaded file: ${file.name}`,
-        timestamp: new Date().toISOString(),
-      },
-      {
-        role: 'ai',
-        content: 'Uploaded. Profiling...',
-        timestamp: new Date().toISOString(),
-      },
+      { role: 'user', content: `📎 Uploaded file: ${file.name}`, timestamp: new Date().toISOString() },
+      { role: 'ai', content: 'Uploaded. Profiling...', timestamp: new Date().toISOString() }
     ]);
 
     try {
@@ -1380,85 +894,36 @@ export default function DecisionSupportView({ user, addNotification }) {
       console.time('[DSV] upload:createProfile');
       const PROFILE_TIMEOUT_MS = 20000;
       let profileRecord = await Promise.race([
-        createDatasetProfileFromSheets({
-          userId: user.id,
-          userFileId: null,
-          fileName: file.name,
-          sheetsRaw: uploadPreparation.sheetsRaw,
-          mappingPlans: uploadPreparation.mappingPlans,
-          allowLLM: false,
-        }),
-        new Promise((resolve) => setTimeout(() => {
-          console.warn('[DSV] createProfile DB timed out, using local-only profile');
-          resolve(null);
-        }, PROFILE_TIMEOUT_MS)),
+        createDatasetProfileFromSheets({ userId: user.id, userFileId: null, fileName: file.name, sheetsRaw: uploadPreparation.sheetsRaw, mappingPlans: uploadPreparation.mappingPlans, allowLLM: false }),
+        new Promise((resolve) => setTimeout(() => { console.warn('[DSV] createProfile DB timed out, using local-only profile'); resolve(null); }, PROFILE_TIMEOUT_MS))
       ]);
       console.timeEnd('[DSV] upload:createProfile');
+
       if (!profileRecord) {
-        const mappingPlanMap = new Map(
-          (uploadPreparation.mappingPlans || []).map((p) => [String(p.sheet_name || '').toLowerCase(), p])
-        );
+        const mappingPlanMap = new Map((uploadPreparation.mappingPlans || []).map((p) => [String(p.sheet_name || '').toLowerCase(), p]));
         profileRecord = {
-          id: `local-${Date.now()}`,
-          user_id: user.id,
-          fingerprint: datasetFingerprint,
+          id: `local-${Date.now()}`, user_id: user.id, fingerprint: datasetFingerprint,
           profile_json: {
             file_name: file.name,
-            global: {
-              workflow_guess: { label: 'A', confidence: 0.5, reason: 'default (offline)' },
-              time_range_guess: { start: null, end: null },
-              minimal_questions: [],
-            },
+            global: { workflow_guess: { label: 'A', confidence: 0.5, reason: 'default (offline)' }, time_range_guess: { start: null, end: null }, minimal_questions: [] },
             sheets: (uploadPreparation.sheetsRaw || []).map((s) => {
               const plan = mappingPlanMap.get(String(s.sheet_name || '').toLowerCase()) || {};
-              return {
-                sheet_name: s.sheet_name,
-                likely_role: plan.upload_type || 'unknown',
-                confidence: plan.confidence || 0,
-                original_headers: s.columns || [],
-                normalized_headers: (s.columns || []).map((c) => String(c).trim().toLowerCase()),
-                grain_guess: { keys: [], time_column: null, granularity: 'unknown' },
-                column_semantics: [],
-                quality_checks: { type_issues: [], null_rate: {}, outlier_rate: {} },
-                notes: [],
-              };
-            }),
+              return { sheet_name: s.sheet_name, likely_role: plan.upload_type || 'unknown', confidence: plan.confidence || 0, original_headers: s.columns || [], normalized_headers: (s.columns || []).map((c) => String(c).trim().toLowerCase()), grain_guess: { keys: [], time_column: null, granularity: 'unknown' }, column_semantics: [], quality_checks: { type_issues: [], null_rate: {}, outlier_rate: {} }, notes: [] };
+            })
           },
           contract_json: (() => {
-            const sheetsRawMap = new Map(
-              (uploadPreparation.sheetsRaw || []).map((s) => [String(s.sheet_name || '').toLowerCase(), s])
-            );
+            const sheetsRawMap = new Map((uploadPreparation.sheetsRaw || []).map((s) => [String(s.sheet_name || '').toLowerCase(), s]));
             const datasets = (uploadPreparation.mappingPlans || []).map((p) => {
               const uploadType = p.upload_type || 'unknown';
               const rawSheet = sheetsRawMap.get(String(p.sheet_name || '').toLowerCase()) || {};
               const columns = rawSheet.columns || [];
-              const status = (uploadType && uploadType !== 'unknown')
-                ? getRequiredMappingStatus({ uploadType, columns, columnMapping: p.mapping || {} })
-                : { coverage: 0, missingRequired: [], isComplete: false };
-              return {
-                sheet_name: p.sheet_name,
-                upload_type: uploadType,
-                mapping: p.mapping || {},
-                requiredCoverage: Number((status.coverage || 0).toFixed(3)),
-                missing_required_fields: status.missingRequired || [],
-                validation: {
-                  status: status.isComplete ? 'pass' : 'fail',
-                  reasons: status.isComplete ? [] : [`Missing required fields: ${(status.missingRequired || []).join(', ')}`],
-                },
-              };
+              const status = (uploadType && uploadType !== 'unknown') ? getRequiredMappingStatus({ uploadType, columns, columnMapping: p.mapping || {} }) : { coverage: 0, missingRequired: [], isComplete: false };
+              return { sheet_name: p.sheet_name, upload_type: uploadType, mapping: p.mapping || {}, requiredCoverage: Number((status.coverage || 0).toFixed(3)), missing_required_fields: status.missingRequired || [], validation: { status: status.isComplete ? 'pass' : 'fail', reasons: status.isComplete ? [] : [`Missing required fields: ${(status.missingRequired || []).join(', ')}`] } };
             });
             const allPass = datasets.length > 0 && datasets.every((d) => d.validation.status === 'pass');
-            return {
-              datasets,
-              validation: {
-                status: allPass ? 'pass' : 'fail',
-                reasons: allPass ? [] : ['One or more sheets failed required field coverage'],
-              },
-            };
+            return { datasets, validation: { status: allPass ? 'pass' : 'fail', reasons: allPass ? [] : ['One or more sheets failed required field coverage'] } };
           })(),
-          created_at: new Date().toISOString(),
-          _local: true,
-          _inlineRawRows: uploadPreparation.rawRowsForStorage || [],
+          created_at: new Date().toISOString(), _local: true, _inlineRawRows: uploadPreparation.rawRowsForStorage || []
         };
         registerLocalProfile(profileRecord);
       }
@@ -1469,87 +934,41 @@ export default function DecisionSupportView({ user, addNotification }) {
 
       const reuseEnabledForConversation = conversationDatasetContext[currentConversationId]?.reuse_enabled !== false;
       const workflow = getWorkflowFromProfile(profileRecord?.profile_json || {});
-      let reusePlan = {
-        contract_template_id: null,
-        settings_template_id: null,
-        confidence: 0,
-        mode: 'no_reuse',
-        explanation: 'Reuse skipped.',
-      };
+      let reusePlan = { contract_template_id: null, settings_template_id: null, confidence: 0, mode: 'no_reuse', explanation: 'Reuse skipped.' };
       let autoReused = false;
       let reusedSettingsTemplate = null;
 
       if (reuseEnabledForConversation) {
         try {
           const [contractTemplates, settingsTemplates, similarityIndexRows] = await Promise.race([
-            Promise.all([
-              reuseMemoryService.getContractTemplates(user.id, workflow, 60),
-              reuseMemoryService.getRunSettingsTemplates(user.id, workflow, 60),
-              reuseMemoryService.getRecentSimilarityIndex(user.id, 120),
-            ]),
-            new Promise((_, reject) => setTimeout(() => reject(new Error('reuse lookup timeout')), 15000)),
+            Promise.all([reuseMemoryService.getContractTemplates(user.id, workflow, 60), reuseMemoryService.getRunSettingsTemplates(user.id, workflow, 60), reuseMemoryService.getRecentSimilarityIndex(user.id, 120)]),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('reuse lookup timeout')), 15000))
           ]);
-
-          reusePlan = buildReusePlan({
-            dataset_profile: profileRecord,
-            contract_templates: contractTemplates,
-            settings_templates: settingsTemplates,
-            similarity_index_rows: similarityIndexRows,
-          });
-        } catch (error) {
-          console.warn('[DSV] Reuse lookup skipped:', error.message);
-        }
+          reusePlan = buildReusePlan({ dataset_profile: profileRecord, contract_templates: contractTemplates, settings_templates: settingsTemplates, similarity_index_rows: similarityIndexRows });
+        } catch (error) { console.warn('[DSV] Reuse lookup skipped:', error.message); }
       }
 
       try {
         if (reusePlan.mode === 'auto_apply' && reusePlan.contract_template_id) {
-          const template = await Promise.race([
-            reuseMemoryService.getContractTemplateById(user.id, reusePlan.contract_template_id),
-            new Promise((_, reject) => setTimeout(() => reject(new Error('reuse apply timeout')), 15000)),
-          ]);
+          const template = await Promise.race([reuseMemoryService.getContractTemplateById(user.id, reusePlan.contract_template_id), new Promise((_, reject) => setTimeout(() => reject(new Error('reuse apply timeout')), 15000))]);
           if (template?.contract_json) {
-            const applied = applyContractTemplateToProfile({
-              profile_json: profileRecord?.profile_json || {},
-              contract_template_json: template.contract_json,
-              sheetsRaw: uploadPreparation.sheetsRaw,
-            });
-            const updated = await datasetProfilesService.updateDatasetProfile(user.id, profileRecord.id, {
-              profile_json: applied.profile_json,
-              contract_json: applied.contract_json,
-            });
-            profileRecord = updated || {
-              ...profileRecord,
-              profile_json: applied.profile_json,
-              contract_json: applied.contract_json,
-            };
+            const applied = applyContractTemplateToProfile({ profile_json: profileRecord?.profile_json || {}, contract_template_json: template.contract_json, sheetsRaw: uploadPreparation.sheetsRaw });
+            const updated = await datasetProfilesService.updateDatasetProfile(user.id, profileRecord.id, { profile_json: applied.profile_json, contract_json: applied.contract_json });
+            profileRecord = updated || { ...profileRecord, profile_json: applied.profile_json, contract_json: applied.contract_json };
             autoReused = true;
           }
         }
-
         if (reusePlan.mode === 'auto_apply' && reusePlan.settings_template_id) {
-          const settingsTemplate = await Promise.race([
-            reuseMemoryService.getRunSettingsTemplateById(user.id, reusePlan.settings_template_id),
-            new Promise((_, reject) => setTimeout(() => reject(new Error('settings template timeout')), 15000)),
-          ]);
-          if (settingsTemplate?.settings_json) {
-            reusedSettingsTemplate = settingsTemplate.settings_json;
-          }
+          const settingsTemplate = await Promise.race([reuseMemoryService.getRunSettingsTemplateById(user.id, reusePlan.settings_template_id), new Promise((_, reject) => setTimeout(() => reject(new Error('settings template timeout')), 15000))]);
+          if (settingsTemplate?.settings_json) { reusedSettingsTemplate = settingsTemplate.settings_json; }
         }
-      } catch (reuseApplyErr) {
-        console.warn('[DSV] Reuse auto-apply skipped:', reuseApplyErr?.message);
-      }
+      } catch (reuseApplyErr) { console.warn('[DSV] Reuse auto-apply skipped:', reuseApplyErr?.message); }
 
       // Populate local data cache for Data tab (offline fallback)
       if (profileRecord?._local) {
-        const UPLOAD_TO_TABLE = {
-          inventory_snapshots: 'inventory_snapshots',
-          po_open_lines: 'po_open_lines',
-          supplier_master: 'suppliers',
-        };
+        const UPLOAD_TO_TABLE = { inventory_snapshots: 'inventory_snapshots', po_open_lines: 'po_open_lines', supplier_master: 'suppliers' };
         const contractDatasets = profileRecord?.contract_json?.datasets || [];
-        const sheetsRawMap = new Map(
-          (uploadPreparation.sheetsRaw || []).map((s) => [String(s.sheet_name || '').toLowerCase(), s])
-        );
+        const sheetsRawMap = new Map((uploadPreparation.sheetsRaw || []).map((s) => [String(s.sheet_name || '').toLowerCase(), s]));
         const allMaterialCodes = new Set();
 
         for (const dataset of contractDatasets) {
@@ -1560,184 +979,71 @@ export default function DecisionSupportView({ user, addNotification }) {
           const mapping = dataset.mapping || {};
           const targetToSource = {};
           Object.entries(mapping).forEach(([src, tgt]) => { if (tgt) targetToSource[tgt] = src; });
-
           const matCol = targetToSource['material_code'];
-          if (matCol) {
-            rawSheet.rows.forEach((row) => {
-              const val = row[matCol];
-              if (val != null && val !== '') allMaterialCodes.add(String(val));
-            });
-          }
-
+          if (matCol) { rawSheet.rows.forEach((row) => { const val = row[matCol]; if (val != null && val !== '') allMaterialCodes.add(String(val)); }); }
           const tableKey = UPLOAD_TO_TABLE[uploadType];
           if (!tableKey || !TABLE_REGISTRY[tableKey]) continue;
-
           const mappedRows = rawSheet.rows.map((row, idx) => {
             const mapped = { id: `local-${idx}`, user_id: user.id };
-            Object.entries(targetToSource).forEach(([targetField, sourceCol]) => {
-              mapped[targetField] = row[sourceCol] ?? null;
-            });
-            if (uploadType === 'supplier_master') {
-              mapped.contact_info = mapped.contact_person || mapped.phone || mapped.email || null;
-              mapped.status = mapped.status || 'active';
-            }
+            Object.entries(targetToSource).forEach(([targetField, sourceCol]) => { mapped[targetField] = row[sourceCol] ?? null; });
+            if (uploadType === 'supplier_master') { mapped.contact_info = mapped.contact_person || mapped.phone || mapped.email || null; mapped.status = mapped.status || 'active'; }
             return mapped;
           });
           setLocalTableData(tableKey, mappedRows);
         }
-
         if (allMaterialCodes.size > 0) {
-          const materialRows = Array.from(allMaterialCodes).map((code, idx) => ({
-            id: `local-mat-${idx}`,
-            user_id: user.id,
-            material_code: code,
-            material_name: code,
-            category: null,
-            uom: null,
-          }));
+          const materialRows = Array.from(allMaterialCodes).map((code, idx) => ({ id: `local-mat-${idx}`, user_id: user.id, material_code: code, material_name: code, category: null, uom: null }));
           setLocalTableData('materials', materialRows);
         }
       }
 
       const cardPayload = buildDataSummaryCardPayload(profileRecord);
       const validationPayload = buildValidationPayload(profileRecord);
-      const downloadsPayload = buildDownloadsPayload({
-        profileJson: profileRecord?.profile_json,
-        contractJson: profileRecord?.contract_json,
-        profileId: profileRecord?.id,
-      });
+      const downloadsPayload = buildDownloadsPayload({ profileJson: profileRecord?.profile_json, contractJson: profileRecord?.contract_json, profileId: profileRecord?.id });
       const hasReusePrompt = reusePlan.mode === 'ask_one_click' && reusePlan.contract_template_id;
-      const confirmationPayload = (autoReused || hasReusePrompt)
-        ? null
-        : buildConfirmationPayload(cardPayload, uploadPreparation.mappingPlans);
-      const contractConfirmed = autoReused
-        ? validationPayload.status === 'pass'
-        : (hasReusePrompt ? false : (validationPayload.status === 'pass' && !confirmationPayload));
+      const confirmationPayload = (autoReused || hasReusePrompt) ? null : buildConfirmationPayload(cardPayload, uploadPreparation.mappingPlans);
+      const contractConfirmed = autoReused ? validationPayload.status === 'pass' : (hasReusePrompt ? false : (validationPayload.status === 'pass' && !confirmationPayload));
 
       setConversationDatasetContext((prev) => ({
         ...prev,
         [currentConversationId]: {
           ...(prev[currentConversationId] || {}),
-          dataset_profile_id: profileRecord?.id,
-          dataset_fingerprint: datasetFingerprint,
-          user_file_id: fileRecord?.id || null,
-          summary: cardPayload.context_summary || '',
-          profileJson: profileRecord?.profile_json || {},
-          contractJson: profileRecord?.contract_json || {},
-          validationPayload,
-          sheetsRaw: uploadPreparation.sheetsRaw,
-          rawRowsForStorage: profileRecord?._local ? (uploadPreparation.rawRowsForStorage || []) : null,
-          fileName: file.name,
-          contractConfirmed,
-          minimalQuestions: cardPayload.minimal_questions || [],
-          reuse_enabled: reuseEnabledForConversation,
-          force_retrain: Boolean(prev[currentConversationId]?.force_retrain),
+          dataset_profile_id: profileRecord?.id, dataset_fingerprint: datasetFingerprint, user_file_id: fileRecord?.id || null,
+          summary: cardPayload.context_summary || '', profileJson: profileRecord?.profile_json || {}, contractJson: profileRecord?.contract_json || {},
+          validationPayload, sheetsRaw: uploadPreparation.sheetsRaw, rawRowsForStorage: profileRecord?._local ? (uploadPreparation.rawRowsForStorage || []) : null,
+          fileName: file.name, contractConfirmed, minimalQuestions: cardPayload.minimal_questions || [],
+          reuse_enabled: reuseEnabledForConversation, force_retrain: Boolean(prev[currentConversationId]?.force_retrain),
           reused_settings_template: reusedSettingsTemplate,
-          pending_reuse_plan: hasReusePrompt
-            ? {
-                ...reusePlan,
-                dataset_profile_id: profileRecord?.id,
-                dataset_fingerprint: datasetFingerprint,
-              }
-            : null,
-        },
+          pending_reuse_plan: hasReusePrompt ? { ...reusePlan, dataset_profile_id: profileRecord?.id, dataset_fingerprint: datasetFingerprint } : null
+        }
       }));
 
       const messages = [];
       if (autoReused) {
-        messages.push({
-          role: 'ai',
-          content: `Reused mapping from previous dataset (confidence ${(Number(reusePlan.confidence || 0) * 100).toFixed(0)}%).`,
-          timestamp: new Date().toISOString(),
-        });
+        messages.push({ role: 'ai', content: `Reused mapping from previous dataset (confidence ${(Number(reusePlan.confidence || 0) * 100).toFixed(0)}%).`, timestamp: new Date().toISOString() });
       } else if (hasReusePrompt) {
-        messages.push({
-          role: 'ai',
-          content: `I found a previous mapping for similar data (confidence ${(Number(reusePlan.confidence || 0) * 100).toFixed(0)}%). Apply it?`,
-          timestamp: new Date().toISOString(),
-        });
-        messages.push({
-          role: 'ai',
-          type: 'reuse_decision_card',
-          payload: {
-            ...reusePlan,
-            dataset_profile_id: profileRecord?.id,
-            dataset_fingerprint: datasetFingerprint,
-          },
-          timestamp: new Date().toISOString(),
-        });
+        messages.push({ role: 'ai', content: `I found a previous mapping for similar data (confidence ${(Number(reusePlan.confidence || 0) * 100).toFixed(0)}%). Apply it?`, timestamp: new Date().toISOString() });
+        messages.push({ role: 'ai', type: 'reuse_decision_card', payload: { ...reusePlan, dataset_profile_id: profileRecord?.id, dataset_fingerprint: datasetFingerprint }, timestamp: new Date().toISOString() });
       } else {
-        messages.push({
-          role: 'ai',
-          content: 'Saved profile.',
-          timestamp: new Date().toISOString(),
-        });
+        messages.push({ role: 'ai', content: 'Saved profile.', timestamp: new Date().toISOString() });
       }
       messages.push(
-        {
-          role: 'ai',
-          type: 'dataset_summary_card',
-          payload: cardPayload,
-          timestamp: new Date().toISOString(),
-        },
-        {
-          role: 'ai',
-          type: 'validation_card',
-          payload: validationPayload,
-          timestamp: new Date().toISOString(),
-        },
-        {
-          role: 'ai',
-          type: 'downloads_card',
-          payload: downloadsPayload,
-          timestamp: new Date().toISOString(),
-        }
+        { role: 'ai', type: 'dataset_summary_card', payload: cardPayload, timestamp: new Date().toISOString() },
+        { role: 'ai', type: 'validation_card', payload: validationPayload, timestamp: new Date().toISOString() },
+        { role: 'ai', type: 'downloads_card', payload: downloadsPayload, timestamp: new Date().toISOString() }
       );
-
-      if (confirmationPayload) {
-        messages.push({
-          role: 'ai',
-          type: 'contract_confirmation_card',
-          payload: confirmationPayload,
-          timestamp: new Date().toISOString(),
-        });
-      }
-
+      if (confirmationPayload) { messages.push({ role: 'ai', type: 'contract_confirmation_card', payload: confirmationPayload, timestamp: new Date().toISOString() }); }
       appendMessagesToCurrentConversation(messages);
 
       const finalSignature = buildSignature(profileRecord?.profile_json || {}, profileRecord?.contract_json || {});
-      reuseMemoryService.upsertDatasetSimilarityIndex({
-        user_id: user.id,
-        dataset_profile_id: profileRecord?.id,
-        fingerprint: datasetFingerprint,
-        signature_json: finalSignature,
-      }).catch((error) => {
-        console.warn('[DecisionSupportView] Failed to persist similarity index:', error.message);
-      });
+      reuseMemoryService.upsertDatasetSimilarityIndex({ user_id: user.id, dataset_profile_id: profileRecord?.id, fingerprint: datasetFingerprint, signature_json: finalSignature }).catch((error) => { console.warn('[DecisionSupportView] Failed to persist similarity index:', error.message); });
 
       const validationPassed = profileRecord?.contract_json?.validation?.status === 'pass';
       if (validationPassed) {
-        reuseMemoryService.upsertContractTemplate({
-          user_id: user.id,
-          fingerprint: datasetFingerprint,
-          workflow,
-          contract_json: profileRecord?.contract_json || {},
-          quality_delta: 0.08,
-        }).catch((error) => {
-          console.warn('[DecisionSupportView] Failed to upsert contract template:', error.message);
-        });
+        reuseMemoryService.upsertContractTemplate({ user_id: user.id, fingerprint: datasetFingerprint, workflow, contract_json: profileRecord?.contract_json || {}, quality_delta: 0.08 }).catch((error) => { console.warn('[DecisionSupportView] Failed to upsert contract template:', error.message); });
       }
-
       if (reusedSettingsTemplate) {
-        reuseMemoryService.upsertRunSettingsTemplate({
-          user_id: user.id,
-          fingerprint: datasetFingerprint,
-          workflow,
-          settings_json: reusedSettingsTemplate,
-          quality_delta: 0.02,
-        }).catch((error) => {
-          console.warn('[DecisionSupportView] Failed to update settings template usage:', error.message);
-        });
+        reuseMemoryService.upsertRunSettingsTemplate({ user_id: user.id, fingerprint: datasetFingerprint, workflow, settings_json: reusedSettingsTemplate, quality_delta: 0.02 }).catch((error) => { console.warn('[DecisionSupportView] Failed to update settings template usage:', error.message); });
       }
 
       console.timeEnd('[DSV] upload:total');
@@ -1746,198 +1052,87 @@ export default function DecisionSupportView({ user, addNotification }) {
       console.timeEnd('[DSV] upload:total');
       const errorMessage = getErrorMessage(error, 'Unable to upload dataset.');
       console.error('[DSV] Dataset upload failed:', error?.message, error);
-      appendMessagesToCurrentConversation([{
-        role: 'ai',
-        content: `❌ Upload failed: ${errorMessage}`,
-        timestamp: new Date().toISOString(),
-      }]);
+      appendMessagesToCurrentConversation([{ role: 'ai', content: `❌ Upload failed: ${errorMessage}`, timestamp: new Date().toISOString() }]);
       addNotification?.(`Upload failed: ${errorMessage}`, 'error');
     } finally {
       setIsUploadingDataset(false);
       setUploadStatusText('');
-      if (fileInputRef.current) {
-        fileInputRef.current.value = '';
-      }
+      if (fileInputRef.current) { fileInputRef.current.value = ''; }
     }
   }, [user?.id, currentConversationId, conversationDatasetContext, appendMessagesToCurrentConversation, addNotification, setConversationDatasetContext]);
 
-  const handleFileInputChange = useCallback((e) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      handleDatasetUpload(file);
-    }
-  }, [handleDatasetUpload]);
+  const handleFileInputChange = useCallback((e) => { const file = e.target.files?.[0]; if (file) handleDatasetUpload(file); }, [handleDatasetUpload]);
 
   const handleDropUpload = useCallback((e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragOverUpload(false);
+    e.preventDefault(); e.stopPropagation(); setIsDragOverUpload(false);
     if (isUploadingDataset) return;
     const file = e.dataTransfer?.files?.[0];
-    if (file) {
-      handleDatasetUpload(file);
-    }
+    if (file) handleDatasetUpload(file);
   }, [handleDatasetUpload, isUploadingDataset]);
 
-  // ── Canvas run (legacy) ──────────────────────────────────────────────────
+  // ── Canvas run handler ──────────────────────────────────────────────────
   const handleCanvasRun = useCallback(async (messageText, historyWithUserMessage) => {
     if (!currentConversationId || !activeDatasetContext || !user?.id) return null;
 
     if (!activeDatasetContext.contractConfirmed) {
-      const warnText = 'Please confirm low-confidence contract mappings in the confirmation card before execution.';
-      appendMessagesToCurrentConversation([{ role: 'ai', content: warnText, timestamp: new Date().toISOString() }]);
+      appendMessagesToCurrentConversation([{ role: 'ai', content: 'Please confirm low-confidence contract mappings in the confirmation card before execution.', timestamp: new Date().toISOString() }]);
       addNotification?.('Please confirm contract mapping first.', 'warning');
       return null;
     }
 
     updateCanvasState(currentConversationId, (prev) => ({
-      ...prev,
-      isOpen: true,
-      activeTab: 'logs',
-      run: { ...(prev.run || {}), status: 'running' },
-      logs: [],
-      downloads: [],
-      chartPayload: { actual_vs_forecast: [], inventory_projection: [], cost_breakdown: [], topology_graph: null },
-      topologyRunning: false,
+      ...prev, isOpen: true, activeTab: 'logs', run: { ...(prev.run || {}), status: 'running' },
+      logs: [], downloads: [], chartPayload: { actual_vs_forecast: [], inventory_projection: [], cost_breakdown: [], topology_graph: null }, topologyRunning: false
     }));
 
     try {
       const result = await executeChatCanvasRun({
-        userId: user.id,
-        prompt: messageText,
-        datasetProfileId: activeDatasetContext.dataset_profile_id,
-        datasetFingerprint: activeDatasetContext.dataset_fingerprint,
-        profileJson: activeDatasetContext.profileJson,
-        contractJson: activeDatasetContext.contractJson,
-        sheetsRaw: activeDatasetContext.sheetsRaw || [],
+        userId: user.id, prompt: messageText, datasetProfileId: activeDatasetContext.dataset_profile_id,
+        datasetFingerprint: activeDatasetContext.dataset_fingerprint, profileJson: activeDatasetContext.profileJson,
+        contractJson: activeDatasetContext.contractJson, sheetsRaw: activeDatasetContext.sheetsRaw || [],
         callbacks: {
-          onLog: (logItem) => {
-            updateCanvasState(currentConversationId, (prev) => ({
-              ...prev,
-              logs: [...(prev.logs || []), logItem],
-            }));
-          },
-          onStepChange: (stepStatuses) => {
-            updateCanvasState(currentConversationId, (prev) => ({
-              ...prev,
-              stepStatuses,
-            }));
-          },
+          onLog: (logItem) => { updateCanvasState(currentConversationId, (prev) => ({ ...prev, logs: [...(prev.logs || []), logItem] })); },
+          onStepChange: (stepStatuses) => { updateCanvasState(currentConversationId, (prev) => ({ ...prev, stepStatuses })); },
           onArtifact: ({ fileName, mimeType, content }) => {
-            updateCanvasState(currentConversationId, (prev) => {
-              const nextDownloads = [
-                ...(prev.downloads || []),
-                { label: fileName, fileName, mimeType, content },
-              ];
-              return {
-                ...prev,
-                downloads: nextDownloads,
-                codeText: fileName === 'ml_code.py' ? String(content || '') : prev.codeText,
-              };
-            });
-          },
-          onRunChange: (runModel) => {
             updateCanvasState(currentConversationId, (prev) => ({
               ...prev,
-              run: runModel,
+              downloads: [...(prev.downloads || []), { label: fileName, fileName, mimeType, content }],
+              codeText: fileName === 'ml_code.py' ? String(content || '') : prev.codeText
             }));
           },
-        },
+          onRunChange: (runModel) => { updateCanvasState(currentConversationId, (prev) => ({ ...prev, run: runModel })); }
+        }
       });
 
-      updateCanvasState(currentConversationId, (prev) => ({
-        ...prev,
-        run: result.run,
-        chartPayload: result.chartPayload,
-        stepStatuses: result.stepStatuses,
-        activeTab: 'charts',
-      }));
+      updateCanvasState(currentConversationId, (prev) => ({ ...prev, run: result.run, chartPayload: result.chartPayload, stepStatuses: result.stepStatuses, activeTab: 'charts' }));
 
       const summaryText = buildEvidenceSummaryText(result.summary);
-      const reportFile = {
-        label: 'run_report.json',
-        fileName: 'run_report.json',
-        mimeType: 'application/json',
-        content: {
-          summary: result.summary,
-          evidence_pack: result.evidencePack,
-          validation: result.validation,
-          solver_used: result.solverUsed,
-        },
-      };
-
-      updateCanvasState(currentConversationId, (prev) => ({
-        ...prev,
-        downloads: [...(prev.downloads || []), reportFile],
-      }));
+      const reportFile = { label: 'run_report.json', fileName: 'run_report.json', mimeType: 'application/json', content: { summary: result.summary, evidence_pack: result.evidencePack, validation: result.validation, solver_used: result.solverUsed } };
+      updateCanvasState(currentConversationId, (prev) => ({ ...prev, downloads: [...(prev.downloads || []), reportFile] }));
 
       const aiMessage = { role: 'ai', content: summaryText, timestamp: new Date().toISOString() };
       const finalMessages = [...historyWithUserMessage, aiMessage];
       const newTitle = currentMessages.length <= 1 ? messageText.slice(0, 50) : currentConversation.title;
-
-      const updatedConversation = {
-        ...currentConversation,
-        title: newTitle,
-        messages: finalMessages,
-        updated_at: new Date().toISOString(),
-      };
-
-      setConversations((prev) => prev.map((conversation) =>
-        conversation.id === currentConversationId ? updatedConversation : conversation
-      ));
-
-      if (conversationsDb) {
-        conversationsDb
-          .from('conversations')
-          .update({ title: newTitle, messages: finalMessages, updated_at: new Date().toISOString() })
-          .eq('id', currentConversationId)
-          .eq('user_id', user.id)
-          .then(({ error }) => { if (error) markTableUnavailable(); });
-      }
-
+      const updatedConversation = { ...currentConversation, title: newTitle, messages: finalMessages, updated_at: new Date().toISOString() };
+      setConversations((prev) => prev.map((c) => c.id === currentConversationId ? updatedConversation : c));
+      if (conversationsDb) { conversationsDb.from('conversations').update({ title: newTitle, messages: finalMessages, updated_at: new Date().toISOString() }).eq('id', currentConversationId).eq('user_id', user.id).then(({ error }) => { if (error) markTableUnavailable(); }); }
       return true;
     } catch (error) {
       console.error('Canvas execution failed:', error);
       updateCanvasState(currentConversationId, (prev) => ({
-        ...prev,
-        run: { ...(prev.run || {}), status: 'failed' },
-        activeTab: 'logs',
-        logs: [
-          ...(prev.logs || []),
-          { id: `err_${Date.now()}`, step: 'report', message: `❌ Execution failed: ${error.message}`, timestamp: new Date().toISOString() },
-        ],
+        ...prev, run: { ...(prev.run || {}), status: 'failed' }, activeTab: 'logs',
+        logs: [...(prev.logs || []), { id: `err_${Date.now()}`, step: 'report', message: `❌ Execution failed: ${error.message}`, timestamp: new Date().toISOString() }]
       }));
-
       const aiMessage = { role: 'ai', content: `❌ Canvas execution failed: ${error.message}`, timestamp: new Date().toISOString() };
       const finalMessages = [...historyWithUserMessage, aiMessage];
       const updatedConversation = { ...currentConversation, messages: finalMessages, updated_at: new Date().toISOString() };
-      setConversations((prev) => prev.map((conversation) =>
-        conversation.id === currentConversationId ? updatedConversation : conversation
-      ));
-
-      if (conversationsDb) {
-        conversationsDb
-          .from('conversations')
-          .update({ messages: finalMessages, updated_at: new Date().toISOString() })
-          .eq('id', currentConversationId)
-          .eq('user_id', user.id)
-          .then(({ error: updateError }) => { if (updateError) markTableUnavailable(); });
-      }
+      setConversations((prev) => prev.map((c) => c.id === currentConversationId ? updatedConversation : c));
+      if (conversationsDb) { conversationsDb.from('conversations').update({ messages: finalMessages, updated_at: new Date().toISOString() }).eq('id', currentConversationId).eq('user_id', user.id).then(({ error: updateError }) => { if (updateError) markTableUnavailable(); }); }
       return false;
     }
-  }, [
-    currentConversationId,
-    activeDatasetContext,
-    user?.id,
-    updateCanvasState,
-    appendMessagesToCurrentConversation,
-    addNotification,
-    currentConversation,
-    currentMessages,
-    setConversations,
-  ]);
+  }, [currentConversationId, activeDatasetContext, user?.id, updateCanvasState, appendMessagesToCurrentConversation, addNotification, currentConversation, currentMessages, setConversations]);
 
-  // ── handleSend ───────────────────────────────────────────────────────────
+  // ── Send handler ────────────────────────────────────────────────────────
   const handleSend = useCallback(async (e) => {
     if (e) e.preventDefault();
     if (!input.trim() || !currentConversationId) return;
@@ -1949,503 +1144,195 @@ export default function DecisionSupportView({ user, addNotification }) {
     setStreamingContent('');
 
     try {
-      if (textareaRef.current) {
-        textareaRef.current.style.height = 'auto';
+      if (textareaRef.current) { textareaRef.current.style.height = 'auto'; }
+
+    const updatedMessages = [...currentMessages, userMessage];
+    setConversations((prev) => prev.map((conversation) =>
+      conversation.id === currentConversationId
+        ? { ...conversation, messages: updatedMessages, updated_at: new Date().toISOString() }
+        : conversation
+    ));
+
+    const trimmed = String(messageText || '').trim();
+    const lower = trimmed.toLowerCase();
+    const command = lower.split(/\s+/)[0];
+
+    if (lower.startsWith('/reuse')) {
+      const parts = trimmed.split(/\s+/);
+      const mode = String(parts[1] || 'off').toLowerCase();
+      const reuseEnabled = mode !== 'off';
+      setConversationDatasetContext((prev) => ({ ...prev, [currentConversationId]: { ...(prev[currentConversationId] || {}), reuse_enabled: reuseEnabled, pending_reuse_plan: reuseEnabled ? prev[currentConversationId]?.pending_reuse_plan || null : null, reused_settings_template: reuseEnabled ? prev[currentConversationId]?.reused_settings_template || null : null } }));
+      appendMessagesToCurrentConversation([{ role: 'ai', content: reuseEnabled ? 'Reuse is enabled for this conversation.' : 'Reuse is disabled for this conversation.', timestamp: new Date().toISOString() }]);
+      setIsTyping(false); setStreamingContent(''); return;
+    }
+
+    if (lower.startsWith('/retrain')) {
+      const parts = trimmed.split(/\s+/);
+      const mode = String(parts[1] || 'on').toLowerCase();
+      const forceRetrain = mode !== 'off';
+      setConversationDatasetContext((prev) => ({ ...prev, [currentConversationId]: { ...(prev[currentConversationId] || {}), force_retrain: forceRetrain } }));
+      appendMessagesToCurrentConversation([{ role: 'ai', content: forceRetrain ? 'Forecast retrain is forced for this conversation.' : 'Forecast retrain force is disabled.', timestamp: new Date().toISOString() }]);
+      setIsTyping(false); setStreamingContent(''); return;
+    }
+
+    if (command === '/reset_data') {
+      const parts = lower.split(/\s+/);
+      if (parts[1] !== 'confirm') {
+        appendMessagesToCurrentConversation([{ role: 'ai', content: 'Type /reset_data confirm to proceed.', timestamp: new Date().toISOString() }]);
+        setIsTyping(false); setStreamingContent(''); return;
       }
-
-      const updatedMessages = [...currentMessages, userMessage];
-      setConversations((prev) => prev.map((conversation) =>
-        conversation.id === currentConversationId
-          ? { ...conversation, messages: updatedMessages, updated_at: new Date().toISOString() }
-          : conversation
-      ));
-
-      const trimmed = String(messageText || '').trim();
-      const lower = trimmed.toLowerCase();
-      const command = lower.split(/\s+/)[0];
-
-      if (lower.startsWith('/reuse')) {
-        const parts = trimmed.split(/\s+/);
-        const mode = String(parts[1] || 'off').toLowerCase();
-        const reuseEnabled = mode !== 'off';
-        setConversationDatasetContext((prev) => ({
-          ...prev,
-          [currentConversationId]: {
-            ...(prev[currentConversationId] || {}),
-            reuse_enabled: reuseEnabled,
-            pending_reuse_plan: reuseEnabled ? prev[currentConversationId]?.pending_reuse_plan || null : null,
-            reused_settings_template: reuseEnabled ? prev[currentConversationId]?.reused_settings_template || null : null,
-          },
-        }));
-        appendMessagesToCurrentConversation([{
-          role: 'ai',
-          content: reuseEnabled ? 'Reuse is enabled for this conversation.' : 'Reuse is disabled for this conversation.',
-          timestamp: new Date().toISOString(),
-        }]);
-        setIsTyping(false);
-        setStreamingContent('');
-        return;
-      }
-
-      if (lower.startsWith('/retrain')) {
-        const parts = trimmed.split(/\s+/);
-        const mode = String(parts[1] || 'on').toLowerCase();
-        const forceRetrain = mode !== 'off';
-        setConversationDatasetContext((prev) => ({
-          ...prev,
-          [currentConversationId]: {
-            ...(prev[currentConversationId] || {}),
-            force_retrain: forceRetrain,
-          },
-        }));
-        appendMessagesToCurrentConversation([{
-          role: 'ai',
-          content: forceRetrain ? 'Forecast retrain is forced for this conversation.' : 'Forecast retrain force is disabled.',
-          timestamp: new Date().toISOString(),
-        }]);
-        setIsTyping(false);
-        setStreamingContent('');
-        return;
-      }
-
-      if (command === '/reset_data') {
-        const parts = lower.split(/\s+/);
-        const confirmed = parts[1] === 'confirm';
-
-        if (!confirmed) {
-          appendMessagesToCurrentConversation([{
-            role: 'ai',
-            content: 'Type /reset_data confirm to proceed.',
-            timestamp: new Date().toISOString(),
-          }]);
-          setIsTyping(false);
-          setStreamingContent('');
-          return;
-        }
-
-        try {
-          await diResetService.resetCurrentUserData();
-
-          setConversationDatasetContext((prev) => {
-            const next = {};
-            Object.keys(prev || {}).forEach((conversationId) => {
-              next[conversationId] = {
-                ...(prev[conversationId] || {}),
-                dataset_profile_id: null,
-                dataset_fingerprint: null,
-                user_file_id: null,
-                summary: '',
-                profileJson: {},
-                contractJson: {},
-                contractConfirmed: false,
-                minimalQuestions: [],
-                pending_reuse_plan: null,
-                reused_settings_template: null,
-              };
-            });
-            return next;
-          });
-
-          setLatestPlanRunId(null);
-          forecastExecutor.setRunningForecastProfiles({});
-          setRunningPlanKeys({});
-          setWorkflowSnapshots({});
-          setActiveWorkflowRuns({});
-          conversationManager.setCanvasStateByConversation({});
-          topologyAutoLoadRef.current = {};
-
-          appendMessagesToCurrentConversation([{
-            role: 'ai',
-            content: '✅ Cleared old profiles/runs/artifacts for this user.',
-            timestamp: new Date().toISOString(),
-          }]);
-        } catch (error) {
-          appendMessagesToCurrentConversation([{
-            role: 'ai',
-            content: `❌ Failed to clear DI data: ${getErrorMessage(error, 'Unexpected error')}`,
-            timestamp: new Date().toISOString(),
-          }]);
-        }
-
-        setIsTyping(false);
-        setStreamingContent('');
-        return;
-      }
-
-      if (lower.startsWith('/forecast')) {
-        const parts = trimmed.split(/\s+/);
-        const profileId = parts.length > 1 ? Number(parts[1]) : null;
-        await executeForecastFlow({
-          profileId: Number.isFinite(profileId)
-            ? profileId
-            : (Number.isFinite(Number(activeDatasetContext?.dataset_profile_id))
-                ? Number(activeDatasetContext.dataset_profile_id)
-                : null),
-        });
-        setIsTyping(false);
-        setStreamingContent('');
-        return;
-      }
-
-      if (lower.startsWith('/plan')) {
-        const parts = trimmed.split(/\s+/);
-        const profileId = parts.length > 1 ? Number(parts[1]) : null;
-        await executePlanFlow({
-          datasetProfileId: Number.isFinite(profileId)
-            ? profileId
-            : (Number.isFinite(Number(activeDatasetContext?.dataset_profile_id))
-                ? Number(activeDatasetContext.dataset_profile_id)
-                : null),
-        });
-        setIsTyping(false);
-        setStreamingContent('');
-        return;
-      }
-
-      if (command === '/workflowa' || command === '/run-workflow-a') {
-        const parts = trimmed.split(/\s+/);
-        const profileId = parts.length > 1 ? Number(parts[1]) : null;
-        await executeWorkflowAFlow({
-          datasetProfileId: Number.isFinite(profileId)
-            ? profileId
-            : (Number.isFinite(Number(activeDatasetContext?.dataset_profile_id))
-                ? Number(activeDatasetContext.dataset_profile_id)
-                : null),
-        });
-        setIsTyping(false);
-        setStreamingContent('');
-        return;
-      }
-
-      if (command === '/workflow') {
-        const parts = trimmed.split(/\s+/);
-        const profileId = parts.length > 1 ? Number(parts[1]) : null;
-        await executeWorkflowFlow({
-          datasetProfileId: Number.isFinite(profileId)
-            ? profileId
-            : (Number.isFinite(Number(activeDatasetContext?.dataset_profile_id))
-                ? Number(activeDatasetContext.dataset_profile_id)
-                : null),
-        });
-        setIsTyping(false);
-        setStreamingContent('');
-        return;
-      }
-
-      if (command === '/workflowb' || command === '/run-workflow-b' || command === '/risk') {
-        const parts = trimmed.split(/\s+/);
-        const profileId = parts.length > 1 ? Number(parts[1]) : null;
-        await executeWorkflowBFlow({
-          datasetProfileId: Number.isFinite(profileId)
-            ? profileId
-            : (Number.isFinite(Number(activeDatasetContext?.dataset_profile_id))
-                ? Number(activeDatasetContext.dataset_profile_id)
-                : null),
-        });
-        setIsTyping(false);
-        setStreamingContent('');
-        return;
-      }
-
-      if (command === '/topology') {
-        const parts = trimmed.split(/\s+/);
-        const explicitRunId = parts.length > 1 ? Number(parts[1]) : null;
-        await handleRunTopology(Number.isFinite(explicitRunId) ? explicitRunId : topologyRunId);
-        setIsTyping(false);
-        setStreamingContent('');
-        return;
-      }
-
-      // SmartOps 2.0: LLM-powered intent parsing + action routing
       try {
-        const parsedIntent = await parseIntent({
-          userMessage: messageText,
-          sessionContext: sessionCtx.context,
-          domainContext,
+        await diResetService.resetCurrentUserData();
+        setConversationDatasetContext((prev) => {
+          const next = {};
+          Object.keys(prev || {}).forEach((cid) => { next[cid] = { ...(prev[cid] || {}), dataset_profile_id: null, dataset_fingerprint: null, user_file_id: null, summary: '', profileJson: {}, contractJson: {}, contractConfirmed: false, minimalQuestions: [], pending_reuse_plan: null, reused_settings_template: null }; });
+          return next;
         });
-
-        if (parsedIntent.intent !== 'GENERAL_CHAT' && parsedIntent.confidence > 0.7) {
-          const intentHandlers = {
-            executePlanFlow: (params) => executePlanFlow({
-              datasetProfileId: params.datasetProfileId || (Number.isFinite(Number(activeDatasetContext?.dataset_profile_id)) ? Number(activeDatasetContext.dataset_profile_id) : null),
-              constraintsOverride: params.constraintsOverride,
-              objectiveOverride: params.objectiveOverride,
-            }),
-            executeForecastFlow: (params) => executeForecastFlow({
-              datasetProfileId: params.datasetProfileId || (Number.isFinite(Number(activeDatasetContext?.dataset_profile_id)) ? Number(activeDatasetContext.dataset_profile_id) : null),
-            }),
-            executeWorkflowAFlow: (params) => executeWorkflowAFlow({
-              datasetProfileId: params.datasetProfileId || (Number.isFinite(Number(activeDatasetContext?.dataset_profile_id)) ? Number(activeDatasetContext.dataset_profile_id) : null),
-            }),
-            executeWorkflowBFlow: (params) => executeWorkflowBFlow({
-              datasetProfileId: params.datasetProfileId || (Number.isFinite(Number(activeDatasetContext?.dataset_profile_id)) ? Number(activeDatasetContext.dataset_profile_id) : null),
-            }),
-            executeDigitalTwinFlow: (params) => executeDigitalTwinFlow({
-              scenario: params.scenario || 'normal',
-              chaosIntensity: params.chaosIntensity || null,
-            }),
-            handleParameterChange: async (intent, ctx) => {
-              const result = await handleParameterChange({
-                parsedIntent: intent,
-                sessionContext: ctx,
-                userId: user?.id,
-                conversationId: currentConversationId,
-                rerunPlan: (params) => executePlanFlow({
-                  datasetProfileId: Number.isFinite(Number(activeDatasetContext?.dataset_profile_id)) ? Number(activeDatasetContext.dataset_profile_id) : null,
-                  constraintsOverride: params.constraintsOverride,
-                  objectiveOverride: params.objectiveOverride,
-                }),
-              });
-              if (result?.comparison) {
-                appendMessagesToCurrentConversation([{
-                  role: 'ai',
-                  type: 'plan_comparison_card',
-                  payload: result.comparison,
-                  content: buildComparisonSummaryText(result.comparison),
-                  timestamp: new Date().toISOString(),
-                }]);
-              }
-            },
-            comparePlans: (ctx) => {
-              const comparison = handlePlanComparison(ctx);
-              if (comparison) {
-                appendMessagesToCurrentConversation([{
-                  role: 'ai',
-                  type: 'plan_comparison_card',
-                  payload: comparison,
-                  content: buildComparisonSummaryText(comparison),
-                  timestamp: new Date().toISOString(),
-                }]);
-              } else {
-                appendMessagesToCurrentConversation([{
-                  role: 'ai',
-                  content: 'No previous plan available for comparison. Run a plan first, then make changes to compare.',
-                  timestamp: new Date().toISOString(),
-                }]);
-              }
-            },
-            runWhatIf: (_scenarioOverrides) => {
-              handleCanvasRun(messageText, updatedMessages);
-            },
-            handleApproval: async (action) => {
-              const pending = (sessionCtx.context?.pending_approvals || []).filter((a) => a.status === 'PENDING');
-              if (pending.length === 0) {
-                appendMessagesToCurrentConversation([{
-                  role: 'ai',
-                  content: 'No pending approvals found.',
-                  timestamp: new Date().toISOString(),
-                }]);
-                return;
-              }
-              const approvalIds = pending.map((a) => a.approval_id);
-              if (action === 'approve_all') {
-                await batchApprove({ approvalIds, userId: user?.id, note: 'Approved via chat' });
-                approvalIds.forEach((id) => sessionCtx.resolveApproval(id, 'APPROVED'));
-                appendMessagesToCurrentConversation([{
-                  role: 'ai',
-                  content: `Approved ${approvalIds.length} pending approval(s).`,
-                  timestamp: new Date().toISOString(),
-                }]);
-              } else if (action === 'reject_all') {
-                await batchReject({ approvalIds, userId: user?.id, note: 'Rejected via chat' });
-                approvalIds.forEach((id) => sessionCtx.resolveApproval(id, 'REJECTED'));
-                appendMessagesToCurrentConversation([{
-                  role: 'ai',
-                  content: `Rejected ${approvalIds.length} pending approval(s).`,
-                  timestamp: new Date().toISOString(),
-                }]);
-              }
-            },
-            applyNegotiationOption: async ({ optionId, optionTitle }) => {
-              const negCtx = sessionCtx.context?.negotiation;
-              if (!negCtx || negCtx.round === 0 || !negCtx.options) {
-                appendMessagesToCurrentConversation([{
-                  role: 'ai',
-                  content: 'No active negotiation session. Please run a plan first to trigger negotiation options.',
-                  timestamp: new Date().toISOString(),
-                }]);
-                return;
-              }
-
-              const optionDefs = negCtx.options?.options || [];
-              let matchedOption = null;
-
-              if (optionId) {
-                const normalizedId = String(optionId).match(/^opt_\d+$/)
-                  ? optionId
-                  : `opt_${String(optionId).replace(/\D/g, '').padStart(3, '0')}`;
-                matchedOption = optionDefs.find((o) => o.option_id === normalizedId);
-              }
-
-              if (!matchedOption && optionTitle) {
-                const lowerTitle = optionTitle.toLowerCase();
-                matchedOption = optionDefs.find((o) =>
-                  o.title.toLowerCase().includes(lowerTitle)
-                );
-              }
-
-              if (!matchedOption && (optionTitle || '').toLowerCase().includes('recommend')) {
-                const recommendedId = negCtx.report?.recommended_option_id;
-                matchedOption = optionDefs.find((o) => o.option_id === recommendedId);
-              }
-
-              if (!matchedOption) {
-                appendMessagesToCurrentConversation([{
-                  role: 'ai',
-                  content: `Could not identify option "${optionId || optionTitle}". Available options: ${optionDefs.map((o) => `${o.option_id} ("${o.title}")`).join(', ')}`,
-                  timestamp: new Date().toISOString(),
-                }]);
-                return;
-              }
-
-              const rankedOptions = negCtx.evaluation?.ranked_options || [];
-              const evalResult = rankedOptions.find((r) => r.option_id === matchedOption.option_id) || null;
-
-              await handleApplyNegotiationOption(
-                matchedOption,
-                evalResult,
-                { planRunId: negCtx.active_plan_run_id }
-              );
-            },
-            appendMessage: (msg) => appendMessagesToCurrentConversation([msg]),
-            onNoDataset: () => appendMessagesToCurrentConversation([{
-              role: 'ai',
-              content: 'Please upload a dataset first. You can drag and drop a CSV or XLSX file into the chat.',
-              timestamp: new Date().toISOString(),
-            }]),
-          };
-
-          const result = await routeIntent(parsedIntent, sessionCtx.context, intentHandlers, {
-            userId: user?.id,
-            conversationId: currentConversationId,
-            datasetProfileId: Number.isFinite(Number(activeDatasetContext?.dataset_profile_id)) ? Number(activeDatasetContext.dataset_profile_id) : null,
-          });
-
-          if (result?.handled) {
-            setIsTyping(false);
-            setStreamingContent('');
-            return;
-          }
-        }
-      } catch (intentError) {
-        console.warn('[DSV] Intent parsing failed, falling through to chat:', intentError?.message);
-      }
-
-      // Fallback: legacy keyword-based execution intent
-      const canExecute = Boolean(activeDatasetContext?.dataset_profile_id) && isExecutionIntent(messageText);
-      if (canExecute) {
-        const handled = await handleCanvasRun(messageText, updatedMessages);
-        setIsTyping(false);
-        setStreamingContent('');
-        if (handled) {
-          return;
-        }
-      }
-
-      const history = updatedMessages.slice(-10);
-
-      let fullResult = '';
-      let aiErrorPayload = null;
-      try {
-        fullResult = await streamChatWithAI(
-          messageText,
-          history,
-          systemPrompt,
-          (chunk) => {
-            setStreamingContent((prev) => prev + chunk);
-          }
-        );
+        setLatestPlanRunId(null); forecastExec.setRunningForecastProfiles({}); planExec.setRunningPlanKeys({});
+        workflowExec.setWorkflowSnapshots({}); workflowExec.setActiveWorkflowRuns({});
+        convManager.setCanvasStateByConversation({}); topologyAutoLoadRef.current = {};
+        appendMessagesToCurrentConversation([{ role: 'ai', content: '✅ Cleared old profiles/runs/artifacts for this user.', timestamp: new Date().toISOString() }]);
       } catch (error) {
-        console.error('AI call failed:', error);
-        if (isApiKeyConfigError(error?.message)) {
-          aiErrorPayload = {
-            title: 'AI service configuration required',
-            message: 'Server-side AI keys are missing or invalid. Ask an admin to set Supabase Edge Function secrets.',
-            ctaLabel: 'Show setup hint',
-          };
-        } else {
-          fullResult = `❌ AI service temporarily unavailable\n\nError: ${error.message}`;
-        }
+        appendMessagesToCurrentConversation([{ role: 'ai', content: `❌ Failed to clear DI data: ${getErrorMessage(error, 'Unexpected error')}`, timestamp: new Date().toISOString() }]);
       }
+      setIsTyping(false); setStreamingContent(''); return;
+    }
 
-      if (!aiErrorPayload && isApiKeyConfigError(fullResult)) {
-        aiErrorPayload = {
-          title: 'AI service configuration required',
-          message: 'Server-side AI keys are missing or invalid. Ask an admin to set Supabase Edge Function secrets.',
-          ctaLabel: 'Show setup hint',
+    if (lower.startsWith('/forecast')) {
+      const parts = trimmed.split(/\s+/);
+      const profileId = parts.length > 1 ? Number(parts[1]) : null;
+      await executeForecastFlow({ profileId: Number.isFinite(profileId) ? profileId : (Number.isFinite(Number(activeDatasetContext?.dataset_profile_id)) ? Number(activeDatasetContext.dataset_profile_id) : null) });
+      setIsTyping(false); setStreamingContent(''); return;
+    }
+
+    if (lower.startsWith('/plan')) {
+      const parts = trimmed.split(/\s+/);
+      const profileId = parts.length > 1 ? Number(parts[1]) : null;
+      await executePlanFlow({ datasetProfileId: Number.isFinite(profileId) ? profileId : (Number.isFinite(Number(activeDatasetContext?.dataset_profile_id)) ? Number(activeDatasetContext.dataset_profile_id) : null) });
+      setIsTyping(false); setStreamingContent(''); return;
+    }
+
+    if (command === '/workflowa' || command === '/run-workflow-a') {
+      const parts = trimmed.split(/\s+/);
+      const profileId = parts.length > 1 ? Number(parts[1]) : null;
+      await executeWorkflowAFlow({ datasetProfileId: Number.isFinite(profileId) ? profileId : (Number.isFinite(Number(activeDatasetContext?.dataset_profile_id)) ? Number(activeDatasetContext.dataset_profile_id) : null) });
+      setIsTyping(false); setStreamingContent(''); return;
+    }
+
+    if (command === '/workflow') {
+      const parts = trimmed.split(/\s+/);
+      const profileId = parts.length > 1 ? Number(parts[1]) : null;
+      await executeWorkflowFlow({ datasetProfileId: Number.isFinite(profileId) ? profileId : (Number.isFinite(Number(activeDatasetContext?.dataset_profile_id)) ? Number(activeDatasetContext.dataset_profile_id) : null) });
+      setIsTyping(false); setStreamingContent(''); return;
+    }
+
+    if (command === '/workflowb' || command === '/run-workflow-b' || command === '/risk') {
+      const parts = trimmed.split(/\s+/);
+      const profileId = parts.length > 1 ? Number(parts[1]) : null;
+      await executeWorkflowBFlow({ datasetProfileId: Number.isFinite(profileId) ? profileId : (Number.isFinite(Number(activeDatasetContext?.dataset_profile_id)) ? Number(activeDatasetContext.dataset_profile_id) : null) });
+      setIsTyping(false); setStreamingContent(''); return;
+    }
+
+    if (command === '/topology') {
+      const parts = trimmed.split(/\s+/);
+      const explicitRunId = parts.length > 1 ? Number(parts[1]) : null;
+      await handleRunTopology(Number.isFinite(explicitRunId) ? explicitRunId : topologyRunId);
+      setIsTyping(false); setStreamingContent(''); return;
+    }
+
+    // SmartOps 2.0: LLM-powered intent parsing + action routing
+    try {
+      const parsedIntent = await parseIntent({ userMessage: messageText, sessionContext: sessionCtx.context, domainContext });
+
+      if (parsedIntent.intent !== 'GENERAL_CHAT' && parsedIntent.confidence > 0.7) {
+        const intentHandlers = {
+          executePlanFlow: (params) => executePlanFlow({ datasetProfileId: params.datasetProfileId || (Number.isFinite(Number(activeDatasetContext?.dataset_profile_id)) ? Number(activeDatasetContext.dataset_profile_id) : null), constraintsOverride: params.constraintsOverride, objectiveOverride: params.objectiveOverride }),
+          executeForecastFlow: (params) => executeForecastFlow({ datasetProfileId: params.datasetProfileId || (Number.isFinite(Number(activeDatasetContext?.dataset_profile_id)) ? Number(activeDatasetContext.dataset_profile_id) : null) }),
+          executeWorkflowAFlow: (params) => executeWorkflowAFlow({ datasetProfileId: params.datasetProfileId || (Number.isFinite(Number(activeDatasetContext?.dataset_profile_id)) ? Number(activeDatasetContext.dataset_profile_id) : null) }),
+          executeWorkflowBFlow: (params) => executeWorkflowBFlow({ datasetProfileId: params.datasetProfileId || (Number.isFinite(Number(activeDatasetContext?.dataset_profile_id)) ? Number(activeDatasetContext.dataset_profile_id) : null) }),
+          executeDigitalTwinFlow: (params) => executeDigitalTwinFlow({ scenario: params.scenario || 'normal', chaosIntensity: params.chaosIntensity || null }),
+          handleParameterChange: async (intent, ctx) => {
+            const result = await handleParameterChange({ parsedIntent: intent, sessionContext: ctx, userId: user?.id, conversationId: currentConversationId, rerunPlan: (params) => executePlanFlow({ datasetProfileId: Number.isFinite(Number(activeDatasetContext?.dataset_profile_id)) ? Number(activeDatasetContext.dataset_profile_id) : null, constraintsOverride: params.constraintsOverride, objectiveOverride: params.objectiveOverride }) });
+            if (result?.comparison) { appendMessagesToCurrentConversation([{ role: 'ai', type: 'plan_comparison_card', payload: result.comparison, content: buildComparisonSummaryText(result.comparison), timestamp: new Date().toISOString() }]); }
+          },
+          comparePlans: (ctx) => {
+            const comparison = handlePlanComparison(ctx);
+            if (comparison) { appendMessagesToCurrentConversation([{ role: 'ai', type: 'plan_comparison_card', payload: comparison, content: buildComparisonSummaryText(comparison), timestamp: new Date().toISOString() }]); }
+            else { appendMessagesToCurrentConversation([{ role: 'ai', content: 'No previous plan available for comparison. Run a plan first, then make changes to compare.', timestamp: new Date().toISOString() }]); }
+          },
+          runWhatIf: () => { handleCanvasRun(messageText, updatedMessages); },
+          handleApproval: async (action) => {
+            const pending = (sessionCtx.context?.pending_approvals || []).filter((a) => a.status === 'PENDING');
+            if (pending.length === 0) { appendMessagesToCurrentConversation([{ role: 'ai', content: 'No pending approvals found.', timestamp: new Date().toISOString() }]); return; }
+            const approvalIds = pending.map((a) => a.approval_id);
+            if (action === 'approve_all') { await batchApprove({ approvalIds, userId: user?.id, note: 'Approved via chat' }); approvalIds.forEach((id) => sessionCtx.resolveApproval(id, 'APPROVED')); appendMessagesToCurrentConversation([{ role: 'ai', content: `Approved ${approvalIds.length} pending approval(s).`, timestamp: new Date().toISOString() }]); }
+            else if (action === 'reject_all') { await batchReject({ approvalIds, userId: user?.id, note: 'Rejected via chat' }); approvalIds.forEach((id) => sessionCtx.resolveApproval(id, 'REJECTED')); appendMessagesToCurrentConversation([{ role: 'ai', content: `Rejected ${approvalIds.length} pending approval(s).`, timestamp: new Date().toISOString() }]); }
+          },
+          applyNegotiationOption: async ({ optionId, optionTitle }) => {
+            const negCtx = sessionCtx.context?.negotiation;
+            if (!negCtx || negCtx.round === 0 || !negCtx.options) { appendMessagesToCurrentConversation([{ role: 'ai', content: 'No active negotiation session. Please run a plan first to trigger negotiation options.', timestamp: new Date().toISOString() }]); return; }
+            const optionDefs = negCtx.options?.options || [];
+            let matchedOption = null;
+            if (optionId) { const normalizedId = String(optionId).match(/^opt_\d+$/) ? optionId : `opt_${String(optionId).replace(/\D/g, '').padStart(3, '0')}`; matchedOption = optionDefs.find((o) => o.option_id === normalizedId); }
+            if (!matchedOption && optionTitle) { const lowerTitle = optionTitle.toLowerCase(); matchedOption = optionDefs.find((o) => o.title.toLowerCase().includes(lowerTitle)); }
+            if (!matchedOption && (optionTitle || '').toLowerCase().includes('recommend')) { const recommendedId = negCtx.report?.recommended_option_id; matchedOption = optionDefs.find((o) => o.option_id === recommendedId); }
+            if (!matchedOption) { appendMessagesToCurrentConversation([{ role: 'ai', content: `Could not identify option "${optionId || optionTitle}". Available options: ${optionDefs.map((o) => `${o.option_id} ("${o.title}")`).join(', ')}`, timestamp: new Date().toISOString() }]); return; }
+            const rankedOptions = negCtx.evaluation?.ranked_options || [];
+            const evalResult = rankedOptions.find((r) => r.option_id === matchedOption.option_id) || null;
+            await handleApplyNegotiationOption(matchedOption, evalResult, { planRunId: negCtx.active_plan_run_id });
+          },
+          appendMessage: (msg) => appendMessagesToCurrentConversation([msg]),
+          onNoDataset: () => appendMessagesToCurrentConversation([{ role: 'ai', content: 'Please upload a dataset first. You can drag and drop a CSV or XLSX file into the chat.', timestamp: new Date().toISOString() }]),
         };
+
+        const result = await routeIntent(parsedIntent, sessionCtx.context, intentHandlers, { userId: user?.id, conversationId: currentConversationId, datasetProfileId: Number.isFinite(Number(activeDatasetContext?.dataset_profile_id)) ? Number(activeDatasetContext.dataset_profile_id) : null });
+        if (result?.handled) { setIsTyping(false); setStreamingContent(''); return; }
       }
+    } catch (intentError) { console.warn('[DSV] Intent parsing failed, falling through to chat:', intentError?.message); }
 
-      const aiMessage = aiErrorPayload
-        ? { role: 'ai', type: 'ai_error_card', payload: aiErrorPayload, timestamp: new Date().toISOString() }
-        : { role: 'ai', content: fullResult, timestamp: new Date().toISOString() };
+    // Fallback: legacy keyword-based execution intent
+    const canExecute = Boolean(activeDatasetContext?.dataset_profile_id) && isExecutionIntent(messageText);
+    if (canExecute) {
+      const handled = await handleCanvasRun(messageText, updatedMessages);
+      setIsTyping(false); setStreamingContent('');
+      if (handled) return;
+    }
 
-      const finalMessages = [...updatedMessages, aiMessage];
-      const newTitle = currentMessages.length <= 1 ? messageText.slice(0, 50) : currentConversation.title;
+    const history = updatedMessages.slice(-10);
+    let fullResult = '';
+    let aiErrorPayload = null;
+    try {
+      fullResult = await streamChatWithAI(messageText, history, systemPrompt, (chunk) => { setStreamingContent((prev) => prev + chunk); });
+    } catch (error) {
+      console.error('AI call failed:', error);
+      if (isApiKeyConfigError(error?.message)) { aiErrorPayload = { title: 'AI service configuration required', message: 'Server-side AI keys are missing or invalid. Ask an admin to set Supabase Edge Function secrets.', ctaLabel: 'Show setup hint' }; }
+      else { fullResult = `❌ AI service temporarily unavailable\n\nError: ${error.message}`; }
+    }
 
-      const updatedConversation = {
-        ...currentConversation,
-        title: newTitle,
-        messages: finalMessages,
-        updated_at: new Date().toISOString(),
-      };
+    if (!aiErrorPayload && isApiKeyConfigError(fullResult)) {
+      aiErrorPayload = { title: 'AI service configuration required', message: 'Server-side AI keys are missing or invalid. Ask an admin to set Supabase Edge Function secrets.', ctaLabel: 'Show setup hint' };
+    }
 
-      setConversations((prev) => prev.map((conversation) =>
-        conversation.id === currentConversationId ? updatedConversation : conversation
-      ));
+    const aiMessage = aiErrorPayload
+      ? { role: 'ai', type: 'ai_error_card', payload: aiErrorPayload, timestamp: new Date().toISOString() }
+      : { role: 'ai', content: fullResult, timestamp: new Date().toISOString() };
+    const finalMessages = [...updatedMessages, aiMessage];
+    const newTitle = currentMessages.length <= 1 ? messageText.slice(0, 50) : currentConversation.title;
+    const updatedConversation = { ...currentConversation, title: newTitle, messages: finalMessages, updated_at: new Date().toISOString() };
+    setConversations((prev) => prev.map((c) => c.id === currentConversationId ? updatedConversation : c));
+    setStreamingContent(''); setIsTyping(false);
 
-      setStreamingContent('');
-      setIsTyping(false);
-
-      if (conversationsDb) {
-        conversationsDb
-          .from('conversations')
-          .update({ title: newTitle, messages: finalMessages, updated_at: new Date().toISOString() })
-          .eq('id', currentConversationId)
-          .eq('user_id', user.id)
-          .then(({ error }) => { if (error) markTableUnavailable(); });
-      }
+      if (conversationsDb) { conversationsDb.from('conversations').update({ title: newTitle, messages: finalMessages, updated_at: new Date().toISOString() }).eq('id', currentConversationId).eq('user_id', user.id).then(({ error }) => { if (error) markTableUnavailable(); }); }
     } catch (error) {
       console.error('[DSV] handleSend failed:', error);
-      appendMessagesToCurrentConversation([{
-        role: 'ai',
-        content: `❌ Request failed: ${getErrorMessage(error, 'Unexpected error')}`,
-        timestamp: new Date().toISOString(),
-      }]);
+      appendMessagesToCurrentConversation([{ role: 'ai', content: `❌ Request failed: ${getErrorMessage(error, 'Unexpected error')}`, timestamp: new Date().toISOString() }]);
     } finally {
-      setIsTyping(false);
-      setStreamingContent('');
+      setIsTyping(false); setStreamingContent('');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    input,
-    currentConversationId,
-    currentMessages,
-    currentConversation,
-    systemPrompt,
-    user?.id,
-    activeDatasetContext,
-    handleCanvasRun,
-    appendMessagesToCurrentConversation,
-    executeForecastFlow,
-    executePlanFlow,
-    executeWorkflowFlow,
-    executeWorkflowAFlow,
-    executeWorkflowBFlow,
-    executeDigitalTwinFlow,
-    handleRunTopology,
-    topologyRunId,
-    setActiveWorkflowRuns,
-    setConversations,
-    setConversationDatasetContext,
-  ]);
+  }, [input, currentConversationId, currentMessages, currentConversation, systemPrompt, user?.id, activeDatasetContext, handleCanvasRun, appendMessagesToCurrentConversation, executeForecastFlow, executePlanFlow, executeWorkflowFlow, executeWorkflowAFlow, executeWorkflowBFlow, executeDigitalTwinFlow, handleRunTopology, topologyRunId, setConversations, setConversationDatasetContext, setLatestPlanRunId]);
 
-  const handleKeyDown = useCallback((e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSend(e);
-    }
-  }, [handleSend]);
+  const handleKeyDown = useCallback((e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(e); } }, [handleSend]);
 
   const handleTextareaChange = useCallback((e) => {
     setInput(e.target.value);
@@ -2460,7 +1347,6 @@ export default function DecisionSupportView({ user, addNotification }) {
     const now = new Date();
     const diffMs = now - date;
     const diffMins = Math.floor(diffMs / 60000);
-
     if (diffMins < 1) return 'Just now';
     if (diffMins < 60) return `${diffMins}m ago`;
     if (diffMins < 1440) return `${Math.floor(diffMins / 60)}h ago`;
@@ -2469,126 +1355,65 @@ export default function DecisionSupportView({ user, addNotification }) {
 
   const runningWorkflowProfileIds = useMemo(() => {
     const index = {};
-    Object.keys(activeWorkflowRuns || {}).forEach((runId) => {
+    Object.keys(workflowExec.activeWorkflowRuns || {}).forEach((runId) => {
       const numericRunId = Number(runId);
-      const snapshot = workflowSnapshots[numericRunId] || workflowSnapshots[runId];
+      const snapshot = workflowExec.workflowSnapshots[numericRunId] || workflowExec.workflowSnapshots[runId];
       const profileId = snapshot?.run?.dataset_profile_id;
-      if (profileId) {
-        index[profileId] = true;
-      }
+      if (profileId) index[profileId] = true;
     });
     return index;
-  }, [activeWorkflowRuns, workflowSnapshots]);
+  }, [workflowExec.activeWorkflowRuns, workflowExec.workflowSnapshots]);
 
   const contextBadge = useMemo(() => {
     if (contextLoading) return { text: 'Loading context...', color: 'bg-yellow-100 text-yellow-700' };
     if (!domainContext) return { text: 'No context', color: 'bg-slate-100 text-slate-500' };
-
     const parts = [];
     if (domainContext.riskItems.length > 0) parts.push(`${domainContext.riskItems.length} risks`);
     if (domainContext.suppliers) parts.push(`${domainContext.suppliers} suppliers`);
     if (domainContext.materials) parts.push(`${domainContext.materials} materials`);
     if (activeDatasetContext?.dataset_profile_id) parts.push(`profile #${activeDatasetContext.dataset_profile_id}`);
-
     if (parts.length === 0) return { text: 'Context ready', color: 'bg-green-100 text-green-700' };
     return { text: parts.join(' | '), color: 'bg-green-100 text-green-700' };
   }, [domainContext, contextLoading, activeDatasetContext]);
 
   const handleConfigureApiKey = useCallback(() => {
-    addNotification?.(
-      'AI keys are now managed in Supabase Edge Function secrets (GEMINI_API_KEY / DEEPSEEK_API_KEY).',
-      'info'
-    );
+    addNotification?.('AI keys are now managed in Supabase Edge Function secrets (GEMINI_API_KEY / DEEPSEEK_API_KEY).', 'info');
   }, [addNotification]);
 
-  // ── renderSpecialMessage via MessageCardRenderer ─────────────────────────
-  const cardHandlers = useMemo(() => ({
-    handleUseDatasetContextFromCard,
-    executeForecastFlow,
-    executeWorkflowAFlow,
-    executeWorkflowBFlow,
-    executePlanFlow,
-    executeRiskAwarePlanFlow,
-    handleResumeWorkflowA,
-    handleReplayWorkflowA,
-    handleCancelAsyncWorkflow,
-    handleBlockingQuestionsSubmit,
-    handleSubmitBlockingAnswers,
-    handleRequestRelax,
-    handleRequestPlanApproval,
-    handleApprovePlanApproval,
-    handleRejectPlanApproval,
-    handleContractConfirmation,
-    handleApplyReuseSuggestion,
-    handleReviewReuseSuggestion,
-    handleRiskReplanDecision,
-    handleConfigureApiKey,
-    handleGenerateNegotiationOptions,
-    handleApplyNegotiationOption,
-    updateCanvasState,
-    sessionCtx,
-    batchApprove,
-    batchReject,
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [
-    handleUseDatasetContextFromCard,
-    executeForecastFlow,
-    executeWorkflowAFlow,
-    executeWorkflowBFlow,
-    executePlanFlow,
-    executeRiskAwarePlanFlow,
-    handleResumeWorkflowA,
-    handleReplayWorkflowA,
-    handleCancelAsyncWorkflow,
-    handleBlockingQuestionsSubmit,
-    handleSubmitBlockingAnswers,
-    handleRequestRelax,
-    handleRequestPlanApproval,
-    handleApprovePlanApproval,
-    handleRejectPlanApproval,
-    handleContractConfirmation,
-    handleApplyReuseSuggestion,
-    handleReviewReuseSuggestion,
-    handleRiskReplanDecision,
-    handleConfigureApiKey,
-    handleGenerateNegotiationOptions,
-    handleApplyNegotiationOption,
-    updateCanvasState,
-    sessionCtx,
-  ]);
-
-  const cardState = useMemo(() => ({
-    activeDatasetContext,
-    currentConversationId,
-    conversationDatasetContext,
-    runningForecastProfiles,
-    runningPlanKeys,
-    runningWorkflowProfileIds,
-    workflowSnapshots,
-    isNegotiationGenerating,
-    user,
-    _rawRowsCache,
-  }), [
-    activeDatasetContext,
-    currentConversationId,
-    conversationDatasetContext,
-    runningForecastProfiles,
-    runningPlanKeys,
-    runningWorkflowProfileIds,
-    workflowSnapshots,
-    isNegotiationGenerating,
-    user,
-  ]);
-
+  // ── Message card rendering via extracted component ──────────────────────
   const renderSpecialMessage = useCallback((message) => {
-    return (
-      <MessageCardRenderer
-        message={message}
-        handlers={cardHandlers}
-        state={cardState}
-      />
-    );
-  }, [cardHandlers, cardState]);
+    const handlers = {
+      handleUseDatasetContextFromCard, executeForecastFlow, executeWorkflowAFlow, executeWorkflowBFlow,
+      executePlanFlow, executeRiskAwarePlanFlow, handleResumeWorkflowA, handleReplayWorkflowA,
+      handleCancelAsyncWorkflow, handleBlockingQuestionsSubmit, handleSubmitBlockingAnswers,
+      handleRequestRelax, handleRequestPlanApproval: planExec.handleRequestPlanApproval,
+      handleApprovePlanApproval: planExec.handleApprovePlanApproval, handleRejectPlanApproval: planExec.handleRejectPlanApproval,
+      handleContractConfirmation, handleApplyReuseSuggestion, handleReviewReuseSuggestion,
+      handleRiskReplanDecision: planExec.handleRiskReplanDecision, handleConfigureApiKey,
+      handleGenerateNegotiationOptions, handleApplyNegotiationOption, updateCanvasState, sessionCtx, batchApprove, batchReject,
+    };
+
+    const state = {
+      activeDatasetContext, currentConversationId, conversationDatasetContext,
+      runningForecastProfiles: forecastExec.runningForecastProfiles, runningPlanKeys: planExec.runningPlanKeys,
+      runningWorkflowProfileIds, workflowSnapshots: workflowExec.workflowSnapshots,
+      isNegotiationGenerating, user, _rawRowsCache,
+    };
+
+    return <MessageCardRenderer message={message} handlers={handlers} state={state} />;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    activeDatasetContext, currentConversationId, handleConfigureApiKey,
+    planExec.handleApprovePlanApproval, planExec.handleRejectPlanApproval, planExec.handleRequestPlanApproval,
+    handleContractConfirmation, handleUseDatasetContextFromCard, updateCanvasState,
+    executeForecastFlow, executePlanFlow, executeWorkflowAFlow, executeWorkflowBFlow,
+    forecastExec.runningForecastProfiles, planExec.runningPlanKeys, runningWorkflowProfileIds,
+    workflowExec.workflowSnapshots, handleResumeWorkflowA, handleReplayWorkflowA,
+    handleBlockingQuestionsSubmit, handleSubmitBlockingAnswers, handleCancelAsyncWorkflow,
+    handleApplyReuseSuggestion, handleReviewReuseSuggestion, executeRiskAwarePlanFlow,
+    planExec.handleRiskReplanDecision, handleRequestRelax, isNegotiationGenerating,
+    handleGenerateNegotiationOptions, handleApplyNegotiationOption
+  ]);
 
   return (
     <div className="h-full w-full flex flex-col p-2 md:p-3 animate-fade-in">
@@ -2621,61 +1446,26 @@ export default function DecisionSupportView({ user, addNotification }) {
                       <span className={`text-xs px-2 py-0.5 rounded-full ${contextBadge.color}`}>{contextBadge.text}</span>
                     </div>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => setShowNewChatConfirm(true)}
-                    className="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-                    title="New conversation"
-                  >
+                  <button type="button" onClick={() => setShowNewChatConfirm(true)} className="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors" title="New conversation">
                     <FileText className="w-4 h-4 text-slate-500" />
                   </button>
                 </div>
 
                 <ChatThread
-                  messages={currentMessages}
-                  isTyping={isTyping}
-                  streamingContent={streamingContent}
-                  formatTime={formatTime}
-                  renderSpecialMessage={renderSpecialMessage}
-                  quickPrompts={QUICK_PROMPTS}
-                  onSelectPrompt={(promptText) => {
-                    setInput(promptText);
-                    textareaRef.current?.focus();
-                  }}
-                  showInitialEmptyState={currentMessages.length <= 1 && !isTyping}
-                  isLoading={false}
+                  messages={currentMessages} isTyping={isTyping} streamingContent={streamingContent}
+                  formatTime={formatTime} renderSpecialMessage={renderSpecialMessage} quickPrompts={QUICK_PROMPTS}
+                  onSelectPrompt={(promptText) => { setInput(promptText); textareaRef.current?.focus(); }}
+                  showInitialEmptyState={currentMessages.length <= 1 && !isTyping} isLoading={false}
                 />
 
                 <ChatComposer
-                  input={input}
-                  onInputChange={handleTextareaChange}
-                  onKeyDown={handleKeyDown}
-                  onSubmit={handleSend}
-                  textareaRef={textareaRef}
-                  fileInputRef={fileInputRef}
-                  onFileInputChange={handleFileInputChange}
-                  onFilePicker={() => fileInputRef.current?.click()}
-                  isTyping={isTyping}
-                  isUploading={isUploadingDataset}
-                  uploadStatusText={uploadStatusText}
-                  isDragOver={isDragOverUpload}
-                  onDragEnter={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    if (!isUploadingDataset) setIsDragOverUpload(true);
-                  }}
-                  onDragOver={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    if (!isUploadingDataset) setIsDragOverUpload(true);
-                  }}
-                  onDragLeave={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    if (!e.currentTarget.contains(e.relatedTarget)) {
-                      setIsDragOverUpload(false);
-                    }
-                  }}
+                  input={input} onInputChange={handleTextareaChange} onKeyDown={handleKeyDown} onSubmit={handleSend}
+                  textareaRef={textareaRef} fileInputRef={fileInputRef} onFileInputChange={handleFileInputChange}
+                  onFilePicker={() => fileInputRef.current?.click()} isTyping={isTyping} isUploading={isUploadingDataset}
+                  uploadStatusText={uploadStatusText} isDragOver={isDragOverUpload}
+                  onDragEnter={(e) => { e.preventDefault(); e.stopPropagation(); if (!isUploadingDataset) setIsDragOverUpload(true); }}
+                  onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); if (!isUploadingDataset) setIsDragOverUpload(true); }}
+                  onDragLeave={(e) => { e.preventDefault(); e.stopPropagation(); if (!e.currentTarget.contains(e.relatedTarget)) setIsDragOverUpload(false); }}
                   onDrop={handleDropUpload}
                 />
               </>
@@ -2688,50 +1478,27 @@ export default function DecisionSupportView({ user, addNotification }) {
         )}
         canvas={(
           <CanvasPanel
-            onToggleOpen={isCanvasDetached
-              ? () => { setIsCanvasDetached(false); handleCanvasToggle(); }
-              : handleCanvasToggle}
-            onPopout={isCanvasDetached
-              ? () => setIsCanvasDetached(false)
-              : () => setIsCanvasDetached(true)}
+            onToggleOpen={isCanvasDetached ? () => { setIsCanvasDetached(false); handleCanvasToggle(); } : handleCanvasToggle}
+            onPopout={isCanvasDetached ? () => setIsCanvasDetached(false) : () => setIsCanvasDetached(true)}
             isDetached={isCanvasDetached}
             activeTab={activeCanvasState.activeTab}
-            onTabChange={(tabId) => {
-              if (!currentConversationId) return;
-              updateCanvasState(currentConversationId, (prev) => ({
-                ...prev,
-                activeTab: tabId,
-              }));
-            }}
-            run={activeCanvasState.run}
-            logs={activeCanvasState.logs}
-            stepStatuses={activeCanvasState.stepStatuses}
-            codeText={activeCanvasState.codeText}
-            chartPayload={effectiveCanvasChartPayload}
-            forecastSeriesGroups={forecastSeriesGroups}
-            downloads={activeCanvasState.downloads}
-            topologyGraph={effectiveCanvasChartPayload.topology_graph || null}
-            topologyRunId={topologyRunId}
-            onRunTopology={handleRunTopology}
-            topologyRunning={Boolean(activeCanvasState.topologyRunning)}
-            userId={user?.id || null}
-            latestPlanRunId={latestPlanRunId}
+            onTabChange={(tabId) => { if (!currentConversationId) return; updateCanvasState(currentConversationId, (prev) => ({ ...prev, activeTab: tabId })); }}
+            run={activeCanvasState.run} logs={activeCanvasState.logs} stepStatuses={activeCanvasState.stepStatuses}
+            codeText={activeCanvasState.codeText} chartPayload={effectiveCanvasChartPayload}
+            forecastSeriesGroups={forecastSeriesGroups} downloads={activeCanvasState.downloads}
+            topologyGraph={effectiveCanvasChartPayload.topology_graph || null} topologyRunId={topologyRunId}
+            onRunTopology={handleRunTopology} topologyRunning={Boolean(activeCanvasState.topologyRunning)}
+            userId={user?.id || null} latestPlanRunId={latestPlanRunId}
             datasetProfileId={activeDatasetContext?.dataset_profile_id || null}
             datasetProfileRow={activeDatasetContext?.dataset_profile_id ? {
-              id: activeDatasetContext.dataset_profile_id,
-              user_file_id: activeDatasetContext.user_file_id || null,
-              profile_json: activeDatasetContext.profileJson || {},
-              contract_json: activeDatasetContext.contractJson || {},
+              id: activeDatasetContext.dataset_profile_id, user_file_id: activeDatasetContext.user_file_id || null,
+              profile_json: activeDatasetContext.profileJson || {}, contract_json: activeDatasetContext.contractJson || {}
             } : null}
           />
         )}
-        sidebarCollapsed={isSidebarCollapsed}
-        onSidebarToggle={handleSidebarToggle}
-        canvasOpen={Boolean(activeCanvasState.isOpen)}
-        onCanvasToggle={handleCanvasToggle}
-        initialSplitRatio={splitRatio}
-        onSplitRatioCommit={handleSplitRatioCommit}
-        canvasDetached={isCanvasDetached}
+        sidebarCollapsed={isSidebarCollapsed} onSidebarToggle={handleSidebarToggle}
+        canvasOpen={Boolean(activeCanvasState.isOpen)} onCanvasToggle={handleCanvasToggle}
+        initialSplitRatio={splitRatio} onSplitRatioCommit={handleSplitRatioCommit} canvasDetached={isCanvasDetached}
       />
 
       {showNewChatConfirm && (
@@ -2747,12 +1514,8 @@ export default function DecisionSupportView({ user, addNotification }) {
               </div>
             </div>
             <div className="flex gap-2 justify-end">
-              <Button variant="secondary" onClick={() => setShowNewChatConfirm(false)}>
-                Cancel
-              </Button>
-              <Button variant="primary" onClick={handleNewConversation}>
-                New Conversation
-              </Button>
+              <Button variant="secondary" onClick={() => setShowNewChatConfirm(false)}>Cancel</Button>
+              <Button variant="primary" onClick={handleNewConversation}>New Conversation</Button>
             </div>
           </Card>
         </div>
