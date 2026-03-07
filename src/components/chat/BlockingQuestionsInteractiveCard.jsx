@@ -36,7 +36,9 @@ export default function BlockingQuestionsInteractiveCard({ payload, onSubmit }) 
           <div className="space-y-2">
             {questions.map((question, idx) => (
               <div key={idx} className="space-y-1">
-                <p className="text-slate-700 dark:text-slate-200">{question}</p>
+                <p className="text-slate-700 dark:text-slate-200">
+                  {typeof question === 'string' ? question : question?.question || JSON.stringify(question)}
+                </p>
                 <input
                   type="text"
                   value={answers[String(idx)]}

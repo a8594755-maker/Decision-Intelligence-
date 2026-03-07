@@ -10,6 +10,10 @@ function nextLocalId() {
   return `local-run-${++_localIdCounter}-${Date.now()}`;
 }
 
+function isLocalId(id) {
+  return typeof id === 'string' && id.startsWith('local-');
+}
+
 function warnFallback(method, err) {
   console.warn(`[diRunsService] ${method} Supabase failed, using local fallback:`, err?.message || err);
 }
@@ -23,6 +27,19 @@ export const diRunsService = {
       stage,
       status: 'queued'
     };
+
+    // If profile ID is local, skip Supabase (bigint column rejects string IDs)
+    if (isLocalId(dataset_profile_id)) {
+      const localRun = {
+        ...payload,
+        id: nextLocalId(),
+        created_at: new Date().toISOString(),
+        started_at: null, finished_at: null, error: null,
+        _local: true
+      };
+      _localRuns.set(localRun.id, localRun);
+      return localRun;
+    }
 
     try {
       const { data, error } = await supabase
@@ -40,9 +57,7 @@ export const diRunsService = {
         ...payload,
         id: nextLocalId(),
         created_at: new Date().toISOString(),
-        started_at: null,
-        finished_at: null,
-        error: null,
+        started_at: null, finished_at: null, error: null,
         _local: true
       };
       _localRuns.set(localRun.id, localRun);
@@ -56,6 +71,13 @@ export const diRunsService = {
     if (started_at !== undefined) updates.started_at = started_at;
     if (finished_at !== undefined) updates.finished_at = finished_at;
     if (runError !== undefined) updates.error = runError;
+
+    if (isLocalId(run_id)) {
+      const existing = _localRuns.get(run_id) || { id: run_id };
+      const updated = { ...existing, ...updates };
+      _localRuns.set(run_id, updated);
+      return updated;
+    }
 
     try {
       const { data, error } = await supabase
@@ -78,6 +100,20 @@ export const diRunsService = {
   },
 
   async saveArtifact({ run_id, artifact_type, artifact_json }) {
+    if (isLocalId(run_id)) {
+      const localArtifact = {
+        id: `local-art-${++_localIdCounter}`,
+        run_id,
+        artifact_type,
+        artifact_json,
+        created_at: new Date().toISOString(),
+        _local: true
+      };
+      if (!_localArtifacts.has(run_id)) _localArtifacts.set(run_id, []);
+      _localArtifacts.get(run_id).push(localArtifact);
+      return localArtifact;
+    }
+
     try {
       const { data, error } = await supabase
         .from('di_run_artifacts')
@@ -126,6 +162,11 @@ export const diRunsService = {
   },
 
   async getRunById(user_id, run_id) {
+    if (isLocalId(run_id)) {
+      const local = _localRuns.get(run_id);
+      return (local && local.user_id === user_id) ? local : null;
+    }
+
     try {
       const { data, error } = await supabase
         .from('di_runs')
@@ -230,6 +271,10 @@ export const diRunsService = {
   },
 
   async getRun(run_id) {
+    if (isLocalId(run_id)) {
+      return _localRuns.get(run_id) || null;
+    }
+
     try {
       const { data, error } = await supabase
         .from('di_runs')
@@ -247,6 +292,10 @@ export const diRunsService = {
   },
 
   async getArtifactsForRun(run_id) {
+    if (isLocalId(run_id)) {
+      return _localArtifacts.get(run_id) || [];
+    }
+
     try {
       const { data, error } = await supabase
         .from('di_run_artifacts')
@@ -264,6 +313,14 @@ export const diRunsService = {
   },
 
   async getArtifactById(artifact_id) {
+    if (isLocalId(artifact_id)) {
+      for (const arts of _localArtifacts.values()) {
+        const found = arts.find((a) => a.id === artifact_id);
+        if (found) return found;
+      }
+      return null;
+    }
+
     try {
       const { data, error } = await supabase
         .from('di_run_artifacts')
@@ -275,7 +332,6 @@ export const diRunsService = {
       return data || null;
     } catch (err) {
       warnFallback('getArtifactById', err);
-      // Search local cache
       for (const arts of _localArtifacts.values()) {
         const found = arts.find((a) => a.id === artifact_id);
         if (found) return found;
@@ -296,6 +352,22 @@ export const diRunsService = {
 
     if (rows.length === 0) return [];
 
+    if (isLocalId(run_id)) {
+      const localStepResults = rows.map((r, i) => ({
+        ...r,
+        id: `local-step-${++_localIdCounter}-${i}`,
+        created_at: new Date().toISOString(),
+        started_at: null, finished_at: null,
+        error_code: null, error_message: null,
+        input_ref: null, output_ref: null,
+        _local: true
+      }));
+      if (!_localSteps.has(run_id)) _localSteps.set(run_id, new Map());
+      const stepMap = _localSteps.get(run_id);
+      localStepResults.forEach((s) => stepMap.set(s.step, s));
+      return localStepResults;
+    }
+
     try {
       const { data, error } = await supabase
         .from('di_run_steps')
@@ -303,7 +375,6 @@ export const diRunsService = {
         .select('*');
 
       if (error) throw error;
-      // Cache locally
       if (!_localSteps.has(run_id)) _localSteps.set(run_id, new Map());
       const stepMap = _localSteps.get(run_id);
       (data || []).forEach((s) => stepMap.set(s.step, s));
@@ -314,12 +385,9 @@ export const diRunsService = {
         ...r,
         id: `local-step-${++_localIdCounter}-${i}`,
         created_at: new Date().toISOString(),
-        started_at: null,
-        finished_at: null,
-        error_code: null,
-        error_message: null,
-        input_ref: null,
-        output_ref: null,
+        started_at: null, finished_at: null,
+        error_code: null, error_message: null,
+        input_ref: null, output_ref: null,
         _local: true
       }));
       if (!_localSteps.has(run_id)) _localSteps.set(run_id, new Map());
@@ -330,6 +398,11 @@ export const diRunsService = {
   },
 
   async getRunSteps(run_id) {
+    if (isLocalId(run_id)) {
+      const stepMap = _localSteps.get(run_id);
+      return stepMap ? Array.from(stepMap.values()) : [];
+    }
+
     try {
       const { data, error } = await supabase
         .from('di_run_steps')
@@ -338,7 +411,6 @@ export const diRunsService = {
         .order('id', { ascending: true });
 
       if (error) throw error;
-      // Cache locally
       if (data?.length > 0) {
         if (!_localSteps.has(run_id)) _localSteps.set(run_id, new Map());
         const stepMap = _localSteps.get(run_id);
@@ -374,6 +446,15 @@ export const diRunsService = {
       input_ref,
       output_ref
     };
+
+    if (isLocalId(run_id)) {
+      const existing = _localSteps.get(run_id)?.get(step) || {};
+      const merged = { ...existing, ...payload, _local: true };
+      if (!merged.id) merged.id = `local-step-${++_localIdCounter}`;
+      if (!_localSteps.has(run_id)) _localSteps.set(run_id, new Map());
+      _localSteps.get(run_id).set(step, merged);
+      return merged;
+    }
 
     try {
       const { data, error } = await supabase
@@ -416,6 +497,15 @@ export const diRunsService = {
     if (error_message !== undefined) updates.error_message = error_message;
     if (input_ref !== undefined) updates.input_ref = input_ref;
     if (output_ref !== undefined) updates.output_ref = output_ref;
+
+    if (isLocalId(run_id)) {
+      const existing = _localSteps.get(run_id)?.get(step) || { run_id, step };
+      const merged = { ...existing, ...updates, _local: true };
+      if (!merged.id) merged.id = `local-step-${++_localIdCounter}`;
+      if (!_localSteps.has(run_id)) _localSteps.set(run_id, new Map());
+      _localSteps.get(run_id).set(step, merged);
+      return merged;
+    }
 
     try {
       const { data, error } = await supabase
