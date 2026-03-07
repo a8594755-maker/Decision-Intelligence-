@@ -66,7 +66,7 @@ export function AuthProvider({ children }) {
       }
     }, 8000);
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, s) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, s) => {
       const elapsed = Math.round(performance.now() - t0);
       if (!resolved) {
         resolved = true;
@@ -74,8 +74,9 @@ export function AuthProvider({ children }) {
         console.info(`[Auth] onAuthStateChange initial event in ${elapsed}ms — session: ${s ? 'yes' : 'none'}, event: ${_event}`);
       }
       setSession(s);
-      await loadUserRole(s?.user?.id ?? null);
+      // Unblock UI immediately — load role in background (don't let it block rendering)
       setLoading(false);
+      loadUserRole(s?.user?.id ?? null).catch(() => {});
     });
 
     return () => {
