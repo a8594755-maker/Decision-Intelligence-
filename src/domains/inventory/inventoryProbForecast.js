@@ -343,7 +343,7 @@ export function runSingleTrial({
     // Get inbound for this bucket
     const inboundMap = inboundByKeyBucket;
     let inboundQty = 0;
-    for (const [key, bucketMap] of inboundMap) {
+    for (const [_key, bucketMap] of inboundMap) {
       if (bucketMap.has(bucket)) {
         inboundQty += bucketMap.get(bucket);
       }
@@ -351,7 +351,7 @@ export function runSingleTrial({
     
     // Get demand for this bucket (sum across all keys)
     let demandQty = 0;
-    for (const [key, bucketDemandMap] of demandByKeyBucket) {
+    for (const [_key, bucketDemandMap] of demandByKeyBucket) {
       if (bucketDemandMap.has(bucket)) {
         const dist = bucketDemandMap.get(bucket);
         demandQty += sampleDemand(dist, rng);

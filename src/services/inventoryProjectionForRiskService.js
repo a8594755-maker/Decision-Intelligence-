@@ -110,7 +110,7 @@ export async function loadInventoryProjectionForRisk(userId, forecastRunId, opti
       poOpenLinesService.getInboundByBuckets(userId, timeBuckets, plantId),
       inventorySnapshotsService.getLatestInventorySnapshots(userId, plantId)
     ]);
-  } catch (e) {
+  } catch (_e) {
     return {
       ...EMPTY_RESULT('DEGRADED', 'unknown'),
       perf: {

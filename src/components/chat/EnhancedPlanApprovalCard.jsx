@@ -65,7 +65,7 @@ export default function EnhancedPlanApprovalCard({
   onApprove,
   onReject,
   onBatchApprove,
-  onBatchReject,
+  _onBatchReject,
   onReviewIndividually,
 }) {
   const [showAuditTrail, setShowAuditTrail] = useState(false);

@@ -213,7 +213,7 @@ describe('normalizeSupplierEvent', () => {
   });
 
   it('defaults source_system to external', () => {
-    const { source_system, ...rest } = VALID_DELAY_EVENT;
+    const { source_system: _source_system, ...rest } = VALID_DELAY_EVENT;
     const result = normalizeSupplierEvent(rest);
     expect(result.valid).toBe(true);
     expect(result.event.source_system).toBe('external');

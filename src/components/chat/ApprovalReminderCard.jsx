@@ -23,7 +23,7 @@ export default function ApprovalReminderCard({
     approval_id,
     run_id,
     hours_remaining,
-    deadline,
+    deadline: _deadline,
     narrative_summary,
     is_critical,
   } = payload;

@@ -12,7 +12,7 @@
  * @param {string} options.uploadType - Upload type
  * @param {string} options.fileName - Original file name
  */
-export function downloadErrorReport({ errorRows, rawRows = [], columns = [], uploadType, fileName }) {
+export function downloadErrorReport({ errorRows, rawRows = [], _columns = [], uploadType, fileName }) {
   if (!errorRows || errorRows.length === 0) {
     console.warn('No error rows to download');
     return;

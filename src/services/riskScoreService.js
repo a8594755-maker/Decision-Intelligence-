@@ -237,7 +237,7 @@ async function loadRevenueDataForRun(userId, runId) {
   
   try {
     // First, find the revenue run for this BOM run
-    const { data: revenueRunData, error: runError } = await supabase
+    const { data: revenueRunData, error: _runError } = await supabase
       .from('forecast_runs')
       .select('id')
       .eq('user_id', userId)
@@ -526,7 +526,7 @@ export async function getRiskScoreForKey(userId, forecastRunId, materialCode, pl
 /**
  * Log audit event
  */
-async function logAuditEvent(userId, forecastRunId, eventType, entityKey, payload) {
+async function _logAuditEvent(userId, forecastRunId, eventType, entityKey, payload) {
   try {
     const { error } = await supabase
       .from('audit_events')

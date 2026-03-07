@@ -7,12 +7,14 @@ import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import * as XLSX from 'xlsx';
 import {
   Upload, FileSpreadsheet, Loader2, CheckCircle, AlertCircle,
-  X, ArrowRight, ArrowLeft, RefreshCw, Clock, ChevronDown, Eye,
+  X, ArrowRight, ArrowLeft, RefreshCw, Clock, ChevronDown, Eye, Download,
 } from 'lucide-react';
+import { quarantineRowsToCsvData } from '../utils/dataValidation';
 import { Card, Button, Badge } from './ui';
 import { useAuth } from '../contexts/AuthContext';
 import {
   generateSheetPlans,
+  generateSheetPlansFromParsed,
   importWorkbookSheets,
   validateSheetPlans,
 } from '../services/oneShotImportService';
@@ -23,25 +25,48 @@ import MappingReviewPanel from './MappingReviewPanel';
 import { saveMappingProfile, generateHeaderFingerprint } from '../services/mappingProfileService';
 
 const UPLOAD_TYPE_OPTIONS = Object.keys(UPLOAD_SCHEMAS);
+const MAX_FILE_SIZE_MB = 100;
+const WARN_FILE_SIZE_MB = 50;
 
 /* ───────────── Step 1: File Upload ───────────── */
-function FileDropZone({ onFileLoaded, onLoadSample, loading }) {
+function FileDropZone({ onFileLoaded, onLoadSample, loading, onError }) {
   const inputRef = useRef(null);
   const [dragOver, setDragOver] = useState(false);
 
   const handleFile = useCallback((file) => {
     if (!file) return;
+
+    // Hard reject files over limit
+    if (file.size > MAX_FILE_SIZE_MB * 1024 * 1024) {
+      onError?.(`File too large (${(file.size / 1024 / 1024).toFixed(1)} MB). Maximum is ${MAX_FILE_SIZE_MB} MB.`);
+      return;
+    }
+
+    // Warn for large files
+    if (file.size > WARN_FILE_SIZE_MB * 1024 * 1024) {
+      console.warn(`[DataImport] Large file: ${(file.size / 1024 / 1024).toFixed(1)} MB — processing may take a moment`);
+    }
+
     const reader = new FileReader();
-    reader.onload = (e) => {
+    reader.onload = async (e) => {
       try {
-        const wb = XLSX.read(new Uint8Array(e.target.result), { type: 'array' });
-        onFileLoaded(wb, file.name, file.size, file.lastModified);
-      } catch (err) {
-        console.error('[DataImport] Failed to parse file:', err);
+        // Try Worker-based parsing (non-blocking)
+        const { classifyWorkbookInWorker } = await import('../utils/xlsxParserWorkerClient');
+        const parsed = await classifyWorkbookInWorker(e.target.result);
+        onFileLoaded(parsed, file.name, file.size, file.lastModified);
+      } catch (workerErr) {
+        console.warn('[DataImport] Worker parse failed, falling back to main thread:', workerErr.message);
+        try {
+          const wb = XLSX.read(new Uint8Array(e.target.result), { type: 'array' });
+          onFileLoaded(wb, file.name, file.size, file.lastModified);
+        } catch (err) {
+          console.error('[DataImport] Failed to parse file:', err);
+          onError?.(`Failed to parse file: ${err.message}`);
+        }
       }
     };
     reader.readAsArrayBuffer(file);
-  }, [onFileLoaded]);
+  }, [onFileLoaded, onError]);
 
   return (
     <div className="space-y-4">
@@ -148,9 +173,18 @@ function preValidateSheets(workbook, sheetPlans) {
   const results = [];
   for (const plan of sheetPlans) {
     if (!plan.enabled || !plan.suggestedType) continue;
-    const ws = workbook.Sheets[plan.sheetName];
-    if (!ws) continue;
-    const rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
+
+    // Get rows: try workbook first, fall back to plan's cached sampleRows for preview
+    let rows;
+    const ws = workbook?.Sheets?.[plan.sheetName];
+    if (ws) {
+      rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
+    } else {
+      // Worker path: workbook not available on main thread.
+      // Use plan metadata for preview (sampleRows + rowCount).
+      // Full data will be extracted from worker during actual import.
+      rows = plan.sampleRows || [];
+    }
     const sampleRows = rows.slice(0, 5);
     const schema = UPLOAD_SCHEMAS[plan.suggestedType];
     const requiredFields = schema?.required_fields || [];
@@ -188,16 +222,19 @@ function preValidateSheets(workbook, sheetPlans) {
       else seen.add(key);
     }
 
+    // Use plan.rowCount when we only have sample data (worker path)
+    const totalRowCount = ws ? rows.length : (plan.rowCount || rows.length);
+
     results.push({
       sheetName: plan.sheetName,
       uploadType: plan.suggestedType,
-      totalRows: rows.length,
+      totalRows: totalRowCount,
       sampleRows,
       headers: Object.keys(rows[0] || {}),
       badRowCount: badRows.length,
       badRowSample: badRows.slice(0, 10),
       duplicateCount,
-      totalValid: rows.length - badRows.length,
+      totalValid: totalRowCount - badRows.length,
     });
   }
   return results;
@@ -314,8 +351,30 @@ function ValidationPreview({ validationResults, onConfirm, onBack }) {
 }
 
 /* ───────────── Step 3: Import Progress ───────────── */
-function ImportProgress({ progress, total }) {
+function formatDuration(ms) {
+  const seconds = Math.floor(ms / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return `${minutes}m ${secs}s`;
+}
+
+function ImportProgress({ progress, total, startTime, onCancel }) {
   const pct = total > 0 ? Math.round((progress.current / total) * 100) : 0;
+  const [elapsed, setElapsed] = useState(0);
+
+  useEffect(() => {
+    if (!startTime) return undefined;
+
+    const updateElapsed = () => setElapsed(Date.now() - startTime);
+    const intervalId = window.setInterval(updateElapsed, 1000);
+
+    return () => window.clearInterval(intervalId);
+  }, [startTime]);
+
+  const elapsedDisplay = startTime ? elapsed : 0;
+  const remaining = pct > 5 ? formatDuration((elapsedDisplay / pct) * (100 - pct)) : null;
+
   return (
     <div className="py-8">
       <div className="flex items-center justify-center mb-6">
@@ -336,6 +395,23 @@ function ImportProgress({ progress, total }) {
           {progress.substep}
         </p>
       )}
+      {progress.savedSoFar != null && (
+        <p className="text-xs text-slate-400 text-center mt-1">
+          {progress.savedSoFar.toLocaleString()} rows saved
+          {progress.totalRows ? ` / ${progress.totalRows.toLocaleString()}` : ''}
+        </p>
+      )}
+      <div className="flex justify-center gap-4 mt-2 text-xs text-slate-400">
+        {elapsedDisplay > 0 && <span>Elapsed: {formatDuration(elapsedDisplay)}</span>}
+        {remaining && <span>Est. remaining: {remaining}</span>}
+      </div>
+      {onCancel && (
+        <div className="flex justify-center mt-4">
+          <button onClick={onCancel} className="text-xs text-red-500 hover:text-red-700 underline">
+            Cancel Import
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -348,6 +424,30 @@ function ImportReport({ report, onReset }) {
     FAILED: 'error',
     NEEDS_REVIEW: 'warning',
     ABORTED: 'error',
+  };
+
+  const handleDownloadQuarantine = async () => {
+    try {
+      const XLSX = await import('xlsx');
+      const wb = XLSX.utils.book_new();
+
+      (report.sheetReports || []).forEach((sr) => {
+        if (sr.quarantineReport && sr.quarantineReport.rejected > 0) {
+          const csvData = quarantineRowsToCsvData(sr.quarantineReport);
+          if (csvData.length > 0) {
+            const ws = XLSX.utils.json_to_sheet(csvData);
+            // Sheet names max 31 chars in Excel
+            const safeName = (sr.sheetName || 'Sheet').slice(0, 31);
+            XLSX.utils.book_append_sheet(wb, ws, safeName);
+          }
+        }
+      });
+
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      XLSX.writeFile(wb, `error_report_${timestamp}.xlsx`);
+    } catch (err) {
+      console.error('[DataImport] Failed to download quarantine report:', err);
+    }
   };
 
   return (
@@ -382,6 +482,24 @@ function ImportReport({ report, onReset }) {
         ))}
       </div>
 
+      {/* Quarantine summary banner */}
+      {report.quarantineSummary?.totalRejected > 0 && (
+        <div className="flex items-center justify-between p-3 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800">
+          <div>
+            <p className="text-sm font-medium text-amber-800 dark:text-amber-200">
+              {report.quarantineSummary.totalRejected} rows quarantined
+            </p>
+            <p className="text-xs text-amber-600 dark:text-amber-400 mt-0.5">
+              These rows failed validation and were not imported. Fix errors and re-import.
+            </p>
+          </div>
+          <Button variant="outline" size="sm" onClick={handleDownloadQuarantine}>
+            <Download className="w-4 h-4 mr-1.5" />
+            Download Error Report
+          </Button>
+        </div>
+      )}
+
       {/* Reset button */}
       <div className="flex justify-center pt-2">
         <Button variant="outline" onClick={onReset}>
@@ -400,7 +518,7 @@ function ImportHistory({ userId }) {
 
   useEffect(() => {
     if (!userId) return;
-    setLoading(true);
+    queueMicrotask(() => setLoading(true));
     importBatchesService.getAllBatches(userId, { limit: 10 })
       .then(setBatches)
       .catch(() => setBatches([]))
@@ -451,25 +569,35 @@ export default function DataImportPanel() {
   const [mappingReviewSheet, setMappingReviewSheet] = useState(null); // sheet index needing review
   const [workbook, setWorkbook] = useState(null);
   const [fileName, setFileName] = useState('');
-  const [fileSize, setFileSize] = useState(0);
-  const [fileLastModified, setFileLastModified] = useState(0);
+  const [_fileSize, setFileSize] = useState(0);
+  const [_fileLastModified, setFileLastModified] = useState(0);
   const [sheetPlans, setSheetPlans] = useState([]);
   const [classifying, setClassifying] = useState(false);
   const [progress, setProgress] = useState({ current: 0, sheetName: '' });
   const [importReport, setImportReport] = useState(null);
   const [validationResults, setValidationResults] = useState([]);
   const abortRef = useRef(null);
+  const importStartRef = useRef(null);
 
   /* ── Step 1 → 2: file loaded, classify sheets ── */
-  const handleFileLoaded = useCallback((wb, name, size, lastModified) => {
+  const handleFileLoaded = useCallback((wbOrParsed, name, size, lastModified) => {
     setClassifying(true);
-    setWorkbook(wb);
     setFileName(name);
     setFileSize(size);
     setFileLastModified(lastModified);
 
     try {
-      const plans = generateSheetPlans(wb, name, size, lastModified);
+      let plans;
+      // Worker path: wbOrParsed has { sheetNames, sheets }
+      if (wbOrParsed.sheetNames && wbOrParsed.sheets) {
+        // Store the parsed result; actual workbook lives in Worker memory
+        setWorkbook(wbOrParsed._workbook || null);
+        plans = generateSheetPlansFromParsed(wbOrParsed, name, size, lastModified);
+      } else {
+        // Fallback: raw XLSX workbook
+        setWorkbook(wbOrParsed);
+        plans = generateSheetPlans(wbOrParsed, name, size, lastModified);
+      }
       // Auto-confirm mappings where classification is complete
       const confirmedPlans = plans.map(p => {
         if (p.isComplete && p.mappingDraft && p.suggestedType) {
@@ -572,8 +700,9 @@ export default function DataImportPanel() {
     if (enabledCount === 0) return;
 
     setStep('importing');
-    setProgress({ current: 0, sheetName: '', substep: '' });
+    setProgress({ current: 0, sheetName: '', substep: '', savedSoFar: null, totalRows: null });
     abortRef.current = new AbortController();
+    importStartRef.current = Date.now();
 
     try {
       const report = await importWorkbookSheets({
@@ -584,12 +713,14 @@ export default function DataImportPanel() {
         options: {
           mode: 'best-effort',
           signal: abortRef.current.signal,
-          onProgress: ({ stage, current, total, sheetName, substep }) => {
+          onProgress: ({ stage, current, _total, sheetName, substep, savedSoFar, totalRows }) => {
             setProgress(prev => ({
               ...prev,
               current: current ?? prev.current,
               sheetName: sheetName ?? prev.sheetName,
               substep: stage === 'substep' ? substep : prev.substep,
+              savedSoFar: savedSoFar ?? prev.savedSoFar,
+              totalRows: totalRows ?? prev.totalRows,
             }));
           },
         },
@@ -650,7 +781,12 @@ export default function DataImportPanel() {
 
         {/* Step content */}
         {step === 'upload' && (
-          <FileDropZone onFileLoaded={handleFileLoaded} onLoadSample={handleLoadSample} loading={classifying} />
+          <FileDropZone
+            onFileLoaded={handleFileLoaded}
+            onLoadSample={handleLoadSample}
+            loading={classifying}
+            onError={(msg) => addNotification?.(msg, 'error')}
+          />
         )}
 
         {step === 'review' && (
@@ -714,7 +850,12 @@ export default function DataImportPanel() {
         )}
 
         {step === 'importing' && (
-          <ImportProgress progress={progress} total={enabledCount} />
+          <ImportProgress
+            progress={progress}
+            total={enabledCount}
+            startTime={importStartRef.current}
+            onCancel={() => abortRef.current?.abort()}
+          />
         )}
 
         {step === 'result' && importReport && (

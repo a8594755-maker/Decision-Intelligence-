@@ -25,7 +25,7 @@ export const CONFIDENCE_THRESHOLDS = {
  *   { [sourceColumn]: { confidence: number, matchType: 'exact'|'synonym'|'inference' } }
  * @returns {object}
  */
-export function getRequiredMappingStatus({ uploadType, columns, columnMapping, mappingMeta }) {
+export function getRequiredMappingStatus({ uploadType, _columns, columnMapping, mappingMeta }) {
   // Get schema
   const schema = UPLOAD_SCHEMAS[uploadType];
   if (!schema) {

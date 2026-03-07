@@ -169,7 +169,7 @@ describe('derivePlanningParams', () => {
       calibrationMeta: GOOD_CALIBRATION
     });
 
-    const alpha = 0.5;
+    const _alpha = 0.5;
     // SKU-A|P1: avg_p50=(10+12)/2=11, avg_p90=(15+18)/2=16.5 → 11 + 0.5*5.5 = 13.75
     expect(result.patch.safety_stock_by_key['SKU-A|P1']).toBeCloseTo(13.75, 4);
     // SKU-B|P1: avg_p50=(30+32)/2=31, avg_p90=(40+42)/2=41 → 31 + 0.5*10 = 36

@@ -4,7 +4,7 @@
  */
 
 import { UPLOAD_FINGERPRINTS, getSupportedUploadTypes } from '../config/uploadFingerprints';
-import { mapHeaderToCanonical, batchMapHeaders } from '../config/headerSynonyms';
+import { batchMapHeaders } from '../config/headerSynonyms';
 
 /**
  * Classify a single sheet based on headers and sample data
@@ -15,7 +15,7 @@ import { mapHeaderToCanonical, batchMapHeaders } from '../config/headerSynonyms'
  * @param {object[]} params.sampleRows - Sample rows (first 10-20) for type checking
  * @returns {object} Classification result
  */
-export function classifySheet({ sheetName, headers, sampleRows = [] }) {
+export function classifySheet({ sheetName: _sheetName, headers, sampleRows = [] }) {
   // Map headers to canonical names
   const headerMapping = batchMapHeaders(headers);
   const canonicalHeaders = new Set(headerMapping.values());
@@ -308,7 +308,7 @@ function checkValueType(value, expectedType) {
     case 'number':
       return !isNaN(Number(value)) && value !== '';
       
-    case 'date':
+    case 'date': {
       // Check if it's a date-like string or Excel serial number
       if (typeof value === 'number' && value > 1 && value < 100000) {
         return true; // Excel serial date
@@ -323,6 +323,7 @@ function checkValueType(value, expectedType) {
         /^\d{4}-W\d{2}$/                 // 2024-W03 (week)
       ];
       return datePatterns.some(pattern => pattern.test(dateStr));
+    }
       
     case 'string':
       return typeof value === 'string' || String(value).length > 0;

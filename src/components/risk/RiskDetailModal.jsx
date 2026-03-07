@@ -27,15 +27,15 @@ export default function RiskDetailModal({
   isOpen,
   onClose,
   riskData,
-  user,
-  horizonDays,
-  activeForecastRun,
-  probSeries,
-  loadProbSeriesForKey,
+  _user,
+  _horizonDays,
+  _activeForecastRun,
+  _probSeries,
+  _loadProbSeriesForKey,
   hasProbResults,
-  revenueState,
-  riskScoreData,
-  replayDraft
+  _revenueState,
+  _riskScoreData,
+  _replayDraft
 }) {
   const [activeTab, setActiveTab] = useState('inventory');
 

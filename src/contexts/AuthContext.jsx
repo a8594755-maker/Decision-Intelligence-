@@ -50,7 +50,7 @@ export function AuthProvider({ children }) {
   // React 18 Strict Mode (doubleInvokeEffectsInDEV) and Vite HMR reloads.
   useEffect(() => {
     if (!isSupabaseConfigured) {
-      setLoading(false);
+      queueMicrotask(() => setLoading(false));
       return;
     }
 
@@ -145,6 +145,7 @@ export function AuthProvider({ children }) {
   );
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export const useAuth = () => {
   const ctx = useContext(AuthContext);
   if (!ctx) throw new Error('useAuth must be used inside <AuthProvider>');

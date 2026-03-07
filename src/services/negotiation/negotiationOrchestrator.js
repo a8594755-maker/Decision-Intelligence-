@@ -243,7 +243,7 @@ export async function runNegotiation({
   // Step 3: Generate candidate options (deterministic, pure)
   // -------------------------------------------------------------------------
   // Extract base MOQ constraints for concrete override computation
-  const baseMoqRows = Array.isArray(constraintCheck?.violations)
+  const _baseMoqRows = Array.isArray(constraintCheck?.violations)
     ? null  // We don't have original constraints from constraint_check
     : null;
 

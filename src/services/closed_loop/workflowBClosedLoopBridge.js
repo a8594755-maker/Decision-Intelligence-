@@ -19,7 +19,7 @@
 
 import { runClosedLoop, isClosedLoopEnabled } from './index.js';
 import { diRunsService } from '../diRunsService';
-import { loadArtifact } from '../../utils/artifactStore';
+// import { loadArtifact } from '../../utils/artifactStore';
 import { runPlanFromDatasetProfile } from '../chatPlanningService';
 
 // ── Constants ─────────────────────────────────────────────────────────────────

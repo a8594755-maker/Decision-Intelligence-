@@ -12,5 +12,15 @@ export default defineConfig({
   build: {
     // Strip console.log and debugger statements in production builds
     esbuild: { drop: ['console', 'debugger'] },
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          'vendor-charts': ['recharts'],
+          'vendor-flow': ['reactflow'],
+          'vendor-xlsx': ['xlsx'],
+          'vendor-supabase': ['@supabase/supabase-js'],
+        },
+      },
+    },
   },
 })

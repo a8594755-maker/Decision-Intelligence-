@@ -19,6 +19,8 @@ import CostSection from './CostSection';
 import RevenueSection from './RevenueSection';
 import RiskScoreSection from './RiskScoreSection';
 import WhatIfSection from './WhatIfSection';
+import ComputationTraceSection from './ComputationTraceSection';
+import ActionsSection from './ActionsSection';
 
 const DetailsPanel = ({
   details,
@@ -37,7 +39,7 @@ const DetailsPanel = ({
   const [expediteBuckets, setExpediteBuckets] = useState(1);
   const [simulationResult, setSimulationResult] = useState(null);
   const [whatIfResult, setWhatIfResult] = useState(null);
-  const [runningWhatIf, setRunningWhatIf] = useState(false);
+  const [_runningWhatIf, setRunningWhatIf] = useState(false);
   
   // ========== What-if Handlers ==========
   const handleRunWhatIf = async (action) => {
@@ -490,6 +492,50 @@ const DetailsPanel = ({
             </div>
           </div>
         </div>
+
+        {/* Section 5.5: Data Confidence & Assumptions */}
+        {details.assumptions && details.assumptions.length > 0 && (
+          <div>
+            <div className="flex items-center gap-2 mb-2">
+              <AlertCircle className="w-4 h-4 text-slate-600 dark:text-slate-400" />
+              <h4 className="font-semibold text-slate-700 dark:text-slate-300 flex-1">
+                Data Confidence
+              </h4>
+              {details.confidence_score != null && (
+                <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
+                  details.confidence_score >= 0.8 ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300' :
+                  details.confidence_score >= 0.5 ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300' :
+                  'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300'
+                }`}>
+                  {Math.round(details.confidence_score * 100)}%
+                </span>
+              )}
+            </div>
+            <div className="bg-slate-50 dark:bg-slate-900/50 rounded-lg p-3 space-y-2">
+              {details.assumptions.map((a, idx) => (
+                <div key={a.field} className={`flex items-start gap-2 text-xs ${idx > 0 ? 'pt-2 border-t border-slate-200 dark:border-slate-700' : ''}`}>
+                  <span className={`mt-0.5 w-2 h-2 rounded-full flex-shrink-0 ${a.isDefault ? 'bg-amber-500' : 'bg-green-500'}`} />
+                  <div className="flex-1">
+                    <div className="font-medium text-slate-700 dark:text-slate-300">
+                      {a.field} = {a.value ?? 'N/A'}
+                      {a.isDefault && <span className="ml-1 text-amber-600 dark:text-amber-400">(default)</span>}
+                    </div>
+                    <div className="text-slate-500 dark:text-slate-400">{a.note}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Section 5.6: Computation Trace */}
+        <ComputationTraceSection trace={details.computationTrace} />
+
+        {/* Section 5.7: Recommended Actions */}
+        <ActionsSection
+          actions={details.recommendedActions || []}
+          decisionRankingScore={details.decisionRankingScore}
+        />
 
         {/* Section 6: What-if Simulator (M3 - Expedite) */}
         <div>

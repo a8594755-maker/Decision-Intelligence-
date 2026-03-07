@@ -19,6 +19,7 @@ const OVERRIDE_DEFAULTS = {
   lead_time_buffer_days: null
 };
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function getDefaultOverrides() {
   return { ...OVERRIDE_DEFAULTS };
 }

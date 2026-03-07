@@ -292,6 +292,12 @@ export const mapSupplyCoverageToUI = (domainResult, warnings = []) => {
 
     // Data quality level (verified / partial / estimated / missing)
     dataQualityLevel: domainResult.dataQualityLevel || 'missing',
+
+    // Row-level confidence & explainability
+    assumptions: domainResult.assumptions || [],
+    confidence_score: domainResult.confidence_score ?? null,
+    assumptionCount: (domainResult.assumptions || []).filter(a => a.isDefault).length,
+    computationTrace: domainResult.computationTrace || null,
     
     // Warning info
     _warnings: warnings.length > 0 ? warnings : undefined,

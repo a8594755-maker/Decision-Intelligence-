@@ -50,7 +50,7 @@ function extractRunKpis(replayMetrics, solverMeta) {
 /**
  * Build a row-keyed index: { 'sku|plant_id|order_date': { order_qty, ... } }
  */
-function indexPlanRows(rows = []) {
+function _indexPlanRows(rows = []) {
   const index = new Map();
   rows.forEach((row) => {
     const key = `${row.sku || ''}|${row.plant_id || ''}|${row.order_date || ''}`;

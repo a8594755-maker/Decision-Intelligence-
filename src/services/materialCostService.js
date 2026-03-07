@@ -169,7 +169,7 @@ const detectQuantityField = (record) => {
   const possibleFields = ['quantity', 'qty', 'order_qty', 'orderQty', 'order_quantity'];
   
   for (const field of possibleFields) {
-    if (record.hasOwnProperty(field) && record[field] != null) {
+    if (Object.prototype.hasOwnProperty.call(record, field) && record[field] != null) {
       return field;
     }
   }

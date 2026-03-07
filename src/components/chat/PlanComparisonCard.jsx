@@ -134,7 +134,7 @@ export default function PlanComparisonCard({ payload }) {
               </tr>
             </thead>
             <tbody>
-              {KPI_ROWS.map(({ key, label, DeltaComponent }) => (
+              {KPI_ROWS.map(({ key, label, DeltaComponent: _DeltaComponent }) => (
                 <tr key={key} className="border-b border-slate-100 dark:border-slate-800 last:border-0">
                   <td className="py-1.5 pr-3 font-medium text-slate-700 dark:text-slate-300">{label}</td>
                   <td className="text-right py-1.5 px-3 text-slate-600 dark:text-slate-400 tabular-nums">

@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState } from 'react';
 import { RefreshCw, CheckCircle2, XCircle, Hourglass, AlertTriangle, TrendingDown } from 'lucide-react';
 import { Card, Badge, Button } from '../ui';
 

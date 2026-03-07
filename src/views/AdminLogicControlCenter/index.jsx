@@ -41,12 +41,14 @@ export default function AdminLogicControlCenter({ setView }) {
 
   useEffect(() => {
     checkAuth();
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- checkAuth runs once on mount
   }, []);
 
   useEffect(() => {
     if (user && selectedLogic) {
       loadVersions();
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- loadVersions depends on user/selectedLogic/selectedScope
   }, [user, selectedLogic, selectedScope]);
 
   async function checkAuth() {

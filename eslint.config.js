@@ -38,6 +38,14 @@ export default defineConfig([
     },
   },
   {
+    files: ['playwright.config.js', 'e2e/**/*.{js,jsx}'],
+    languageOptions: {
+      globals: {
+        process: 'readonly',
+      },
+    },
+  },
+  {
     files: ['**/*.test.{js,jsx}', '**/*.spec.{js,jsx}'],
     languageOptions: {
       globals: {

@@ -169,7 +169,7 @@ export async function deletePreviousDataByIngestKey(userId, ingestKey, uploadTyp
   }
   
   try {
-    const { data, error, count } = await supabase
+    const { data: _data, error, count } = await supabase
       .from(tableName)
       .delete({ count: 'exact' })
       .eq('user_id', userId)

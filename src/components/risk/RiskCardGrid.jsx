@@ -42,12 +42,13 @@ export default function RiskCardGrid({
           aVal = a.daysToStockout === null || a.daysToStockout === undefined ? Infinity : a.daysToStockout;
           bVal = b.daysToStockout === null || b.daysToStockout === undefined ? Infinity : b.daysToStockout;
           break;
-        case 'status':
+        case 'status': {
           // Critical (3) > Warning (2) > OK (1)
           const statusOrder = { critical: 3, warning: 2, ok: 1 };
           aVal = statusOrder[a.status?.toLowerCase()] || 0;
           bVal = statusOrder[b.status?.toLowerCase()] || 0;
           break;
+        }
         case 'materialCode':
           aVal = a.materialCode || '';
           bVal = b.materialCode || '';

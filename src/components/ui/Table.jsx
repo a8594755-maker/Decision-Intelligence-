@@ -37,6 +37,7 @@ export const Table = ({
   const threshold = typeof virtualize === 'number' ? virtualize : VIRTUALIZE_THRESHOLD;
   const shouldVirtualize = virtualize !== false && data.length >= threshold;
 
+  // eslint-disable-next-line react-hooks/incompatible-library
   const virtualizer = useVirtualizer({
     count: shouldVirtualize ? data.length : 0,
     getScrollElement: () => parentRef.current,

@@ -407,7 +407,7 @@ export const validateAndCleanSupplier = (row, fieldMapping) => {
         cleanedData[systemField] = parseNumber(rawValue, { allowNegative: false, decimals: 0 });
         break;
 
-      case 'status':
+      case 'status': {
         const status = cleanText(rawValue);
         if (status && ['active', 'inactive'].includes(status.toLowerCase())) {
           cleanedData[systemField] = status.toLowerCase();
@@ -415,6 +415,7 @@ export const validateAndCleanSupplier = (row, fieldMapping) => {
           cleanedData[systemField] = 'active'; // Default status
         }
         break;
+      }
 
       default:
         cleanedData[systemField] = rawValue;

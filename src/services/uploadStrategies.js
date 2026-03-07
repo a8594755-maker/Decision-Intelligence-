@@ -40,7 +40,7 @@ export function getIdempotencyKey({ batchId, sheetName, uploadType }) {
  * Supports chunk ingest and idempotency
  */
 class GoodsReceiptStrategy {
-  async ingest({ userId, rows, batchId, uploadFileId, fileName, sheetName, addNotification, setSaveProgress, options = {} }) {
+  async ingest({ userId, rows, batchId, uploadFileId, _fileName, _sheetName, addNotification, setSaveProgress, options = {} }) {
     console.log(`[GoodsReceiptStrategy] Starting for ${rows.length} rows`);
 
     // ===== Try RPC first (Transaction + Bulk Upsert) =====
@@ -230,7 +230,7 @@ class GoodsReceiptStrategy {
  * Supports chunk ingest and idempotency
  */
 class PriceHistoryStrategy {
-  async ingest({ userId, rows, batchId, uploadFileId, fileName, sheetName, addNotification, setSaveProgress, options = {} }) {
+  async ingest({ userId, rows, batchId, uploadFileId, _fileName, _sheetName, addNotification, setSaveProgress, options = {} }) {
     console.log(`[PriceHistoryStrategy] Starting for ${rows.length} rows`);
 
     // ===== Try RPC first =====
@@ -431,7 +431,7 @@ const normalizeSupplierStatus = (status) => {
 };
 
 class SupplierMasterStrategy {
-  async ingest({ userId, rows, batchId, fileName, sheetName, addNotification, setSaveProgress, options = {} }) {
+  async ingest({ userId, rows, batchId, _fileName, _sheetName, _addNotification, _setSaveProgress, options = {} }) {
     console.log(`[SupplierMasterStrategy] Starting for ${rows.length} rows`);
 
     const suppliers = rows.map(row => ({
@@ -465,7 +465,7 @@ class SupplierMasterStrategy {
  * Supports chunk ingest and idempotency
  */
 class BomEdgeStrategy {
-  async ingest({ userId, rows, batchId, fileName, sheetName, addNotification, setSaveProgress, options = {} }) {
+  async ingest({ userId, rows, batchId, _fileName, _sheetName, _addNotification, _setSaveProgress, options = {} }) {
     console.log(`[BomEdgeStrategy] Starting for ${rows.length} rows`);
 
     const bomEdges = rows.map(row => ({
@@ -505,7 +505,7 @@ class BomEdgeStrategy {
  * Supports chunk ingest and idempotency
  */
 class DemandFgStrategy {
-  async ingest({ userId, rows, batchId, fileName, sheetName, addNotification, setSaveProgress, options = {} }) {
+  async ingest({ userId, rows, batchId, _fileName, _sheetName, _addNotification, _setSaveProgress, options = {} }) {
     console.log(`[DemandFgStrategy] Starting for ${rows.length} rows`);
 
     const demands = rows.map(row => ({
@@ -542,7 +542,7 @@ class DemandFgStrategy {
  * Supports chunk ingest and idempotency
  */
 class PoOpenLinesStrategy {
-  async ingest({ userId, rows, batchId, fileName, sheetName, addNotification, setSaveProgress, options = {} }) {
+  async ingest({ userId, rows, batchId, _fileName, _sheetName, _addNotification, _setSaveProgress, options = {} }) {
     console.log(`[PoOpenLinesStrategy] Starting for ${rows.length} rows`);
 
     const poLines = rows.map(row => ({
@@ -575,7 +575,7 @@ class PoOpenLinesStrategy {
  * Supports chunk ingest and idempotency
  */
 class InventorySnapshotsStrategy {
-  async ingest({ userId, rows, batchId, fileName, sheetName, addNotification, setSaveProgress, options = {} }) {
+  async ingest({ userId, rows, batchId, _fileName, _sheetName, _addNotification, setSaveProgress, _options = {} }) {
     console.log(`[InventorySnapshotsStrategy] Starting for ${rows.length} rows`);
 
     // Update progress
@@ -625,7 +625,7 @@ class InventorySnapshotsStrategy {
  * Supports chunk ingest and idempotency
  */
 class FgFinancialsStrategy {
-  async ingest({ userId, rows, batchId, fileName, sheetName, addNotification, setSaveProgress, options = {} }) {
+  async ingest({ userId, rows, batchId, _fileName, _sheetName, _addNotification, _setSaveProgress, options = {} }) {
     console.log(`[FgFinancialsStrategy] Starting for ${rows.length} rows`);
 
     const financials = rows.map(row => ({
@@ -658,7 +658,7 @@ class FgFinancialsStrategy {
  * Supports chunk ingest and idempotency (onConflict: user_id, cost_date)
  */
 class OperationalCostStrategy {
-  async ingest({ userId, rows, batchId, uploadFileId, fileName, sheetName, addNotification, setSaveProgress, options = {} }) {
+  async ingest({ userId, rows, batchId, uploadFileId, _fileName, _sheetName, _addNotification, setSaveProgress, _options = {} }) {
     console.log(`[OperationalCostStrategy] Starting for ${rows.length} rows`);
 
     setSaveProgress({

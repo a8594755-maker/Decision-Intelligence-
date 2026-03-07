@@ -8,7 +8,7 @@ import { classifySheet, getClassificationReasons } from '../utils/sheetClassifie
 import { getUploadStrategy, getIdempotencyKey } from './uploadStrategies';
 import { importBatchesService } from './importHistoryService';
 import { userFilesService } from './supabaseClient';
-import { validateAndCleanData } from '../utils/dataValidation';
+import { buildQuarantineReport } from '../utils/dataValidation';
 import { validateInWorker } from '../utils/dataValidationWorkerClient';
 import { ruleBasedMapping } from '../utils/aiMappingHelper';
 import UPLOAD_SCHEMAS from '../utils/uploadSchemas';
@@ -23,8 +23,7 @@ import {
 } from './sheetRunsService';
 import { autoFillRows, validateRequiredFields } from '../utils/dataAutoFill';
 import { getRequiredMappingStatus } from '../utils/requiredMappingStatus';
-import { suggestMappingWithLLM } from './oneShotAiSuggestService';
-import { findMappingProfile, generateHeaderFingerprint } from './mappingProfileService';
+import { logger, createSpan, createImportMetricsCollector } from './observability';
 
 /**
  * Wrap a promise with a timeout. Returns fallbackValue on timeout if provided.
@@ -50,7 +49,7 @@ function withTimeout(promise, ms, fallbackValue) {
  * @param {object} options - { maxRowsPerSheet: 10000 }
  * @returns {object[]} Array of sheet plans
  */
-export function generateSheetPlans(workbook, fileName = 'unknown', fileSize = 0, fileLastModified = 0, options = {}) {
+export function generateSheetPlans(workbook, fileName = 'unknown', fileSize = 0, fileLastModified = 0, _options = {}) {
   const plans = [];
   const sheetNames = workbook.SheetNames;
   
@@ -94,7 +93,12 @@ export function generateSheetPlans(workbook, fileName = 'unknown', fileSize = 0,
       // Classify sheet
       const classification = classifySheet({ sheetName, headers, sampleRows });
       const reasons = classification.reasons || getClassificationReasons(classification);
-      
+
+      // Observability: log classification
+      logger.info('import-pipeline', `Sheet "${sheetName}" classified as ${classification.suggestedType || 'unknown'}`, {
+        sheetName, uploadType: classification.suggestedType, confidence: classification.confidence,
+      });
+
       // ✅ A) Calculate actual mapping state (using rule-based mapping)
       const uploadType = classification.suggestedType;
       let mappingStatus = {
@@ -208,9 +212,110 @@ export function generateSheetPlans(workbook, fileName = 'unknown', fileSize = 0,
 }
 
 /**
+ * Generate sheet plans from pre-parsed workbook metadata (Worker path).
+ * Same logic as generateSheetPlans but skips XLSX parsing since data is already extracted.
+ *
+ * @param {{ sheetNames: string[], sheets: Array<{ name, headers, sampleRows, rowCount }> }} parsed
+ * @param {string} fileName
+ * @param {number} fileSize
+ * @param {number} fileLastModified
+ * @returns {object[]} Array of sheet plans
+ */
+export function generateSheetPlansFromParsed(parsed, fileName = 'unknown', fileSize = 0, fileLastModified = 0) {
+  const plans = [];
+
+  for (let sheetIndex = 0; sheetIndex < parsed.sheets.length; sheetIndex++) {
+    const sheet = parsed.sheets[sheetIndex];
+    const sheetName = sheet.name;
+    const sheetId = `${fileName}:${fileSize}:${fileLastModified}:${sheetIndex}`;
+
+    try {
+      if (sheet.rowCount === 0) {
+        plans.push({
+          sheetId, sheetName, uploadType: null, suggestedType: null, confidence: 0,
+          enabled: false, disabledReason: 'Sheet is empty (0 rows)', rowCount: 0,
+          headers: [], mappingDraft: {}, mappingFinal: null, mappingConfirmed: false,
+          requiredCoverage: 0, missingRequired: [], isComplete: false
+        });
+        continue;
+      }
+
+      const { headers, sampleRows, rowCount } = sheet;
+
+      const classification = classifySheet({ sheetName, headers, sampleRows });
+      const reasons = classification.reasons || getClassificationReasons(classification);
+
+      logger.info('import-pipeline', `Sheet "${sheetName}" classified as ${classification.suggestedType || 'unknown'}`, {
+        sheetName, uploadType: classification.suggestedType, confidence: classification.confidence,
+      });
+
+      const uploadType = classification.suggestedType;
+      let mappingStatus = { coverage: 0, missingRequired: [], isComplete: false };
+      let initialMapping = {};
+      let mappingMeta = {};
+
+      if (uploadType && UPLOAD_SCHEMAS[uploadType]) {
+        const schema = UPLOAD_SCHEMAS[uploadType];
+        const ruleMappings = ruleBasedMapping(headers, uploadType, schema.fields);
+        ruleMappings.forEach(m => {
+          if (m.target && m.confidence >= 0.7) {
+            initialMapping[m.source] = m.target;
+            mappingMeta[m.source] = {
+              confidence: m.confidence,
+              matchType: m.confidence >= 1.0 ? 'exact' : (m.confidence >= 0.8 ? 'synonym' : 'inference'),
+            };
+          }
+        });
+
+        mappingStatus = getRequiredMappingStatus({
+          uploadType, columns: headers, columnMapping: initialMapping, mappingMeta,
+        });
+      }
+
+      let enabled = mappingStatus.isComplete === true;
+      let warningMessage = null;
+      if (rowCount > 10000) {
+        warningMessage = `Large sheet (${rowCount.toLocaleString()} rows), will use chunk ingest`;
+      }
+
+      plans.push({
+        sheetId, sheetName,
+        uploadType: classification.suggestedType, suggestedType: classification.suggestedType,
+        confidence: classification.confidence, enabled,
+        evidence: classification.evidence, reasons,
+        rowCount, candidates: classification.candidates,
+        needsChunking: rowCount > 500, warningMessage,
+        headers, sampleRows: sampleRows.slice(0, 5),
+        mappingDraft: { ...initialMapping }, mappingMeta,
+        mappingFinal: null, mappingConfirmed: false,
+        requiredCoverage: mappingStatus.coverage,
+        missingRequired: mappingStatus.missingRequired,
+        isComplete: mappingStatus.isComplete,
+        reviewRequired: mappingStatus.reviewRequired || false,
+      });
+    } catch (error) {
+      console.error(`[One-shot] Failed to analyze sheet "${sheetName}":`, error);
+      plans.push({
+        sheetId, sheetName, uploadType: null, suggestedType: null, confidence: 0,
+        enabled: false, disabledReason: `Analysis failed: ${error.message}`, rowCount: 0,
+        headers: [], mappingDraft: {}, mappingFinal: null, mappingConfirmed: false,
+        requiredCoverage: 0, missingRequired: [], isComplete: false
+      });
+    }
+  }
+
+  console.log('[One-shot] Generated sheet plans (from parsed):', plans.map(p => ({
+    sheetId: p.sheetId, name: p.sheetName, type: p.uploadType,
+    confidence: Math.round(p.confidence * 100) + '%', enabled: p.enabled
+  })));
+
+  return plans;
+}
+
+/**
  * Import multiple sheets from a workbook
  * Supports chunk ingest, idempotency, abort, detailed reporting
- * 
+ *
  * @param {object} params
  * @param {string} params.userId - User ID
  * @param {object} params.workbook - XLSX workbook object
@@ -233,7 +338,12 @@ export async function importWorkbookSheets({ userId, workbook, fileName, sheetPl
     signal = null,
     forceRerun = false
   } = options;
-  
+
+  const importId = `import-${Date.now()}`;
+  const metrics = createImportMetricsCollector(importId);
+  const pipelineSpan = createSpan('import', 'workbook', null);
+  logger.info('import-pipeline', `Starting import: ${fileName}`, { _traceId: pipelineSpan.traceId, fileName, sheetsCount: sheetPlans.length });
+
   // Check if ingest_key support is deployed
   const hasIngestKeySupport = await checkIngestKeySupport();
   
@@ -260,7 +370,8 @@ export async function importWorkbookSheets({ userId, workbook, fileName, sheetPl
     hasIngestKeySupport,
     mode,
     rolledBack: false, // Flag whether rollback was triggered
-    sheetReports: []
+    sheetReports: [],
+    quarantineSummary: { totalRejected: 0, totalWarnings: 0, bySheet: {} }
   };
   
   // Track succeeded sheets for rollback (All-or-nothing mode)
@@ -422,7 +533,34 @@ export async function importWorkbookSheets({ userId, workbook, fileName, sheetPl
       }
       
       report.sheetReports.push(sheetResult);
-      
+
+      // Aggregate quarantine data
+      if (sheetResult.quarantineReport) {
+        report.quarantineSummary.totalRejected += sheetResult.quarantineReport.rejected;
+        report.quarantineSummary.totalWarnings += sheetResult.quarantineReport.warnings;
+        report.quarantineSummary.bySheet[sheetResult.sheetName] = {
+          rejected: sheetResult.quarantineReport.rejected,
+          warnings: sheetResult.quarantineReport.warnings,
+        };
+      }
+
+      // Observability: record per-sheet metrics
+      if (sheetResult.status === 'IMPORTED') {
+        metrics.recordClassification(sheetName, {
+          uploadType, confidence: plan.confidence ?? 1, enabled: true,
+        });
+        metrics.recordValidation(sheetName, {
+          total: sheetResult.totalRows || 0,
+          valid: sheetResult.savedCount || 0,
+          invalid: sheetResult.errorCount || 0,
+          quarantined: sheetResult.quarantineReport?.rejected || 0,
+        });
+        metrics.recordIngest(sheetName, {
+          savedCount: sheetResult.savedCount || 0,
+          chunks: sheetResult.chunks?.length || 0,
+        });
+      }
+
     } catch (error) {
       console.error(`[One-shot] Failed to import sheet "${sheetName}":`, error);
       
@@ -445,7 +583,24 @@ export async function importWorkbookSheets({ userId, workbook, fileName, sheetPl
   }
   
   report.finishedAt = new Date().toISOString();
-  
+
+  // Observability: finalize pipeline span + log summary
+  pipelineSpan.addMetric('sheetsProcessed', report.succeededSheets);
+  pipelineSpan.addMetric('totalRowsIngested', metrics.getSummary().totalRowsIngested);
+  pipelineSpan.addMetric('quarantined', report.quarantineSummary.totalRejected);
+  pipelineSpan.end();
+
+  logger.info('import-pipeline', `Import complete: ${report.succeededSheets}/${report.totalSheets} sheets`, {
+    _traceId: pipelineSpan.traceId,
+    durationMs: pipelineSpan.durationMs,
+    succeeded: report.succeededSheets,
+    failed: report.failedSheets,
+    skipped: report.skippedSheets,
+    quarantined: report.quarantineSummary.totalRejected,
+  });
+
+  report.observability = { traceId: pipelineSpan.traceId, metrics: metrics.getSummary(), span: pipelineSpan.toJSON() };
+
   return report;
 }
 
@@ -504,9 +659,26 @@ async function importSingleSheet({
   let sheetRunId = null;
   
   try {
-    // 1. Parse sheet data
-    const sheetData = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { defval: '' });
-    
+    // 1. Parse sheet data (try Worker extraction first, fallback to direct XLSX parsing)
+    let sheetData;
+    if (workbook && workbook.Sheets && workbook.Sheets[sheetName]) {
+      sheetData = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { defval: '' });
+    } else {
+      // Worker path: workbook may be null; extract from worker
+      try {
+        const { extractSheetInWorker } = await import('../utils/xlsxParserWorkerClient');
+        sheetData = await extractSheetInWorker(sheetName);
+      } catch (workerErr) {
+        console.warn(`[One-shot] Worker extract failed for "${sheetName}":`, workerErr.message);
+        // If workbook is available, try direct parse
+        if (workbook?.Sheets?.[sheetName]) {
+          sheetData = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { defval: '' });
+        } else {
+          throw new Error(`Cannot extract sheet "${sheetName}": no workbook or worker available`);
+        }
+      }
+    }
+
     if (sheetData.length === 0) {
       return {
         sheetName,
@@ -569,7 +741,10 @@ async function importSingleSheet({
     // 7. Validate and clean (use Web Worker for large datasets)
     onProgress({ stage: 'substep', sheetName, uploadType, substep: 'Validating data...' });
     const validationResult = await validateInWorker(sheetData, uploadType, columnMapping);
-    
+
+    // 7.5 Build quarantine report from validation result
+    const quarantineReport = buildQuarantineReport(validationResult, sheetName, uploadType);
+
     // 8. Auto-fill common missing fields (for any remaining fillable fields)
     const autoFillResult = autoFillRows(validationResult.validRows, uploadType);
     const rowsToIngest = autoFillResult.rows;
@@ -731,6 +906,11 @@ async function importSingleSheet({
     // 12. Get upload strategy
     const strategy = getUploadStrategy(uploadType);
 
+    // Adaptive chunk size: reduce for very large sheets to bound memory
+    const effectiveChunkSize = rowsToIngest.length > 50000
+      ? Math.min(chunkSize, 200)
+      : chunkSize;
+
     // 13. Ingest in chunks
     onProgress({ stage: 'substep', sheetName, uploadType, substep: 'Ingesting data...' });
     const ingestResult = await withTimeout(ingestInChunks({
@@ -742,7 +922,7 @@ async function importSingleSheet({
       uploadFileId,
       fileName,
       sheetName,
-      chunkSize,
+      chunkSize: effectiveChunkSize,
       onProgress: (chunkProgress) => {
         onProgress({
           stage: 'ingesting',
@@ -750,7 +930,8 @@ async function importSingleSheet({
           uploadType,
           chunkIndex: chunkProgress.chunkIndex,
           totalChunks: chunkProgress.totalChunks,
-          savedSoFar: chunkProgress.savedSoFar
+          savedSoFar: chunkProgress.savedSoFar,
+          totalRows: rowsToIngest.length
         });
       },
       signal,
@@ -804,7 +985,8 @@ async function importSingleSheet({
       chunks: ingestResult.chunks,
       warnings: ingestResult.warnings,
       sheetRunId,
-      idempotencyKey: hasIngestKeySupport ? idempotencyKey : null // For rollback
+      idempotencyKey: hasIngestKeySupport ? idempotencyKey : null, // For rollback
+      quarantineReport
     };
     
   } catch (error) {

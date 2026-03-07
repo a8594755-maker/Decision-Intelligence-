@@ -10,7 +10,7 @@ import { Card } from '../ui';
 
 const KPICards = ({
   criticalCount = 0,
-  warningCount = 0,
+  _warningCount = 0,
   shortageWithinHorizon = 0,
   profitAtRisk = 0,
   criticalProfitAtRisk = 0,

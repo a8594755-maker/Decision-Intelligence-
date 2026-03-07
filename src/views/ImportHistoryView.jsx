@@ -48,6 +48,7 @@ const ImportHistoryView = ({ addNotification, user, setView }) => {
     if (user?.id) {
       loadBatches();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
   /**

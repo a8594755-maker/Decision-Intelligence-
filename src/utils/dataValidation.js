@@ -73,7 +73,7 @@ const parseDate = (dateValue) => {
       }
       return isoDate;
     }
-  } catch (e) {
+  } catch (_e) {
     // Continue trying other formats
   }
 
@@ -226,7 +226,7 @@ const parsePhone = (value) => {
  * @param {Object} row - Complete data row (for cross-field validation)
  * @returns {Object} { value, errors: [] }
  */
-const validateAndCleanField = (value, fieldDef, uploadType, row = {}) => {
+const validateAndCleanField = (value, fieldDef, uploadType, _row = {}) => {
   const errors = [];
   let cleanedValue = value;
 
@@ -984,6 +984,70 @@ export const validateAndCleanData = (rawRows, uploadType, columnMapping) => {
 
   // Step 3: Validate and clean
   return validateAndCleanRows(preValidatedRows, uploadType);
+};
+
+/**
+ * Build a quarantine report from validation results.
+ * @param {Object} validationResult - from validateAndCleanRows
+ * @param {string} sheetName - Sheet name
+ * @param {string} uploadType - Upload type
+ * @param {number} maxRows - Max quarantined rows to include (default 5000)
+ * @returns {Object} QuarantineReport
+ */
+export const buildQuarantineReport = (validationResult, sheetName, uploadType, maxRows = 5000) => {
+  const { validRows = [], errorRows = [], duplicateGroups = [], stats = {} } = validationResult;
+
+  // Separate warnings (errors with type === 'warning') from hard rejects
+  const warningRows = [];
+  const rejectedRows = [];
+  errorRows.forEach(row => {
+    const allWarnings = row.errors.every(e => e.type === 'warning');
+    if (allWarnings) {
+      warningRows.push(row);
+    } else {
+      rejectedRows.push(row);
+    }
+  });
+
+  return {
+    version: '1',
+    generated_at: new Date().toISOString(),
+    sheet_name: sheetName,
+    upload_type: uploadType,
+    total_rows: stats.total || 0,
+    accepted: validRows.length,
+    warnings: warningRows.length,
+    rejected: rejectedRows.length,
+    quarantined_rows: rejectedRows.slice(0, maxRows).map(row => ({
+      rowIndex: row.rowIndex,
+      disposition: 'rejected',
+      originalData: row.originalData,
+      errors: row.errors,
+      errorSummary: row.errors.map(e => `${e.fieldLabel || e.field}: ${e.error}`).join('; ').slice(0, 300)
+    })),
+    warning_rows: warningRows.slice(0, 500).map(row => ({
+      rowIndex: row.rowIndex,
+      disposition: 'warning',
+      errors: row.errors,
+      errorSummary: row.errors.map(e => `${e.fieldLabel || e.field}: ${e.error}`).join('; ').slice(0, 300)
+    })),
+    duplicate_groups: duplicateGroups,
+    stats
+  };
+};
+
+/**
+ * Convert quarantined rows to flat CSV-ready array.
+ * @param {Object} quarantineReport - from buildQuarantineReport
+ * @returns {Array<Object>} flat rows suitable for XLSX.utils.json_to_sheet
+ */
+export const quarantineRowsToCsvData = (quarantineReport) => {
+  return (quarantineReport.quarantined_rows || []).map(qr => ({
+    row_number: qr.rowIndex,
+    disposition: qr.disposition,
+    error_reason: qr.errorSummary,
+    ...qr.originalData
+  }));
 };
 
 export default validateAndCleanRows;

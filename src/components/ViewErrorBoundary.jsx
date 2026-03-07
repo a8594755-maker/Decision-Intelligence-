@@ -23,14 +23,15 @@ export default class ViewErrorBoundary extends React.Component {
     console.error(`[ViewErrorBoundary:${viewName}] Caught error:`, error, errorInfo);
 
     // Report to Sentry if available
-    try {
-      const Sentry = require('@sentry/react');
-      Sentry.captureException(error, {
-        extra: { viewName, componentStack: errorInfo?.componentStack },
+    import('@sentry/react')
+      .then(Sentry => {
+        Sentry.captureException(error, {
+          extra: { viewName, componentStack: errorInfo?.componentStack },
+        });
+      })
+      .catch(() => {
+        // Sentry not available — ignore
       });
-    } catch {
-      // Sentry not available — ignore
-    }
   }
 
   handleReset = () => {

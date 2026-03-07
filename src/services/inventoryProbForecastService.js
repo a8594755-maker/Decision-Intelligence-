@@ -12,11 +12,10 @@
 
 import { supabase } from './supabaseClient';
 import { logEvent, EVENT_TYPES, ENTITY_TYPES } from './auditService';
-import { 
-  executeInventoryProbForecast, 
+import {
+  executeInventoryProbForecast,
   buildBomMultiplierMap,
-  propagateDemandToComponents,
-  validateInputs 
+  validateInputs
 } from '../domains/inventory/inventoryProbForecast';
 
 // ============================================================
@@ -265,7 +264,7 @@ export async function runInventoryProbForecast(userId, bomRunId, options = {}) {
 /**
  * Fetch starting inventory from snapshots (latest per material/plant)
  */
-async function fetchStartingInventory(userId, bomRunId, timeBuckets) {
+async function fetchStartingInventory(userId, _bomRunId, _timeBuckets) {
   // Get the latest snapshot per material/plant for this user
   // Since inventory_snapshots uses batch_id not forecast_run_id, we get all and take latest
   const { data: snapshots, error } = await supabase
@@ -300,7 +299,7 @@ async function fetchStartingInventory(userId, bomRunId, timeBuckets) {
 /**
  * Fetch demand distribution based on source
  */
-async function fetchDemandDistribution(userId, bomRunId, demandSource, demandForecastRunId, timeBuckets) {
+async function fetchDemandDistribution(userId, bomRunId, demandSource, demandForecastRunId, _timeBuckets) {
   const demandByKeyBucket = new Map();
   
   if (demandSource === 'demand_forecast' && demandForecastRunId) {
@@ -406,7 +405,7 @@ async function fetchDemandDistribution(userId, bomRunId, demandSource, demandFor
 /**
  * Fetch inbound PO forecasts based on source
  */
-async function fetchInboundPoForecasts(userId, inboundSource, supplyForecastRunId, bomRunId) {
+async function fetchInboundPoForecasts(userId, inboundSource, supplyForecastRunId, _bomRunId) {
   const poForecasts = [];
   
   if (inboundSource === 'supply_forecast' && supplyForecastRunId) {

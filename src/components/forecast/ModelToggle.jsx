@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Brain, TrendingUp, Calendar, AlertTriangle, Info, CheckCircle } from 'lucide-react';
 import { Badge } from '../ui/Badge';
 

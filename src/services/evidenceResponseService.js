@@ -26,7 +26,7 @@ export function buildEvidenceResponse({
   comparison,
   riskScores,
   forecastMetrics,
-  userQuery,
+  _userQuery,
 }) {
   const evidence = [];
   const tradeOffs = [];

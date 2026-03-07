@@ -9,7 +9,7 @@
  *   - Toggle the LLM explanation (negotiation_report narrative)
  */
 
-import React, { useState, useCallback } from 'react';
+import React, { useState } from 'react';
 import {
   AlertTriangle,
   Zap,

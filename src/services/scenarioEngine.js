@@ -236,7 +236,7 @@ export async function runScenario(userId, scenario, onProgress) {
 
     return updated;
   } catch (error) {
-    const updated = await updateScenario(scenario.id, {
+    const _updated = await updateScenario(scenario.id, {
       status: 'failed',
       error_message: error.message || 'Scenario execution failed'
     });

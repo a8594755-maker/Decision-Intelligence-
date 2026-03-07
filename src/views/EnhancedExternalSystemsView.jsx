@@ -62,7 +62,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
 
   // AI mapping suggestion status
   const [mappingAiStatus, setMappingAiStatus] = useState('idle'); // 'idle' | 'analyzing' | 'ready' | 'error'
-  const [mappingAiError, setMappingAiError] = useState('');
+  const [_mappingAiError, setMappingAiError] = useState('');
 
   const [uploadProgress, setUploadProgress] = useState(0);
   
@@ -81,7 +81,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
   }, [oneShotEnabled]);
   const [oneShotStep, setOneShotStep] = useState('IDLE'); // ✅ 'IDLE' | 'CLASSIFY' | 'REVIEW' | 'IMPORTING' | 'RESULT'
   const [currentEditingSheetIndex, setCurrentEditingSheetIndex] = useState(0); // ✅ Current editing sheet index in Step 2
-  const [activeReviewSheetId, setActiveReviewSheetId] = useState(null); // ✅ Currently editing sheetId in Step 2
+  const [_activeReviewSheetId, setActiveReviewSheetId] = useState(null); // ✅ Currently editing sheetId in Step 2
   const [sheetPlans, setSheetPlans] = useState([]); // ✅ [{sheetName, uploadType, enabled, mappingDraft, mappingFinal, mappingConfirmed}]
   const [oneShotProgress, setOneShotProgress] = useState({ 
     stage: '', 
@@ -110,7 +110,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
   const fileInputRef = useRef(null);
 
   // Step 1: Select upload type
-  const handleTypeSelect = (type) => {
+  const _handleTypeSelect = (type) => {
     workflowActions.setUploadType(type);
     // Reset other states (non-workflow states)
     setWorkbook(null);
@@ -1063,8 +1063,8 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
   const updateSheetPlan = (sheetId, updates) => {
     console.log('[DEBUG] updateSheetPlan:', { sheetId, updates });
     
-    const hasMappingDraft = updates.hasOwnProperty('mappingDraft');
-    sendAgentLog({location:'EnhancedExternalSystemsView.jsx:updateSheetPlan',message:'[updateSheetPlan] Called',data:{sheetId,updatesKeys:Object.keys(updates),hasMappingDraft,hasIsComplete:updates.hasOwnProperty('isComplete'),hasMissingRequired:updates.hasOwnProperty('missingRequired'),mappingDraftKeys:updates.mappingDraft?Object.keys(updates.mappingDraft):null},runId:'incomplete-debug',sessionId:'debug-session',hypothesisId:'H4'});
+    const hasMappingDraft = Object.hasOwn(updates, 'mappingDraft');
+    sendAgentLog({location:'EnhancedExternalSystemsView.jsx:updateSheetPlan',message:'[updateSheetPlan] Called',data:{sheetId,updatesKeys:Object.keys(updates),hasMappingDraft,hasIsComplete:Object.hasOwn(updates, 'isComplete'),hasMissingRequired:Object.hasOwn(updates, 'missingRequired'),mappingDraftKeys:updates.mappingDraft?Object.keys(updates.mappingDraft):null},runId:'incomplete-debug',sessionId:'debug-session',hypothesisId:'H4'});
     
     setSheetPlans(prev => {
       const planBefore = prev.find(p => p.sheetId === sheetId);
@@ -1289,12 +1289,12 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
       });
       
       // Step 2: Check coverage
-      const status = getRequiredMappingStatus({
+      const _status = getRequiredMappingStatus({
         uploadType: plan.uploadType,
         columns: headers,
         columnMapping
       });
-      
+
       // Step 3: Always call LLM for comprehensive mapping (including optional fields)
       const { suggestMappingWithLLM } = await import('../services/oneShotAiSuggestService');
       
@@ -1447,7 +1447,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
         updates.missingRequired = status.missingRequired;
       }
       
-      sendAgentLog({location:'EnhancedExternalSystemsView.jsx:handleAiFieldSuggestion',message:'[updateSheetPlan] updates object created with mappingDraft',data:{sheetId,updatesMapping:updates.mapping,updatesMappingDraft:updates.mappingDraft,mappingKeys:Object.keys(updates.mapping||{}),mappingDraftKeys:Object.keys(updates.mappingDraft||{}),hasIsComplete:updates.hasOwnProperty('isComplete'),hasMissingRequired:updates.hasOwnProperty('missingRequired')},runId:'post-fix',sessionId:'debug-session',hypothesisId:'C'});
+      sendAgentLog({location:'EnhancedExternalSystemsView.jsx:handleAiFieldSuggestion',message:'[updateSheetPlan] updates object created with mappingDraft',data:{sheetId,updatesMapping:updates.mapping,updatesMappingDraft:updates.mappingDraft,mappingKeys:Object.keys(updates.mapping||{}),mappingDraftKeys:Object.keys(updates.mappingDraft||{}),hasIsComplete:Object.hasOwn(updates, 'isComplete'),hasMissingRequired:Object.hasOwn(updates, 'missingRequired')},runId:'post-fix',sessionId:'debug-session',hypothesisId:'C'});
 
       // Large file >1000 rows: show warning only, don't default to disabled (let user decide)
       if (plan.rowCount > 1000 && !hasIngestKeySupport) {

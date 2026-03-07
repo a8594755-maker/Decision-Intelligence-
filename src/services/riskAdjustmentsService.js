@@ -106,7 +106,7 @@ const sortedObject = (obj) => {
  */
 export function computeRiskAdjustments({
   riskScores = [],
-  baseParams = {},
+  _baseParams = {},
   configOverrides = {}
 } = {}) {
   const config = { ...RISK_ADJ_CONFIG, ...configOverrides };

@@ -332,7 +332,7 @@ export function buildSupplierEventChatMessage({ event, riskDelta, replanRecommen
 export async function processSupplierEvent({
   event,
   userId,
-  conversationId,
+  _conversationId,
   alertMonitor,
   loadRiskState,
   config = {},
@@ -467,7 +467,7 @@ export async function processSupplierEvent({
 export async function processSupplierEventBatch({
   events,
   userId,
-  conversationId,
+  _conversationId,
   alertMonitor,
   loadRiskState,
   config = {},

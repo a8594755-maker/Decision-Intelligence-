@@ -16,7 +16,7 @@ export const SupplierManagementView = ({ addNotification }) => {
   const [suppliers, setSuppliers] = useState([]);
   const [suppliersWithKpi, setSuppliersWithKpi] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [loadingKpi, setLoadingKpi] = useState(false);
+  const [_loadingKpi, setLoadingKpi] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [showAddModal, setShowAddModal] = useState(false);
@@ -24,7 +24,7 @@ export const SupplierManagementView = ({ addNotification }) => {
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   const [selectedSupplier, setSelectedSupplier] = useState(null);
-  const [importFile, setImportFile] = useState(null);
+  const [_importFile, setImportFile] = useState(null);
   const [importPreview, setImportPreview] = useState([]);
   const [importProgress, setImportProgress] = useState(0);
   const fileInputRef = useRef(null);

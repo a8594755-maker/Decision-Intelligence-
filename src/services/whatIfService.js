@@ -184,7 +184,7 @@ async function createWhatIfRun(userId, bomRunId, action) {
  */
 async function saveWhatIfResults(userId, whatIfRunId, materialCode, plantId, engineResult, action) {
   try {
-    const { before, after, delta, roi } = engineResult;
+    const { before, after } = engineResult;
     
     const { error } = await supabase
       .from('what_if_results')
@@ -231,8 +231,8 @@ async function saveWhatIfResults(userId, whatIfRunId, materialCode, plantId, eng
  */
 async function loadBaselineData(userId, bomRunId, keyContext) {
   const { materialCode, plantId } = keyContext;
-  const key = normalizeWhatIfKey(materialCode, plantId);
-  
+  const _key = normalizeWhatIfKey(materialCode, plantId);
+
   let baseline = {
     pStockout: 1.0,  // Default: high risk if no data
     impactUsd: 0,
@@ -336,7 +336,7 @@ export async function getWhatIfRuns(userId, bomRunId) {
 /**
  * Log audit event
  */
-async function logAuditEvent(userId, forecastRunId, eventType, entityKey, payload) {
+async function _logAuditEvent(userId, forecastRunId, eventType, entityKey, payload) {
   try {
     await supabase
       .from('audit_events')

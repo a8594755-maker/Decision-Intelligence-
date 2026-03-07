@@ -27,6 +27,7 @@ const BOMDataView = ({ user, addNotification, globalDataSource }) => {
     if (user?.id) {
       loadData();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, activeTab, currentPage, filters, globalDataSource]);
 
   /**

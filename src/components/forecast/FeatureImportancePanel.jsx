@@ -15,7 +15,7 @@ const FeatureImportancePanel = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [expanded, setExpanded] = useState(false);
-  const [driftData, setDriftData] = useState(null);
+  const [_driftData, _setDriftData] = useState(null);
 
   const fetchImportance = async () => {
     setLoading(true);

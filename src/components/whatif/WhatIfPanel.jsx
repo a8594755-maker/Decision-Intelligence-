@@ -106,7 +106,7 @@ export default function WhatIfPanel({
   const {
     mode,
     resolvedRunId,
-    basePlan,
+    _basePlan,
     staleness,
     recentPlans,
     error: resolverError,
@@ -278,7 +278,7 @@ export default function WhatIfPanel({
       );
 
       // Run in the background — errors are caught and reflected in scenario status
-      runScenario(userId, scenario, ({ step, message }) => {
+      runScenario(userId, scenario, ({ _step, message }) => {
         setProgress(message);
       })
         .then((updatedScenario) => {

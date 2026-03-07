@@ -16,8 +16,7 @@ const USE_EDGE_FUNCTION = true;
 // Import Domain layer functions (for fallback)
 import {
   explodeBOM as domainExplodeBOM,
-  getAggregationKey,
-  parseAggregationKey
+  getAggregationKey
 } from '../domains/forecast/bomCalculator.js';
 
 import { supabase } from './supabaseClient';
@@ -67,7 +66,7 @@ export async function executeBomExplosion(options = {}) {
         try {
           const responseData = await error.context.response.json();
           errorDetails = JSON.stringify(responseData, null, 2);
-        } catch (e) {
+        } catch (_e) {
           // If not JSON, use original message
         }
       }
@@ -211,7 +210,7 @@ export async function pollBomExplosionStatus(
  * Legacy: Local BOM Explosion execution (kept as fallback)
  * @deprecated Please use executeBomExplosion + Edge Function
  */
-async function _executeBomExplosionLegacyPlaceholder(options = {}) {
+async function _executeBomExplosionLegacyPlaceholder(_options = {}) {
   // This is the original local calculation logic, kept but not directly used
   // Can extract legacy params from options and call when needed
   console.warn('Using legacy local calculation mode');
@@ -262,7 +261,7 @@ export async function executeBomExplosionLegacy(userId, batchId, demandFgRows, b
   // Collect input batch_ids (for forecast_runs traceability)
   const demandBatchIds = [...new Set((demandFgRows || []).map(r => r.batch_id).filter(Boolean))];
   const bomBatchIds = [...new Set((bomEdgesRows || []).map(r => r.batch_id).filter(Boolean))];
-  const inputBatchIds = [...demandBatchIds, ...bomBatchIds];
+  const _inputBatchIds = [...demandBatchIds, ...bomBatchIds];
 
   // Step 1: Create forecast_run (versioned: one run per execution)
   let forecastRunId = null;

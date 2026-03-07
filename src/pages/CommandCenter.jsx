@@ -53,13 +53,6 @@ function extractKpis(events) {
   };
 }
 
-function trendFor(current, previous) {
-  if (current == null || previous == null) return 'flat';
-  if (current > previous) return 'up';
-  if (current < previous) return 'down';
-  return 'flat';
-}
-
 function trendLabel(current, previous, fmt = v => v) {
   if (current == null) return null;
   if (previous == null) return 'First run';
@@ -95,7 +88,7 @@ export default function CommandCenter() {
 
   useEffect(() => {
     if (!user?.id) return;
-    setLoadingActivity(true);
+    queueMicrotask(() => setLoadingActivity(true));
     getRecentAuditTrail(user.id, 8)
       .then(setRecentActivity)
       .finally(() => setLoadingActivity(false));
@@ -297,6 +290,7 @@ export default function CommandCenter() {
 
 /* ───── Sub-components ───── */
 
+// eslint-disable-next-line no-unused-vars -- Icon is used in JSX below; ESLint false positive on destructured rename
 function ActionCard({ onClick, icon: Icon, accent, title, desc }) {
   return (
     <button

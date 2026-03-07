@@ -365,7 +365,7 @@ export function aggregateInboundByBucket(poForecasts, timeBuckets = null) {
     }
   });
   
-  const targetBuckets = timeBuckets || Array.from(allBuckets).sort();
+  const _targetBuckets = timeBuckets || Array.from(allBuckets).sort();
   
   // Aggregate P50 quantities
   poForecasts.forEach(pf => {

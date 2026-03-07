@@ -52,7 +52,7 @@ const makeIntent = (overrides = {}) => ({
 /** Strip generated_at for deterministic comparison */
 const stripTimestamp = (obj) => {
   if (!obj || typeof obj !== 'object') return obj;
-  const { generated_at, ...rest } = obj;
+  const { generated_at: _generated_at, ...rest } = obj;
   return rest;
 };
 

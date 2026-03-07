@@ -7,11 +7,11 @@ import { Card, Badge } from '../ui';
  * M7.2 WP2: Expedite action MVP
  */
 const WhatIfSection = ({
-  userId,
+  _userId,
   materialCode,
   plantId,
   bomRunId,
-  keyContext, // { onHand, safetyStock, gapQty, inboundLines, pStockout, impactUsd }
+  _keyContext, // { onHand, safetyStock, gapQty, inboundLines, pStockout, impactUsd }
   onRunWhatIf,
   result,
   replayDraft // M7.3 WP3: Replay draft from audit event

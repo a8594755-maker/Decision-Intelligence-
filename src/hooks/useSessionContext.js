@@ -43,14 +43,14 @@ export default function useSessionContext(userId, conversationId) {
   // Load context when conversationId changes
   useEffect(() => {
     if (!userId || !conversationId) {
-      setContext(null);
+      queueMicrotask(() => setContext(null));
       prevConvRef.current = null;
       return;
     }
     if (conversationId !== prevConvRef.current) {
       prevConvRef.current = conversationId;
       // Step 1: Immediate localStorage load (synchronous)
-      setContext(getSessionContext(userId, conversationId));
+      queueMicrotask(() => setContext(getSessionContext(userId, conversationId)));
 
       // Step 2: Async reconciliation with Supabase (cross-device sync)
       const reconcileKey = `${userId}_${conversationId}`;

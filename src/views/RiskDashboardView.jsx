@@ -43,8 +43,15 @@ import RiskDetailModal from '../components/risk/RiskDetailModal';
 // Data transformation Adapter (new version)
 import { mapSupplyCoverageToUI } from '../components/risk/mapDomainToUI';
 
+// Unified Data Quality
+import { buildDataQualityReport } from '../utils/dataQualityReport';
+import DataQualityCard from '../components/chat/DataQualityCard';
+
 // Sample data loading
 import { loadSampleWorkbook } from '../services/sampleDataService';
+
+// Action recommendation engine
+import { generateActionsBatch } from '../domains/risk/actionRecommender';
 
 // PO normalization, component_demand aggregation
 import { normalizeOpenPOBatch } from '../utils/poNormalizer';
@@ -54,7 +61,7 @@ import { aggregateComponentDemandToDaily, normalizeKey } from '../utils/componen
 const HORIZON_BUCKETS = 3; // Next N time_buckets
 const DEFAULT_LEAD_TIME_DAYS = 7; // Used by Inventory domain for P(stockout)
 
-const RiskDashboardView = ({ addNotification, user, setView, globalDataSource, setGlobalDataSource }) => {
+const RiskDashboardView = ({ addNotification, user, setView, globalDataSource, _setGlobalDataSource }) => {
   // ========== State Management ==========
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -77,6 +84,9 @@ const RiskDashboardView = ({ addNotification, user, setView, globalDataSource, s
 
   // Data snapshot time
   const [dataSnapshotTime, setDataSnapshotTime] = useState(null);
+
+  // Data Quality Report
+  const [dataQualityReport, setDataQualityReport] = useState(null);
 
   // Diagnostic KPI (A3: demandKeysWithoutRiskRow / riskRowsWithoutDemand for key alignment debug)
   const [diagnostics, setDiagnostics] = useState({
@@ -102,7 +112,7 @@ const RiskDashboardView = ({ addNotification, user, setView, globalDataSource, s
   // Probabilistic forecast data (Step 2: P0)
   const [probResults, setProbResults] = useState({}); // Map<key, probSummary>
   const [probSeriesCache, setProbSeriesCache] = useState({}); // Map<key, series[]>
-  const [loadingProb, setLoadingProb] = useState(false);
+  const [_loadingProb, setLoadingProb] = useState(false);
   const [hasProbResults, setHasProbResults] = useState(false);
 
   // Revenue at Risk data (M6 Gate-R5)
@@ -125,7 +135,7 @@ const RiskDashboardView = ({ addNotification, user, setView, globalDataSource, s
   // M7.3 WP3: Audit Timeline state
   const [auditEvents, setAuditEvents] = useState([]);
   const [auditLoading, setAuditLoading] = useState(false);
-  const [selectedAuditEvent, setSelectedAuditEvent] = useState(null);
+  const [_selectedAuditEvent, _setSelectedAuditEvent] = useState(null);
   const [replayDraft, setReplayDraft] = useState(null); // For What-if replay
 
   // M8: View Mode State (Table/Grid/List)
@@ -468,6 +478,18 @@ const RiskDashboardView = ({ addNotification, user, setView, globalDataSource, s
         console.warn('Data transformation warnings:', warnings);
       }
 
+      // Build unified data quality report for this dashboard load
+      const loadedTypes = [];
+      if (inventoryData?.length) loadedTypes.push('inventory_snapshots');
+      if (rawPoData?.length) loadedTypes.push('po_open_lines');
+      if (financialsData?.length) loadedTypes.push('fg_financials');
+      const allExpected = ['demand_fg', 'inventory_snapshots', 'po_open_lines', 'fg_financials'];
+      const qualityReport = buildDataQualityReport({
+        availableDatasets: loadedTypes,
+        missingDatasets: allExpected.filter(t => !loadedTypes.includes(t)),
+      });
+      setDataQualityReport(qualityReport);
+
       addNotification(`Loaded ${calculatedRows.length} risk entries (REAL DATA)`, 'success');
     } catch (error) {
       console.error('Failed to load risk data:', error);
@@ -496,6 +518,7 @@ const RiskDashboardView = ({ addNotification, user, setView, globalDataSource, s
 
   useEffect(() => {
     loadRiskData();
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- loadRiskData is stable within these deps
   }, [user, selectedForecastRunId, globalDataSource]);
 
   // ========== Derived Data (from uiRows single source) ==========
@@ -521,11 +544,11 @@ const RiskDashboardView = ({ addNotification, user, setView, globalDataSource, s
     }
 
     // Merge revenue data (M6 Gate-R5) and risk score data (M7 Gate-7.1)
-    return filtered.map(row => {
+    const withRevAndScores = filtered.map(row => {
       const key = `${row.item}|${row.plantId}`;
       const revData = revenueState.summaryByKey[key];
       const scoreData = riskScoreState.scoreByKey[key];
-      
+
       return {
         ...row,
         revMarginAtRisk: revData?.marginAtRisk ?? null,
@@ -539,6 +562,10 @@ const RiskDashboardView = ({ addNotification, user, setView, globalDataSource, s
         hasRiskScore: !!scoreData
       };
     });
+
+    // Generate recommended actions and decision ranking for all rows
+    const { rows: withActions } = generateActionsBatch(withRevAndScores);
+    return withActions;
   }, [uiRows, selectedPlant, searchTerm, selectedRiskLevel, revenueState.summaryByKey, riskScoreState.scoreByKey]);
 
   // KPI statistics (derived from filteredRows)
@@ -800,6 +827,7 @@ const RiskDashboardView = ({ addNotification, user, setView, globalDataSource, s
       loadRiskScores(); // M7 Gate-7.1: Load risk scores
       loadAuditEvents(); // M7.3 WP3: Load audit timeline
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- loader functions are stable within activeForecastRun
   }, [activeForecastRun?.id]);
 
   /**
@@ -1014,7 +1042,7 @@ const RiskDashboardView = ({ addNotification, user, setView, globalDataSource, s
                 <Button
                   onClick={async () => {
                     try {
-                      const { workbook: wb, fileName } = await loadSampleWorkbook();
+                      const { workbook: _wb, fileName } = await loadSampleWorkbook();
                       addNotification?.(`Sample data "${fileName}" loaded — go to Upload to import`, 'success');
                       setView?.('external');
                     } catch (e) {
@@ -1175,6 +1203,13 @@ const RiskDashboardView = ({ addNotification, user, setView, globalDataSource, s
             </div>
           </div>
         </div>
+
+        {/* Data Quality Banner */}
+        {dataQualityReport && (
+          <div className="mb-3">
+            <DataQualityCard payload={dataQualityReport} />
+          </div>
+        )}
 
         {/* A) Filter Bar */}
         <FilterBar

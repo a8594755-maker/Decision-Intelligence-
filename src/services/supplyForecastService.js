@@ -51,7 +51,7 @@ export async function runSupplyForecast(params, services) {
     
     // Step 2: Fetch inputs (PO lines, receipts, suppliers)
     const fetchStart = Date.now();
-    const { poLines, receipts, suppliers } = await supplyForecastService.fetchInputs(
+    const { poLines, receipts, _suppliers } = await supplyForecastService.fetchInputs(
       userId, 
       plantId,
       { 
@@ -146,7 +146,7 @@ export const supplyForecastService = {
    * @param {Object} options - Fetch options
    * @returns {Object} - { poLines, receipts, suppliers }
    */
-  async fetchInputs(userId, plantId, options = {}) {
+  async fetchInputs(userId, plantId, _options = {}) {
     // Fetch open PO lines
     let poQuery = supabase
       .from('po_open_lines')

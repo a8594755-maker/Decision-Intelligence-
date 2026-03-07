@@ -10,7 +10,7 @@ import {
 import { importBatchesService } from '../services/importHistoryService';
 import { Badge } from './ui';
 
-const ViewDataModal = ({ isOpen, onClose, batch, user, addNotification }) => {
+const ViewDataModal = ({ isOpen, onClose, batch, user, _addNotification }) => {
   // State
   const [data, setData] = useState([]);
   const [totalCount, setTotalCount] = useState(0);

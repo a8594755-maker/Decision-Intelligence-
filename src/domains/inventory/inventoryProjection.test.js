@@ -9,7 +9,6 @@ import {
   projectInventorySeriesForKey,
   computeSeriesForKey,
   buildDemandByBucket,
-  buildInboundByBucket,
   buildStartingInventory
 } from './inventoryProjection.js';
 

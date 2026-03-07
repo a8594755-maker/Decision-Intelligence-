@@ -239,14 +239,14 @@ function SimulationTab({ scenarios, addNotification }) {
 
   const kpis = result?.kpis || {};
   const timeline = result?.timeline_sample || [];
-  const costBreakdown = result?.cost_breakdown || {};
   const chaosSummary = result?.chaos_summary || {};
 
   const costData = useMemo(() => {
-    return Object.entries(costBreakdown)
+    const cb = result?.cost_breakdown || {};
+    return Object.entries(cb)
       .filter(([k]) => k !== 'total')
       .map(([key, val]) => ({ name: key.replace(/_/g, ' '), value: Number(val) || 0, key }));
-  }, [costBreakdown]);
+  }, [result]);
 
   const scenarioOptions = useMemo(() => {
     if (!scenarios?.length) return [
@@ -829,7 +829,7 @@ function StrategyTunerTab({ scenarios, addNotification, optimizerResult }) {
       });
     }
     return merged;
-  }, [baselineResult, customResult, strategyName]);
+  }, [baselineResult, customResult]); // strategyName intentionally omitted -- stable label
 
   const sensitivityLabel = TUNER_PARAM_CONFIG.find((p) => p.key === sensitivityParam)?.label || sensitivityParam;
 
@@ -1011,7 +1011,7 @@ function StrategyTunerTab({ scenarios, addNotification, optimizerResult }) {
 
 // ── Main View ───────────────────────────────────────────────────────────────
 
-export default function DigitalTwinView({ user, addNotification }) {
+export default function DigitalTwinView({ _user, addNotification }) {
   const [activeTab, setActiveTab] = useState('simulation');
   const [scenarios, setScenarios] = useState([]);
   const [optimizerResult, setOptimizerResult] = useState(null);

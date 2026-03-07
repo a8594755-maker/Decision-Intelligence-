@@ -51,7 +51,7 @@ export default function CostAnalysisView({ addNotification, user, setView }) {
   const [dataCoverage, setDataCoverage] = useState(null);
   const [materialAIOptimization, setMaterialAIOptimization] = useState('');
   const [analyzingMaterialAI, setAnalyzingMaterialAI] = useState(false);
-  const [searchTerm, setSearchTerm] = useState('');
+  const [searchTerm, _setSearchTerm] = useState('');
   const [filterType, setFilterType] = useState('all'); // 'all', 'increases', 'decreases'
   const [customRange, setCustomRange] = useState(null); // { startDate, endDate } or null
   const [showCustomRangePicker, setShowCustomRangePicker] = useState(false);
@@ -72,6 +72,7 @@ export default function CostAnalysisView({ addNotification, user, setView }) {
         loadMaterialCostData();
       }
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- loader functions are stable within these deps
   }, [user, selectedPeriod, customRange, viewMode]);
 
   // Load selected material trend when material changes
@@ -80,6 +81,7 @@ export default function CostAnalysisView({ addNotification, user, setView }) {
       loadMaterialTrend();
       loadSupplierComparison();
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- loader functions are stable within these deps
   }, [selectedMaterial, user, selectedPeriod, customRange, viewMode]);
 
   const loadOperationalData = async () => {
@@ -965,7 +967,7 @@ Please provide in Chinese (Traditional):
                     bg: 'bg-amber-50 dark:bg-amber-900/20', text: 'text-amber-600' },
                   { cls: 'C', data: spendConcentration.summary.classC, label: 'Low Value',
                     bg: 'bg-green-50 dark:bg-green-900/20', text: 'text-green-600' }
-                ].map(({ cls, data, label, bg, text }) => (
+                ].map(({ cls, data, _label, bg, text }) => (
                   <div key={cls} className={`p-3 rounded-lg ${bg} text-center`}>
                     <div className={`text-2xl font-bold ${text}`}>Class {cls}</div>
                     <div className="text-sm text-slate-600 dark:text-slate-300">

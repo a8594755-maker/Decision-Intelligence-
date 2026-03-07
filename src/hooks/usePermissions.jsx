@@ -74,6 +74,7 @@ function markUserProfilesUnavailable(error) {
 
 // ── Action definitions (synced with backend rbac.py) ──────────────────────
 
+// eslint-disable-next-line react-refresh/only-export-components -- ACTIONS is a static constant, not a component
 export const ACTIONS = {
   // Plan Studio
   RUN_PLAN:              'run_plan',
@@ -253,6 +254,7 @@ export function PermissionsProvider({ userId, children }) {
   );
 }
 
+// eslint-disable-next-line react-refresh/only-export-components -- custom hook, not a component
 export function usePermissions() {
   const ctx = useContext(PermissionsContext);
   if (!ctx) throw new Error('usePermissions must be used inside PermissionsProvider');

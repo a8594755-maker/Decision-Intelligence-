@@ -159,7 +159,7 @@ export default function TopologyTab({
   });
 
   const plantOptions = useMemo(() => buildPlantOptions(topologyGraph), [topologyGraph]);
-  const nodeMap = useMemo(() => {
+  const _nodeMap = useMemo(() => {
     const map = new Map();
     (Array.isArray(topologyGraph?.nodes) ? topologyGraph.nodes : []).forEach((node) => {
       map.set(node.id, node);

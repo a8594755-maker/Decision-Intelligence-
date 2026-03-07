@@ -78,5 +78,5 @@ export function updateUrlSearch(params) {
   window.history.replaceState(window.history.state, '', url);
   try {
     sessionStorage.setItem('lastVisitedPath', url);
-  } catch (_) {}
+  } catch (_) { /* no-op */ }
 }

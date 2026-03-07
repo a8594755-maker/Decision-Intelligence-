@@ -14,7 +14,7 @@ import {
 export default function OverviewTab({ 
   publishedVersion, 
   draftVersion, 
-  selectedScope,
+  _selectedScope,
   onCreateDraft,
   canEdit 
 }) {

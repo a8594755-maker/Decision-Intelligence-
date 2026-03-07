@@ -110,6 +110,117 @@ export const calculateProfitAtRiskForRow = (riskRow, financialIndex = {}, useFal
     : fallbackCount === 1 ? 'partial'
     : 'estimated';
 
+  // Build assumptions array
+  const ssSource = riskRow.safetyStockSource || ((riskRow.safetyStock || 0) > 0 ? 'real' : 'fallback');
+  const hasDemand = typeof riskRow.daysToStockout === 'number' && riskRow.daysToStockout !== Infinity;
+
+  const assumptions = [
+    {
+      field: 'profitPerUnit',
+      source: profitAtRiskReason === 'REAL' ? 'fg_financials' : (profitAtRiskReason === 'ASSUMPTION' ? 'fallback' : 'missing'),
+      value: profitPerUnit,
+      isDefault: profitAtRiskReason !== 'REAL',
+      note: profitAtRiskReason === 'REAL'
+        ? `Matched ${item} in fg_financials (${currency})`
+        : profitAtRiskReason === 'ASSUMPTION'
+          ? `No financial data for ${item}; using default $${DEFAULT_PROFIT_PER_UNIT}/unit`
+          : `No financial data and fallback disabled`
+    },
+    {
+      field: 'leadTimeDays',
+      source: riskRow.leadTimeDaysSource === 'supplier' ? 'suppliers' : 'fallback',
+      value: riskRow.leadTimeDaysUsed ?? null,
+      isDefault: riskRow.leadTimeDaysSource !== 'supplier',
+      note: riskRow.leadTimeDaysSource === 'supplier'
+        ? `Lead time from suppliers: ${riskRow.leadTimeDaysUsed} days`
+        : 'Using system default lead time (7 days)'
+    },
+    {
+      field: 'safetyStock',
+      source: ssSource === 'real' ? 'inventory_snapshots' : 'fallback',
+      value: riskRow.safetyStock || 0,
+      isDefault: ssSource !== 'real',
+      note: ssSource === 'real'
+        ? `Safety stock from inventory: ${riskRow.safetyStock}`
+        : 'No safety stock data; using 0'
+    },
+    {
+      field: 'demandCoverage',
+      source: hasDemand ? 'component_demand' : 'missing',
+      value: hasDemand ? riskRow.daysToStockout : null,
+      isDefault: !hasDemand,
+      note: hasDemand
+        ? `Demand data present; daysToStockout = ${riskRow.daysToStockout}`
+        : 'No component_demand data for this item/plant'
+    }
+  ];
+
+  // Compute confidence_score (0-1 weighted average)
+  const WEIGHTS = { financial: 0.4, leadTime: 0.25, safetyStock: 0.2, demand: 0.15 };
+  const signals = {
+    financial: profitAtRiskReason === 'REAL' ? 1.0 : profitAtRiskReason === 'ASSUMPTION' ? 0.3 : 0.0,
+    leadTime: riskRow.leadTimeDaysSource === 'supplier' ? 1.0 : 0.3,
+    safetyStock: ssSource === 'real' ? 1.0 : 0.3,
+    demand: hasDemand ? 1.0 : 0.0
+  };
+  const confidence_score = Math.round((
+    signals.financial * WEIGHTS.financial +
+    signals.leadTime * WEIGHTS.leadTime +
+    signals.safetyStock * WEIGHTS.safetyStock +
+    signals.demand * WEIGHTS.demand
+  ) * 100) / 100;
+
+  // Build computation trace
+  const computationTrace = {
+    steps: [
+      {
+        label: 'Inventory Lookup',
+        inputs: { material: item, plant: riskRow.factory || riskRow.plantId || riskRow.plant_id },
+        result: { onHand: riskRow.onHand ?? riskRow.currentStock ?? 0, safetyStock: riskRow.safetyStock || 0, source: ssSource === 'real' ? 'inventory_snapshots' : 'default (0)' },
+        formula: null
+      },
+      {
+        label: 'Supply Coverage',
+        inputs: { horizonBuckets: riskRow.horizonBuckets, inboundPOs: riskRow.inboundCountHorizon },
+        result: { inboundCount: riskRow.inboundCountHorizon ?? 0, inboundQty: riskRow.inboundQtyHorizon ?? 0, status: riskRow.status || 'OK' },
+        formula: 'CRITICAL if inboundCount=0, WARNING if inboundCount=1 or qty<10, else OK'
+      },
+      {
+        label: 'Gap Calculation',
+        inputs: { safetyStock: riskRow.safetyStock || 0, onHand: riskRow.onHand ?? 0 },
+        result: { gapQty, netAvailable: (riskRow.onHand ?? 0) - (riskRow.safetyStock || 0) },
+        formula: 'gapQty = max(0, safetyStock - onHand)'
+      },
+      {
+        label: 'Profit at Risk',
+        inputs: { exposureQty, profitPerUnit, source: profitAtRiskReason === 'REAL' ? 'fg_financials' : profitAtRiskReason },
+        result: { profitAtRisk },
+        formula: `profitAtRisk = max(0, ${gapQty}) × ${profitPerUnit} = ${profitAtRisk}`
+      }
+    ],
+    what_if_hints: []
+  };
+
+  if (hasDemand) {
+    computationTrace.steps.push({
+      label: 'Inventory Risk',
+      inputs: { dailyDemand: riskRow.dailyDemand || 'from component_demand', leadTimeDays: riskRow.leadTimeDaysUsed, source: riskRow.leadTimeDaysSource },
+      result: { daysToStockout: riskRow.daysToStockout, pStockout: riskRow.stockoutProbability ?? riskRow.probability },
+      formula: 'daysToStockout = onHand / dailyDemand'
+    });
+  }
+
+  // Generate what-if hints from default assumptions
+  const hintMap = {
+    profitPerUnit: { action: `Upload financials for ${item}`, currentState: `Using fallback ($${DEFAULT_PROFIT_PER_UNIT}/unit)`, potentialState: 'Real profit/unit from fg_financials', impactField: 'profitAtRisk' },
+    leadTimeDays: { action: `Add lead_time_days to suppliers for ${item}`, currentState: 'Using system default (7 days)', potentialState: 'Supplier-specific lead time', impactField: 'daysToStockout' },
+    safetyStock: { action: `Set safety_stock in inventory for ${item}`, currentState: 'Using 0 (no safety stock)', potentialState: 'Real safety stock threshold', impactField: 'gapQty' },
+    demandCoverage: { action: `Run BOM explosion forecast including ${item}`, currentState: 'No demand forecast data', potentialState: 'daysToStockout and P(stockout) calculated', impactField: 'daysToStockout' }
+  };
+  assumptions.filter(a => a.isDefault).forEach(a => {
+    if (hintMap[a.field]) computationTrace.what_if_hints.push(hintMap[a.field]);
+  });
+
   return {
     ...riskRow,
     profitPerUnit,
@@ -117,7 +228,10 @@ export const calculateProfitAtRiskForRow = (riskRow, financialIndex = {}, useFal
     exposureQty,
     profitAtRisk,
     profitAtRiskReason,
-    dataQualityLevel
+    dataQualityLevel,
+    assumptions,
+    confidence_score,
+    computationTrace
   };
 };
 

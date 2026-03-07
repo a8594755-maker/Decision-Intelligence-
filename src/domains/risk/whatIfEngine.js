@@ -154,7 +154,7 @@ export function calculateExpeditedStockoutProbability(input, expeditedInbound) {
   const { onHand, safetyStock, gapQty } = input;
   
   // Net available after safety stock
-  const netAvailable = onHand - safetyStock;
+  const _netAvailable = onHand - safetyStock;
   
   // Calculate total expedited inbound arriving before/at stockout bucket
   const expeditedQty = expeditedInbound

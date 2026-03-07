@@ -11,7 +11,7 @@
  *   6. negotiation_evaluation artifact has correct ranking_method
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import {
   generateNegotiationOptions,
   detectTrigger
@@ -74,7 +74,7 @@ const RANKING_METHOD =
  * opt_002 (MOQ)    → feasible (MOQ relax fixes the infeasibility)
  * all others       → infeasible (engine_flags not supported in mock)
  */
-function mockEvaluateOptions(options, baseKpis) {
+function mockEvaluateOptions(options, _baseKpis) {
   const baseService = 0;
   const baseCost = 0;
 
@@ -237,7 +237,7 @@ describe('Negotiation Integration – synthetic infeasible case', () => {
     expect(feasibleOpts.length).toBeGreaterThan(0);
 
     // All feasible options should appear before all infeasible ones
-    const firstFeasibleIdx = rankedOptions.findIndex(
+    const _firstFeasibleIdx = rankedOptions.findIndex(
       (o) => o.status === 'succeeded' && o.kpis?.scenario?.feasible !== false
     );
     const lastFeasibleIdx = rankedOptions.reduce(

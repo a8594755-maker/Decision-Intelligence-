@@ -36,7 +36,7 @@ function applyInventoryRiskToDomainResults(domainResults, componentDemandAggrega
         });
         row.daysToStockout = invRisk.daysToStockout;
         row.stockoutProbability = invRisk.probability;
-      } catch (_) {}
+      } catch (_) { /* no-op */ }
     }
   });
 }

@@ -105,14 +105,14 @@ describe('AI Export Workbook handler', () => {
 
     // Simulate the error handling from the handler
     try {
-      const resp = await globalThis.fetch('http://localhost:8000/export-workbook', {
+      const _resp = await globalThis.fetch('http://localhost:8000/export-workbook', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ version: 'v1', run_id: 1, ai_insights: false }),
       });
       // Should not reach here
       expect(true).toBe(false);
-    } catch (err) {
+    } catch (_err) {
       // Fallback to Quick Export
       fallbackCalled();
     }

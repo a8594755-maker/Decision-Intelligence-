@@ -166,7 +166,7 @@ export async function fetchRecentPlans({ userId, datasetProfileId, limit = 8 }) 
   try {
     // If we have a specific profile, filter by it
     if (datasetProfileId) {
-      const run = await diRunsService.getLatestRunByStage(userId, {
+      const _run = await diRunsService.getLatestRunByStage(userId, {
         stage: 'optimize',
         status: 'succeeded',
         dataset_profile_id: Number(datasetProfileId),

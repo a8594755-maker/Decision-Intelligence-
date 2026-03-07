@@ -7,7 +7,7 @@ import { callGeminiAPI } from './geminiAPI';
 import { extractAiJson, generateMappingPrompt } from '../utils/aiMappingHelper';
 import { classifySheet } from '../utils/sheetClassifier';
 import UPLOAD_SCHEMAS from '../utils/uploadSchemas';
-import { normalizeHeader, buildHeaderIndex, alignAiMappings, logHeaderStats, logMappingAlignStats } from '../utils/headerNormalize';
+import { buildHeaderIndex, alignAiMappings, logHeaderStats, logMappingAlignStats } from '../utils/headerNormalize';
 import { sendAgentLog } from '../utils/sendAgentLog';
 
 /**
@@ -364,7 +364,7 @@ export async function suggestSheetMapping({
   headers,
   sampleRows,
   currentUploadType = null,
-  hasIngestKeySupport = false
+  _hasIngestKeySupport = false
 }) {
   try {
     console.log(`[AI Suggest] Starting for sheet: ${sheetName}`);

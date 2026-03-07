@@ -43,7 +43,13 @@ vi.mock('../../services/datasetProfilesService', () => ({
   datasetProfilesService: {
     list: vi.fn().mockResolvedValue([]),
     get: vi.fn().mockResolvedValue(null),
+    getProfile: vi.fn().mockResolvedValue(null),
+    getDatasetProfileById: vi.fn().mockResolvedValue(null),
+    getLatestDatasetProfile: vi.fn().mockResolvedValue(null),
+    createDatasetProfile: vi.fn().mockResolvedValue(null),
+    updateDatasetProfile: vi.fn().mockResolvedValue(null),
   },
+  registerLocalProfile: vi.fn(),
 }));
 
 vi.mock('../../services/reuseMemoryService', () => ({
@@ -89,6 +95,20 @@ vi.mock('../../services/topology/topologyService', () => ({
   loadTopologyGraphForRun: vi.fn(),
 }));
 
+vi.mock('../../services/negotiation/negotiationOrchestrator', () => ({
+  runNegotiation: vi.fn().mockResolvedValue({ triggered: false }),
+  checkNegotiationTrigger: vi.fn().mockResolvedValue(null),
+}));
+
+vi.mock('../../services/digitalTwinService', () => ({
+  runSimulation: vi.fn().mockResolvedValue({ success: false }),
+  buildDigitalTwinCardPayload: vi.fn().mockReturnValue({}),
+}));
+
+vi.mock('../../services/planWritebackService', () => ({
+  writeApprovedPlanBaseline: vi.fn().mockResolvedValue(null),
+}));
+
 vi.mock('../../workflows/workflowRegistry', () => ({
   startWorkflow: vi.fn(),
   runNextStep: vi.fn(),
@@ -115,7 +135,9 @@ vi.mock('../../services/chatCanvasWorkflowService', () => ({
 
 vi.mock('../../hooks/useSessionContext', () => ({
   default: () => ({
+    context: {},
     ctx: {},
+    lastForecastRunId: null,
     updateDataset: vi.fn(),
     updateForecast: vi.fn(),
     updatePlan: vi.fn(),
@@ -125,19 +147,27 @@ vi.mock('../../hooks/useSessionContext', () => ({
     recordIntent: vi.fn(),
     addPendingApproval: vi.fn(),
     resolvePendingApproval: vi.fn(),
+    resolveApproval: vi.fn(),
     dismissAlert: vi.fn(),
     updateNegotiation: vi.fn(),
+    recordNegOptionApplied: vi.fn(),
+    clearNegotiation: vi.fn(),
   }),
 }));
 
 vi.mock('../../services/chatIntentService', () => ({
   parseUserIntent: vi.fn().mockResolvedValue({ intent: 'chat', entities: {} }),
+  parseIntent: vi.fn().mockResolvedValue({ intent: 'GENERAL_CHAT', confidence: 0.5 }),
+  routeIntent: vi.fn().mockResolvedValue({ handled: false }),
   isExecutionType: vi.fn().mockReturnValue(false),
   buildActionParams: vi.fn().mockReturnValue({}),
 }));
 
 vi.mock('../../services/chatRefinementService', () => ({
   detectRefinement: vi.fn().mockReturnValue(null),
+  handleParameterChange: vi.fn().mockResolvedValue(null),
+  handlePlanComparison: vi.fn().mockReturnValue(null),
+  buildComparisonSummaryText: vi.fn().mockReturnValue(''),
 }));
 
 vi.mock('../../services/evidenceResponseService', () => ({
@@ -155,6 +185,8 @@ vi.mock('../../services/approvalWorkflowService', () => ({
     getStatus: vi.fn().mockReturnValue(null),
     request: vi.fn(),
   },
+  batchApprove: vi.fn().mockResolvedValue({}),
+  batchReject: vi.fn().mockResolvedValue({}),
 }));
 
 // Mock localStorage

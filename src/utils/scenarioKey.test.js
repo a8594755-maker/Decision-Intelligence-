@@ -13,7 +13,6 @@ import { describe, it, expect } from 'vitest';
 import {
   stableStringify,
   canonicalizeOverrides,
-  canonicalizeEngineFlags,
   computeScenarioKeySync
 } from './scenarioKey';
 

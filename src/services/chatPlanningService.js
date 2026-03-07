@@ -24,6 +24,8 @@ import {
 } from './riskAdjustmentsService';
 import { applyScenarioOverridesToPayload } from '../utils/applyScenarioOverrides';
 import { createFallbackAudit } from '../config/fallbackPolicies';
+import { buildDataQualityReport } from '../utils/dataQualityReport';
+import { logger, createSpan } from './observability';
 
 const MAX_PLAN_ROWS_IN_CARD = 50;
 const MAX_PLAN_ROWS_IN_ARTIFACT = 2000;
@@ -1495,6 +1497,11 @@ export async function runPlanFromDatasetProfile({
   if (!userId) throw new Error('userId is required');
   if (!datasetProfileRow?.id) throw new Error('datasetProfileRow is required');
 
+  const planSpan = createSpan('planning', 'full-pipeline');
+  logger.info('planning-pipeline', 'Planning started', {
+    _traceId: planSpan.traceId, datasetProfileId: datasetProfileRow.id, riskMode,
+  });
+
   const workflow = makeWorkflowLabel(datasetProfileRow);
 
   const run = await diRunsService.createRun({
@@ -1586,6 +1593,7 @@ export async function runPlanFromDatasetProfile({
     }
 
     const fallbackAudit = createFallbackAudit();
+    logger.info('planning-pipeline', 'Fallback audit initialized', { _traceId: planSpan.traceId });
 
     const openPoDataset = chooseDatasetByType(contractJson, 'po_open_lines');
     const openPoResult = openPoDataset
@@ -1820,9 +1828,16 @@ export async function runPlanFromDatasetProfile({
     }
     // ────────────────────────────────────────────────────────────────────────
 
+    const solverSpan = createSpan('planning', 'solver', planSpan.traceId);
     const solverResult = await optimizationApiClient.createReplenishmentPlan(optimizationPayload, {
       timeoutMs: 25000,
       allowFallback: true
+    });
+    solverSpan.addMetric('status', solverResult?.status || 'unknown');
+    solverSpan.addMetric('planRows', solverResult?.plan?.length || 0);
+    solverSpan.end();
+    logger.info('planning-pipeline', `Solver completed: ${solverResult?.status || 'unknown'}`, {
+      _traceId: planSpan.traceId, planRows: solverResult?.plan?.length || 0, durationMs: solverSpan.durationMs,
     });
 
     const normalizedPlan = Array.isArray(solverResult?.plan)
@@ -1925,19 +1940,25 @@ export async function runPlanFromDatasetProfile({
     if (bomDataset && bomRequiredMappingMissing.length === 0) availableDatasets.push('bom_edge');
     else missingDatasets.push('bom_edge');
 
-    const dataQuality = {
-      coverage_level: missingDatasets.length === 0 ? 'full' : (missingDatasets.length <= 2 ? 'partial' : 'minimal'),
-      available_datasets: availableDatasets,
-      missing_datasets: missingDatasets,
-      fallbacks_used: audit.fieldFallbacks,
-      dataset_fallbacks: audit.datasetFallbacks,
-      row_stats: {
+    const dataQuality = buildDataQualityReport({
+      availableDatasets,
+      missingDatasets,
+      fallbackAudit: audit,
+      rowStats: {
         total: inventoryResult.rows.length,
         clean: inventoryResult.rows.length - audit.summary.totalFieldFallbacks,
         with_fallback: audit.summary.totalFieldFallbacks > 0 ? inventoryResult.rows.length : 0,
         dropped: inventoryResult.dropped || 0,
       },
-    };
+    });
+
+    logger.info('planning-pipeline', `Data quality: ${dataQuality.coverage_level}`, {
+      _traceId: planSpan.traceId,
+      coverageLevel: dataQuality.coverage_level,
+      availableDatasets: dataQuality.available_datasets,
+      missingDatasets: dataQuality.missing_datasets,
+      fallbacksUsed: dataQuality.fallbacks_used,
+    });
 
     const solverMetaArtifact = {
       status: solverResult?.status || 'unknown',
@@ -1968,6 +1989,12 @@ export async function runPlanFromDatasetProfile({
     const solverMetaSaved = await saveJsonArtifact(run.id, 'solver_meta', solverMetaArtifact, ARTIFACT_SIZE_THRESHOLD, {
       user_id: userId,
       filename: `solver_meta_run_${run.id}.json`
+    });
+
+    // Persist unified data quality report as a standalone artifact
+    await saveJsonArtifact(run.id, 'data_quality_report', dataQuality, ARTIFACT_SIZE_THRESHOLD, {
+      user_id: userId,
+      filename: `data_quality_report_run_${run.id}.json`
     });
 
     const constraintSaved = await saveJsonArtifact(run.id, 'constraint_check', constraintResult, ARTIFACT_SIZE_THRESHOLD, {
@@ -2602,6 +2629,15 @@ export async function runPlanFromDatasetProfile({
 
     const summaryText = decisionNarrative?.summary_text || finalReport.summary;
 
+    // Observability: finalize planning span
+    planSpan.addMetric('planRows', normalizedPlan.length);
+    planSpan.addMetric('solver', solverResult?.status || 'unknown');
+    planSpan.addMetric('coverageLevel', dataQuality.coverage_level);
+    planSpan.end();
+    logger.info('planning-pipeline', 'Planning completed successfully', {
+      _traceId: planSpan.traceId, durationMs: planSpan.durationMs, planRows: normalizedPlan.length,
+    });
+
     return {
       run: updatedRun,
       forecast_run_id: forecastContext.run?.id || null,
@@ -2651,6 +2687,12 @@ export async function runPlanFromDatasetProfile({
       });
       error.blockingQuestions = enrichedQuestions;
     }
+
+    planSpan.addMetric('error', error.message || 'unknown');
+    planSpan.end();
+    logger.error('planning-pipeline', `Planning failed: ${error.message}`, {
+      _traceId: planSpan.traceId, durationMs: planSpan.durationMs, isBlocking: !!error.isBlocking,
+    });
 
     await diRunsService.updateRunStatus({
       run_id: run.id,

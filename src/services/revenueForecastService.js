@@ -13,7 +13,6 @@ import { supabase } from './supabaseClient';
 import {
   calculateMarginAtRiskBatch,
   computeMarginAtRiskKPIs,
-  validateRevenueTerm,
   REVENUE_ENGINE_VERSION,
   REVENUE_WARN_KEYS,
   REVENUE_STOP_KEYS

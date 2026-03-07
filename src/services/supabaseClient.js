@@ -1407,7 +1407,7 @@ export const bomEdgesService = {
       console.info("[ingest] sample keys=", Object.keys(sample));
       const uuidFields = ['user_id', 'batch_id', 'batchId', 'sheet_run_id', 'sheetRunId', 'ingest_key', 'ingestKey'];
       uuidFields.forEach(field => {
-        if (sample.hasOwnProperty(field)) {
+        if (Object.prototype.hasOwnProperty.call(sample, field)) {
           const value = sample[field];
           const valueType = typeof value;
           const valuePreview = JSON.stringify(value).slice(0, 200);
@@ -1465,7 +1465,7 @@ export const bomEdgesService = {
 
   // Get BOM edges (for BOM Explosion calculation)
   // Supports filtering by plantId and timeBuckets (considering validity)
-  async fetchBomEdges(userId, plantId = null, timeBuckets = []) {
+  async fetchBomEdges(userId, plantId = null, _timeBuckets = []) {
     let query = supabase
       .from('bom_edges')
       .select('*')

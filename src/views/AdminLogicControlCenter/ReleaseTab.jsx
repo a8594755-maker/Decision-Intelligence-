@@ -128,7 +128,7 @@ export default function ReleaseTab({
     }
   }
 
-  async function checkCanPublish(versionId) {
+  async function _checkCanPublish(versionId) {
     const { data, error } = await supabase.rpc('can_publish_version', { p_version_id: versionId }, RPC_JSON_OPTIONS);
     if (error) throw error;
     return data?.[0] || { can_publish: true };

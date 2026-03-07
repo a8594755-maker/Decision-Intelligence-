@@ -3,8 +3,11 @@
  * Handles batch writing of large datasets, supports abort and detailed progress reporting
  */
 
+import { runWithConcurrencyAbortable } from '../utils/concurrency';
+
 export const DEFAULT_CHUNK_SIZE = 500;
 export const RPC_MAX_CHUNK_SIZE = 800; // RPC has 1000 limit, keep buffer
+const INGEST_CONCURRENCY = 3;
 
 /**
  * Extract detailed error information from Supabase/Postgres error
@@ -186,75 +189,59 @@ export async function ingestInChunks({
   const warnings = [];
   let totalSavedCount = 0;
   
-  // Process chunks sequentially
-  for (let i = 0; i < chunks.length; i++) {
-    // Check abort signal
-    if (signal?.aborted) {
-      console.log(`[ChunkIngest] Aborted at chunk ${i + 1}/${totalChunks}`);
-      throw new Error('ABORTED');
-    }
-    
-    const chunk = chunks[i];
+  // Process chunks in parallel with concurrency limit
+  const tasks = chunks.map((chunk, i) => async () => {
     const chunkIndex = i + 1;
-    
-    // Progress callback
+
+    const result = await strategy.ingest({
+      userId,
+      rows: chunk,
+      batchId,
+      uploadFileId,
+      fileName: `${fileName} (chunk ${chunkIndex}/${totalChunks})`,
+      sheetName,
+      addNotification: () => {},
+      setSaveProgress: () => {},
+      options: {
+        ...options,
+        chunkIndex,
+        totalChunks,
+        isChunked: totalChunks > 1
+      }
+    });
+
+    return { chunkIndex, savedCount: result.savedCount || 0, rowsInChunk: chunk.length };
+  });
+
+  const settled = await runWithConcurrencyAbortable(tasks, signal, INGEST_CONCURRENCY, (completed, total) => {
     onProgress({
       phase: 'ingesting',
       sheetName,
       uploadType,
-      chunkIndex,
-      totalChunks,
+      chunkIndex: completed,
+      totalChunks: total,
       savedSoFar: totalSavedCount
     });
-    
-    try {
-      // Call strategy.ingest for this chunk
-      const result = await strategy.ingest({
-        userId,
-        rows: chunk,
-        batchId,
-        uploadFileId,
-        fileName: `${fileName} (chunk ${chunkIndex}/${totalChunks})`,
-        sheetName,
-        addNotification: () => {}, // Suppress individual notifications
-        setSaveProgress: () => {},  // Suppress individual progress
-        options: {
-          ...options,
-          chunkIndex,
-          totalChunks,
-          isChunked: totalChunks > 1
-        }
-      });
-      
-      const savedCount = result.savedCount || 0;
-      totalSavedCount += savedCount;
-      
-      chunkResults.push({
-        chunkIndex,
-        status: 'success',
-        savedCount,
-        rowsInChunk: chunk.length
-      });
-      
-      console.log(`[ChunkIngest] Chunk ${chunkIndex}/${totalChunks} succeeded: ${savedCount} saved`);
-      
-    } catch (chunkError) {
-      console.error(`[ChunkIngest] Chunk ${chunkIndex}/${totalChunks} failed:`, chunkError);
-      
-      // ✅ Improved: extract detailed error info (Supabase error structure)
-      const errorDetails = extractErrorDetails(chunkError, uploadType, chunkIndex, chunk);
-      
+  });
+
+  for (const item of settled) {
+    if (item.status === 'fulfilled') {
+      totalSavedCount += item.value.savedCount;
+      chunkResults.push({ ...item.value, status: 'success' });
+      console.log(`[ChunkIngest] Chunk ${item.value.chunkIndex}/${totalChunks} succeeded: ${item.value.savedCount} saved`);
+    } else {
+      const chunkIndex = item.index + 1;
+      const errorDetails = extractErrorDetails(item.reason, uploadType, chunkIndex, chunks[item.index]);
       chunkResults.push({
         chunkIndex,
         status: 'failed',
         savedCount: 0,
-        rowsInChunk: chunk.length,
+        rowsInChunk: chunks[item.index].length,
         error: errorDetails.message,
         errorCode: errorDetails.code,
         errorDetails: errorDetails.details,
         firstFailedRow: errorDetails.firstFailedRow
       });
-      
       warnings.push({
         chunkIndex,
         message: `Chunk ${chunkIndex} failed: ${errorDetails.message}`,
@@ -262,9 +249,6 @@ export async function ingestInChunks({
         hint: errorDetails.hint,
         severity: 'error'
       });
-      
-      // If chunk fails, log but continue to next chunk (unless aborted)
-      // Final sheet status will be marked as partial_success or failed
     }
   }
   

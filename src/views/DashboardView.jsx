@@ -51,6 +51,7 @@ const Sparkline = ({ data = [], color = COLORS.blue, height = 40 }) => {
 };
 
 // ─── KPI Card ───
+// eslint-disable-next-line no-unused-vars -- Icon is used in JSX below; ESLint false positive on destructured rename
 const KpiCard = ({ title, value, subtitle, icon: Icon, color, trend, trendLabel, sparkData, onClick }) => {
   const isPositive = trend > 0;
   const trendColor = isPositive ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-500 dark:text-red-400';
@@ -262,6 +263,7 @@ const DashboardView = ({ setView, user, globalDataSource, setGlobalDataSource })
 
   useEffect(() => {
     fetchDashboardData();
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- fetchDashboardData runs when userId changes
   }, [userId]);
 
   // ─── Derived chart data ───

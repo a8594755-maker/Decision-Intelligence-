@@ -105,15 +105,19 @@ export default function DataSummaryCard({
   onRunRisk,
   isRiskRunning = false
 }) {
+  const workflow = payload?.workflow_guess || {};
+  const timeRange = payload?.time_range_guess || {};
+  const minimalQuestions = Array.isArray(payload?.minimal_questions) ? payload.minimal_questions : [];
+  const profileId = payload?.dataset_profile_id;
+
+  const { buttonReadiness, capabilities, sheets } = useMemo(() => {
+    const s = Array.isArray(payload?.sheets) ? payload.sheets : [];
+    if (!payload) return { buttonReadiness: {}, capabilities: {}, sheets: s };
+    const result = computeReadiness(s);
+    return { ...result, sheets: s };
+  }, [payload]);
+
   if (!payload) return null;
-
-  const workflow = payload.workflow_guess || {};
-  const timeRange = payload.time_range_guess || {};
-  const sheets = Array.isArray(payload.sheets) ? payload.sheets : [];
-  const minimalQuestions = Array.isArray(payload.minimal_questions) ? payload.minimal_questions : [];
-  const profileId = payload.dataset_profile_id;
-
-  const { buttonReadiness, capabilities } = useMemo(() => computeReadiness(sheets), [sheets]);
   const readiness = {
     forecast: buttonReadiness.forecast || { ready: false, missing: [] },
     workflowA: buttonReadiness.workflowA || { ready: false, missing: [] },

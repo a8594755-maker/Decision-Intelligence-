@@ -195,7 +195,7 @@ export function buildRiskReplanRecommendationCard({
  * @returns {{ shouldReplan: boolean, recommendationCard: Object|null, analysis, replanParams, benefit }}
  */
 export function evaluateRiskReplanRecommendation({
-  userId,
+  _userId,
   datasetProfileId,
   riskRunId,
   riskScores = [],

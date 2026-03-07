@@ -16,7 +16,7 @@ const TABS = [
 ];
 
 export default function SettingsPage() {
-  const { user, addNotification } = useAuth();
+  const { user, addNotification: _addNotification } = useAuth();
   const { darkMode, setDarkMode } = useApp();
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('profile');
@@ -36,6 +36,7 @@ export default function SettingsPage() {
 
         {/* Tab bar */}
         <div className="flex gap-1 border-b" style={{ borderColor: 'var(--border-default)' }}>
+          {/* eslint-disable-next-line no-unused-vars -- Icon is used in JSX below */}
           {TABS.map(({ key, label, icon: Icon }) => (
             <button
               key={key}

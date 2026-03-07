@@ -203,7 +203,7 @@ const buildHistoryLines = (conversationHistory = [], limit = 10) => {
     .join('\n');
 };
 
-const buildChatSystemContext = ({ systemPrompt = '', conversationHistory = [], historyLimit = 10 }) => {
+const _buildChatSystemContext = ({ systemPrompt = '', conversationHistory = [], historyLimit = 10 }) => {
   let fullContext = String(systemPrompt || '');
   const historyText = buildHistoryLines(conversationHistory, historyLimit);
   if (historyText) {
@@ -756,7 +756,7 @@ Please base your analysis on data, avoid excessive speculation.`;
   });
 };
 
-const streamGeminiChat = async ({
+const _streamGeminiChat = async ({
   apiKey,
   message,
   fullContext,

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { NavLink as RouterNavLink, useLocation } from 'react-router-dom';
+import { NavLink as RouterNavLink } from 'react-router-dom';
 import {
   Activity, LayoutDashboard, Calculator, TrendingUp,
   ShieldAlert, Settings, Moon, Sun, LogOut, Cpu,
@@ -25,7 +25,6 @@ export default function Sidebar() {
   const { user, handleLogout } = useAuth();
   const { darkMode, setDarkMode } = useApp();
   const [expanded, setExpanded] = useState(false);
-  const location = useLocation();
 
   const width = expanded ? 'w-52' : 'w-14';
 
@@ -135,6 +134,7 @@ export default function Sidebar() {
 }
 
 /* ── Sidebar link item ── */
+// eslint-disable-next-line no-unused-vars -- Icon is used in JSX below; ESLint false positive on destructured rename
 function SidebarLink({ to, label, icon: Icon, end, expanded }) {
   return (
     <RouterNavLink
