@@ -82,6 +82,7 @@ import CanvasPanel from '../../components/chat/CanvasPanel';
 import RiskAwarePlanComparisonCard from '../../components/chat/RiskAwarePlanComparisonCard';
 import RiskReplanCard from '../../components/risk/RiskReplanCard';
 import PODelayAlertCard from '../../components/chat/PODelayAlertCard';
+import DataQualityCard from '../../components/chat/DataQualityCard';
 import RiskTriggerNotificationCard from '../../components/chat/RiskTriggerNotificationCard';
 import ProactiveAlertCard from '../../components/chat/ProactiveAlertCard';
 import AIErrorCard from '../../components/chat/AIErrorCard';
@@ -4368,6 +4369,9 @@ export default function DecisionSupportView({ user, addNotification }) {
     }
     if (message.type === 'forecast_error_card') {
       return <ForecastErrorCard payload={message.payload} />;
+    }
+    if (message.type === 'data_quality_card') {
+      return <DataQualityCard payload={message.payload} />;
     }
     if (message.type === 'plan_summary_card') {
       return <PlanSummaryCard payload={message.payload} />;

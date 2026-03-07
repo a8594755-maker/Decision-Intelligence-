@@ -93,6 +93,45 @@ export function applyScenarioOverridesToPayload(payload, overrides = {}, engineF
     }
   }
 
+  // ─── per-supplier overrides: adjust lead_time / cost per supplier ───
+  if (overrides.supplier_overrides && typeof overrides.supplier_overrides === 'object') {
+    const supplierMap = overrides.supplier_overrides;
+    const appliedSuppliers = [];
+
+    if (Array.isArray(payload.inventory)) {
+      payload.inventory = payload.inventory.map((row) => {
+        const supplierId = row.supplier_id || row.supplier || row.vendor_id;
+        if (!supplierId || !supplierMap[supplierId]) return row;
+
+        const overrideSpec = supplierMap[supplierId];
+        const updated = { ...row };
+
+        // Per-supplier lead_time_buffer_days
+        if (overrideSpec.lead_time_buffer_days != null) {
+          const buffer = Number(overrideSpec.lead_time_buffer_days);
+          if (Number.isFinite(buffer) && buffer > 0) {
+            updated.lead_time_days = Math.max(1, (Number(row.lead_time_days) || 7) - buffer);
+          }
+        }
+
+        // Per-supplier cost_multiplier
+        if (overrideSpec.cost_multiplier != null) {
+          const mult = Number(overrideSpec.cost_multiplier);
+          if (Number.isFinite(mult) && mult > 0) {
+            updated.unit_cost = Number(((Number(row.unit_cost) || 0) * mult).toFixed(4));
+          }
+        }
+
+        appliedSuppliers.push(supplierId);
+        return updated;
+      });
+    }
+
+    if (appliedSuppliers.length > 0) {
+      effectiveParams.supplier_overrides_applied = [...new Set(appliedSuppliers)];
+    }
+  }
+
   // ─── budget_cap echo (already set in constraints via constraintsOverride) ───
   if (overrides.budget_cap != null) {
     effectiveParams.budget_cap = Number(overrides.budget_cap);

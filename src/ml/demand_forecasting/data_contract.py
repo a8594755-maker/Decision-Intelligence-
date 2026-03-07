@@ -183,6 +183,7 @@ class DataQualityReport:
     negative_values_clipped: int = 0
     nan_values_filled: int = 0
     duplicate_dates_merged: int = 0
+    outliers_capped: int = 0
     gaps: List[str] = field(default_factory=list)
     is_daily: bool = True
     is_constant: bool = False
@@ -206,6 +207,7 @@ class DataQualityReport:
             "negative_values_clipped": self.negative_values_clipped,
             "nan_values_filled": self.nan_values_filled,
             "duplicate_dates_merged": self.duplicate_dates_merged,
+            "outliers_capped": self.outliers_capped,
             "missing_rate": self.missing_rate,
             "is_daily": self.is_daily,
             "is_constant": self.is_constant,

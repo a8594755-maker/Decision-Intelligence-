@@ -112,19 +112,37 @@ def validate_and_clean_series(
         report.warnings.append(f"裁切了 {neg_count} 個負值 → 0")
         df_full.loc[neg_mask, 'sales'] = 0
 
-    # ── 7. 常數序列檢測 ──
+    # ── 7. IQR Outlier Detection & Capping ──
+    if len(df_full) >= 10:
+        q1 = df_full['sales'].quantile(0.25)
+        q3 = df_full['sales'].quantile(0.75)
+        iqr = q3 - q1
+        if iqr > 1e-8:
+            lower_bound = max(0, q1 - 1.5 * iqr)
+            upper_bound = q3 + 1.5 * iqr
+            outlier_mask = (df_full['sales'] < lower_bound) | (df_full['sales'] > upper_bound)
+            outlier_count = int(outlier_mask.sum())
+            if outlier_count > 0:
+                report.outliers_capped = outlier_count
+                report.warnings.append(
+                    f"IQR 異常值偵測：{outlier_count} 筆超出 [{lower_bound:.1f}, {upper_bound:.1f}]，已 cap"
+                )
+                df_full.loc[df_full['sales'] < lower_bound, 'sales'] = lower_bound
+                df_full.loc[df_full['sales'] > upper_bound, 'sales'] = upper_bound
+
+    # ── 8. 常數序列檢測 ──
     if df_full['sales'].std() < 1e-8:
         report.is_constant = True
         report.warnings.append("序列為常數（std ≈ 0），模型預測將無意義")
 
-    # ── 8. Inf 檢測 ──
+    # ── 9. Inf 檢測 ──
     inf_mask = ~np.isfinite(df_full['sales'].values)
     if inf_mask.any():
         inf_count = int(inf_mask.sum())
         report.warnings.append(f"偵測到 {inf_count} 個 inf 值，已替換為 0")
         df_full.loc[inf_mask, 'sales'] = 0
 
-    # ── 9. 組裝結果 ──
+    # ── 10. 組裝結果 ──
     report.cleaned_count = len(df_full)
 
     cleaned = SalesSeries(

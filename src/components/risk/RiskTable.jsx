@@ -198,7 +198,7 @@ const RiskTable = ({
               Next Bkt
             </th>
             
-            <th 
+            <th
               onClick={() => handleSort('profitAtRisk')}
               className="px-2 py-2 text-right text-xs font-semibold uppercase text-slate-700 dark:text-slate-300 cursor-pointer hover:bg-slate-200 dark:hover:bg-slate-700 w-[95px] min-w-[95px]"
             >
@@ -207,7 +207,18 @@ const RiskTable = ({
                 {renderSortIcon('profitAtRisk')}
               </div>
             </th>
-            
+
+            <th
+              onClick={() => handleSort('dataQualityLevel')}
+              className="px-2 py-2 text-center text-xs font-semibold uppercase text-slate-700 dark:text-slate-300 cursor-pointer hover:bg-slate-200 dark:hover:bg-slate-700 w-[60px] min-w-[60px]"
+              title="Data quality: verified / partial / estimated / missing"
+            >
+              <div className="flex items-center justify-center gap-1">
+                Quality
+                {renderSortIcon('dataQualityLevel')}
+              </div>
+            </th>
+
             <th className="px-2 py-2 text-right text-xs font-semibold uppercase text-rose-600 dark:text-rose-400 w-[85px] min-w-[85px]">
               Rev Margin
             </th>
@@ -338,6 +349,24 @@ const RiskTable = ({
                   )}
                 </td>
                 
+                <td className="px-2 py-1.5 text-center">
+                  {(() => {
+                    const q = risk.dataQualityLevel || 'missing';
+                    const cfg = {
+                      verified: { dot: 'bg-green-500', label: 'Verified', title: 'All data from real sources' },
+                      partial:  { dot: 'bg-blue-500',  label: 'Partial',  title: 'One field uses fallback' },
+                      estimated:{ dot: 'bg-amber-500', label: 'Est.',     title: 'Multiple fields use fallbacks' },
+                      missing:  { dot: 'bg-red-500',   label: 'Missing',  title: 'No financial data available' },
+                    }[q] || { dot: 'bg-slate-400', label: '?', title: 'Unknown' };
+                    return (
+                      <span className="inline-flex items-center gap-1" title={cfg.title}>
+                        <span className={`w-2 h-2 rounded-full ${cfg.dot}`} />
+                        <span className="text-[10px] text-slate-500 dark:text-slate-400">{cfg.label}</span>
+                      </span>
+                    );
+                  })()}
+                </td>
+
                 <td className="px-2 py-1.5 text-right">
                   {risk.revMarginAtRisk != null ? (
                     <span className={`font-semibold ${risk.revMarginAtRisk > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-400'}`}>

@@ -42,6 +42,13 @@ vi.mock('../services/supabaseClient', () => ({
   },
 }));
 
+// i18n mock — prevent actual i18next init in tests
+vi.mock('react-i18next', () => ({
+  useTranslation: () => ({ t: (key) => key, i18n: { changeLanguage: vi.fn() } }),
+  Trans: ({ children }) => children,
+  initReactI18next: { type: '3rdParty', init: vi.fn() },
+}));
+
 // DOM polyfills — only in jsdom environment
 if (typeof window !== 'undefined') {
   globalThis.ResizeObserver = class ResizeObserver {

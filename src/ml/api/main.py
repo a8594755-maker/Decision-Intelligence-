@@ -11,7 +11,11 @@ for _path in (_src_dir, _project_root):
     if _path not in sys.path:
         sys.path.insert(0, _path)
 
-from fastapi import FastAPI, HTTPException, Query, Request
+# Configure structured logging BEFORE any getLogger() calls
+from ml.api.logging_config import configure_logging
+configure_logging()
+
+from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -110,6 +114,13 @@ def _get_governance_store() -> GovernanceStore:
 
 
 def _actor_from_request(request: Request) -> ActorContext:
+    # Prefer JWT claims (set by jwt_auth_middleware) over headers
+    jwt_claims = getattr(request.state, "jwt_claims", None)
+    if jwt_claims and jwt_claims.sub:
+        return ActorContext(
+            actor_id=jwt_claims.sub,
+            role=normalize_role(jwt_claims.role),
+        )
     actor_id = (
         request.headers.get("x-actor-id")
         or request.headers.get("x-user-id")
@@ -182,8 +193,21 @@ app.add_middleware(
 app.include_router(excel_export_router)
 app.include_router(registry_router)
 
+# Health endpoints (liveness + readiness probes)
+from ml.api.observability import health_router, request_id_middleware as _request_id_mw
+app.include_router(health_router)
 
-# Phase 4.7: X-Tenant-ID header extraction middleware
+# Prometheus metrics (optional — installed via prometheus-fastapi-instrumentator)
+try:
+    from prometheus_fastapi_instrumentator import Instrumentator
+    Instrumentator().instrument(app).expose(app, endpoint="/metrics")
+except ImportError:
+    pass  # prometheus-fastapi-instrumentator not installed — skip
+
+# ── Middleware Stack (LIFO: last registered = first to run) ──
+# Execution order: request_id → JWT → rate_limit → tenant_id → CORS
+
+# 5. Tenant ID extraction (registered first, runs last among custom middleware)
 @app.middleware("http")
 async def tenant_id_middleware(request: Request, call_next):
     """Extract X-Tenant-ID header and attach to request state."""
@@ -196,6 +220,94 @@ async def tenant_id_middleware(request: Request, call_next):
 def _tenant_id_from_request(request: Request) -> str:
     """Get tenant_id from request state (set by middleware)."""
     return getattr(request.state, "tenant_id", "") or ""
+
+
+# 4. Rate Limiting (Redis-backed with in-process fallback)
+from ml.api.rate_limiter import RateLimiter
+_RATE_LIMIT_ENABLED = os.getenv("DI_RATE_LIMIT_ENABLED", "true").lower() == "true"
+_rate_limiter = RateLimiter.from_env()
+
+
+@app.middleware("http")
+async def rate_limit_middleware(request: Request, call_next):
+    """Rate limiter for heavy endpoints. Uses Redis if available, else in-process."""
+    if not _RATE_LIMIT_ENABLED:
+        return await call_next(request)
+
+    # Only rate-limit heavy endpoints
+    path = request.url.path
+    _heavy_paths = {"/demand-forecast", "/replenishment-plan", "/train-model", "/backtest"}
+    if path not in _heavy_paths:
+        return await call_next(request)
+
+    # Use JWT user or IP as rate limit key
+    jwt_claims = getattr(request.state, "jwt_claims", None)
+    if jwt_claims and jwt_claims.sub:
+        key = f"user:{jwt_claims.sub}"
+    else:
+        key = f"ip:{request.client.host if request.client else 'unknown'}"
+
+    if not await _rate_limiter.is_allowed(key):
+        return JSONResponse(
+            status_code=429,
+            content={"error": "Rate limit exceeded. Please retry after 60 seconds."},
+        )
+
+    return await call_next(request)
+
+
+# 3. JWT Authentication
+from ml.api.jwt_auth import configure_jwt, jwt_auth_middleware as _jwt_auth_mw
+configure_jwt()
+
+
+@app.middleware("http")
+async def jwt_middleware(request: Request, call_next):
+    return await _jwt_auth_mw(request, call_next)
+
+
+# 2. Request ID + Structured Logging context (registered last, runs first)
+@app.middleware("http")
+async def request_id_mw(request: Request, call_next):
+    return await _request_id_mw(request, call_next)
+
+
+@app.on_event("shutdown")
+async def _shutdown_rate_limiter():
+    await _rate_limiter.close()
+
+
+# ── Solver Concurrency Guard ──
+_SOLVER_MAX_CONCURRENT = int(os.getenv("DI_SOLVER_MAX_CONCURRENT", "3"))
+_solver_semaphore = asyncio.Semaphore(_SOLVER_MAX_CONCURRENT)
+
+
+async def acquire_solver_slot(timeout: float = 30.0) -> bool:
+    """Try to acquire a solver slot within timeout. Returns True if acquired."""
+    try:
+        return await asyncio.wait_for(_solver_semaphore.acquire(), timeout=timeout)
+    except asyncio.TimeoutError:
+        return False
+
+
+def release_solver_slot():
+    """Release a solver slot."""
+    _solver_semaphore.release()
+
+
+def _require_tenant_id(request: Request) -> str:
+    """
+    Enforce tenant_id on multi-tenant endpoints.
+    Returns tenant_id or raises 400 if missing and enforcement is enabled.
+    """
+    tenant_id = _tenant_id_from_request(request)
+    enforce = os.getenv("DI_ENFORCE_TENANT_ID", "false").lower() == "true"
+    if enforce and not tenant_id:
+        raise HTTPException(
+            status_code=400,
+            detail="X-Tenant-ID header is required for this endpoint.",
+        )
+    return tenant_id
 
 
 @app.exception_handler(Exception)
@@ -481,12 +593,15 @@ async def stream_job_events(
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 @app.post("/demand-forecast")
-async def demand_forecast(request: ForecastRequest):
+async def demand_forecast(request: ForecastRequest, raw_request: Request = None):
     """
     双模型需求预测端点
     :param request: 预测请求参数
     :return: 预测结果
     """
+    # Tenant enforcement: extract tenant_id for downstream filtering
+    if raw_request:
+        _require_tenant_id(raw_request)
     try:
         # Phase 1 – P1.5: Import boundary gate (schema validation)
         from ml.demand_forecasting.dataset_schema import validate_forecast_payload
@@ -1464,11 +1579,29 @@ def _deterministic_replenishment_plan(payload: ReplenishmentPlanRequest) -> Dict
     return response
 
 @app.post("/replenishment-plan")
-async def replenishment_plan(request: ReplenishmentPlanRequest):
+async def replenishment_plan(request: ReplenishmentPlanRequest, raw_request: Request = None):
     """
     Deterministic replenishment planner (heuristic baseline).
     Returns a stable response schema for chat workflow integration.
     """
+    # Tenant enforcement
+    if raw_request:
+        _require_tenant_id(raw_request)
+
+    # Concurrency guard: limit simultaneous solver requests
+    acquired = await acquire_solver_slot(timeout=30.0)
+    if not acquired:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Server busy: {_SOLVER_MAX_CONCURRENT} concurrent solver requests already running. Please retry.",
+        )
+    try:
+        return await _replenishment_plan_inner(request)
+    finally:
+        release_solver_slot()
+
+
+async def _replenishment_plan_inner(request: ReplenishmentPlanRequest):
     telemetry_run_id: Optional[str] = None
     planning_payload: Dict[str, Any] = {}
     try:

@@ -6,10 +6,16 @@ import { AppProvider } from './contexts/AppContext'
 import { AuthProvider } from './contexts/AuthContext'
 import { router } from './router'
 import './index.css'
+import './i18n'
 import { warmupEdgeFunction } from './services/aiProxyService'
+import { setInferenceFn } from './config/headerSynonyms'
+import { inferFieldFromValues } from './utils/fieldPatternInference'
 
 // Wake up Edge Function early so the first AI call doesn't pay cold-start cost
 warmupEdgeFunction();
+
+// Wire up pattern inference for header synonyms (avoids circular import)
+setInferenceFn(inferFieldFromValues);
 
 const sentryDsn = import.meta.env.VITE_SENTRY_DSN;
 if (sentryDsn) {

@@ -6,14 +6,26 @@
 import UPLOAD_SCHEMAS from './uploadSchemas';
 
 /**
- * Check required fields mapping status
- * @param {object} params
- * @param {string} params.uploadType - Upload type
- * @param {Array<string>} params.columns - Original column names
- * @param {object} params.columnMapping - Column mapping { source: target }
- * @returns {object} { missingRequired: string[], isComplete: boolean, coverage: number, mappedRequired: string[] }
+ * Confidence thresholds for field mapping decisions.
  */
-export function getRequiredMappingStatus({ uploadType, columns, columnMapping }) {
+export const CONFIDENCE_THRESHOLDS = {
+  AUTO_ACCEPT: 0.85,   // Auto-accept mapping
+  NEEDS_REVIEW: 0.60,  // Show in review UI, ask user to confirm
+  UNMAPPED: 0.60,      // Below this → treat as unmapped
+};
+
+/**
+ * Check required fields mapping status with per-field confidence scoring.
+ *
+ * @param {object} params
+ * @param {string}        params.uploadType      - Upload type
+ * @param {Array<string>} params.columns         - Original column names
+ * @param {object}        params.columnMapping   - Column mapping { source: target }
+ * @param {object}        [params.mappingMeta]   - Optional per-source confidence metadata
+ *   { [sourceColumn]: { confidence: number, matchType: 'exact'|'synonym'|'inference' } }
+ * @returns {object}
+ */
+export function getRequiredMappingStatus({ uploadType, columns, columnMapping, mappingMeta }) {
   // Get schema
   const schema = UPLOAD_SCHEMAS[uploadType];
   if (!schema) {
@@ -22,7 +34,10 @@ export function getRequiredMappingStatus({ uploadType, columns, columnMapping })
       missingRequired: [],
       isComplete: false,
       coverage: 0,
-      mappedRequired: []
+      mappedRequired: [],
+      fieldConfidence: {},
+      overallConfidence: 0,
+      reviewRequired: false,
     };
   }
 
@@ -32,29 +47,69 @@ export function getRequiredMappingStatus({ uploadType, columns, columnMapping })
     .map(f => f.key);
 
   if (requiredFields.length === 0) {
-    // No required fields, consider complete
     return {
       missingRequired: [],
       isComplete: true,
       coverage: 1.0,
-      mappedRequired: []
+      mappedRequired: [],
+      fieldConfidence: {},
+      overallConfidence: 1.0,
+      reviewRequired: false,
     };
+  }
+
+  // Build reverse mapping: target → source
+  const targetToSource = {};
+  for (const [source, target] of Object.entries(columnMapping || {})) {
+    if (target) targetToSource[target] = source;
   }
 
   // Check which required fields have been mapped
   const mappedTargets = new Set(Object.values(columnMapping || {}));
-  
   const mappedRequired = requiredFields.filter(rf => mappedTargets.has(rf));
   const missingRequired = requiredFields.filter(rf => !mappedTargets.has(rf));
 
   const coverage = mappedRequired.length / requiredFields.length;
   const isComplete = coverage >= 1.0;
 
+  // Build per-field confidence
+  const fieldConfidence = {};
+  let confidenceSum = 0;
+  let confidenceCount = 0;
+  let needsReview = false;
+
+  for (const [source, target] of Object.entries(columnMapping || {})) {
+    if (!target) continue;
+
+    const meta = (mappingMeta || {})[source];
+    const confidence = meta?.confidence ?? 1.0; // Default to 1.0 if no meta (legacy mappings)
+    const matchType = meta?.matchType ?? 'exact';
+    const fieldNeedsReview = confidence < CONFIDENCE_THRESHOLDS.AUTO_ACCEPT;
+
+    fieldConfidence[target] = {
+      source,
+      confidence,
+      matchType,
+      needsReview: fieldNeedsReview,
+    };
+
+    confidenceSum += confidence;
+    confidenceCount++;
+    if (fieldNeedsReview) needsReview = true;
+  }
+
+  const overallConfidence = confidenceCount > 0
+    ? Math.round((confidenceSum / confidenceCount) * 100) / 100
+    : 0;
+
   return {
     missingRequired,
     isComplete,
     coverage,
-    mappedRequired
+    mappedRequired,
+    fieldConfidence,
+    overallConfidence,
+    reviewRequired: needsReview,
   };
 }
 

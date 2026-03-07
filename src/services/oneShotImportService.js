@@ -24,6 +24,7 @@ import {
 import { autoFillRows, validateRequiredFields } from '../utils/dataAutoFill';
 import { getRequiredMappingStatus } from '../utils/requiredMappingStatus';
 import { suggestMappingWithLLM } from './oneShotAiSuggestService';
+import { findMappingProfile, generateHeaderFingerprint } from './mappingProfileService';
 
 /**
  * Wrap a promise with a timeout. Returns fallbackValue on timeout if provided.
@@ -103,25 +104,34 @@ export function generateSheetPlans(workbook, fileName = 'unknown', fileSize = 0,
       };
       let initialMapping = {};
       
+      // Per-field confidence metadata for mapping review
+      let mappingMeta = {};
+
       if (uploadType && UPLOAD_SCHEMAS[uploadType]) {
         const schema = UPLOAD_SCHEMAS[uploadType];
-        
+
         // Use rule-based mapping to calculate initial coverage
         const ruleMappings = ruleBasedMapping(headers, uploadType, schema.fields);
         initialMapping = {};
         ruleMappings.forEach(m => {
           if (m.target && m.confidence >= 0.7) {
             initialMapping[m.source] = m.target;
+            // Capture per-field confidence metadata
+            mappingMeta[m.source] = {
+              confidence: m.confidence,
+              matchType: m.confidence >= 1.0 ? 'exact' : (m.confidence >= 0.8 ? 'synonym' : 'inference'),
+            };
           }
         });
-        
-        // Calculate mapping status
+
+        // Calculate mapping status with confidence metadata
         mappingStatus = getRequiredMappingStatus({
           uploadType,
           columns: headers,
-          columnMapping: initialMapping
+          columnMapping: initialMapping,
+          mappingMeta,
         });
-        
+
         console.log(`[generateSheetPlans] ${sheetName} (${uploadType}): coverage=${Math.round(mappingStatus.coverage * 100)}%, missing=[${mappingStatus.missingRequired.join(', ')}], typeConfidence=${Math.round(classification.confidence * 100)}%`);
       }
       
@@ -150,12 +160,15 @@ export function generateSheetPlans(workbook, fileName = 'unknown', fileSize = 0,
         warningMessage,
         // ✅ Two-step Gate: Write actual mapping state (mappingDraft uses rule-based result, consistent with coverage/isComplete)
         headers: Object.keys(sheetData[0] || {}),
+        sampleRows: sampleRows.slice(0, 5), // First 5 rows for mapping review preview
         mappingDraft: { ...initialMapping },
+        mappingMeta,
         mappingFinal: null,
         mappingConfirmed: false,
         requiredCoverage: mappingStatus.coverage,
         missingRequired: mappingStatus.missingRequired,
-        isComplete: mappingStatus.isComplete
+        isComplete: mappingStatus.isComplete,
+        reviewRequired: mappingStatus.reviewRequired || false,
       };
       sendAgentLog({location:'oneShotImportService.js:generateSheetPlans',message:'[generateSheetPlans] Plan pushed',data:{sheetName,uploadType:classification.suggestedType,isComplete:mappingStatus.isComplete,requiredCoverage:mappingStatus.coverage,missingRequired:mappingStatus.missingRequired,mappingDraftKeys:Object.keys(initialMapping)},sessionId:'debug-session',hypothesisId:'H1'});
       plans.push(planPayload);

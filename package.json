@@ -20,7 +20,8 @@
     "test:solver-regression": "./venv312/bin/python -m pytest -q tests/regression",
     "test:phase4-guardrails": "python3 -m pytest -q tests/test_action_guardrails.py tests/test_registry_router_guardrails.py tests/test_retrain_triggers.py tests/test_model_lifecycle_registry.py tests/test_promotion_gates.py",
     "lint:fix": "eslint . --fix",
-    "ci": "npm run lint && npm run test:run && npm run build"
+    "ci": "npm run lint && npm run test:run && npm run build",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@sentry/react": "^10.42.0",
@@ -35,6 +36,8 @@
     "react-router-dom": "^6.22.3",
     "reactflow": "^11.11.4",
     "recharts": "^3.7.0",
+    "i18next": "^24.2.0",
+    "react-i18next": "^15.4.0",
     "remark-gfm": "^4.0.1",
     "xlsx": "^0.18.5"
   },
@@ -59,6 +62,7 @@
     "tailwindcss": "^4.1.17",
     "typescript": "^5.9.3",
     "vite": "^7.2.4",
-    "vitest": "^4.0.18"
+    "vitest": "^4.0.18",
+    "@playwright/test": "^1.50.0"
   }
 }

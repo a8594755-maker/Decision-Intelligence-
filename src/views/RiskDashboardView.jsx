@@ -43,6 +43,9 @@ import RiskDetailModal from '../components/risk/RiskDetailModal';
 // Data transformation Adapter (new version)
 import { mapSupplyCoverageToUI } from '../components/risk/mapDomainToUI';
 
+// Sample data loading
+import { loadSampleWorkbook } from '../services/sampleDataService';
+
 // PO normalization, component_demand aggregation
 import { normalizeOpenPOBatch } from '../utils/poNormalizer';
 import { aggregateComponentDemandToDaily, normalizeKey } from '../utils/componentDemandAggregator';
@@ -125,14 +128,13 @@ const RiskDashboardView = ({ addNotification, user, setView, globalDataSource, s
   const [selectedAuditEvent, setSelectedAuditEvent] = useState(null);
   const [replayDraft, setReplayDraft] = useState(null); // For What-if replay
 
-  // M8: View Mode State (Grid/List) - Reserved for future use
+  // M8: View Mode State (Table/Grid/List)
   const [viewMode, setViewMode] = useState(() => {
-    // Load from localStorage on init
     if (typeof window !== 'undefined') {
       const saved = localStorage.getItem('riskDashboardView');
-      return saved === 'list' ? 'list' : 'grid';
+      if (['table', 'grid', 'list'].includes(saved)) return saved;
     }
-    return 'grid';
+    return 'table';
   });
 
   // ========== Data Loading ==========
@@ -552,7 +554,6 @@ const RiskDashboardView = ({ addNotification, user, setView, globalDataSource, s
       warningCount,
       shortageWithinHorizon,
       totalItems: filteredRows.length,
-      profitAtRisk: 0 // TODO: Week 2
     };
   }, [filteredRows]);
 
@@ -579,7 +580,75 @@ const RiskDashboardView = ({ addNotification, user, setView, globalDataSource, s
   };
 
   const handleExport = () => {
-    addNotification('Export feature in development (Week 2)', 'info');
+    if (filteredRows.length === 0) return;
+    try {
+      const headers = ['Material', 'Plant', 'Risk Level', 'Gap Qty', 'Days to Stockout', 'P(Stockout)', 'Next Bucket', 'Profit at Risk', 'Currency', 'Data Quality'];
+      const csvRows = filteredRows.map(r => [
+        r.item, r.plantId, r.riskLevel, r.gapQty ?? 0,
+        r.daysToStockout === Infinity ? '' : (r.daysToStockout ?? ''),
+        r.pStockout != null ? (r.pStockout * 100).toFixed(1) + '%' : '',
+        r.nextTimeBucket || '', r.profitAtRisk ?? 0, r.currency || 'USD',
+        r.dataQualityLevel || 'missing'
+      ]);
+      const escape = v => { const s = String(v ?? ''); return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g, '""')}"` : s; };
+      const csv = [headers.map(escape).join(','), ...csvRows.map(row => row.map(escape).join(','))].join('\n');
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `risk_export_${new Date().toISOString().slice(0, 10)}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+      addNotification(`Exported ${filteredRows.length} rows to CSV`, 'success');
+    } catch (e) {
+      addNotification('Export failed: ' + e.message, 'error');
+    }
+  };
+
+  const handleExportExcel = async () => {
+    if (filteredRows.length === 0) return;
+    try {
+      const XLSX = (await import('xlsx')).default || (await import('xlsx'));
+      const wb = XLSX.utils.book_new();
+      // Sheet 1: Risk Items
+      const riskRows = filteredRows.map(r => ({
+        Material: r.item, Plant: r.plantId, Risk_Level: r.riskLevel,
+        Net_Available: r.netAvailable ?? 0, Gap_Qty: r.gapQty ?? 0,
+        Days_To_Stockout: r.daysToStockout === Infinity ? null : (r.daysToStockout ?? null),
+        P_Stockout: r.pStockout != null ? +(r.pStockout * 100).toFixed(1) : null,
+        Next_Bucket: r.nextTimeBucket || '', Profit_At_Risk: r.profitAtRisk ?? 0,
+        Currency: r.currency || 'USD', Data_Quality: r.dataQualityLevel || 'missing'
+      }));
+      const ws1 = XLSX.utils.json_to_sheet(riskRows);
+      XLSX.utils.book_append_sheet(wb, ws1, 'Risk_Items');
+      // Sheet 2: KPI Summary
+      const kpiPairs = [
+        ['Total Items', filteredRows.length],
+        ['Critical', filteredRows.filter(r => r.riskLevel === 'critical').length],
+        ['Warning', filteredRows.filter(r => r.riskLevel === 'warning').length],
+        ['Total Profit at Risk', profitSummary.totalProfitAtRisk ?? 0],
+        ['Critical Profit at Risk', profitSummary.criticalProfitAtRisk ?? 0],
+        ['Items with Real Financials', profitSummary.itemsWithRealFinancials ?? 0],
+        ['Items with Assumptions', profitSummary.itemsWithAssumption ?? 0],
+        ['Data Snapshot', dataSnapshotTime || 'N/A'],
+        ['Export Date', new Date().toISOString()],
+      ];
+      const ws2 = XLSX.utils.aoa_to_sheet([['Key', 'Value'], ...kpiPairs]);
+      ws2['!cols'] = [{ wch: 28 }, { wch: 40 }];
+      XLSX.utils.book_append_sheet(wb, ws2, 'KPI_Summary');
+      // Download
+      const buf = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+      const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `risk_export_${new Date().toISOString().slice(0, 10)}.xlsx`;
+      a.click();
+      URL.revokeObjectURL(url);
+      addNotification(`Exported ${filteredRows.length} rows to Excel`, 'success');
+    } catch (e) {
+      addNotification('Excel export failed: ' + e.message, 'error');
+    }
   };
 
   const handleRetry = () => {
@@ -935,12 +1004,29 @@ const RiskDashboardView = ({ addNotification, user, setView, globalDataSource, s
               Retry
             </Button>
             {error.type === 'empty' && (
-              <Button 
-                onClick={() => setView?.('external')} 
-                variant="secondary"
-              >
-                Go to Upload
-              </Button>
+              <>
+                <Button
+                  onClick={() => setView?.('external')}
+                  variant="secondary"
+                >
+                  Go to Upload
+                </Button>
+                <Button
+                  onClick={async () => {
+                    try {
+                      const { workbook: wb, fileName } = await loadSampleWorkbook();
+                      addNotification?.(`Sample data "${fileName}" loaded — go to Upload to import`, 'success');
+                      setView?.('external');
+                    } catch (e) {
+                      addNotification?.(`Failed to load sample: ${e.message}`, 'error');
+                    }
+                  }}
+                  variant="secondary"
+                  icon={Database}
+                >
+                  Load Sample Data
+                </Button>
+              </>
             )}
           </div>
         </div>
@@ -1100,7 +1186,8 @@ const RiskDashboardView = ({ addNotification, user, setView, globalDataSource, s
           selectedRiskLevel={selectedRiskLevel}
           onRiskLevelChange={setSelectedRiskLevel}
           onExport={handleExport}
-          exportDisabled={true}
+          onExportExcel={handleExportExcel}
+          exportDisabled={filteredRows.length === 0}
           onClearFilters={handleClearFilters}
         />
 
@@ -1114,6 +1201,9 @@ const RiskDashboardView = ({ addNotification, user, setView, globalDataSource, s
           totalItems={kpis.totalItems}
           dataSnapshotTime={dataSnapshotTime}
           horizonDays={HORIZON_BUCKETS}
+          itemsWithRealFinancials={profitSummary.itemsWithRealFinancials || 0}
+          itemsWithAssumption={profitSummary.itemsWithAssumption || 0}
+          usingFallback={profitSummary.usingFallback}
         />
       </div>
 
@@ -1124,19 +1214,40 @@ const RiskDashboardView = ({ addNotification, user, setView, globalDataSource, s
             <h2 className="font-semibold text-lg text-slate-900 dark:text-slate-100">
               Risk List
             </h2>
-            <span className="text-sm text-slate-500 dark:text-slate-400">
-              {filteredRows.length} items
-            </span>
+            <div className="flex items-center gap-3">
+              <span className="text-sm text-slate-500 dark:text-slate-400">
+                {filteredRows.length} items
+              </span>
+              <ViewToggle viewMode={viewMode} onViewChange={handleViewModeChange} />
+            </div>
           </div>
-          <div className="overflow-x-auto">
-            <RiskTable 
-              risks={filteredRows}
-              selectedRowId={selectedRow?.id}
-              onRowSelect={handleRowSelect}
-              loading={loading}
-              probResults={probResults}
-              compactMode={false}
-            />
+          <div className={viewMode === 'table' ? 'overflow-x-auto' : 'p-4'}>
+            {viewMode === 'table' && (
+              <RiskTable
+                risks={filteredRows}
+                selectedRowId={selectedRow?.id}
+                onRowSelect={handleRowSelect}
+                loading={loading}
+                probResults={probResults}
+                compactMode={false}
+              />
+            )}
+            {viewMode === 'grid' && (
+              <RiskCardGrid
+                risks={filteredRows}
+                selectedRowId={selectedRow?.id}
+                onRowSelect={handleRowSelect}
+                loading={loading}
+              />
+            )}
+            {viewMode === 'list' && (
+              <RiskListView
+                risks={filteredRows}
+                selectedRowId={selectedRow?.id}
+                onRowSelect={handleRowSelect}
+                loading={loading}
+              />
+            )}
           </div>
         </div>
       </div>

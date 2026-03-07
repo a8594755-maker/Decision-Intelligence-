@@ -1650,6 +1650,18 @@ def solve_replenishment(
         closed_loop_patch.get("safety_stock_by_key")
     )
 
+    # Profit at Risk: per-SKU profit_per_unit as dynamic stockout penalty weight
+    _par_map_raw = _read_path(payload, "objective.profit_per_unit_by_sku", None)
+    if _par_map_raw is None:
+        _par_map_raw = _read_path(payload, "settings.profit_per_unit_by_sku", None)
+    profit_per_unit_by_sku: Dict[str, float] = {}
+    if isinstance(_par_map_raw, dict):
+        profit_per_unit_by_sku = {
+            str(k): max(0.0, _to_float(v, 0.0))
+            for k, v in _par_map_raw.items()
+            if _to_float(v, 0.0) > 0
+        }
+
     coeff_order = OBJ_SCALE
     coeff_stockout = int(round(stockout_penalty * OBJ_SCALE))
     coeff_holding = int(round(holding_cost * OBJ_SCALE))
@@ -2033,7 +2045,13 @@ def solve_replenishment(
             k_vars = [model.NewIntVar(0, int(max_k), f"k_{var_tag}_{t}") for t in range(T)]
 
         tie_rank = len(ordered_keys) - key_idx
-        back_coeff = max(1, coeff_stockout * max(1, int(round(sku_priority * 100))) + tie_rank)
+        # Profit at Risk: boost stockout penalty by profit_per_unit for high-margin SKUs
+        _par_mult = 1.0
+        if profit_per_unit_by_sku:
+            _par_value = profit_per_unit_by_sku.get(sku, 0.0)
+            if _par_value > 0:
+                _par_mult = 1.0 + min(5.0, _par_value / max(sku_unit_cost / OBJ_SCALE, 0.01))
+        back_coeff = max(1, int(round(coeff_stockout * max(1, int(round(sku_priority * 100))) * _par_mult)) + tie_rank)
         # Risk-driven expedite: apply cost premium to unit cost in objective
         effective_unit_cost = sku_unit_cost
         if is_expedited and expedite_cost_mult > 1.0:

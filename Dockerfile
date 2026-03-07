@@ -46,8 +46,8 @@ ENV PYTHONUNBUFFERED=1 \
 
 EXPOSE 8000
 
-# 健康檢查
+# 健康檢查（use /health/live for liveness probe）
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD ["sh", "-c", "python -c \"import os,urllib.request;urllib.request.urlopen('http://localhost:%s/health'%os.environ.get('PORT','8000'),timeout=5)\" || exit 1"]
+    CMD ["sh", "-c", "python -c \"import os,urllib.request;urllib.request.urlopen('http://localhost:%s/health/live'%os.environ.get('PORT','8000'),timeout=5)\" || exit 1"]
 
-CMD ["sh", "-c", "python -m uvicorn ml.api.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers ${WEB_CONCURRENCY:-2} --timeout-keep-alive 30"]
+CMD ["sh", "-c", "gunicorn ml.api.main:app --worker-class uvicorn.workers.UvicornWorker --bind 0.0.0.0:${PORT:-8000} --workers ${WEB_CONCURRENCY:-2} --timeout 120 --keep-alive 30"]

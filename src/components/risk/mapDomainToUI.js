@@ -289,6 +289,9 @@ export const mapSupplyCoverageToUI = (domainResult, warnings = []) => {
     // A2: Lead time source (Explainability)
     leadTimeDaysUsed: leadTimeDaysUsed,
     leadTimeDaysSource: leadTimeDaysSource || 'fallback',
+
+    // Data quality level (verified / partial / estimated / missing)
+    dataQualityLevel: domainResult.dataQualityLevel || 'missing',
     
     // Warning info
     _warnings: warnings.length > 0 ? warnings : undefined,

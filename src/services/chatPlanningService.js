@@ -23,6 +23,7 @@ import {
   buildPlanComparison
 } from './riskAdjustmentsService';
 import { applyScenarioOverridesToPayload } from '../utils/applyScenarioOverrides';
+import { createFallbackAudit } from '../config/fallbackPolicies';
 
 const MAX_PLAN_ROWS_IN_CARD = 50;
 const MAX_PLAN_ROWS_IN_ARTIFACT = 2000;
@@ -1584,6 +1585,8 @@ export async function runPlanFromDatasetProfile({
       ]);
     }
 
+    const fallbackAudit = createFallbackAudit();
+
     const openPoDataset = chooseDatasetByType(contractJson, 'po_open_lines');
     const openPoResult = openPoDataset
       ? mapOpenPoRows({
@@ -1592,6 +1595,15 @@ export async function runPlanFromDatasetProfile({
           mapping: normalizeTargetMapping(openPoDataset.mapping || {})
         })
       : { rows: [], dropped: 0 };
+
+    if (!openPoDataset) {
+      fallbackAudit.addDatasetFallback('open_pos');
+    }
+
+    const financialsDataset = chooseDatasetByType(contractJson, 'fg_financials');
+    if (!financialsDataset) {
+      fallbackAudit.addDatasetFallback('financials');
+    }
 
     const missingLeadRows = inventoryResult.rows.filter((row) => row.lead_time_days === null || row.lead_time_days === undefined);
     const missingSafetyRows = inventoryResult.rows.filter((row) => row.safety_stock === null || row.safety_stock === undefined);
@@ -1607,15 +1619,15 @@ export async function runPlanFromDatasetProfile({
       throw createBlockingError('Critical planning fields are missing (lead_time_days or safety_stock).', questions);
     }
 
-    const inventoryRowsForPlanning = inventoryResult.rows.map((row) => ({
-      ...row,
-      lead_time_days: row.lead_time_days === null || row.lead_time_days === undefined
-        ? DEFAULT_LEAD_TIME_DAYS
-        : row.lead_time_days,
-      safety_stock: row.safety_stock === null || row.safety_stock === undefined
-        ? DEFAULT_SAFETY_STOCK
-        : row.safety_stock
-    }));
+    const inventoryRowsForPlanning = inventoryResult.rows.map((row) => {
+      const lt = fallbackAudit.apply('lead_time_days', row.lead_time_days);
+      const ss = fallbackAudit.apply('safety_stock', row.safety_stock);
+      return {
+        ...row,
+        lead_time_days: lt.value,
+        safety_stock: ss.value,
+      };
+    });
 
     const demandForecastSeries = toForecastDemandSeries(forecastArtifact);
     if (demandForecastSeries.length === 0) {
@@ -1647,6 +1659,10 @@ export async function runPlanFromDatasetProfile({
     const bomMapping = normalizeTargetMapping(bomDataset?.mapping || {});
     const bomRequiredMappingMissing = ['parent_material', 'child_material', 'qty_per']
       .filter((field) => !bomMapping[field]);
+
+    if (!bomDataset || bomRequiredMappingMissing.length > 0) {
+      fallbackAudit.addDatasetFallback('bom_edge');
+    }
 
     const bomEdgeResult = (bomDataset && bomRequiredMappingMissing.length === 0)
       ? mapBomEdgeRows({
@@ -1898,6 +1914,31 @@ export async function runPlanFromDatasetProfile({
       constraints
     });
 
+    // Collect fallback audit and build data quality metadata
+    const audit = fallbackAudit.getAudit();
+    const availableDatasets = ['demand_fg', 'inventory_snapshots'];
+    const missingDatasets = [];
+    if (openPoDataset) availableDatasets.push('po_open_lines');
+    else missingDatasets.push('po_open_lines');
+    if (financialsDataset) availableDatasets.push('fg_financials');
+    else missingDatasets.push('fg_financials');
+    if (bomDataset && bomRequiredMappingMissing.length === 0) availableDatasets.push('bom_edge');
+    else missingDatasets.push('bom_edge');
+
+    const dataQuality = {
+      coverage_level: missingDatasets.length === 0 ? 'full' : (missingDatasets.length <= 2 ? 'partial' : 'minimal'),
+      available_datasets: availableDatasets,
+      missing_datasets: missingDatasets,
+      fallbacks_used: audit.fieldFallbacks,
+      dataset_fallbacks: audit.datasetFallbacks,
+      row_stats: {
+        total: inventoryResult.rows.length,
+        clean: inventoryResult.rows.length - audit.summary.totalFieldFallbacks,
+        with_fallback: audit.summary.totalFieldFallbacks > 0 ? inventoryResult.rows.length : 0,
+        dropped: inventoryResult.dropped || 0,
+      },
+    };
+
     const solverMetaArtifact = {
       status: solverResult?.status || 'unknown',
       kpis: solverResult?.kpis || {},
@@ -1914,6 +1955,7 @@ export async function runPlanFromDatasetProfile({
         warnings: multiEchelonDiagnostics.warnings,
         component_plan_fallback_used: Boolean(fallbackComponentContext && directComponentPlan.length === 0)
       },
+      data_quality: dataQuality,
       proof: mergedProof,
       infeasible_reasons: Array.isArray(solverResult?.infeasible_reasons)
         ? solverResult.infeasible_reasons

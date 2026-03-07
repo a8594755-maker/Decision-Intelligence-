@@ -5,7 +5,7 @@
  */
 
 import React from 'react';
-import { Filter, Search, Download, X } from 'lucide-react';
+import { Filter, Search, Download, FileSpreadsheet, X } from 'lucide-react';
 import { Button } from '../ui';
 
 const FilterBar = ({
@@ -13,19 +13,20 @@ const FilterBar = ({
   plants = [],
   selectedPlant,
   onPlantChange,
-  
+
   // Material search
   searchTerm,
   onSearchChange,
-  
+
   // Risk level filter
   selectedRiskLevel,
   onRiskLevelChange,
-  
+
   // Export
   onExport,
+  onExportExcel,
   exportDisabled = true,
-  
+
   // Clear filters
   onClearFilters
 }) => {
@@ -102,10 +103,23 @@ const FilterBar = ({
             variant="secondary"
             icon={Download}
             disabled={exportDisabled}
-            title={exportDisabled ? 'Export feature in development' : 'Export to CSV'}
+            title={exportDisabled ? 'No data to export' : 'Export to CSV'}
           >
-            Export
+            CSV
           </Button>
+
+          {/* Export Excel */}
+          {onExportExcel && (
+            <Button
+              onClick={onExportExcel}
+              variant="secondary"
+              icon={FileSpreadsheet}
+              disabled={exportDisabled}
+              title={exportDisabled ? 'No data to export' : 'Export to Excel'}
+            >
+              Excel
+            </Button>
+          )}
         </div>
       </div>
     </div>

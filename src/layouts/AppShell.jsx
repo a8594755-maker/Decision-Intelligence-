@@ -4,6 +4,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useApp } from '../contexts/AppContext';
 import Sidebar from '../components/nav/TopNavBar';
 import ErrorBoundary from '../components/ErrorBoundary';
+import NetworkStatusBanner from '../components/NetworkStatusBanner';
 
 export default function AppShell() {
   const { session, loading, notifications } = useAuth();
@@ -54,9 +55,10 @@ export default function AppShell() {
       </div>
 
       <main
-        className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden"
+        className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden flex flex-col"
         style={{ backgroundColor: 'var(--surface-base)' }}
       >
+        <NetworkStatusBanner />
         <ErrorBoundary>
           <Suspense
             fallback={

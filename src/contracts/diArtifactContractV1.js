@@ -32,7 +32,9 @@ const V1_VALIDATORS = {
   proactive_alerts: validateProactiveAlerts,
   risk_delta_summary: validateRiskDeltaSummary,
   // Plan Baseline Comparison (approved plan write-back)
-  plan_baseline_comparison: validatePlanBaselineComparison
+  plan_baseline_comparison: validatePlanBaselineComparison,
+  // Data Quality Report (data resilience architecture)
+  data_quality_report: validateDataQualityReport
 };
 
 const MAX_ISSUES = 50;
@@ -703,6 +705,17 @@ function validatePlanBaselineComparison(payload, issues) {
   if (hasOwn(root, 'skus_added')) requireArrayField(issues, root, 'skus_added', 'payload');
   if (hasOwn(root, 'skus_removed')) requireArrayField(issues, root, 'skus_removed', 'payload');
   if (hasOwn(root, 'qty_changes')) requireArrayField(issues, root, 'qty_changes', 'payload');
+}
+
+function validateDataQualityReport(payload, issues) {
+  const root = ensureObjectPayload(issues, payload);
+  if (!root) return;
+
+  requireStringField(issues, root, 'coverage_level', 'payload');
+  requireArrayField(issues, root, 'available_datasets', 'payload');
+  requireArrayField(issues, root, 'missing_datasets', 'payload');
+  requireArrayField(issues, root, 'fallbacks_used', 'payload');
+  requireArrayField(issues, root, 'dataset_fallbacks', 'payload');
 }
 
 const buildValidationErrorMessage = (artifactType, issues) => {

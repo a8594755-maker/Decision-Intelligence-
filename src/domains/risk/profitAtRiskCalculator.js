@@ -100,13 +100,24 @@ export const calculateProfitAtRiskForRow = (riskRow, financialIndex = {}, useFal
   // 计算 Profit at Risk
   const profitAtRisk = exposureQty * profitPerUnit;
   
+  // Data quality level based on fallback count
+  let fallbackCount = profitAtRiskReason !== 'REAL' ? 1 : 0;
+  if (riskRow.leadTimeDaysSource === 'fallback') fallbackCount++;
+  if ((riskRow.safetyStock || 0) === 0 && riskRow.safetyStockSource !== 'real') fallbackCount++;
+
+  const dataQualityLevel = profitAtRiskReason === 'MISSING' ? 'missing'
+    : fallbackCount === 0 ? 'verified'
+    : fallbackCount === 1 ? 'partial'
+    : 'estimated';
+
   return {
     ...riskRow,
     profitPerUnit,
     currency,
     exposureQty,
     profitAtRisk,
-    profitAtRiskReason
+    profitAtRiskReason,
+    dataQualityLevel
   };
 };
 
@@ -138,7 +149,7 @@ export const calculateProfitAtRiskBatch = ({
     criticalProfitAtRisk: 0,
     warningProfitAtRisk: 0,
     lowProfitAtRisk: 0,
-    itemsWithRealFinancials: Object.keys(financialIndex).size,
+    itemsWithRealFinancials: Object.keys(financialIndex).length,
     itemsWithAssumption: 0,
     itemsWithMissing: 0
   };

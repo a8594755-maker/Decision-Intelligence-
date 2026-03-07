@@ -16,7 +16,10 @@ const KPICards = ({
   criticalProfitAtRisk = 0,
   totalItems = 0,
   dataSnapshotTime = null,
-  horizonDays = 30
+  horizonDays = 30,
+  itemsWithRealFinancials = 0,
+  itemsWithAssumption = 0,
+  usingFallback = false
 }) => {
   const formatTime = (date) => {
     if (!date) return 'Loading...';
@@ -86,6 +89,20 @@ const KPICards = ({
             </div>
             <div className="text-xs text-slate-500 mt-0.5">
               Critical: ${Math.round(criticalProfitAtRisk).toLocaleString()}
+            </div>
+            <div className="text-xs mt-0.5 flex items-center gap-1.5">
+              {usingFallback ? (
+                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
+                  Estimated
+                </span>
+              ) : (
+                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400">
+                  Verified
+                </span>
+              )}
+              <span className="text-slate-400">
+                {itemsWithRealFinancials} real / {itemsWithAssumption} est.
+              </span>
             </div>
           </div>
           <div className="bg-red-100 dark:bg-red-900/30 p-3 rounded-lg">

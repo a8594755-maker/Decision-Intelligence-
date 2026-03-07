@@ -33,6 +33,17 @@ httpx==0.24.1
 # Excel Export
 openpyxl==3.1.2
 
+# Authentication
+PyJWT==2.8.0
+
+# Observability
+python-json-logger==2.0.7
+prometheus-fastapi-instrumentator==6.1.0
+
+# Production deployment
+gunicorn==21.2.0
+redis[hiredis]==5.0.1
+
 # Development & Testing
 pytest==8.0.2
 pytest-asyncio==0.23.5

@@ -247,7 +247,75 @@ def evaluate_retrain_trigger(
     result.blocked_by_dedupe = blocked_by_dedupe
     result.trigger_types = trigger_types
 
+    # Fire webhook alert if trigger conditions are met (even if blocked by cooldown)
+    if reasons:
+        send_webhook_alert(
+            series_id=context.series_id,
+            result=result,
+            alert_type="retrain_trigger",
+            extra={"window_end": context.window_end},
+        )
+
     return result
+
+
+WEBHOOK_URL = os.getenv("DI_ALERT_WEBHOOK_URL", "")
+WEBHOOK_ENABLED = os.getenv("DI_ALERT_WEBHOOK_ENABLED", "false").lower() == "true"
+
+
+def send_webhook_alert(
+    series_id: str,
+    result: "RetainTriggerResult",
+    alert_type: str = "retrain_trigger",
+    extra: Optional[Dict] = None,
+) -> bool:
+    """
+    Send a webhook alert (Slack / Teams / generic) when a retrain trigger fires.
+    Returns True if sent successfully, False otherwise.
+
+    Webhook payload format is compatible with Slack incoming webhooks.
+    Set DI_ALERT_WEBHOOK_URL and DI_ALERT_WEBHOOK_ENABLED=true to activate.
+    """
+    url = WEBHOOK_URL
+    if not url or not WEBHOOK_ENABLED:
+        return False
+
+    try:
+        import urllib.request
+
+        severity_emoji = {"high": "🔴", "medium": "🟡", "low": "🟢"}.get(
+            result.severity, "⚪"
+        )
+        reasons_text = "\n".join(f"• {r}" for r in result.reasons) if result.reasons else "No details"
+
+        payload = {
+            "text": (
+                f"{severity_emoji} *[{alert_type.upper()}]* Series `{series_id}` — severity: {result.severity}\n"
+                f"{reasons_text}\n"
+                f"Triggers: {', '.join(result.trigger_types)}\n"
+                f"Auto-retrain: {'enabled' if result.auto_retrain_enabled else 'disabled'}"
+            ),
+        }
+        if extra:
+            payload["extra"] = extra
+
+        data = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(
+            url,
+            data=data,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            ok = 200 <= resp.status < 300
+            if ok:
+                logger.info("Webhook alert sent for series %s (%s)", series_id, alert_type)
+            else:
+                logger.warning("Webhook returned status %s for series %s", resp.status, series_id)
+            return ok
+    except Exception as exc:
+        logger.warning("Webhook alert failed for series %s: %s", series_id, exc)
+        return False
 
 
 class RetainTriggerStore:

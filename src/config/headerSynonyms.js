@@ -5,6 +5,17 @@
  * TODO: 未來可改為從資料庫載入，允許使用者自訂 synonyms
  */
 
+// Lazy reference to inferFieldFromValues — set via setInferenceFn() to avoid circular imports
+let _inferFn = null;
+
+/**
+ * Register the pattern inference function. Called once at app startup.
+ * @param {Function} fn – inferFieldFromValues from fieldPatternInference.js
+ */
+export function setInferenceFn(fn) {
+  _inferFn = fn;
+}
+
 export const HEADER_SYNONYMS = {
   // Material / Part Number
   'material_code': ['part_no', 'part_number', 'item', 'item_code', 'item_id', 'part', 'sku', 'sku_id', 'product_code', 'product_id', 'article', 'pn', 'material_no'],
@@ -161,8 +172,89 @@ export function getSynonymsFor(canonicalField) {
 }
 
 /**
+ * Map a raw header to a canonical field name with confidence scoring.
+ * Chains: exact match → synonym match → value-based pattern inference.
+ *
+ * @param {string}   rawHeader       – Raw header from Excel
+ * @param {any[]}    [sampleValues]  – Sample values from the column (for inference)
+ * @param {string[]} [candidateFields] – Canonical fields still unmapped (narrows inference)
+ * @returns {{ canonical: string|null, confidence: number, matchType: 'exact'|'synonym'|'inference'|'none' }}
+ */
+export function mapHeaderWithInference(rawHeader, sampleValues = [], candidateFields = []) {
+  const normalized = normalizeHeader(rawHeader);
+
+  // Layer 1: exact canonical match
+  if (normalized in HEADER_SYNONYMS) {
+    return { canonical: normalized, confidence: 1.0, matchType: 'exact' };
+  }
+
+  // Layer 2: synonym dictionary match
+  for (const [canonical, synonyms] of Object.entries(HEADER_SYNONYMS)) {
+    const normalizedSynonyms = synonyms.map(s => normalizeHeader(s));
+    if (normalizedSynonyms.includes(normalized)) {
+      return { canonical, confidence: 0.9, matchType: 'synonym' };
+    }
+  }
+
+  // Layer 3: value-based pattern inference
+  // Uses _inferFn which is lazily set via setInferenceFn() to avoid circular deps
+  if (sampleValues && sampleValues.length > 0 && _inferFn) {
+    const inference = _inferFn(sampleValues, candidateFields);
+    if (inference) {
+      return {
+        canonical: inference.field,
+        confidence: inference.confidence,
+        matchType: 'inference',
+      };
+    }
+  }
+
+  return { canonical: null, confidence: 0, matchType: 'none' };
+}
+
+/**
+ * Batch map headers with inference support.
+ * Returns enriched mapping results with confidence for each header.
+ *
+ * @param {string[]}  headers        – Raw headers
+ * @param {object[]}  [sampleRows]   – Sample rows for inference
+ * @returns {Map<string, { canonical: string, confidence: number, matchType: string }>}
+ */
+export function batchMapHeadersWithInference(headers, sampleRows = []) {
+  const mapping = new Map();
+  const alreadyMapped = new Set();
+
+  // First pass: exact + synonym matches (high confidence)
+  for (const header of headers) {
+    const result = mapHeaderWithInference(header);
+    if (result.canonical && !alreadyMapped.has(result.canonical)) {
+      mapping.set(header, result);
+      alreadyMapped.add(result.canonical);
+    }
+  }
+
+  // Second pass: inference for unmapped headers
+  if (sampleRows.length > 0) {
+    const unmapped = headers.filter(h => !mapping.has(h));
+    for (const header of unmapped) {
+      const values = sampleRows.map(row => row[header]).filter(v => v !== undefined && v !== null);
+      const candidates = [...new Set(
+        Object.keys(HEADER_SYNONYMS).filter(f => !alreadyMapped.has(f))
+      )];
+      const result = mapHeaderWithInference(header, values, candidates);
+      if (result.canonical && !alreadyMapped.has(result.canonical)) {
+        mapping.set(header, result);
+        alreadyMapped.add(result.canonical);
+      }
+    }
+  }
+
+  return mapping;
+}
+
+/**
  * TODO: 擴充點 - 允許使用者自訂 synonyms
- * 
+ *
  * 未來可實作：
  * - loadCustomSynonyms(userId): 從 DB 載入使用者自訂 synonyms
  * - saveCustomSynonym(userId, canonical, synonym): 儲存新的 synonym

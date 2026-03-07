@@ -1,9 +1,57 @@
 import React from 'react';
-import { BarChart3 } from 'lucide-react';
+import { BarChart3, AlertTriangle, Info } from 'lucide-react';
 import { Card, Badge } from '../ui';
 
 const formatPct = (value) => (Number.isFinite(value) ? `${(value * 100).toFixed(2)}%` : 'N/A');
 const formatNum = (value) => (Number.isFinite(value) ? Number(value).toFixed(2) : 'N/A');
+
+function DataQualityBadge({ dataQuality }) {
+  if (!dataQuality) return null;
+
+  const { coverage_level, fallbacks_used = [], dataset_fallbacks = [] } = dataQuality;
+  const colors = {
+    full: 'success',
+    partial: 'warning',
+    minimal: 'danger',
+  };
+
+  const fallbackCount = fallbacks_used.reduce((sum, f) => sum + (f.count || 1), 0);
+  const degradedFeatures = dataset_fallbacks.filter(d => d.degradesCapability).length;
+
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      <Badge type={colors[coverage_level] || 'info'}>
+        Data: {coverage_level}
+      </Badge>
+      {fallbackCount > 0 && (
+        <span className="inline-flex items-center gap-0.5 text-[10px] text-amber-600 dark:text-amber-400">
+          <AlertTriangle className="w-3 h-3" />
+          {fallbackCount} field{fallbackCount !== 1 ? 's' : ''} estimated
+        </span>
+      )}
+      {degradedFeatures > 0 && (
+        <span className="inline-flex items-center gap-0.5 text-[10px] text-slate-500 dark:text-slate-400">
+          <Info className="w-3 h-3" />
+          {degradedFeatures} feature{degradedFeatures !== 1 ? 's' : ''} unavailable
+        </span>
+      )}
+    </div>
+  );
+}
+
+function DatasetFallbackHints({ datasetFallbacks = [] }) {
+  if (datasetFallbacks.length === 0) return null;
+
+  return (
+    <div className="mt-2 space-y-1">
+      {datasetFallbacks.map((fb, i) => (
+        <p key={i} className="text-[10px] text-slate-500 dark:text-slate-400 leading-tight">
+          {fb.message}
+        </p>
+      ))}
+    </div>
+  );
+}
 
 export default function PlanSummaryCard({ payload }) {
   if (!payload) return null;
@@ -13,6 +61,7 @@ export default function PlanSummaryCard({ payload }) {
   const withPlan = replay.with_plan || {};
   const withoutPlan = replay.without_plan || {};
   const delta = replay.delta || {};
+  const dataQuality = payload.data_quality || null;
 
   return (
     <Card className="w-full border border-emerald-200 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-900/10">
@@ -28,7 +77,7 @@ export default function PlanSummaryCard({ payload }) {
             </p>
             <p className="text-xs text-slate-500">{payload.summary || 'Deterministic plan + verification completed.'}</p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <Badge type="success">{payload.solver_status || 'unknown'}</Badge>
             <Badge type="info">Rows: {payload.total_plan_rows || 0}</Badge>
             {payload.multi_echelon_mode && payload.multi_echelon_mode !== 'off' && (
@@ -36,6 +85,8 @@ export default function PlanSummaryCard({ payload }) {
             )}
           </div>
         </div>
+
+        {dataQuality && <DataQualityBadge dataQuality={dataQuality} />}
 
         <div className="flex flex-wrap gap-2 text-xs">
           <Badge type="info">Service (with plan): {formatPct(withPlan.service_level_proxy)}</Badge>
@@ -48,6 +99,8 @@ export default function PlanSummaryCard({ payload }) {
             <Badge type="info">Component rows: {payload.component_plan_rows}</Badge>
           )}
         </div>
+
+        {dataQuality && <DatasetFallbackHints datasetFallbacks={dataQuality.dataset_fallbacks} />}
       </div>
     </Card>
   );

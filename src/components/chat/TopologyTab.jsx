@@ -312,6 +312,86 @@ export default function TopologyTab({
     return { flowNodes, flowEdges };
   }, [filteredGraph, bottleneckNodeSet, bottleneckEdgeSet, riskNodeSet]);
 
+  // Bottleneck root cause analysis
+  const bottleneckAnalysis = useMemo(() => {
+    if (!topologyGraph || bottleneckNodeSet.size === 0) return [];
+    const nodes = Array.isArray(topologyGraph.nodes) ? topologyGraph.nodes : [];
+    const edges = Array.isArray(topologyGraph.edges) ? topologyGraph.edges : [];
+    const analyses = [];
+
+    bottleneckNodeSet.forEach((nodeId) => {
+      const node = nodes.find((n) => n.id === nodeId);
+      if (!node) return;
+
+      const metrics = node.metrics || {};
+      const reasons = [];
+
+      // Supplier: capacity / lead time issues
+      if (node.type === 'supplier') {
+        if (toNumber(metrics.capacity_utilization, 0) > 90) {
+          reasons.push(`capacity utilization at ${toNumber(metrics.capacity_utilization, 0)}% (>90%)`);
+        }
+        if (toNumber(metrics.on_time_rate, 100) < 80) {
+          reasons.push(`on-time rate only ${toNumber(metrics.on_time_rate, 0)}%`);
+        }
+        if (toNumber(metrics.avg_delay_days, 0) > 3) {
+          reasons.push(`avg delay ${toNumber(metrics.avg_delay_days, 0)} days`);
+        }
+        if (reasons.length === 0) reasons.push('flagged as constrained supplier');
+      }
+      // Component: shortage / high demand
+      else if (node.type === 'component') {
+        const supply = toNumber(metrics.available_qty ?? metrics.supply_qty, 0);
+        const demand = toNumber(metrics.required_qty ?? metrics.demand_qty, 0);
+        if (demand > 0 && supply < demand) {
+          reasons.push(`supply (${supply.toLocaleString()}) < demand (${demand.toLocaleString()})`);
+        }
+        if (toNumber(metrics.stockout_risk, 0) > 0.5) {
+          reasons.push(`stockout risk ${(toNumber(metrics.stockout_risk, 0) * 100).toFixed(0)}%`);
+        }
+        if (reasons.length === 0) reasons.push('material shortage detected');
+      }
+      // Plant: overloaded
+      else if (node.type === 'plant') {
+        if (toNumber(metrics.utilization, 0) > 95) {
+          reasons.push(`plant utilization at ${toNumber(metrics.utilization, 0)}%`);
+        }
+        if (reasons.length === 0) reasons.push('plant capacity constraint');
+      }
+      // FG: demand exceeds supply
+      else if (node.type === 'fg') {
+        const supply = toNumber(metrics.planned_qty ?? metrics.supply_qty, 0);
+        const demand = toNumber(metrics.demand_qty, 0);
+        if (demand > 0 && supply < demand) {
+          reasons.push(`planned supply (${supply.toLocaleString()}) cannot meet demand (${demand.toLocaleString()})`);
+        }
+        if (reasons.length === 0) reasons.push('finished goods supply gap');
+      }
+      else {
+        reasons.push('constraint detected');
+      }
+
+      // Find upstream dependencies
+      const upstreamEdges = edges.filter((e) => e.target === nodeId);
+      const upstreamBottlenecks = upstreamEdges
+        .filter((e) => bottleneckNodeSet.has(e.source))
+        .map((e) => {
+          const src = nodes.find((n) => n.id === e.source);
+          return src?.label || e.source;
+        });
+
+      analyses.push({
+        nodeId,
+        label: node.label || nodeId,
+        type: node.type,
+        reasons,
+        upstreamBottlenecks,
+      });
+    });
+
+    return analyses;
+  }, [topologyGraph, bottleneckNodeSet]);
+
   const overlaySummary = useMemo(() => {
     const risk = topologyGraph?.overlays?.risk || {};
     const bottlenecks = topologyGraph?.overlays?.bottlenecks || {};
@@ -430,6 +510,25 @@ export default function TopologyTab({
             {isFullscreen ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
           </button>
         </div>
+
+        {bottleneckAnalysis.length > 0 && toggles.showBottlenecksOverlay && (
+          <div className="text-[11px] bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-2 space-y-1">
+            <p className="font-medium text-red-700 dark:text-red-300">Bottleneck Root Cause Analysis</p>
+            {bottleneckAnalysis.map((item) => (
+              <div key={item.nodeId} className="text-red-600 dark:text-red-400">
+                <span className="font-medium">{item.label}</span>
+                <span className="text-red-400 dark:text-red-500"> ({item.type})</span>
+                {': '}
+                {item.reasons.join('; ')}
+                {item.upstreamBottlenecks.length > 0 && (
+                  <span className="text-red-400 dark:text-red-500">
+                    {' '}— cascaded from: {item.upstreamBottlenecks.join(', ')}
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className={`grid grid-cols-1 xl:grid-cols-[1fr_320px] gap-3 ${isFullscreen ? 'min-h-[calc(100vh-220px)]' : 'min-h-[480px]'}`}>
