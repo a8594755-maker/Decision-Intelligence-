@@ -55,7 +55,7 @@ if (!isSupabaseConfigured) {
   console.error('Please ensure .env file exists with VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY');
 }
 
-const SUPABASE_FETCH_TIMEOUT_MS = 8000;
+const SUPABASE_FETCH_TIMEOUT_MS = 20000;
 
 const supabaseFetchWithTimeout = (url, options = {}) => {
   const controller = new AbortController();
@@ -68,14 +68,59 @@ const supabaseFetchWithTimeout = (url, options = {}) => {
     .finally(() => clearTimeout(timeoutId));
 };
 
-export const supabase = isSupabaseConfigured
-  ? createClient(supabaseUrl, supabaseKey, {
+// ── Preserve Supabase client across Vite HMR reloads ─────────────────────────
+// The Supabase auth client uses navigator.locks with infinite acquire timeout.
+// On HMR, the old client holds the lock while the new one waits forever for it,
+// causing getSession() to hang 10-30s+. Reusing the same instance avoids this.
+const _createSupabaseClient = () => {
+  if (!isSupabaseConfigured) return createDisabledSupabaseClient();
+
+  // In dev mode, check if a previous HMR instance exists
+  if (import.meta.hot?.data?.supabaseClient) {
+    return import.meta.hot.data.supabaseClient;
+  }
+
+  // Custom lock that uses a real timeout instead of navigator.locks' infinite wait.
+  // Supabase auth-js defaults to navigator.locks with acquireTimeout=-1 (infinite),
+  // which deadlocks under React 18 StrictMode double-invoke and Vite HMR.
+  const authLockWithTimeout = async (name, _acquireTimeout, fn) => {
+    if (typeof navigator === 'undefined' || !navigator?.locks?.request) {
+      return await fn();
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 5000);
+    try {
+      return await navigator.locks.request(name, { signal: controller.signal }, async () => fn());
+    } catch (err) {
+      if (err.name === 'AbortError') {
+        console.warn(`[Supabase] Lock "${name}" timed out after 5s, proceeding without lock`);
+        return await fn();
+      }
+      throw err;
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
+  const client = createClient(supabaseUrl, supabaseKey, {
     global: {
       headers: SUPABASE_JSON_HEADERS,
       fetch: supabaseFetchWithTimeout
+    },
+    auth: {
+      lock: authLockWithTimeout
     }
-  })
-  : createDisabledSupabaseClient();
+  });
+
+  // Store in HMR data so it survives module hot-reload
+  if (import.meta.hot) {
+    import.meta.hot.data.supabaseClient = client;
+  }
+
+  return client;
+};
+
+export const supabase = _createSupabaseClient();
 
 /**
  * User Files Operations

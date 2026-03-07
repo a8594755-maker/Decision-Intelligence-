@@ -7,11 +7,13 @@
 
 export const UPLOAD_FINGERPRINTS = {
   bom_edge: {
-    requiredHeaders: ['parent_material', 'component_material', 'qty_per'],
-    optionalHeaders: ['child_material', 'uom', 'plant_id', 'bom_version', 'scrap_rate', 'yield_rate'],
+    requiredHeaders: ['parent_material', 'qty_per'],
+    requiredOneOf: [['component_material', 'child_material']],
+    optionalHeaders: ['uom', 'plant_id', 'bom_version', 'scrap_rate', 'yield_rate'],
     negativeHeaders: ['supplier', 'price', 'demand', 'inventory', 'receipt'],
     strongFeatures: [
       ['parent_material', 'component_material'], // 同時存在兩個物料欄（強訊號）
+      ['parent_material', 'child_material'], // 同時存在兩個物料欄（強訊號）
       'qty_per', // BOM 特有欄位
       'usage_qty' // BOM 特有欄位
     ],
@@ -26,8 +28,9 @@ export const UPLOAD_FINGERPRINTS = {
   },
 
   demand_fg: {
-    requiredHeaders: ['material_code', 'time_bucket', 'demand_qty'],
-    optionalHeaders: ['plant_id', 'uom', 'week_bucket', 'date', 'source_type', 'customer_id', 'forecast_qty'],
+    requiredHeaders: ['material_code', 'demand_qty'],
+    requiredOneOf: [['time_bucket', 'date', 'week_bucket']],
+    optionalHeaders: ['plant_id', 'uom', 'source_type', 'customer_id', 'forecast_qty'],
     negativeHeaders: ['supplier', 'price', 'parent', 'component', 'po_number', 'receipt'],
     strongFeatures: [
       'time_bucket', // Demand 強訊號（時間維度）
@@ -46,7 +49,8 @@ export const UPLOAD_FINGERPRINTS = {
 
   po_open_lines: {
     requiredHeaders: ['po_number', 'material_code', 'plant_id', 'open_qty'],
-    optionalHeaders: ['po_line', 'supplier_id', 'time_bucket', 'date', 'delivery_date', 'uom', 'status'],
+    requiredOneOf: [['time_bucket', 'date', 'week_bucket']],
+    optionalHeaders: ['po_line', 'supplier_id', 'delivery_date', 'uom', 'status'],
     negativeHeaders: ['parent', 'component', 'demand', 'receipt', 'price'],
     strongFeatures: [
       'po_number', // PO 強訊號

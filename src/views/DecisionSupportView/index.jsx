@@ -8,8 +8,10 @@ import { FileText } from 'lucide-react';
 import { Card, Button } from '../../components/ui';
 import { supabase, userFilesService } from '../../services/supabaseClient';
 import { prepareChatUploadFromFile, buildDataSummaryCardPayload, MAX_UPLOAD_BYTES } from '../../services/chatDatasetProfilingService';
+import { getRequiredMappingStatus } from '../../utils/requiredMappingStatus';
+import { setLocalTableData, TABLE_REGISTRY } from '../../services/liveDataQueryService';
 import { createDatasetProfileFromSheets } from '../../services/datasetProfilingService';
-import { datasetProfilesService } from '../../services/datasetProfilesService';
+import { datasetProfilesService, registerLocalProfile } from '../../services/datasetProfilesService';
 import { reuseMemoryService } from '../../services/reuseMemoryService';
 import { streamChatWithAI } from '../../services/geminiAPI';
 import { diResetService } from '../../services/diResetService';
@@ -137,10 +139,15 @@ import {
   initTableAvailability,
   isTableUnavailable,
   markTableUnavailable,
+  toPositiveRunId,
+  buildActualVsForecastRowsFromForecastCard,
 } from './helpers.js';
 
 const tableAvailable = initTableAvailability();
 const conversationsDb = tableAvailable ? supabase : null;
+
+// Module-level cache for inline raw rows — survives HMR state resets
+const _rawRowsCache = new Map();
 
 export default function DecisionSupportView({ user, addNotification }) {
   const userStorageSuffix = user?.id || 'anon';
@@ -215,11 +222,31 @@ export default function DecisionSupportView({ user, addNotification }) {
     });
   }, []);
 
+  // ── Supabase connectivity pre-flight check ────────────────────────────────
+  useEffect(() => {
+    if (!user?.id) return;
+    (async () => {
+      try {
+        const t0 = performance.now();
+        const { error } = await supabase.from('di_dataset_profiles').select('id').limit(0);
+        const ms = Math.round(performance.now() - t0);
+        if (error) {
+          console.warn(`[DSV] Supabase health check FAILED (${ms}ms):`, error.message, error.code, error.hint);
+          addNotification?.(`Database tables may be inaccessible: ${error.message}. Offline fallback active.`, 'warning');
+        } else {
+          console.info(`[DSV] Supabase health check OK (${ms}ms)`);
+        }
+      } catch (err) {
+        console.warn('[DSV] Supabase health check error:', err?.message);
+      }
+    })();
+  }, [user?.id, addNotification]);
+
   useEffect(() => {
     if (!user?.id) return;
     setContextLoading(true);
     const timeout = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('context_load_timeout')), 8000)
+      setTimeout(() => reject(new Error('context_load_timeout')), 30000)
     );
     Promise.race([loadDomainContext(user.id, supabase), timeout])
       .then((ctx) => setDomainContext(ctx))
@@ -293,9 +320,11 @@ export default function DecisionSupportView({ user, addNotification }) {
         return;
       }
 
+      console.warn('[DSV] conversations table unavailable, falling back to localStorage:', error?.message);
       markTableUnavailable();
+      const local = loadLocalConversations(user.id);
+      setConversations(local);
       setIsConversationsLoading(false);
-      window.location.reload();
     };
 
     load();
@@ -439,25 +468,23 @@ export default function DecisionSupportView({ user, addNotification }) {
     };
   }, [activeCanvasState?.chartPayload, derivedChartPayloadFromMessages]);
   const topologyRunId = useMemo(() => {
-    const graphRunId = Number(
-      effectiveCanvasChartPayload?.topology_graph?.run_id
-      || effectiveCanvasChartPayload?.topology_graph?.runId
-    );
-    if (Number.isFinite(graphRunId)) return graphRunId;
+    const rawGraphRunId = effectiveCanvasChartPayload?.topology_graph?.run_id
+      || effectiveCanvasChartPayload?.topology_graph?.runId;
+    const graphRunId = toPositiveRunId(rawGraphRunId);
+    if (graphRunId) return graphRunId;
 
     const workflowRunId = findLatestWorkflowRunIdFromMessages(currentMessages);
-    if (Number.isFinite(workflowRunId)) return workflowRunId;
+    if (workflowRunId) return workflowRunId;
 
-    const canvasRunId = Number(activeCanvasState?.run?.id || activeCanvasState?.run?.run_id);
-    if (Number.isFinite(canvasRunId)) return canvasRunId;
+    const canvasRunId = toPositiveRunId(activeCanvasState?.run?.id || activeCanvasState?.run?.run_id);
+    if (canvasRunId) return canvasRunId;
 
     const fallbackRunId = findLatestRunIdFromMessages(currentMessages);
-    return Number.isFinite(fallbackRunId) ? fallbackRunId : null;
+    return fallbackRunId || null;
   }, [effectiveCanvasChartPayload?.topology_graph, currentMessages, activeCanvasState?.run]);
   const topologyRunStatus = useMemo(() => {
-    const numericRunId = Number(topologyRunId);
-    if (!Number.isFinite(numericRunId)) return '';
-    const snapshot = workflowSnapshots[numericRunId] || workflowSnapshots[String(numericRunId)] || null;
+    if (!topologyRunId) return '';
+    const snapshot = workflowSnapshots[topologyRunId] || workflowSnapshots[String(topologyRunId)] || null;
     return String(snapshot?.run?.status || '').toLowerCase();
   }, [topologyRunId, workflowSnapshots]);
 
@@ -862,11 +889,29 @@ export default function DecisionSupportView({ user, addNotification }) {
   const resolveDatasetProfileRow = useCallback(async (profileId = null) => {
     if (!user?.id) return null;
 
+    const profileIdStr = profileId != null ? String(profileId) : null;
+    const isLocalId = profileIdStr && profileIdStr.startsWith('local-');
     const numericProfileId = Number.isFinite(Number(profileId)) ? Number(profileId) : null;
-    const activeProfileId = Number.isFinite(Number(activeDatasetContext?.dataset_profile_id))
-      ? Number(activeDatasetContext.dataset_profile_id)
+    const activeProfileIdRaw = activeDatasetContext?.dataset_profile_id;
+    const activeProfileIdStr = activeProfileIdRaw != null ? String(activeProfileIdRaw) : null;
+    const activeProfileId = Number.isFinite(Number(activeProfileIdRaw))
+      ? Number(activeProfileIdRaw)
       : null;
+    const isActiveLocal = activeProfileIdStr && activeProfileIdStr.startsWith('local-');
 
+    // Match local profile ID against active context
+    if (isLocalId && activeProfileIdStr === profileIdStr) {
+      return {
+        id: activeProfileIdStr,
+        user_file_id: activeDatasetContext?.user_file_id || null,
+        profile_json: activeDatasetContext?.profileJson || {},
+        contract_json: activeDatasetContext?.contractJson || {},
+        _inlineRawRows: activeDatasetContext?.rawRowsForStorage || _rawRowsCache.get(activeProfileIdStr) || null,
+        _local: true
+      };
+    }
+
+    // Match numeric profile ID against active context
     if (numericProfileId && activeProfileId && numericProfileId === activeProfileId) {
       return {
         id: activeProfileId,
@@ -879,6 +924,18 @@ export default function DecisionSupportView({ user, addNotification }) {
     if (numericProfileId) {
       const row = await datasetProfilesService.getDatasetProfileById(user.id, numericProfileId);
       if (row) return row;
+    }
+
+    // Fallback: return active context (local or numeric)
+    if (isActiveLocal) {
+      return {
+        id: activeProfileIdStr,
+        user_file_id: activeDatasetContext?.user_file_id || null,
+        profile_json: activeDatasetContext?.profileJson || {},
+        contract_json: activeDatasetContext?.contractJson || {},
+        _inlineRawRows: activeDatasetContext?.rawRowsForStorage || _rawRowsCache.get(activeProfileIdStr) || null,
+        _local: true
+      };
     }
 
     if (activeProfileId) {
@@ -1789,9 +1846,9 @@ export default function DecisionSupportView({ user, addNotification }) {
     }
 
     if (stepEvent?.step === 'topology' && stepEvent?.status === 'succeeded' && currentConversationId) {
-      const numericRunId = Number(runId);
-      if (Number.isFinite(numericRunId)) {
-        loadTopologyGraphForRun({ runId: numericRunId })
+      const safeRunId = toPositiveRunId(runId);
+      if (safeRunId) {
+        loadTopologyGraphForRun({ runId: safeRunId })
           .then((loaded) => {
             if (!loaded?.graph) return;
             updateCanvasState(currentConversationId, (prev) => ({
@@ -2005,7 +2062,8 @@ export default function DecisionSupportView({ user, addNotification }) {
     try {
       const runtimeSettings = buildRuntimeWorkflowSettings(activeDatasetContext || {}, settings || {});
 
-      if (asyncRunsApiClient.isConfigured()) {
+      const isLocalProfile = String(profileRow.id || '').startsWith('local-');
+      if (asyncRunsApiClient.isConfigured() && !isLocalProfile) {
         try {
           const submitResponse = await asyncRunsApiClient.submitRun({
             user_id: user.id,
@@ -2084,11 +2142,17 @@ export default function DecisionSupportView({ user, addNotification }) {
         }
       }
 
+      // Local profiles proceed with in-memory fallback (diRunsService handles offline gracefully)
+      if (isLocalProfile) {
+        console.info(`[DSV] Running ${workflowLabel} with local profile ${profileRow.id} — Supabase calls will fallback to in-memory store`);
+      }
+
       const startSnapshot = await startWorkflow({
         user_id: user.id,
         dataset_profile_id: profileRow.id,
         workflow: selectedWorkflow,
-        settings: runtimeSettings
+        settings: runtimeSettings,
+        profileRow
       });
       markCanvasRunStarted(`${workflowLabel} run (profile #${profileRow.id})`);
       upsertWorkflowSnapshot(startSnapshot);
@@ -2876,27 +2940,113 @@ export default function DecisionSupportView({ user, addNotification }) {
     ]);
 
     try {
+      console.time('[DSV] upload:total');
+      console.time('[DSV] upload:parse');
       const uploadPreparation = await prepareChatUploadFromFile(file);
+      console.timeEnd('[DSV] upload:parse');
       const datasetFingerprint = buildFingerprintFromUpload(uploadPreparation.sheetsRaw, uploadPreparation.mappingPlans);
 
-      setUploadStatusText('Saving raw file...');
+      // Fire-and-forget: save raw file in background (do NOT block upload)
+      setUploadStatusText('Building profile...');
       let fileRecord = null;
-      try {
-        fileRecord = await userFilesService.saveFile(user.id, file.name, uploadPreparation.rawRowsForStorage);
-      } catch (saveErr) {
-        console.warn('[DSV] Raw file save skipped (non-blocking):', saveErr?.message);
+      userFilesService.saveFile(user.id, file.name, uploadPreparation.rawRowsForStorage)
+        .then((rec) => { fileRecord = rec; console.log('[DSV] upload:saveFile OK'); })
+        .catch((err) => console.warn('[DSV] Raw file save skipped:', err?.message));
+
+      console.time('[DSV] upload:createProfile');
+      const PROFILE_TIMEOUT_MS = 20000;
+      let profileRecord = await Promise.race([
+        createDatasetProfileFromSheets({
+          userId: user.id,
+          userFileId: null,
+          fileName: file.name,
+          sheetsRaw: uploadPreparation.sheetsRaw,
+          mappingPlans: uploadPreparation.mappingPlans,
+          allowLLM: false
+        }),
+        new Promise((resolve) => setTimeout(() => {
+          console.warn('[DSV] createProfile DB timed out, using local-only profile');
+          resolve(null);
+        }, PROFILE_TIMEOUT_MS))
+      ]);
+      console.timeEnd('[DSV] upload:createProfile');
+      // If DB timed out, build a minimal local-only profile from the parsed data
+      if (!profileRecord) {
+        const mappingPlanMap = new Map(
+          (uploadPreparation.mappingPlans || []).map((p) => [String(p.sheet_name || '').toLowerCase(), p])
+        );
+        profileRecord = {
+          id: `local-${Date.now()}`,
+          user_id: user.id,
+          fingerprint: datasetFingerprint,
+          profile_json: {
+            file_name: file.name,
+            global: {
+              workflow_guess: { label: 'A', confidence: 0.5, reason: 'default (offline)' },
+              time_range_guess: { start: null, end: null },
+              minimal_questions: []
+            },
+            sheets: (uploadPreparation.sheetsRaw || []).map((s) => {
+              const plan = mappingPlanMap.get(String(s.sheet_name || '').toLowerCase()) || {};
+              return {
+                sheet_name: s.sheet_name,
+                likely_role: plan.upload_type || 'unknown',
+                confidence: plan.confidence || 0,
+                original_headers: s.columns || [],
+                normalized_headers: (s.columns || []).map((c) => String(c).trim().toLowerCase()),
+                grain_guess: { keys: [], time_column: null, granularity: 'unknown' },
+                column_semantics: [],
+                quality_checks: { type_issues: [], null_rate: {}, outlier_rate: {} },
+                notes: []
+              };
+            })
+          },
+          contract_json: (() => {
+            const sheetsRawMap = new Map(
+              (uploadPreparation.sheetsRaw || []).map((s) => [String(s.sheet_name || '').toLowerCase(), s])
+            );
+            const datasets = (uploadPreparation.mappingPlans || []).map((p) => {
+              const uploadType = p.upload_type || 'unknown';
+              const rawSheet = sheetsRawMap.get(String(p.sheet_name || '').toLowerCase()) || {};
+              const columns = rawSheet.columns || [];
+              const status = (uploadType && uploadType !== 'unknown')
+                ? getRequiredMappingStatus({ uploadType, columns, columnMapping: p.mapping || {} })
+                : { coverage: 0, missingRequired: [], isComplete: false };
+              return {
+                sheet_name: p.sheet_name,
+                upload_type: uploadType,
+                mapping: p.mapping || {},
+                requiredCoverage: Number((status.coverage || 0).toFixed(3)),
+                missing_required_fields: status.missingRequired || [],
+                validation: {
+                  status: status.isComplete ? 'pass' : 'fail',
+                  reasons: status.isComplete ? [] : [`Missing required fields: ${(status.missingRequired || []).join(', ')}`]
+                }
+              };
+            });
+            const allPass = datasets.length > 0 && datasets.every((d) => d.validation.status === 'pass');
+            return {
+              datasets,
+              validation: {
+                status: allPass ? 'pass' : 'fail',
+                reasons: allPass ? [] : ['One or more sheets failed required field coverage']
+              }
+            };
+          })(),
+          created_at: new Date().toISOString(),
+          _local: true,
+          _inlineRawRows: uploadPreparation.rawRowsForStorage || []
+        };
+        // Register in service-level cache so getDatasetProfileById can find it
+        registerLocalProfile(profileRecord);
       }
 
-      setUploadStatusText('Validating contract...');
-      let profileRecord = await createDatasetProfileFromSheets({
-        userId: user.id,
-        userFileId: fileRecord?.id || null,
-        fileName: file.name,
-        sheetsRaw: uploadPreparation.sheetsRaw,
-        mappingPlans: uploadPreparation.mappingPlans,
-        allowLLM: false
-      });
+      // Persist raw rows in module-level cache (survives HMR/state resets)
+      if (profileRecord?.id && Array.isArray(uploadPreparation.rawRowsForStorage) && uploadPreparation.rawRowsForStorage.length > 0) {
+        _rawRowsCache.set(String(profileRecord.id), uploadPreparation.rawRowsForStorage);
+      }
 
+      // Reuse lookups — all non-blocking with 3s timeout
       const reuseEnabledForConversation = conversationDatasetContext[currentConversationId]?.reuse_enabled !== false;
       const workflow = getWorkflowFromProfile(profileRecord?.profile_json || {});
       let reusePlan = {
@@ -2904,15 +3054,20 @@ export default function DecisionSupportView({ user, addNotification }) {
         settings_template_id: null,
         confidence: 0,
         mode: 'no_reuse',
-        explanation: 'Reuse is disabled for this conversation.'
+        explanation: 'Reuse skipped.'
       };
+      let autoReused = false;
+      let reusedSettingsTemplate = null;
 
       if (reuseEnabledForConversation) {
         try {
-          const [contractTemplates, settingsTemplates, similarityIndexRows] = await Promise.all([
-            reuseMemoryService.getContractTemplates(user.id, workflow, 60),
-            reuseMemoryService.getRunSettingsTemplates(user.id, workflow, 60),
-            reuseMemoryService.getRecentSimilarityIndex(user.id, 120)
+          const [contractTemplates, settingsTemplates, similarityIndexRows] = await Promise.race([
+            Promise.all([
+              reuseMemoryService.getContractTemplates(user.id, workflow, 60),
+              reuseMemoryService.getRunSettingsTemplates(user.id, workflow, 60),
+              reuseMemoryService.getRecentSimilarityIndex(user.id, 120)
+            ]),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('reuse lookup timeout')), 15000))
           ]);
 
           reusePlan = buildReusePlan({
@@ -2922,44 +3077,109 @@ export default function DecisionSupportView({ user, addNotification }) {
             similarity_index_rows: similarityIndexRows
           });
         } catch (error) {
-          reusePlan = {
-            contract_template_id: null,
-            settings_template_id: null,
-            confidence: 0,
-            mode: 'no_reuse',
-            explanation: 'Reuse memory is unavailable; continuing with deterministic mapping.'
-          };
-          console.warn('[DecisionSupportView] Reuse lookup skipped:', error.message);
+          console.warn('[DSV] Reuse lookup skipped:', error.message);
         }
       }
 
-      let autoReused = false;
-      let reusedSettingsTemplate = null;
-      if (reusePlan.mode === 'auto_apply' && reusePlan.contract_template_id) {
-        const template = await reuseMemoryService.getContractTemplateById(user.id, reusePlan.contract_template_id);
-        if (template?.contract_json) {
-          const applied = applyContractTemplateToProfile({
-            profile_json: profileRecord?.profile_json || {},
-            contract_template_json: template.contract_json,
-            sheetsRaw: uploadPreparation.sheetsRaw
-          });
-          const updated = await datasetProfilesService.updateDatasetProfile(user.id, profileRecord.id, {
-            profile_json: applied.profile_json,
-            contract_json: applied.contract_json
-          });
-          profileRecord = updated || {
-            ...profileRecord,
-            profile_json: applied.profile_json,
-            contract_json: applied.contract_json
-          };
-          autoReused = true;
+      try {
+        if (reusePlan.mode === 'auto_apply' && reusePlan.contract_template_id) {
+          const template = await Promise.race([
+            reuseMemoryService.getContractTemplateById(user.id, reusePlan.contract_template_id),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('reuse apply timeout')), 15000))
+          ]);
+          if (template?.contract_json) {
+            const applied = applyContractTemplateToProfile({
+              profile_json: profileRecord?.profile_json || {},
+              contract_template_json: template.contract_json,
+              sheetsRaw: uploadPreparation.sheetsRaw
+            });
+            const updated = await datasetProfilesService.updateDatasetProfile(user.id, profileRecord.id, {
+              profile_json: applied.profile_json,
+              contract_json: applied.contract_json
+            });
+            profileRecord = updated || {
+              ...profileRecord,
+              profile_json: applied.profile_json,
+              contract_json: applied.contract_json
+            };
+            autoReused = true;
+          }
         }
+
+        if (reusePlan.mode === 'auto_apply' && reusePlan.settings_template_id) {
+          const settingsTemplate = await Promise.race([
+            reuseMemoryService.getRunSettingsTemplateById(user.id, reusePlan.settings_template_id),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('settings template timeout')), 15000))
+          ]);
+          if (settingsTemplate?.settings_json) {
+            reusedSettingsTemplate = settingsTemplate.settings_json;
+          }
+        }
+      } catch (reuseApplyErr) {
+        console.warn('[DSV] Reuse auto-apply skipped:', reuseApplyErr?.message);
       }
 
-      if (reusePlan.mode === 'auto_apply' && reusePlan.settings_template_id) {
-        const settingsTemplate = await reuseMemoryService.getRunSettingsTemplateById(user.id, reusePlan.settings_template_id);
-        if (settingsTemplate?.settings_json) {
-          reusedSettingsTemplate = settingsTemplate.settings_json;
+      // Populate local data cache for Data tab (offline fallback)
+      if (profileRecord?._local) {
+        const UPLOAD_TO_TABLE = {
+          inventory_snapshots: 'inventory_snapshots',
+          po_open_lines: 'po_open_lines',
+          supplier_master: 'suppliers',
+        };
+        const contractDatasets = profileRecord?.contract_json?.datasets || [];
+        const sheetsRawMap = new Map(
+          (uploadPreparation.sheetsRaw || []).map((s) => [String(s.sheet_name || '').toLowerCase(), s])
+        );
+        const allMaterialCodes = new Set();
+
+        for (const dataset of contractDatasets) {
+          const uploadType = dataset.upload_type;
+          if (!uploadType || uploadType === 'unknown') continue;
+          const rawSheet = sheetsRawMap.get(String(dataset.sheet_name || '').toLowerCase());
+          if (!rawSheet?.rows?.length) continue;
+          const mapping = dataset.mapping || {};
+          // mapping is source→target: { excelCol: schemaField }
+          const targetToSource = {};
+          Object.entries(mapping).forEach(([src, tgt]) => { if (tgt) targetToSource[tgt] = src; });
+
+          // Collect material codes for the Materials table
+          const matCol = targetToSource['material_code'];
+          if (matCol) {
+            rawSheet.rows.forEach((row) => {
+              const val = row[matCol];
+              if (val != null && val !== '') allMaterialCodes.add(String(val));
+            });
+          }
+
+          const tableKey = UPLOAD_TO_TABLE[uploadType];
+          if (!tableKey || !TABLE_REGISTRY[tableKey]) continue;
+
+          const mappedRows = rawSheet.rows.map((row, idx) => {
+            const mapped = { id: `local-${idx}`, user_id: user.id };
+            Object.entries(targetToSource).forEach(([targetField, sourceCol]) => {
+              mapped[targetField] = row[sourceCol] ?? null;
+            });
+            // Map supplier_master fields to suppliers table columns
+            if (uploadType === 'supplier_master') {
+              mapped.contact_info = mapped.contact_person || mapped.phone || mapped.email || null;
+              mapped.status = mapped.status || 'active';
+            }
+            return mapped;
+          });
+          setLocalTableData(tableKey, mappedRows);
+        }
+
+        // Populate materials table from unique material codes across all sheets
+        if (allMaterialCodes.size > 0) {
+          const materialRows = Array.from(allMaterialCodes).map((code, idx) => ({
+            id: `local-mat-${idx}`,
+            user_id: user.id,
+            material_code: code,
+            material_name: code,
+            category: null,
+            uom: null,
+          }));
+          setLocalTableData('materials', materialRows);
         }
       }
 
@@ -2990,6 +3210,7 @@ export default function DecisionSupportView({ user, addNotification }) {
           contractJson: profileRecord?.contract_json || {},
           validationPayload,
           sheetsRaw: uploadPreparation.sheetsRaw,
+          rawRowsForStorage: profileRecord?._local ? (uploadPreparation.rawRowsForStorage || []) : null,
           fileName: file.name,
           contractConfirmed,
           minimalQuestions: cardPayload.minimal_questions || [],
@@ -3103,10 +3324,12 @@ export default function DecisionSupportView({ user, addNotification }) {
         });
       }
 
+      console.timeEnd('[DSV] upload:total');
       addNotification?.('Upload complete: profile + contract + validation saved.', 'success');
     } catch (error) {
+      console.timeEnd('[DSV] upload:total');
       const errorMessage = getErrorMessage(error, 'Unable to upload dataset.');
-      console.error('Dataset upload failed:', error);
+      console.error('[DSV] Dataset upload failed:', error?.message, error);
       appendMessagesToCurrentConversation([{
         role: 'ai',
         content: `❌ Upload failed: ${errorMessage}`,
@@ -3992,15 +4215,20 @@ export default function DecisionSupportView({ user, addNotification }) {
         <DataSummaryCard
           payload={message.payload}
           onUseContext={handleUseDatasetContextFromCard}
-          onRunForecast={(cardPayload) => executeForecastFlow({
-            profileId: cardPayload?.dataset_profile_id,
-            fallbackProfileRow: {
-              id: cardPayload?.dataset_profile_id,
-              user_file_id: cardPayload?.user_file_id || null,
-              profile_json: cardPayload?.profile_json || {},
-              contract_json: cardPayload?.contract_json || {}
-            }
-          })}
+          onRunForecast={(cardPayload) => {
+            const ctx = conversationDatasetContext[currentConversationId] || {};
+            const profileIdStr = String(cardPayload?.dataset_profile_id || '');
+            return executeForecastFlow({
+              profileId: cardPayload?.dataset_profile_id,
+              fallbackProfileRow: {
+                id: cardPayload?.dataset_profile_id,
+                user_file_id: cardPayload?.user_file_id || ctx.user_file_id || null,
+                profile_json: cardPayload?.profile_json || {},
+                contract_json: cardPayload?.contract_json || {},
+                _inlineRawRows: ctx.rawRowsForStorage || _rawRowsCache.get(profileIdStr) || null
+              }
+            });
+          }}
           onRunWorkflow={(cardPayload) => executeWorkflowAFlow({
             datasetProfileId: cardPayload?.dataset_profile_id || null
           })}

@@ -1,5 +1,19 @@
 import { supabase } from './supabaseClient';
 
+// ── In-memory fallback store (survives Supabase failures) ────────────────────
+let _localIdCounter = 1000;
+const _localRuns = new Map();       // run_id → run object
+const _localSteps = new Map();      // run_id → Map<step, step object>
+const _localArtifacts = new Map();  // run_id → artifact[]
+
+function nextLocalId() {
+  return `local-run-${++_localIdCounter}-${Date.now()}`;
+}
+
+function warnFallback(method, err) {
+  console.warn(`[diRunsService] ${method} Supabase failed, using local fallback:`, err?.message || err);
+}
+
 export const diRunsService = {
   async createRun({ user_id, dataset_profile_id, workflow, stage }) {
     const payload = {
@@ -10,14 +24,30 @@ export const diRunsService = {
       status: 'queued'
     };
 
-    const { data, error } = await supabase
-      .from('di_runs')
-      .insert([payload])
-      .select('*')
-      .single();
+    try {
+      const { data, error } = await supabase
+        .from('di_runs')
+        .insert([payload])
+        .select('*')
+        .single();
 
-    if (error) throw error;
-    return data;
+      if (error) throw error;
+      _localRuns.set(data.id, data);
+      return data;
+    } catch (err) {
+      warnFallback('createRun', err);
+      const localRun = {
+        ...payload,
+        id: nextLocalId(),
+        created_at: new Date().toISOString(),
+        started_at: null,
+        finished_at: null,
+        error: null,
+        _local: true
+      };
+      _localRuns.set(localRun.id, localRun);
+      return localRun;
+    }
   },
 
   async updateRunStatus({ run_id, status, stage, started_at, finished_at, error: runError }) {
@@ -27,88 +57,120 @@ export const diRunsService = {
     if (finished_at !== undefined) updates.finished_at = finished_at;
     if (runError !== undefined) updates.error = runError;
 
-    const { data, error } = await supabase
-      .from('di_runs')
-      .update(updates)
-      .eq('id', run_id)
-      .select('*')
-      .single();
+    try {
+      const { data, error } = await supabase
+        .from('di_runs')
+        .update(updates)
+        .eq('id', run_id)
+        .select('*')
+        .single();
 
-    if (error) throw error;
-    return data;
+      if (error) throw error;
+      _localRuns.set(data.id, data);
+      return data;
+    } catch (err) {
+      warnFallback('updateRunStatus', err);
+      const existing = _localRuns.get(run_id) || { id: run_id };
+      const updated = { ...existing, ...updates };
+      _localRuns.set(run_id, updated);
+      return updated;
+    }
   },
 
   async saveArtifact({ run_id, artifact_type, artifact_json }) {
-    const { data, error } = await supabase
-      .from('di_run_artifacts')
-      .insert([{ run_id, artifact_type, artifact_json }])
-      .select('*')
-      .single();
+    try {
+      const { data, error } = await supabase
+        .from('di_run_artifacts')
+        .insert([{ run_id, artifact_type, artifact_json }])
+        .select('*')
+        .single();
 
-    if (error) throw error;
-    return data;
+      if (error) throw error;
+      if (!_localArtifacts.has(run_id)) _localArtifacts.set(run_id, []);
+      _localArtifacts.get(run_id).push(data);
+      return data;
+    } catch (err) {
+      warnFallback('saveArtifact', err);
+      const localArtifact = {
+        id: `local-art-${++_localIdCounter}`,
+        run_id,
+        artifact_type,
+        artifact_json,
+        created_at: new Date().toISOString(),
+        _local: true
+      };
+      if (!_localArtifacts.has(run_id)) _localArtifacts.set(run_id, []);
+      _localArtifacts.get(run_id).push(localArtifact);
+      return localArtifact;
+    }
   },
 
   async getLatestRuns(user_id, limit = 10) {
-    const { data, error } = await supabase
-      .from('di_runs')
-      .select('*')
-      .eq('user_id', user_id)
-      .order('created_at', { ascending: false })
-      .limit(limit);
+    try {
+      const { data, error } = await supabase
+        .from('di_runs')
+        .select('*')
+        .eq('user_id', user_id)
+        .order('created_at', { ascending: false })
+        .limit(limit);
 
-    if (error) throw error;
-    return data || [];
+      if (error) throw error;
+      return data || [];
+    } catch (err) {
+      warnFallback('getLatestRuns', err);
+      return Array.from(_localRuns.values())
+        .filter((r) => r.user_id === user_id)
+        .sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''))
+        .slice(0, limit);
+    }
   },
 
   async getRunById(user_id, run_id) {
-    const { data, error } = await supabase
-      .from('di_runs')
-      .select('*')
-      .eq('user_id', user_id)
-      .eq('id', run_id)
-      .maybeSingle();
+    try {
+      const { data, error } = await supabase
+        .from('di_runs')
+        .select('*')
+        .eq('user_id', user_id)
+        .eq('id', run_id)
+        .maybeSingle();
 
-    if (error) throw error;
-    return data || null;
+      if (error) throw error;
+      return data || null;
+    } catch (err) {
+      warnFallback('getRunById', err);
+      const local = _localRuns.get(run_id);
+      return (local && local.user_id === user_id) ? local : null;
+    }
   },
 
   async getLatestRunByStage(user_id, { stage, status = null, dataset_profile_id = null, workflow = null, limit = 20 } = {}) {
     if (!stage) throw new Error('stage is required');
 
-    let query = supabase
-      .from('di_runs')
-      .select('*')
-      .eq('user_id', user_id)
-      .eq('stage', stage)
-      .order('created_at', { ascending: false })
-      .limit(limit);
+    try {
+      let query = supabase
+        .from('di_runs')
+        .select('*')
+        .eq('user_id', user_id)
+        .eq('stage', stage)
+        .order('created_at', { ascending: false })
+        .limit(limit);
 
-    if (status) {
-      query = query.eq('status', status);
+      if (status) query = query.eq('status', status);
+      if (dataset_profile_id !== null && dataset_profile_id !== undefined) query = query.eq('dataset_profile_id', dataset_profile_id);
+      if (workflow !== null && workflow !== undefined) query = query.eq('workflow', workflow);
+
+      const { data, error } = await query;
+      if (error) throw error;
+      return (data && data.length > 0) ? data[0] : null;
+    } catch (err) {
+      warnFallback('getLatestRunByStage', err);
+      return null; // No cached history available offline
     }
-
-    if (dataset_profile_id !== null && dataset_profile_id !== undefined) {
-      query = query.eq('dataset_profile_id', dataset_profile_id);
-    }
-
-    if (workflow !== null && workflow !== undefined) {
-      query = query.eq('workflow', workflow);
-    }
-
-    const { data, error } = await query;
-    if (error) throw error;
-    return (data && data.length > 0) ? data[0] : null;
   },
 
   async getLatestRunByStageForDatasetProfiles(
     user_id,
-    {
-      stage,
-      status = null,
-      dataset_profile_ids = [],
-      limit = 50
-    } = {}
+    { stage, status = null, dataset_profile_ids = [], limit = 50 } = {}
   ) {
     if (!stage) throw new Error('stage is required');
     const ids = (Array.isArray(dataset_profile_ids) ? dataset_profile_ids : [])
@@ -116,90 +178,110 @@ export const diRunsService = {
       .filter((id) => Number.isFinite(id));
     if (ids.length === 0) return null;
 
-    let query = supabase
-      .from('di_runs')
-      .select('*')
-      .eq('user_id', user_id)
-      .eq('stage', stage)
-      .in('dataset_profile_id', ids)
-      .order('created_at', { ascending: false })
-      .limit(limit);
+    try {
+      let query = supabase
+        .from('di_runs')
+        .select('*')
+        .eq('user_id', user_id)
+        .eq('stage', stage)
+        .in('dataset_profile_id', ids)
+        .order('created_at', { ascending: false })
+        .limit(limit);
 
-    if (status) {
-      query = query.eq('status', status);
+      if (status) query = query.eq('status', status);
+
+      const { data, error } = await query;
+      if (error) throw error;
+      return (data && data.length > 0) ? data[0] : null;
+    } catch (err) {
+      warnFallback('getLatestRunByStageForDatasetProfiles', err);
+      return null;
     }
-
-    const { data, error } = await query;
-    if (error) throw error;
-    return (data && data.length > 0) ? data[0] : null;
   },
 
   async getRecentRunsForDatasetProfiles(
     user_id,
-    {
-      dataset_profile_ids = [],
-      status = null,
-      workflow = null,
-      limit = 50
-    } = {}
+    { dataset_profile_ids = [], status = null, workflow = null, limit = 50 } = {}
   ) {
     const ids = (Array.isArray(dataset_profile_ids) ? dataset_profile_ids : [])
       .map((id) => Number(id))
       .filter((id) => Number.isFinite(id));
     if (ids.length === 0) return [];
 
-    let query = supabase
-      .from('di_runs')
-      .select('*')
-      .eq('user_id', user_id)
-      .in('dataset_profile_id', ids)
-      .order('created_at', { ascending: false })
-      .limit(limit);
+    try {
+      let query = supabase
+        .from('di_runs')
+        .select('*')
+        .eq('user_id', user_id)
+        .in('dataset_profile_id', ids)
+        .order('created_at', { ascending: false })
+        .limit(limit);
 
-    if (status) {
-      query = query.eq('status', status);
+      if (status) query = query.eq('status', status);
+      if (workflow) query = query.eq('workflow', workflow);
+
+      const { data, error } = await query;
+      if (error) throw error;
+      return data || [];
+    } catch (err) {
+      warnFallback('getRecentRunsForDatasetProfiles', err);
+      return [];
     }
-
-    if (workflow) {
-      query = query.eq('workflow', workflow);
-    }
-
-    const { data, error } = await query;
-    if (error) throw error;
-    return data || [];
   },
 
   async getRun(run_id) {
-    const { data, error } = await supabase
-      .from('di_runs')
-      .select('*')
-      .eq('id', run_id)
-      .maybeSingle();
+    try {
+      const { data, error } = await supabase
+        .from('di_runs')
+        .select('*')
+        .eq('id', run_id)
+        .maybeSingle();
 
-    if (error) throw error;
-    return data || null;
+      if (error) throw error;
+      if (data) _localRuns.set(data.id, data);
+      return data || _localRuns.get(run_id) || null;
+    } catch (err) {
+      warnFallback('getRun', err);
+      return _localRuns.get(run_id) || null;
+    }
   },
 
   async getArtifactsForRun(run_id) {
-    const { data, error } = await supabase
-      .from('di_run_artifacts')
-      .select('*')
-      .eq('run_id', run_id)
-      .order('created_at', { ascending: true });
+    try {
+      const { data, error } = await supabase
+        .from('di_run_artifacts')
+        .select('*')
+        .eq('run_id', run_id)
+        .order('created_at', { ascending: true });
 
-    if (error) throw error;
-    return data || [];
+      if (error) throw error;
+      if (data?.length > 0) _localArtifacts.set(run_id, data);
+      return data || _localArtifacts.get(run_id) || [];
+    } catch (err) {
+      warnFallback('getArtifactsForRun', err);
+      return _localArtifacts.get(run_id) || [];
+    }
   },
 
   async getArtifactById(artifact_id) {
-    const { data, error } = await supabase
-      .from('di_run_artifacts')
-      .select('*')
-      .eq('id', artifact_id)
-      .maybeSingle();
+    try {
+      const { data, error } = await supabase
+        .from('di_run_artifacts')
+        .select('*')
+        .eq('id', artifact_id)
+        .maybeSingle();
 
-    if (error) throw error;
-    return data || null;
+      if (error) throw error;
+      return data || null;
+    } catch (err) {
+      warnFallback('getArtifactById', err);
+      // Search local cache
+      for (const arts of _localArtifacts.values()) {
+        const found = arts.find((a) => a.id === artifact_id);
+        if (found) return found;
+      }
+      return null;
+    }
   },
 
   async createRunSteps(run_id, steps = []) {
@@ -214,24 +296,60 @@ export const diRunsService = {
 
     if (rows.length === 0) return [];
 
-    const { data, error } = await supabase
-      .from('di_run_steps')
-      .upsert(rows, { onConflict: 'run_id,step' })
-      .select('*');
+    try {
+      const { data, error } = await supabase
+        .from('di_run_steps')
+        .upsert(rows, { onConflict: 'run_id,step' })
+        .select('*');
 
-    if (error) throw error;
-    return data || [];
+      if (error) throw error;
+      // Cache locally
+      if (!_localSteps.has(run_id)) _localSteps.set(run_id, new Map());
+      const stepMap = _localSteps.get(run_id);
+      (data || []).forEach((s) => stepMap.set(s.step, s));
+      return data || [];
+    } catch (err) {
+      warnFallback('createRunSteps', err);
+      const localStepResults = rows.map((r, i) => ({
+        ...r,
+        id: `local-step-${++_localIdCounter}-${i}`,
+        created_at: new Date().toISOString(),
+        started_at: null,
+        finished_at: null,
+        error_code: null,
+        error_message: null,
+        input_ref: null,
+        output_ref: null,
+        _local: true
+      }));
+      if (!_localSteps.has(run_id)) _localSteps.set(run_id, new Map());
+      const stepMap = _localSteps.get(run_id);
+      localStepResults.forEach((s) => stepMap.set(s.step, s));
+      return localStepResults;
+    }
   },
 
   async getRunSteps(run_id) {
-    const { data, error } = await supabase
-      .from('di_run_steps')
-      .select('*')
-      .eq('run_id', run_id)
-      .order('id', { ascending: true });
+    try {
+      const { data, error } = await supabase
+        .from('di_run_steps')
+        .select('*')
+        .eq('run_id', run_id)
+        .order('id', { ascending: true });
 
-    if (error) throw error;
-    return data || [];
+      if (error) throw error;
+      // Cache locally
+      if (data?.length > 0) {
+        if (!_localSteps.has(run_id)) _localSteps.set(run_id, new Map());
+        const stepMap = _localSteps.get(run_id);
+        data.forEach((s) => stepMap.set(s.step, s));
+      }
+      return data || [];
+    } catch (err) {
+      warnFallback('getRunSteps', err);
+      const stepMap = _localSteps.get(run_id);
+      return stepMap ? Array.from(stepMap.values()) : [];
+    }
   },
 
   async upsertRunStep({
@@ -257,14 +375,26 @@ export const diRunsService = {
       output_ref
     };
 
-    const { data, error } = await supabase
-      .from('di_run_steps')
-      .upsert([payload], { onConflict: 'run_id,step' })
-      .select('*')
-      .single();
+    try {
+      const { data, error } = await supabase
+        .from('di_run_steps')
+        .upsert([payload], { onConflict: 'run_id,step' })
+        .select('*')
+        .single();
 
-    if (error) throw error;
-    return data;
+      if (error) throw error;
+      if (!_localSteps.has(run_id)) _localSteps.set(run_id, new Map());
+      _localSteps.get(run_id).set(step, data);
+      return data;
+    } catch (err) {
+      warnFallback('upsertRunStep', err);
+      const existing = _localSteps.get(run_id)?.get(step) || {};
+      const merged = { ...existing, ...payload, _local: true };
+      if (!merged.id) merged.id = `local-step-${++_localIdCounter}`;
+      if (!_localSteps.has(run_id)) _localSteps.set(run_id, new Map());
+      _localSteps.get(run_id).set(step, merged);
+      return merged;
+    }
   },
 
   async updateRunStep({
@@ -287,16 +417,28 @@ export const diRunsService = {
     if (input_ref !== undefined) updates.input_ref = input_ref;
     if (output_ref !== undefined) updates.output_ref = output_ref;
 
-    const { data, error } = await supabase
-      .from('di_run_steps')
-      .update(updates)
-      .eq('run_id', run_id)
-      .eq('step', step)
-      .select('*')
-      .single();
+    try {
+      const { data, error } = await supabase
+        .from('di_run_steps')
+        .update(updates)
+        .eq('run_id', run_id)
+        .eq('step', step)
+        .select('*')
+        .single();
 
-    if (error) throw error;
-    return data;
+      if (error) throw error;
+      if (!_localSteps.has(run_id)) _localSteps.set(run_id, new Map());
+      _localSteps.get(run_id).set(step, data);
+      return data;
+    } catch (err) {
+      warnFallback('updateRunStep', err);
+      const existing = _localSteps.get(run_id)?.get(step) || { run_id, step };
+      const merged = { ...existing, ...updates, _local: true };
+      if (!merged.id) merged.id = `local-step-${++_localIdCounter}`;
+      if (!_localSteps.has(run_id)) _localSteps.set(run_id, new Map());
+      _localSteps.get(run_id).set(step, merged);
+      return merged;
+    }
   },
 
   async getRunSnapshot(run_id) {

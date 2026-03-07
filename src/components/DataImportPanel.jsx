@@ -144,6 +144,11 @@ function ImportProgress({ progress, total }) {
         Importing sheet {progress.current}/{total}
         {progress.sheetName && `: ${progress.sheetName}`}
       </p>
+      {progress.substep && (
+        <p className="text-xs text-slate-400 text-center mt-1">
+          {progress.substep}
+        </p>
+      )}
     </div>
   );
 }
@@ -321,7 +326,7 @@ export default function DataImportPanel() {
     }
 
     setStep('importing');
-    setProgress({ current: 0, sheetName: '' });
+    setProgress({ current: 0, sheetName: '', substep: '' });
     abortRef.current = new AbortController();
 
     try {
@@ -333,8 +338,13 @@ export default function DataImportPanel() {
         options: {
           mode: 'best-effort',
           signal: abortRef.current.signal,
-          onProgress: ({ stage, current, total, sheetName }) => {
-            setProgress({ current, sheetName });
+          onProgress: ({ stage, current, total, sheetName, substep }) => {
+            setProgress(prev => ({
+              ...prev,
+              current: current ?? prev.current,
+              sheetName: sheetName ?? prev.sheetName,
+              substep: stage === 'substep' ? substep : prev.substep,
+            }));
           },
         },
       });
@@ -357,7 +367,7 @@ export default function DataImportPanel() {
     setFileName('');
     setSheetPlans([]);
     setImportReport(null);
-    setProgress({ current: 0, sheetName: '' });
+    setProgress({ current: 0, sheetName: '', substep: '' });
   };
 
   const enabledCount = sheetPlans.filter(p => p.enabled && p.suggestedType).length;

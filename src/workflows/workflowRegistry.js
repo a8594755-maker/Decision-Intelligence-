@@ -94,11 +94,13 @@ const resolveEngine = (workflowName) => {
 };
 
 const parseRunId = (run_id) => {
+  // Accept local-* IDs from offline workflow runs
+  if (typeof run_id === 'string' && run_id.startsWith('local-')) return run_id;
   const runId = Number(run_id);
   if (!Number.isInteger(runId) || runId <= 0) {
     throw new WorkflowRegistryError(
       WORKFLOW_REGISTRY_ERROR_CODES.INVALID_RUN_ID,
-      'run_id must be a positive integer',
+      'run_id must be a positive integer or local ID',
       { run_id }
     );
   }
@@ -126,14 +128,15 @@ export async function startWorkflow({
   user_id,
   dataset_profile_id,
   workflow = null,
-  settings = {}
+  settings = {},
+  profileRow: providedProfileRow = null
 }) {
   if (!user_id) throw new Error('user_id is required');
   if (!dataset_profile_id) throw new Error('dataset_profile_id is required');
 
   let resolvedWorkflow = workflow ? normalizeWorkflowName(workflow) : null;
   if (!resolvedWorkflow) {
-    const profileRow = await datasetProfilesService.getDatasetProfileById(user_id, dataset_profile_id);
+    const profileRow = providedProfileRow || await datasetProfilesService.getDatasetProfileById(user_id, dataset_profile_id);
     resolvedWorkflow = getWorkflowFromProfile(profileRow?.profile_json || {});
   }
 
@@ -142,7 +145,8 @@ export async function startWorkflow({
     user_id,
     dataset_profile_id,
     workflow: resolvedWorkflow,
-    settings
+    settings,
+    profileRow: providedProfileRow
   });
 }
 

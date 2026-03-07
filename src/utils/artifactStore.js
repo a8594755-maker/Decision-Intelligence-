@@ -98,24 +98,29 @@ const persistLargeArtifactFile = async ({ run_id, user_id, fileName, contentType
       payload
     });
   } catch {
-    const { data, error } = await supabase
-      .from('user_files')
-      .insert([{
-        user_id,
-        filename: fileName,
-        data: {
-          artifact_type: 'run_artifact_file',
-          run_id,
-          content_type: contentType,
-          payload,
-          version: `artifact-${run_id}-${Date.now()}`
-        }
-      }])
-      .select('*')
-      .single();
+    try {
+      const { data, error } = await supabase
+        .from('user_files')
+        .insert([{
+          user_id,
+          filename: fileName,
+          data: {
+            artifact_type: 'run_artifact_file',
+            run_id,
+            content_type: contentType,
+            payload,
+            version: `artifact-${run_id}-${Date.now()}`
+          }
+        }])
+        .select('*')
+        .single();
 
-    if (error) throw error;
-    fileRow = data;
+      if (error) throw error;
+      fileRow = data;
+    } catch (err2) {
+      console.warn('[artifactStore] persistLargeArtifactFile Supabase failed, using local fallback:', err2?.message);
+      fileRow = { id: `local-file-${Date.now()}`, filename: fileName, _local: true };
+    }
   }
 
   return fileRow;

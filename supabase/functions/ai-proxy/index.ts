@@ -7,13 +7,29 @@ interface ProxyRequestBody {
   payload?: Record<string, unknown>;
 }
 
-const FRONTEND_ORIGIN = (Deno.env.get('FRONTEND_ORIGIN') || 'http://localhost:5173').trim();
+const FRONTEND_ORIGIN = (Deno.env.get('FRONTEND_ORIGIN') || '').trim();
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': FRONTEND_ORIGIN,
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Max-Age': '86400',
+const ALLOWED_ORIGINS = new Set(
+  [
+    FRONTEND_ORIGIN,
+    'http://localhost:5173',
+    'http://localhost:5174',
+    'http://localhost:5175',
+  ].filter(Boolean),
+);
+
+const buildCorsHeaders = (requestOrigin?: string | null): Record<string, string> => {
+  const origin = String(requestOrigin || '').trim();
+  const isAllowed =
+    ALLOWED_ORIGINS.has(origin) ||
+    /^https?:\/\/localhost(:\d+)?$/.test(origin) ||
+    /^https?:\/\/[\w-]+\.supabase\.co$/.test(origin);
+  return {
+    'Access-Control-Allow-Origin': isAllowed ? origin : (FRONTEND_ORIGIN || 'http://localhost:5173'),
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+    'Access-Control-Max-Age': '86400',
+  };
 };
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
@@ -62,11 +78,11 @@ const DEEPSEEK_DEFAULT_CANDIDATES = Array.from(new Set(
     .filter(Boolean),
 ));
 
-const jsonResponse = (payload: unknown, status = 200) =>
+const jsonResponse = (payload: unknown, status = 200, cors?: Record<string, string>) =>
   new Response(JSON.stringify(payload), {
     status,
     headers: {
-      ...corsHeaders,
+      ...(cors || buildCorsHeaders()),
       'Content-Type': 'application/json',
     },
   });
@@ -567,19 +583,31 @@ const handleDiPrompt = async (payload: Record<string, unknown>) => {
 };
 
 Deno.serve(async (req) => {
+  const cors = buildCorsHeaders(req.headers.get('origin'));
+
   if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders });
+    return new Response('ok', { headers: cors });
   }
   if (req.method !== 'POST') {
-    return jsonResponse({ error: 'Method not allowed' }, 405);
+    return jsonResponse({ error: 'Method not allowed' }, 405, cors);
   }
+
+  // Fast ping for warmup — no auth required, just wake the runtime
+  try {
+    const cloned = req.clone();
+    const peek = await cloned.json().catch(() => null) as { mode?: string } | null;
+    if (peek?.mode === 'ping') {
+      return jsonResponse({ ok: true, mode: 'ping' }, 200, cors);
+    }
+  } catch { /* ignore parse errors, proceed normally */ }
+
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-    return jsonResponse({ error: 'Supabase environment is not configured on Edge Function.' }, 500);
+    return jsonResponse({ error: 'Supabase environment is not configured on Edge Function.' }, 500, cors);
   }
 
   const authHeader = req.headers.get('authorization');
   if (!authHeader) {
-    return jsonResponse({ error: 'Missing authorization header' }, 401);
+    return jsonResponse({ error: 'Missing authorization header' }, 401, cors);
   }
 
   const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
@@ -595,7 +623,7 @@ Deno.serve(async (req) => {
     error: authError,
   } = await supabase.auth.getUser(token);
   if (authError || !user) {
-    return jsonResponse({ error: 'Unauthorized', details: authError?.message || null }, 401);
+    return jsonResponse({ error: 'Unauthorized', details: authError?.message || null }, 401, cors);
   }
 
   try {
@@ -603,19 +631,27 @@ Deno.serve(async (req) => {
     const mode = body?.mode;
     const payload = (body?.payload || {}) as Record<string, unknown>;
 
-    if (!mode) return jsonResponse({ error: 'Missing required field: mode' }, 400);
-    if (mode === 'gemini_generate') return await handleGeminiGenerate(payload);
-    if (mode === 'deepseek_chat') return await handleDeepSeekChat(payload);
-    if (mode === 'ai_chat') return await handleAiChat(payload);
-    if (mode === 'di_prompt') return await handleDiPrompt(payload);
+    if (!mode) return jsonResponse({ error: 'Missing required field: mode' }, 400, cors);
 
-    return jsonResponse({ error: `Unsupported mode: ${mode}` }, 400);
+    // Handlers return jsonResponse internally; wrap to ensure CORS headers
+    const wrapCors = (response: Response) => {
+      Object.entries(cors).forEach(([key, value]) => response.headers.set(key, value));
+      return response;
+    };
+
+    if (mode === 'gemini_generate') return wrapCors(await handleGeminiGenerate(payload));
+    if (mode === 'deepseek_chat') return wrapCors(await handleDeepSeekChat(payload));
+    if (mode === 'ai_chat') return wrapCors(await handleAiChat(payload));
+    if (mode === 'di_prompt') return wrapCors(await handleDiPrompt(payload));
+
+    return jsonResponse({ error: `Unsupported mode: ${mode}` }, 400, cors);
   } catch (error) {
     const status = Number((error as Error & { status?: number })?.status || 500);
     const message = error instanceof Error ? error.message : String(error);
     return jsonResponse(
       { error: message, code: 'runtime_error' },
       status >= 400 && status < 600 ? status : 500,
+      cors,
     );
   }
 });

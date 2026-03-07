@@ -126,7 +126,6 @@ const postGeminiWithModelFallback = async ({
  * Priority: environment variable > localStorage > default value
  */
 export const getApiKey = () => {
-  if (USE_EDGE_AI_PROXY) return '';
   // Prefer environment variable (if exists)
   if (import.meta.env.VITE_GEMINI_API_KEY) {
     return import.meta.env.VITE_GEMINI_API_KEY;
@@ -164,7 +163,6 @@ export const clearApiKey = () => {
 };
 
 export const getDeepSeekApiKey = () => {
-  if (USE_EDGE_AI_PROXY) return '';
   if (import.meta.env.VITE_DEEPSEEK_API_KEY) {
     return import.meta.env.VITE_DEEPSEEK_API_KEY;
   }
@@ -358,11 +356,8 @@ export const callGeminiAPI = async (prompt, systemContext = "", options = {}) =>
         workflow: options?.workflow ?? null,
         promptId: options?.promptId ?? null,
       });
-      const message = String(error?.message || 'Unknown AI proxy error');
-      if (/not configured on server|missing_server_keys|api key/i.test(message)) {
-        return '⚠️ AI service is not configured on server.\n\nAsk your admin to set Supabase Edge Function secret: DEEPSEEK_API_KEY.';
-      }
-      return `❌ AI service request failed\n\nError message: ${message}\n\nPlease check Edge Function logs and retry.`;
+      // Fall through to direct API instead of returning error
+      console.warn('[callGeminiAPI] Edge Function failed, falling back to direct API:', error?.message);
     }
   }
 
@@ -553,12 +548,12 @@ export const chatWithAI = async (message, conversationHistory = [], dataContext 
         latencyMs: Date.now() - t0,
         workflow: 'chat',
       });
-      console.warn('[chatWithAI] DeepSeek chat failed:', error.message);
-      return `❌ DeepSeek 對話服務請求失敗\n\nError: ${error.message}`;
+      // Fall through to direct API instead of returning error
+      console.warn('[chatWithAI] Edge Function failed, falling back to direct API:', error.message);
     }
   }
 
-  // Legacy local path: DeepSeek only (no Gemini fallback).
+  // Direct API path: DeepSeek (no Gemini fallback).
   const deepSeekApiKey = getDeepSeekApiKey();
   if (deepSeekApiKey) {
     try {
@@ -956,9 +951,8 @@ export const streamChatWithAI = async (message, conversationHistory = [], system
         latencyMs: Date.now() - t0,
         workflow: 'chat',
       });
-      const fallback = `❌ AI service request failed\n\nError message: ${error?.message || 'Unknown AI proxy error'}`;
-      onChunk?.(fallback);
-      return fallback;
+      // Fall through to direct API instead of returning error
+      console.warn('[streamChatWithAI] Edge Function failed, falling back to direct API:', error?.message);
     }
   }
 

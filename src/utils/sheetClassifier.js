@@ -56,6 +56,7 @@ export function classifySheet({ sheetName, headers, sampleRows = [] }) {
 function scoreUploadType(uploadType, fingerprint, canonicalHeaders, sampleRows, headerMapping) {
   const {
     requiredHeaders = [],
+    requiredOneOf = [],
     optionalHeaders = [],
     negativeHeaders = [],
     strongFeatures = [], // Strong features (high weight bonus)
@@ -63,11 +64,24 @@ function scoreUploadType(uploadType, fingerprint, canonicalHeaders, sampleRows, 
     fieldTypeHints = {},
     minConfidenceToAutoEnable = 0.75
   } = fingerprint;
-  
+
   // Check required headers
   const matchedRequired = requiredHeaders.filter(h => canonicalHeaders.has(h));
   const missingRequired = requiredHeaders.filter(h => !canonicalHeaders.has(h));
-  
+
+  // Check requiredOneOf groups (at least one from each group must be present)
+  let requiredOneOfMatched = 0;
+  let requiredOneOfMissing = 0;
+  const missingOneOfGroups = [];
+  for (const group of requiredOneOf) {
+    if (group.some(h => canonicalHeaders.has(h))) {
+      requiredOneOfMatched++;
+    } else {
+      requiredOneOfMissing++;
+      missingOneOfGroups.push(group);
+    }
+  }
+
   // Check optional headers
   const matchedOptional = optionalHeaders.filter(h => canonicalHeaders.has(h));
   
@@ -94,19 +108,25 @@ function scoreUploadType(uploadType, fingerprint, canonicalHeaders, sampleRows, 
   
   // Required headers: +10 points each
   score += matchedRequired.length * 10;
-  
+
+  // requiredOneOf matched: +10 points each (same weight as required)
+  score += requiredOneOfMatched * 10;
+
   // Optional headers: +1 point each
   score += matchedOptional.length * 1;
-  
+
   // Missing required: -20 points each (severe penalty)
   score -= missingRequired.length * 20;
-  
+
+  // requiredOneOf missed: -20 points each
+  score -= requiredOneOfMissing * 20;
+
   // Negative headers: -15 points each (major penalty)
   score -= matchedNegative.length * 15;
-  
+
   // Strong features: +30 points each (dominant signal)
   score += matchedStrongFeatures.length * 30;
-  
+
   // Exclusive features: -20 points each (wrong type signal)
   score -= matchedExclusiveFeatures.length * 20;
   
@@ -120,14 +140,14 @@ function scoreUploadType(uploadType, fingerprint, canonicalHeaders, sampleRows, 
     score += 15;
   }
   
-  // Calculate max possible score (all required + all optional + strong features matched, no negatives)
-  const maxScore = (requiredHeaders.length * 10) + (optionalHeaders.length * 1) + ((strongFeatures || []).length * 30) + 20;
-  
+  // Calculate max possible score (all required + requiredOneOf + all optional + strong features matched, no negatives)
+  const maxScore = (requiredHeaders.length * 10) + (requiredOneOf.length * 10) + (optionalHeaders.length * 1) + ((strongFeatures || []).length * 30) + 20;
+
   // Calculate confidence (0-1)
   let confidence = maxScore > 0 ? Math.max(0, score) / maxScore : 0;
-  
-  // Cap confidence if missing required fields
-  if (missingRequired.length > 0) {
+
+  // Cap confidence if missing required fields or requiredOneOf groups
+  if (missingRequired.length > 0 || requiredOneOfMissing > 0) {
     confidence = Math.min(confidence, 0.5); // Cap at 50% if missing any required
   }
   
@@ -146,6 +166,8 @@ function scoreUploadType(uploadType, fingerprint, canonicalHeaders, sampleRows, 
     evidence: {
       matchedRequired,
       missingRequired,
+      requiredOneOfMatched,
+      missingOneOfGroups,
       matchedOptional,
       matchedNegative,
       matchedStrongFeatures,
@@ -156,32 +178,39 @@ function scoreUploadType(uploadType, fingerprint, canonicalHeaders, sampleRows, 
     reasons: buildReasons({
       matchedRequired,
       missingRequired,
+      missingOneOfGroups,
       matchedOptional,
       matchedNegative,
       matchedStrongFeatures,
       matchedExclusiveFeatures,
       typeCheckResults
     }),
-    autoEnabled: confidence >= minConfidenceToAutoEnable && missingRequired.length === 0
+    autoEnabled: confidence >= minConfidenceToAutoEnable && missingRequired.length === 0 && requiredOneOfMissing === 0
   };
 }
 
 /**
  * Build human-readable reasons for classification score
  */
-function buildReasons({ matchedRequired, missingRequired, matchedOptional, matchedNegative, matchedStrongFeatures, matchedExclusiveFeatures, typeCheckResults }) {
+function buildReasons({ matchedRequired, missingRequired, missingOneOfGroups, matchedOptional, matchedNegative, matchedStrongFeatures, matchedExclusiveFeatures, typeCheckResults }) {
   const reasons = [];
-  
+
   if (matchedStrongFeatures && matchedStrongFeatures.length > 0) {
     reasons.push(`✓ Strong features: ${matchedStrongFeatures.map(f => Array.isArray(f) ? f.join('+') : f).join(', ')}`);
   }
-  
+
   if (matchedRequired.length > 0) {
     reasons.push(`✓ Required: ${matchedRequired.join(', ')}`);
   }
-  
+
   if (missingRequired.length > 0) {
     reasons.push(`✗ Missing required: ${missingRequired.join(', ')}`);
+  }
+
+  if (missingOneOfGroups && missingOneOfGroups.length > 0) {
+    missingOneOfGroups.forEach(group => {
+      reasons.push(`✗ Missing one of: ${group.join(' / ')}`);
+    });
   }
   
   if (matchedExclusiveFeatures && matchedExclusiveFeatures.length > 0) {
@@ -331,7 +360,13 @@ export function getClassificationReasons(classificationResult) {
   if (evidence.missingRequired.length > 0) {
     reasons.push(`Missing required fields: ${evidence.missingRequired.join(', ')}`);
   }
-  
+
+  if (evidence.missingOneOfGroups && evidence.missingOneOfGroups.length > 0) {
+    evidence.missingOneOfGroups.forEach(group => {
+      reasons.push(`Missing one of: ${group.join(' / ')}`);
+    });
+  }
+
   if (evidence.matchedNegative.length > 0) {
     reasons.push(`Contains unexpected fields: ${evidence.matchedNegative.join(', ')}`);
   }

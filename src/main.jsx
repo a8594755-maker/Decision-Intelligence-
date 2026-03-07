@@ -6,6 +6,10 @@ import { AppProvider } from './contexts/AppContext'
 import { AuthProvider } from './contexts/AuthContext'
 import { router } from './router'
 import './index.css'
+import { warmupEdgeFunction } from './services/aiProxyService'
+
+// Wake up Edge Function early so the first AI call doesn't pay cold-start cost
+warmupEdgeFunction();
 
 const sentryDsn = import.meta.env.VITE_SENTRY_DSN;
 if (sentryDsn) {

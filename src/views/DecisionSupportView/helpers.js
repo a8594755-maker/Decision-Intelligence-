@@ -227,7 +227,10 @@ export function buildConfirmationPayload(cardPayload, mappingPlans = []) {
   const planBySheet = new Map((mappingPlans || []).map((plan) => [String(plan.sheet_name || ''), plan]));
   const lowConfidenceSheets = (cardPayload?.sheets || []).filter((sheet) => {
     const missingRequired = (sheet.missing_required_fields || []).length > 0;
-    return Number(sheet.confidence || 0) < 0.7 || missingRequired;
+    const validationPassed = sheet.validation_status === 'pass';
+    // Only prompt confirmation when validation fails OR confidence is very low (<50%)
+    // Sheets that pass validation with moderate confidence (≥50%) don't need confirmation
+    return missingRequired || (!validationPassed && Number(sheet.confidence || 0) < 0.7) || Number(sheet.confidence || 0) < 0.5;
   });
 
   if (lowConfidenceSheets.length === 0) return null;
@@ -575,6 +578,8 @@ export function deriveCanvasChartPatchFromCard(cardType, payload = {}) {
 }
 
 export function toPositiveRunId(value) {
+  // Accept local-* IDs from offline workflow runs
+  if (typeof value === 'string' && value.startsWith('local-')) return value;
   const numeric = Number(value);
   if (!Number.isInteger(numeric) || numeric <= 0) return null;
   return numeric;

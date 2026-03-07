@@ -9,6 +9,7 @@ import { getUploadStrategy, getIdempotencyKey } from './uploadStrategies';
 import { importBatchesService } from './importHistoryService';
 import { userFilesService } from './supabaseClient';
 import { validateAndCleanData } from '../utils/dataValidation';
+import { validateInWorker } from '../utils/dataValidationWorkerClient';
 import { ruleBasedMapping } from '../utils/aiMappingHelper';
 import UPLOAD_SCHEMAS from '../utils/uploadSchemas';
 import { ingestInChunks, DEFAULT_CHUNK_SIZE } from './chunkIngestService';
@@ -23,6 +24,23 @@ import {
 import { autoFillRows, validateRequiredFields } from '../utils/dataAutoFill';
 import { getRequiredMappingStatus } from '../utils/requiredMappingStatus';
 import { suggestMappingWithLLM } from './oneShotAiSuggestService';
+
+/**
+ * Wrap a promise with a timeout. Returns fallbackValue on timeout if provided.
+ */
+function withTimeout(promise, ms, fallbackValue) {
+  let timer;
+  const timeout = new Promise((resolve, reject) => {
+    timer = setTimeout(() => {
+      if (fallbackValue !== undefined) {
+        resolve(fallbackValue);
+      } else {
+        reject(new Error(`Operation timed out after ${ms}ms`));
+      }
+    }, ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
 
 /**
  * Generate sheet plans from workbook (classification phase)
@@ -535,8 +553,9 @@ async function importSingleSheet({
       };
     }
     
-    // 7. Validate and clean
-    const validationResult = validateAndCleanData(sheetData, uploadType, columnMapping);
+    // 7. Validate and clean (use Web Worker for large datasets)
+    onProgress({ stage: 'substep', sheetName, uploadType, substep: 'Validating data...' });
+    const validationResult = await validateInWorker(sheetData, uploadType, columnMapping);
     
     // 8. Auto-fill common missing fields (for any remaining fillable fields)
     const autoFillResult = autoFillRows(validationResult.validRows, uploadType);
@@ -580,25 +599,29 @@ async function importSingleSheet({
       'operational_costs': 'operational_costs'
     };
 
+    onProgress({ stage: 'substep', sheetName, uploadType, substep: 'Creating import batch...' });
     let batchId;
     try {
-      const batchRecord = await importBatchesService.createBatch(userId, {
-        uploadType,
-        filename: fileName,
-        targetTable: targetTableMap[uploadType] || uploadType,
-        totalRows: totalRows,
-        metadata: {
-          validRows: validationResult.validRows.length,
-          errorRows: validationResult.errorRows?.length || 0,
-          columns: headers,
-          source: 'one-shot-import',
-          sheetName,
-          needsChunking: totalRows > 500
-        }
-      });
+      const batchRecord = await withTimeout(
+        importBatchesService.createBatch(userId, {
+          uploadType,
+          filename: fileName,
+          targetTable: targetTableMap[uploadType] || uploadType,
+          totalRows: totalRows,
+          metadata: {
+            validRows: validationResult.validRows.length,
+            errorRows: validationResult.errorRows?.length || 0,
+            columns: headers,
+            source: 'one-shot-import',
+            sheetName,
+            needsChunking: totalRows > 500
+          }
+        }),
+        8000
+      );
       batchId = batchRecord.id;
     } catch (batchErr) {
-      console.warn(`[One-shot] createBatch failed (non-blocking):`, batchErr?.message);
+      console.warn(`[One-shot] createBatch failed or timed out (non-blocking):`, batchErr?.message);
       batchId = `local-batch-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     }
     
@@ -606,8 +629,9 @@ async function importSingleSheet({
     const idempotencyKey = getIdempotencyKey({ batchId, sheetName, uploadType });
     
     // 8. Check if already succeeded (idempotency)
+    onProgress({ stage: 'substep', sheetName, uploadType, substep: 'Checking import history...' });
     if (hasIngestKeySupport && !forceRerun) {
-      const existingRun = await findSucceededRun(userId, idempotencyKey);
+      const existingRun = await withTimeout(findSucceededRun(userId, idempotencyKey), 5000, null);
       if (existingRun) {
         console.log(`[One-shot] Sheet "${sheetName}" already imported (run: ${existingRun.id}), skipping`);
         return {
@@ -626,24 +650,31 @@ async function importSingleSheet({
     if (hasIngestKeySupport) {
       try {
         const totalChunks = Math.ceil(validationResult.validRows.length / chunkSize);
-        const sheetRun = await upsertSheetRun({
-          userId,
-          batchId,
-          sheetName,
-          uploadType,
-          idempotencyKey,
-          status: 'running',
-          totalRows: validationResult.validRows.length,
-          chunksTotal: totalChunks
-        });
+        const sheetRun = await withTimeout(
+          upsertSheetRun({
+            userId,
+            batchId,
+            sheetName,
+            uploadType,
+            idempotencyKey,
+            status: 'running',
+            totalRows: validationResult.validRows.length,
+            chunksTotal: totalChunks
+          }),
+          8000
+        );
         sheetRunId = sheetRun.id;
       } catch (runErr) {
-        console.warn(`[One-shot] upsertSheetRun failed (non-blocking):`, runErr?.message);
+        console.warn(`[One-shot] upsertSheetRun failed or timed out (non-blocking):`, runErr?.message);
       }
 
       // Delete previous data (idempotent)
       try {
-        const deletedCount = await deletePreviousDataByIngestKey(userId, idempotencyKey, uploadType);
+        const deletedCount = await withTimeout(
+          deletePreviousDataByIngestKey(userId, idempotencyKey, uploadType),
+          8000,
+          0
+        );
         console.log(`[One-shot] Deleted ${deletedCount} previous rows for sheet "${sheetName}"`);
       } catch (deleteError) {
         console.warn(`[One-shot] Failed to delete previous data:`, deleteError);
@@ -654,10 +685,10 @@ async function importSingleSheet({
     // 10. Save original file — non-blocking
     let uploadFileId = null;
     try {
-      const fileRecord = await userFilesService.saveFile(
-        userId,
-        `${sheetName}.json`,
-        sheetData
+      const fileRecord = await withTimeout(
+        userFilesService.saveFile(userId, `${sheetName}.json`, sheetData),
+        8000,
+        null
       );
       uploadFileId = fileRecord?.id;
     } catch (saveErr) {
@@ -686,9 +717,10 @@ async function importSingleSheet({
     
     // 12. Get upload strategy
     const strategy = getUploadStrategy(uploadType);
-    
+
     // 13. Ingest in chunks
-    const ingestResult = await ingestInChunks({
+    onProgress({ stage: 'substep', sheetName, uploadType, substep: 'Ingesting data...' });
+    const ingestResult = await withTimeout(ingestInChunks({
       strategy,
       userId,
       uploadType,
@@ -712,31 +744,38 @@ async function importSingleSheet({
       options: {
         idempotencyKey: hasIngestKeySupport ? idempotencyKey : null
       }
-    });
-    
+    }), 120000); // 120s total timeout for all chunks
+
     // 13. Update batch status — non-blocking
+    onProgress({ stage: 'substep', sheetName, uploadType, substep: 'Finalizing...' });
     try {
-      await importBatchesService.updateBatch(batchId, {
-        successRows: ingestResult.savedCount,
-        errorRows: validationResult.errorRows?.length || 0,
-        status: 'completed'
-      });
+      await withTimeout(
+        importBatchesService.updateBatch(batchId, {
+          successRows: ingestResult.savedCount,
+          errorRows: validationResult.errorRows?.length || 0,
+          status: 'completed'
+        }),
+        5000
+      );
     } catch (updateErr) {
-      console.warn(`[One-shot] updateBatch failed (non-blocking):`, updateErr?.message);
+      console.warn(`[One-shot] updateBatch failed or timed out (non-blocking):`, updateErr?.message);
     }
 
     // 14. Update sheet run status (succeeded) — non-blocking
     if (hasIngestKeySupport && sheetRunId) {
       try {
-        await updateSheetRun(userId, idempotencyKey, {
-          status: 'succeeded',
-          finished_at: new Date().toISOString(),
-          saved_rows: ingestResult.savedCount,
-          error_rows: validationResult.errorRows?.length || 0,
-          chunks_completed: ingestResult.chunks.filter(c => c.status === 'success').length
-        });
+        await withTimeout(
+          updateSheetRun(userId, idempotencyKey, {
+            status: 'succeeded',
+            finished_at: new Date().toISOString(),
+            saved_rows: ingestResult.savedCount,
+            error_rows: validationResult.errorRows?.length || 0,
+            chunks_completed: ingestResult.chunks.filter(c => c.status === 'success').length
+          }),
+          5000
+        );
       } catch (runUpdateErr) {
-        console.warn(`[One-shot] updateSheetRun failed (non-blocking):`, runUpdateErr?.message);
+        console.warn(`[One-shot] updateSheetRun failed or timed out (non-blocking):`, runUpdateErr?.message);
       }
     }
     

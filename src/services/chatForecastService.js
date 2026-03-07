@@ -20,6 +20,17 @@ const MIN_SERIES_CALIBRATION_SAMPLES = DEFAULT_MIN_SERIES_SAMPLES;
 const ARTIFACT_SIZE_THRESHOLD = 200 * 1024;
 const ENABLE_API_MODEL = String(import.meta.env.VITE_ENABLE_FORECAST_API_AUTOML || '0') === '1';
 
+/**
+ * Race a promise against a timeout. Returns fallbackValue on timeout instead of throwing.
+ */
+function withTimeout(promise, ms, fallbackValue) {
+  let timer;
+  const timeout = new Promise((resolve) => {
+    timer = setTimeout(() => resolve(fallbackValue), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
 const normalizeSheetName = (value) => String(value || '').trim().toLowerCase();
 
 const parseDateValue = (value) => {
@@ -527,21 +538,44 @@ export async function runForecastFromDatasetProfile({
   const workflowLabel = profileJson?.global?.workflow_guess?.label;
   const workflow = workflowLabel === 'A' ? 'workflow_A_replenishment' : `workflow_${workflowLabel || 'unknown'}`;
 
-  const run = await diRunsService.createRun({
+  const localRunFallback = {
+    id: `local-run-${Date.now()}`,
     user_id: userId,
     dataset_profile_id: datasetProfileRow.id,
     workflow,
-    stage: 'forecast'
-  });
-
-  await diRunsService.updateRunStatus({
-    run_id: run.id,
+    stage: 'forecast',
     status: 'running',
-    started_at: new Date().toISOString()
-  });
+    started_at: new Date().toISOString(),
+    _local: true,
+  };
+  console.log('[chatForecastService] Starting forecast, creating run...');
+  const run = await withTimeout(
+    diRunsService.createRun({
+      user_id: userId,
+      dataset_profile_id: datasetProfileRow.id,
+      workflow,
+      stage: 'forecast'
+    }).catch(() => localRunFallback),
+    8000,
+    localRunFallback
+  );
+  console.log('[chatForecastService] Run created:', run.id, run._local ? '(local)' : '(remote)');
+
+  await withTimeout(
+    diRunsService.updateRunStatus({
+      run_id: run.id,
+      status: 'running',
+      started_at: new Date().toISOString()
+    }).catch(() => null),
+    5000,
+    null
+  );
+  console.log('[chatForecastService] Run status updated to running');
 
   try {
     const demandDataset = chooseDemandDataset(contractJson);
+    console.log('[chatForecastService] demandDataset:', demandDataset ? demandDataset.sheet_name : 'null',
+      'validation:', demandDataset?.validation?.status);
     if (!demandDataset) {
       throw createBlockingError('No demand_fg dataset was found in schema contract.', [
         'Please upload or map at least one sheet as demand_fg.',
@@ -559,14 +593,21 @@ export async function runForecastFromDatasetProfile({
       ]);
     }
 
-    if (!datasetProfileRow.user_file_id) {
-      throw createBlockingError('Dataset profile has no linked user_file_id.', [
-        'Please re-upload the file from chat and retry forecast.'
-      ]);
+    let rawRows = [];
+    if (Array.isArray(datasetProfileRow._inlineRawRows) && datasetProfileRow._inlineRawRows.length > 0) {
+      rawRows = datasetProfileRow._inlineRawRows;
+      console.log('[chatForecastService] Using inline raw rows:', rawRows.length);
+    } else if (datasetProfileRow.user_file_id) {
+      console.log('[chatForecastService] Fetching file:', datasetProfileRow.user_file_id);
+      const fileRecord = await withTimeout(
+        userFilesService.getFileById(userId, datasetProfileRow.user_file_id),
+        10000,
+        null
+      );
+      rawRows = fileRecord ? normalizeRowsFromUserFile(fileRecord) : [];
+    } else {
+      console.log('[chatForecastService] No inline rows and no user_file_id');
     }
-
-    const fileRecord = await userFilesService.getFileById(userId, datasetProfileRow.user_file_id);
-    const rawRows = normalizeRowsFromUserFile(fileRecord);
     if (rawRows.length === 0) {
       throw createBlockingError('No source rows were found for this dataset profile.', [
         'Please re-upload the source file and retry forecast.'
@@ -574,6 +615,7 @@ export async function runForecastFromDatasetProfile({
     }
 
     const mapping = normalizeTargetMapping(demandDataset.mapping || {});
+    console.log('[chatForecastService] Mapping:', JSON.stringify(mapping).slice(0, 200));
     const missingMappingFields = ['material_code', 'plant_id', 'demand_qty']
       .filter((field) => !mapping[field]);
     const hasTimeMapping = Boolean(mapping.time_bucket || mapping.week_bucket || mapping.date);
@@ -585,6 +627,7 @@ export async function runForecastFromDatasetProfile({
       ]);
     }
 
+    console.log('[chatForecastService] Mapping demand rows from', rawRows.length, 'raw rows, sheet:', demandDataset.sheet_name);
     const { mappedRows, droppedRows } = mapDemandRows({
       rows: rawRows,
       sheetName: demandDataset.sheet_name,
@@ -598,6 +641,8 @@ export async function runForecastFromDatasetProfile({
       ]);
     }
 
+    console.log('[chatForecastService] mappedRows:', mappedRows.length, 'droppedRows:', droppedRows);
+
     let groupedSeries = aggregateDemandRows(mappedRows);
     groupedSeries = groupedSeries
       .filter((group) => group.series.length >= 3)
@@ -607,6 +652,7 @@ export async function runForecastFromDatasetProfile({
       }))
       .sort((a, b) => b.total_demand - a.total_demand);
 
+    console.log('[chatForecastService] groupedSeries:', groupedSeries.length, 'groups (≥3 points each)');
     if (groupedSeries.length === 0) {
       throw createBlockingError('No valid SKU/plant demand series were available after validation.', [
         'Check that material_code, plant_id, time bucket, and demand_qty contain valid values.'
@@ -622,6 +668,7 @@ export async function runForecastFromDatasetProfile({
       ? Math.floor(horizonPeriods)
       : defaultHorizonByGranularity(inferredGranularity);
 
+    console.log('[chatForecastService] Starting forecast computation, granularity:', inferredGranularity, 'horizon:', horizon, 'groups:', selectedGroups.length);
     const forecastGroups = [];
     const backtestRowsForCalibration = [];
     for (const group of selectedGroups) {
@@ -824,40 +871,71 @@ export async function runForecastFromDatasetProfile({
       }
     };
 
-    const artifactRefs = {};
-    const forecastSaved = await saveJsonArtifact(run.id, 'forecast_series', forecastSeriesArtifact, ARTIFACT_SIZE_THRESHOLD, {
-      user_id: userId,
-      filename: `forecast_series_run_${run.id}.json`
+    console.log('[chatForecastService] Forecast computation done, saving artifacts...');
+    const localArtifactRef = (artifactType) => ({
+      storage: 'local',
+      artifact_id: null,
+      run_id: run.id,
+      artifact_type: artifactType,
+      size_bytes: 0,
+      content_type: 'application/json'
     });
+
+    const artifactRefs = {};
+    const forecastSaved = await withTimeout(
+      saveJsonArtifact(run.id, 'forecast_series', forecastSeriesArtifact, ARTIFACT_SIZE_THRESHOLD, {
+        user_id: userId,
+        filename: `forecast_series_run_${run.id}.json`
+      }).catch(() => ({ artifact: null, ref: localArtifactRef('forecast_series') })),
+      10000,
+      { artifact: null, ref: localArtifactRef('forecast_series') }
+    );
     artifactRefs.forecast_series = forecastSaved.ref;
 
-    const metricsSaved = await saveJsonArtifact(run.id, 'metrics', metricsArtifact, ARTIFACT_SIZE_THRESHOLD, {
-      user_id: userId,
-      filename: `forecast_metrics_run_${run.id}.json`
-    });
+    const metricsSaved = await withTimeout(
+      saveJsonArtifact(run.id, 'metrics', metricsArtifact, ARTIFACT_SIZE_THRESHOLD, {
+        user_id: userId,
+        filename: `forecast_metrics_run_${run.id}.json`
+      }).catch(() => ({ artifact: null, ref: localArtifactRef('metrics') })),
+      10000,
+      { artifact: null, ref: localArtifactRef('metrics') }
+    );
     artifactRefs.metrics = metricsSaved.ref;
 
-    const reportSaved = await saveJsonArtifact(run.id, 'report_json', reportArtifact, ARTIFACT_SIZE_THRESHOLD, {
-      user_id: userId,
-      filename: `forecast_report_run_${run.id}.json`
-    });
+    const reportSaved = await withTimeout(
+      saveJsonArtifact(run.id, 'report_json', reportArtifact, ARTIFACT_SIZE_THRESHOLD, {
+        user_id: userId,
+        filename: `forecast_report_run_${run.id}.json`
+      }).catch(() => ({ artifact: null, ref: localArtifactRef('report_json') })),
+      10000,
+      { artifact: null, ref: localArtifactRef('report_json') }
+    );
     artifactRefs.report_json = reportSaved.ref;
 
     const csvContent = toCsv(calibratedForecastGroups);
     const inlineCsv = csvContent.length <= 100000 ? csvContent : '';
     if (csvContent) {
-      const csvSaved = await saveCsvArtifact(run.id, 'forecast_csv', csvContent, `forecast_run_${run.id}.csv`, ARTIFACT_SIZE_THRESHOLD, {
-        user_id: userId
-      });
+      const csvSaved = await withTimeout(
+        saveCsvArtifact(run.id, 'forecast_csv', csvContent, `forecast_run_${run.id}.csv`, ARTIFACT_SIZE_THRESHOLD, {
+          user_id: userId
+        }).catch(() => ({ artifact: null, ref: localArtifactRef('forecast_csv') })),
+        10000,
+        { artifact: null, ref: localArtifactRef('forecast_csv') }
+      );
       artifactRefs.forecast_csv = csvSaved.ref;
     }
 
-    const updatedRun = await diRunsService.updateRunStatus({
-      run_id: run.id,
-      status: 'succeeded',
-      finished_at: new Date().toISOString(),
-      error: null
-    });
+    const succeededRun = { ...run, status: 'succeeded', finished_at: new Date().toISOString() };
+    const updatedRun = await withTimeout(
+      diRunsService.updateRunStatus({
+        run_id: run.id,
+        status: 'succeeded',
+        finished_at: new Date().toISOString(),
+        error: null
+      }).catch(() => succeededRun),
+      5000,
+      succeededRun
+    );
 
     if (datasetProfileRow?.fingerprint) {
       const settingsPayload = {
@@ -881,6 +959,7 @@ export async function runForecastFromDatasetProfile({
       });
     }
 
+    console.log('[chatForecastService] Forecast complete! Returning result.');
     return {
       run: updatedRun,
       forecast_series: forecastSeriesArtifact,
@@ -891,12 +970,16 @@ export async function runForecastFromDatasetProfile({
       summary_text: buildRuleBasedSummary(metricsArtifact, forecastSeriesArtifact)
     };
   } catch (error) {
-    await diRunsService.updateRunStatus({
-      run_id: run.id,
-      status: 'failed',
-      finished_at: new Date().toISOString(),
-      error: error.message || 'Forecast failed'
-    }).catch(() => {});
+    await withTimeout(
+      diRunsService.updateRunStatus({
+        run_id: run.id,
+        status: 'failed',
+        finished_at: new Date().toISOString(),
+        error: error.message || 'Forecast failed'
+      }).catch(() => {}),
+      5000,
+      null
+    );
     // Preserve run id for UI error card rendering.
     error.run_id = run.id;
     throw error;

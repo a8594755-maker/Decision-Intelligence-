@@ -2,6 +2,15 @@ import { supabase } from './supabaseClient';
 
 const DATASET_PROFILES_MIGRATION_HINT = "Dataset profile table is unavailable in PostgREST. Run sql/migrations/di_dataset_profiles.sql in Supabase SQL Editor, then run: NOTIFY pgrst, 'reload schema';";
 
+// ── Local profile cache (survives Supabase failures) ─────────────────────────
+const _localProfileCache = new Map(); // profileId → profile object
+
+/** Register a locally-created profile so getDatasetProfileById can find it. */
+export function registerLocalProfile(profile) {
+  if (!profile?.id) return;
+  _localProfileCache.set(String(profile.id), profile);
+}
+
 function normalizeUnknownError(error, fallbackMessage) {
   if (error instanceof Error) return error;
 
@@ -82,6 +91,7 @@ function normalizeCreatePayload(payload = {}) {
 export const datasetProfilesService = {
   async createDatasetProfile(payload = {}) {
     const insertPayload = normalizeCreatePayload(payload);
+    console.log('[datasetProfilesService] INSERT attempt — user_id:', insertPayload.user_id, 'fingerprint:', insertPayload.fingerprint?.slice(0, 40));
     const { data, error } = await supabase
       .from('di_dataset_profiles')
       .insert([insertPayload])
@@ -89,14 +99,24 @@ export const datasetProfilesService = {
       .single();
 
     if (error) {
-      console.warn('[datasetProfilesService] DB save failed, returning local-only profile:', error.message);
-      return {
+      console.error('[datasetProfilesService] DB save failed:', {
+        message: error.message,
+        code: error.code,
+        details: error.details,
+        hint: error.hint,
+        status: error.status || error.statusCode,
+      });
+      const localProfile = {
         ...insertPayload,
         id: `local-${Date.now()}`,
         created_at: new Date().toISOString(),
         _local: true
       };
+      _localProfileCache.set(String(localProfile.id), localProfile);
+      return localProfile;
     }
+    console.log('[datasetProfilesService] INSERT success — profile id:', data.id);
+    _localProfileCache.set(String(data.id), data);
     return data;
   },
 
@@ -114,6 +134,13 @@ export const datasetProfilesService = {
   },
 
   async getDatasetProfileById(userId, profileId) {
+    // Local profiles live in memory only — skip Supabase query
+    const profileIdStr = String(profileId || '');
+    if (profileIdStr.startsWith('local-')) {
+      const cached = _localProfileCache.get(profileIdStr);
+      return cached || null;
+    }
+
     const { data, error } = await supabase
       .from('di_dataset_profiles')
       .select('*')

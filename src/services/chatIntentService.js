@@ -25,6 +25,24 @@ const EXECUTION_INTENTS = new Set([
   'ACCEPT_NEGOTIATION_OPTION',
 ]);
 
+// ── Local Fast-Path Intent Detection ─────────────────────────────────────────
+// Skip expensive LLM call for messages that are clearly general chat.
+
+const ACTION_KEYWORDS = /\b(run|execute|plan|forecast|optimize|approval|approve|reject|compare|what.?if|scenario|simulate|digital.?twin|change|set|update|budget|service.?level|horizon|risk|workflow|分析|執行|預測|比較|審批|核准|否決|模擬|情境)\b/i;
+
+/**
+ * Returns true if the message likely needs LLM-powered intent parsing.
+ * Short greetings / general chat skip the expensive round-trip.
+ */
+const needsLlmParsing = (message) => {
+  const trimmed = String(message || '').trim();
+  // Very short messages (< 6 words) without action keywords → general chat
+  const wordCount = trimmed.split(/\s+/).length;
+  if (wordCount <= 5 && !ACTION_KEYWORDS.test(trimmed)) return false;
+  // Longer messages with action keywords → need LLM
+  return ACTION_KEYWORDS.test(trimmed) || wordCount > 20;
+};
+
 // ── Intent Parsing ───────────────────────────────────────────────────────────
 
 /**
@@ -37,6 +55,12 @@ const EXECUTION_INTENTS = new Set([
  * @returns {Promise<Object>} parsed intent: { intent, confidence, entities, requires_dataset, suggested_response }
  */
 export async function parseIntent({ userMessage, sessionContext, domainContext }) {
+  // Fast path: skip LLM for obvious general chat
+  if (!needsLlmParsing(userMessage)) {
+    console.info('[chatIntentService] Fast-path: skipping LLM intent parsing for general chat');
+    return fallbackIntent(userMessage);
+  }
+
   try {
     const result = await runDiPrompt({
       promptId: DI_PROMPT_IDS.INTENT_PARSER,

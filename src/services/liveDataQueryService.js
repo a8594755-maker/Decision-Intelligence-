@@ -80,10 +80,62 @@ export const TABLE_REGISTRY = {
   },
 };
 
+// ── Local data cache (offline fallback) ──────────────────────────────────────
+
+const _localCache = {};
+
+/**
+ * Set local data for a table (used when Supabase is unavailable).
+ * @param {string} tableName - Registry key (e.g. 'suppliers', 'inventory_snapshots')
+ * @param {Array<object>} rows - Mapped rows matching the table schema
+ */
+export function setLocalTableData(tableName, rows) {
+  if (!TABLE_REGISTRY[tableName]) return;
+  _localCache[tableName] = Array.isArray(rows) ? rows : [];
+}
+
+/**
+ * Clear all local table data.
+ */
+export function clearLocalTableData() {
+  Object.keys(_localCache).forEach((key) => { delete _localCache[key]; });
+}
+
+function queryLocalCache(tableName, { filters = {}, sort = null, limit = 50, offset = 0 } = {}) {
+  const config = TABLE_REGISTRY[tableName];
+  if (!config) return { rows: [], totalCount: 0 };
+  let rows = [...(_localCache[tableName] || [])];
+
+  // Apply filters
+  for (const filterDef of config.filterFields) {
+    const value = filters[filterDef.key];
+    if (value == null || value === '') continue;
+    if (filterDef.type === 'ilike') {
+      const pattern = String(value).toLowerCase();
+      rows = rows.filter((r) => String(r[filterDef.key] || '').toLowerCase().includes(pattern));
+    } else {
+      rows = rows.filter((r) => String(r[filterDef.key] || '') === String(value));
+    }
+  }
+
+  // Sort
+  const { column: sortCol, ascending: sortAsc } = sort || config.defaultSort;
+  rows.sort((a, b) => {
+    const av = a[sortCol] ?? '';
+    const bv = b[sortCol] ?? '';
+    const cmp = typeof av === 'number' && typeof bv === 'number' ? av - bv : String(av).localeCompare(String(bv));
+    return sortAsc ? cmp : -cmp;
+  });
+
+  const totalCount = rows.length;
+  return { rows: rows.slice(offset, offset + limit), totalCount };
+}
+
 // ── Query ────────────────────────────────────────────────────────────────────
 
 /**
  * Query a table with filters, sorting, and pagination.
+ * Falls back to local cache when Supabase is unavailable.
  * @returns {{ rows: Array, totalCount: number }}
  */
 export async function queryTable(userId, tableName, {
@@ -95,33 +147,49 @@ export async function queryTable(userId, tableName, {
   const config = TABLE_REGISTRY[tableName];
   if (!config) throw new Error(`Unknown table: ${tableName}`);
 
-  const { column: sortCol, ascending: sortAsc } = sort || config.defaultSort;
+  const queryOpts = { filters, sort, limit, offset };
 
-  // Build query
-  let query = supabase
-    .from(config.table)
-    .select('*', { count: 'exact' })
-    .eq('user_id', userId);
-
-  // Apply filters
-  for (const filterDef of config.filterFields) {
-    const value = filters[filterDef.key];
-    if (value == null || value === '') continue;
-    if (filterDef.type === 'ilike') {
-      query = query.ilike(filterDef.key, `%${value}%`);
-    } else {
-      query = query.eq(filterDef.key, value);
-    }
+  // Return local cache immediately if available (avoids 8s Supabase timeout)
+  if (_localCache[tableName]?.length > 0) {
+    return queryLocalCache(tableName, queryOpts);
   }
 
-  query = query
-    .order(sortCol, { ascending: sortAsc })
-    .range(offset, offset + limit - 1);
+  try {
+    const { column: sortCol, ascending: sortAsc } = sort || config.defaultSort;
 
-  const { data, error, count } = await query;
-  if (error) throw error;
+    // Build query
+    let query = supabase
+      .from(config.table)
+      .select('*', { count: 'exact' })
+      .eq('user_id', userId);
 
-  return { rows: data || [], totalCount: count || 0 };
+    // Apply filters
+    for (const filterDef of config.filterFields) {
+      const value = filters[filterDef.key];
+      if (value == null || value === '') continue;
+      if (filterDef.type === 'ilike') {
+        query = query.ilike(filterDef.key, `%${value}%`);
+      } else {
+        query = query.eq(filterDef.key, value);
+      }
+    }
+
+    query = query
+      .order(sortCol, { ascending: sortAsc })
+      .range(offset, offset + limit - 1);
+
+    const result = await Promise.race([
+      query,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('queryTable timeout')), 8000))
+    ]);
+
+    const { data, error, count } = result;
+    if (error) throw error;
+
+    return { rows: data || [], totalCount: count || 0 };
+  } catch {
+    return { rows: [], totalCount: 0 };
+  }
 }
 
 /**
@@ -131,24 +199,39 @@ export async function getTableCount(userId, tableName, filters = {}) {
   const config = TABLE_REGISTRY[tableName];
   if (!config) throw new Error(`Unknown table: ${tableName}`);
 
-  let query = supabase
-    .from(config.table)
-    .select('*', { count: 'exact', head: true })
-    .eq('user_id', userId);
-
-  for (const filterDef of config.filterFields) {
-    const value = filters[filterDef.key];
-    if (value == null || value === '') continue;
-    if (filterDef.type === 'ilike') {
-      query = query.ilike(filterDef.key, `%${value}%`);
-    } else {
-      query = query.eq(filterDef.key, value);
-    }
+  // Return local cache count immediately if available
+  if (_localCache[tableName]?.length > 0) {
+    const localResult = queryLocalCache(tableName, { filters, limit: 999999 });
+    return localResult.totalCount;
   }
 
-  const { count, error } = await query;
-  if (error) throw error;
-  return count || 0;
+  try {
+    let query = supabase
+      .from(config.table)
+      .select('*', { count: 'exact', head: true })
+      .eq('user_id', userId);
+
+    for (const filterDef of config.filterFields) {
+      const value = filters[filterDef.key];
+      if (value == null || value === '') continue;
+      if (filterDef.type === 'ilike') {
+        query = query.ilike(filterDef.key, `%${value}%`);
+      } else {
+        query = query.eq(filterDef.key, value);
+      }
+    }
+
+    const result = await Promise.race([
+      query,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('getTableCount timeout')), 8000))
+    ]);
+
+    const { count, error } = result;
+    if (error) throw error;
+    return count || 0;
+  } catch {
+    return 0;
+  }
 }
 
 // ── Update ───────────────────────────────────────────────────────────────────

@@ -9,6 +9,17 @@ import { buildIntentParserPrompt, validateIntentContract } from '../prompts/inte
 import { extractAiJson } from '../utils/aiMappingHelper';
 import { invokeAiProxy } from './aiProxyService';
 
+const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY || '';
+const DEEPSEEK_API_KEY = import.meta.env.VITE_DEEPSEEK_API_KEY || '';
+const DEEPSEEK_BASE_URL = String(import.meta.env.VITE_DI_DEEPSEEK_BASE_URL || 'https://api.deepseek.com').replace(/\/+$/, '');
+const EDGE_FN_TIMEOUT_MS = 15000;
+
+const withTimeout = (promise, ms) =>
+  Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error(`Edge Function timed out after ${ms}ms`)), ms))
+  ]);
+
 export const DI_PROMPT_IDS = Object.freeze({
   DATA_PROFILER: 'prompt_1_data_profiler',
   SCHEMA_MAPPING: 'prompt_2_schema_mapping',
@@ -138,36 +149,116 @@ const toPromptText = (promptId, input) => {
   throw new Error(`Unsupported DI prompt id: ${promptId}`);
 };
 
-const callGeminiPrompt = async ({ prompt, model, temperature = 0.15, maxOutputTokens = 4096 }) => {
-  const response = await invokeAiProxy('di_prompt', {
-    provider: 'gemini',
-    prompt,
-    model,
-    modelCandidates: DI_GEMINI_MODEL_CANDIDATES,
-    temperature,
-    maxOutputTokens,
-    responseMimeType: 'application/json'
-  });
-  const text = typeof response?.text === 'string' ? response.text : '';
-  if (!text) {
-    throw new Error('AI proxy returned empty Gemini content.');
+const callGeminiDirect = async ({ prompt, model, temperature = 0.15, maxOutputTokens = 4096 }) => {
+  if (!GEMINI_API_KEY) throw new Error('No VITE_GEMINI_API_KEY configured for direct Gemini call.');
+  const candidates = DI_GEMINI_MODEL_CANDIDATES.length > 0 ? DI_GEMINI_MODEL_CANDIDATES : [model];
+  let lastError = null;
+  for (const m of candidates) {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { temperature, maxOutputTokens, responseMimeType: 'application/json' }
+      })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+      if (text) return { text, model: m };
+      throw new Error('Gemini direct API returned empty content.');
+    }
+    const errData = await res.json().catch(() => ({}));
+    const errMsg = errData?.error?.message || `Gemini ${res.status}`;
+    if (res.status === 404 || /not found|unsupported/i.test(errMsg)) {
+      lastError = new Error(errMsg);
+      continue;
+    }
+    throw new Error(errMsg);
   }
-  return { text, model: response?.model || model };
+  throw lastError || new Error('All Gemini model candidates failed.');
+};
+
+const callGeminiPrompt = async ({ prompt, model, temperature = 0.15, maxOutputTokens = 4096 }) => {
+  // Try Edge Function with timeout, fall back to direct API
+  const t0 = performance.now();
+  if (GEMINI_API_KEY) {
+    try {
+      const response = await withTimeout(
+        invokeAiProxy('di_prompt', {
+          provider: 'gemini',
+          prompt,
+          model,
+          modelCandidates: DI_GEMINI_MODEL_CANDIDATES,
+          temperature,
+          maxOutputTokens,
+          responseMimeType: 'application/json'
+        }),
+        EDGE_FN_TIMEOUT_MS
+      );
+      const text = typeof response?.text === 'string' ? response.text : '';
+      if (!text) throw new Error('AI proxy returned empty Gemini content.');
+      console.info(`[diModelRouter] Gemini via Edge Function OK in ${Math.round(performance.now() - t0)}ms`);
+      return { text, model: response?.model || model };
+    } catch (proxyError) {
+      console.warn(`[diModelRouter] Gemini Edge Function failed after ${Math.round(performance.now() - t0)}ms, trying direct API:`, proxyError.message);
+      return callGeminiDirect({ prompt, model, temperature, maxOutputTokens });
+    }
+  }
+  return callGeminiDirect({ prompt, model, temperature, maxOutputTokens });
+};
+
+const callDeepSeekDirect = async ({ prompt, model, temperature = 0.15, maxOutputTokens = 4096 }) => {
+  if (!DEEPSEEK_API_KEY) throw new Error('No VITE_DEEPSEEK_API_KEY configured for direct DeepSeek call.');
+  const res = await fetch(`${DEEPSEEK_BASE_URL}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${DEEPSEEK_API_KEY}`
+    },
+    body: JSON.stringify({
+      model,
+      messages: [{ role: 'user', content: prompt }],
+      temperature,
+      max_tokens: maxOutputTokens
+    })
+  });
+  if (!res.ok) {
+    const errData = await res.json().catch(() => ({}));
+    throw new Error(errData?.error?.message || `DeepSeek direct API failed (${res.status})`);
+  }
+  const data = await res.json();
+  const text = data.choices?.[0]?.message?.content || '';
+  if (!text) throw new Error('DeepSeek direct API returned empty content.');
+  return { text, model: data.model || model };
 };
 
 const callDeepSeekPrompt = async ({ prompt, model, temperature = 0.15, maxOutputTokens = 4096 }) => {
-  const response = await invokeAiProxy('di_prompt', {
-    provider: 'deepseek',
-    prompt,
-    model,
-    temperature,
-    maxOutputTokens
-  });
-  const text = typeof response?.text === 'string' ? response.text : '';
-  if (!text) {
-    throw new Error('AI proxy returned empty DeepSeek content.');
+  // Try Edge Function with timeout, fall back to direct API
+  const t0 = performance.now();
+  if (DEEPSEEK_API_KEY) {
+    try {
+      const response = await withTimeout(
+        invokeAiProxy('di_prompt', {
+          provider: 'deepseek',
+          prompt,
+          model,
+          temperature,
+          maxOutputTokens
+        }),
+        EDGE_FN_TIMEOUT_MS
+      );
+      const text = typeof response?.text === 'string' ? response.text : '';
+      if (!text) throw new Error('AI proxy returned empty DeepSeek content.');
+      console.info(`[diModelRouter] DeepSeek via Edge Function OK in ${Math.round(performance.now() - t0)}ms`);
+      return { text, model: response?.model || model };
+    } catch (proxyError) {
+      console.warn(`[diModelRouter] DeepSeek Edge Function failed after ${Math.round(performance.now() - t0)}ms, trying direct API:`, proxyError.message);
+      return callDeepSeekDirect({ prompt, model, temperature, maxOutputTokens });
+    }
   }
-  return { text, model: response?.model || model };
+  return callDeepSeekDirect({ prompt, model, temperature, maxOutputTokens });
 };
 
 export const runDiPrompt = async ({

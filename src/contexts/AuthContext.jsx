@@ -44,34 +44,40 @@ export function AuthProvider({ children }) {
   }, []);
 
   // Bootstrap auth session
+  // We rely on onAuthStateChange as the primary session source because it fires
+  // immediately with the current session and does NOT acquire navigator.locks.
+  // getSession() uses navigator.locks with infinite timeout, which deadlocks under
+  // React 18 Strict Mode (doubleInvokeEffectsInDEV) and Vite HMR reloads.
   useEffect(() => {
     if (!isSupabaseConfigured) {
       setLoading(false);
       return;
     }
 
-    // Safety timeout — if getSession() hangs (bad credentials, network), unblock UI
-    const timeout = setTimeout(() => {
-      console.warn('Auth session bootstrap timed out, proceeding without session');
-      setLoading(false);
-    }, 4000);
+    const t0 = performance.now();
+    let resolved = false;
 
-    supabase.auth.getSession().then(async ({ data: { session: s } }) => {
-      clearTimeout(timeout);
-      setSession(s);
-      await loadUserRole(s?.user?.id ?? null);
-      setLoading(false);
-    }).catch((err) => {
-      clearTimeout(timeout);
-      console.warn('Auth session bootstrap failed:', err?.message || err);
-      setLoading(false);
-    });
+    // Safety timeout — if onAuthStateChange never fires, unblock UI
+    const timeout = setTimeout(() => {
+      if (!resolved) {
+        resolved = true;
+        console.warn(`[Auth] bootstrap timed out after ${Math.round(performance.now() - t0)}ms, proceeding without session`);
+        setLoading(false);
+      }
+    }, 8000);
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, s) => {
+      const elapsed = Math.round(performance.now() - t0);
+      if (!resolved) {
+        resolved = true;
+        clearTimeout(timeout);
+        console.info(`[Auth] onAuthStateChange initial event in ${elapsed}ms — session: ${s ? 'yes' : 'none'}, event: ${_event}`);
+      }
       setSession(s);
       await loadUserRole(s?.user?.id ?? null);
-      if (!s) setLoading(false);
+      setLoading(false);
     });
+
     return () => {
       clearTimeout(timeout);
       subscription.unsubscribe();

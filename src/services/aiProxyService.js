@@ -1,64 +1,98 @@
-import { supabase } from './supabaseClient';
 import { acquireOrThrow } from '../utils/rateLimiter';
 
 const AI_PROXY_FUNCTION_NAME = 'ai-proxy';
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || '';
+const SUPABASE_URL = String(import.meta.env.VITE_SUPABASE_URL || '').replace(/\/+$/, '');
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
 
-const buildFunctionHint = () => {
-  const endpoint = SUPABASE_URL
-    ? `${String(SUPABASE_URL).replace(/\/+$/, '')}/functions/v1/${AI_PROXY_FUNCTION_NAME}`
-    : `(missing VITE_SUPABASE_URL)/functions/v1/${AI_PROXY_FUNCTION_NAME}`;
-  return [
-    `Edge Function "${AI_PROXY_FUNCTION_NAME}" is unreachable.`,
-    `Endpoint: ${endpoint}`,
-    'Check that the function is deployed to the same Supabase project and that Edge Functions are enabled.'
-  ].join(' ');
+const EDGE_FN_URL = SUPABASE_URL
+  ? `${SUPABASE_URL}/functions/v1/${AI_PROXY_FUNCTION_NAME}`
+  : '';
+
+/**
+ * Read the stored Supabase JWT from localStorage synchronously.
+ * Supabase JS v2 stores it under `sb-<project-ref>-auth-token`.
+ * This avoids calling supabase.auth.getSession() which can trigger
+ * a slow token-refresh network round-trip that hangs in some browsers.
+ */
+const getStoredAccessToken = () => {
+  try {
+    if (typeof localStorage === 'undefined') return null;
+    // Extract project ref from URL: https://<ref>.supabase.co
+    const match = SUPABASE_URL.match(/\/\/([^.]+)\./);
+    if (!match) return null;
+    const storageKey = `sb-${match[1]}-auth-token`;
+    const raw = localStorage.getItem(storageKey);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed?.access_token || null;
+  } catch {
+    return null;
+  }
 };
 
-const readFunctionErrorMessage = async (error) => {
-  if (!error) return 'Unknown Edge Function error';
-  const contextResponse = error?.context?.response;
-  if (contextResponse) {
-    try {
-      const payload = await contextResponse.json();
-      if (payload?.error) return String(payload.error);
-      if (payload?.message) return String(payload.message);
-    } catch {
-      // ignore response parsing errors
-    }
-  }
-  if (typeof error?.message === 'string' && error.message) {
-    const lower = error.message.toLowerCase();
-    if (
-      lower.includes('failed to send a request to the edge function')
-      || lower.includes('failed to fetch')
-      || lower.includes('networkerror')
-    ) {
-      return buildFunctionHint();
-    }
-    return error.message;
-  }
-  return 'Unknown Edge Function error';
+/**
+ * Fire-and-forget warmup: sends a lightweight ping to wake the Edge Function
+ * so the first real request doesn't pay the cold-start penalty (~3-5s).
+ */
+let _warmedUp = false;
+export const warmupEdgeFunction = () => {
+  if (_warmedUp || !EDGE_FN_URL || !SUPABASE_ANON_KEY) return;
+  _warmedUp = true;
+  const t0 = performance.now();
+  fetch(EDGE_FN_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'apikey': SUPABASE_ANON_KEY,
+      'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+    },
+    body: JSON.stringify({ mode: 'ping', payload: {} }),
+  })
+    .then((r) => console.info(`[aiProxy] warmup completed in ${Math.round(performance.now() - t0)}ms — status ${r.status}`))
+    .catch((e) => console.warn(`[aiProxy] warmup failed in ${Math.round(performance.now() - t0)}ms:`, e.message));
 };
 
 export const invokeAiProxy = async (mode, payload = {}) => {
   acquireOrThrow('ai_proxy');
 
-  if (!supabase?.functions?.invoke) {
-    throw new Error('Supabase Functions is unavailable. Check VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.');
+  if (!EDGE_FN_URL) {
+    throw new Error('Edge Function URL not configured. Check VITE_SUPABASE_URL.');
   }
-  const requestBody = {
-    mode,
-    payload,
+
+  const accessToken = getStoredAccessToken();
+  const headers = {
+    'Content-Type': 'application/json',
+    'apikey': SUPABASE_ANON_KEY,
   };
-  const { data, error } = await supabase.functions.invoke(AI_PROXY_FUNCTION_NAME, {
-    body: requestBody,
+  if (accessToken) {
+    headers['Authorization'] = `Bearer ${accessToken}`;
+  }
+
+  const t0 = performance.now();
+  console.info(`[aiProxy] Calling Edge Function "${AI_PROXY_FUNCTION_NAME}" (mode=${mode}) via raw fetch...`);
+
+  const res = await fetch(EDGE_FN_URL, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ mode, payload }),
   });
 
-  if (error) {
-    const message = await readFunctionErrorMessage(error);
+  const elapsed = Math.round(performance.now() - t0);
+  console.info(`[aiProxy] Edge Function "${AI_PROXY_FUNCTION_NAME}" (mode=${mode}) responded in ${elapsed}ms — status ${res.status}`);
+
+  if (!res.ok) {
+    let message = `Edge Function failed (${res.status})`;
+    try {
+      const errPayload = await res.json();
+      if (errPayload?.error) message = String(errPayload.error);
+      else if (errPayload?.message) message = String(errPayload.message);
+    } catch {
+      // ignore parse errors
+    }
     throw new Error(message);
   }
+
+  const data = await res.json();
   if (!data) {
     throw new Error('AI proxy returned an empty response.');
   }

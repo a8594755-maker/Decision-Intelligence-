@@ -610,7 +610,7 @@ export default function CanvasPanel({
                 </div>
               ) : (
                 <div className="h-48 md:h-64 w-full">
-                  <ResponsiveContainer width="100%" height="100%" minWidth={0}>
+                  <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
                     <LineChart data={actualVsForecastRows}>
                       <CartesianGrid strokeDasharray="3 3" />
                       <XAxis dataKey={actualVsForecast.xKey} tickFormatter={chartTick} fontSize={11} />
@@ -708,7 +708,7 @@ export default function CanvasPanel({
                     <div className="h-48 md:h-64 w-full flex items-center justify-center text-slate-400 text-sm">No data available</div>
                   ) : (
                     <div className="h-48 md:h-64 w-full">
-                      <ResponsiveContainer width="100%" height="100%" minWidth={0}>
+                      <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
                         <LineChart data={invRows}>
                           <CartesianGrid strokeDasharray="3 3" />
                           <XAxis dataKey="period" tickFormatter={chartTick} fontSize={11} />
@@ -764,7 +764,7 @@ export default function CanvasPanel({
                     <div className="h-48 md:h-64 w-full flex items-center justify-center text-slate-400 text-sm">No data available</div>
                   ) : (
                     <div className="h-48 md:h-64 w-full">
-                      <ResponsiveContainer width="100%" height="100%" minWidth={0}>
+                      <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
                         <BarChart data={costRows} margin={{ top: 4, right: 4, left: 0, bottom: 24 }}>
                           <CartesianGrid strokeDasharray="3 3" vertical={false} />
                           <XAxis dataKey="label" fontSize={11} tick={{ fill: '#64748b' }} interval={0} angle={-20} textAnchor="end" />

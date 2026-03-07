@@ -303,8 +303,9 @@ const buildRunSnapshot = async (runId) => {
 };
 
 const getSourceCachedOutput = async (settings, stepName) => {
-  const sourceRunId = Number(settings?.replay_of_run_id);
-  if (!Number.isFinite(sourceRunId)) return null;
+  const rawId = settings?.replay_of_run_id;
+  const sourceRunId = String(rawId || '').startsWith('local-') ? rawId : Number(rawId);
+  if (!sourceRunId || (typeof sourceRunId === 'number' && !Number.isFinite(sourceRunId))) return null;
 
   const sourceSteps = await diRunsService.getRunSteps(sourceRunId);
   const sourceStep = sourceSteps.find((row) => row.step === stepName);
@@ -1156,14 +1157,19 @@ async function executeStep({ run, datasetProfileRow, settings, stepRow, stepMap 
   });
 }
 
-export async function startWorkflowA({ user_id, dataset_profile_id, settings = {} }) {
+// Module-level cache for dataset profile rows (survives across steps within a run)
+const _profileRowCache = new Map();
+
+export async function startWorkflowA({ user_id, dataset_profile_id, settings = {}, profileRow: providedProfileRow = null }) {
   if (!user_id) throw new Error('user_id is required');
   if (!dataset_profile_id) throw new Error('dataset_profile_id is required');
 
-  const profileRow = await datasetProfilesService.getDatasetProfileById(user_id, dataset_profile_id);
+  const profileRow = providedProfileRow || await datasetProfilesService.getDatasetProfileById(user_id, dataset_profile_id);
   if (!profileRow) {
     throw new WorkflowAError(WORKFLOW_ERROR_CODES.DATA_CONTRACT_MISSING_REQUIRED, `Dataset profile ${dataset_profile_id} not found.`);
   }
+  // Cache for subsequent steps (runNextStep)
+  _profileRowCache.set(String(dataset_profile_id), profileRow);
 
   const run = await diRunsService.createRun({
     user_id,
@@ -1194,8 +1200,10 @@ export async function startWorkflowA({ user_id, dataset_profile_id, settings = {
 }
 
 export async function runNextStep(run_id) {
-  const runId = Number(run_id);
-  if (!Number.isFinite(runId)) throw new Error('run_id must be numeric');
+  // Accept both numeric and local string IDs
+  const runId = String(run_id || '').startsWith('local-') ? run_id : Number(run_id);
+  if (!runId) throw new Error('run_id is required');
+  if (typeof runId === 'number' && !Number.isFinite(runId)) throw new Error('run_id must be numeric or a local ID');
 
   const snapshotBefore = await buildRunSnapshot(runId);
   const run = snapshotBefore.run;
@@ -1258,7 +1266,8 @@ export async function runNextStep(run_id) {
 
   const settingsWrapper = await getWorkflowSettings(runId);
   let settings = settingsWrapper?.settings || settingsWrapper || {};
-  const datasetProfileRow = await datasetProfilesService.getDatasetProfileById(run.user_id, run.dataset_profile_id);
+  const datasetProfileRow = _profileRowCache.get(String(run.dataset_profile_id))
+    || await datasetProfilesService.getDatasetProfileById(run.user_id, run.dataset_profile_id);
 
   if (!datasetProfileRow) {
     const wfError = new WorkflowAError(
@@ -1424,9 +1433,10 @@ export async function resumeRun(run_id, options = {}) {
 
   const currentStatus = normalizeStatus(latest.run?.status);
   if (currentStatus === 'failed') {
-    const resetResult = await resetFailedAndDownstreamSteps(Number(run_id), latest.steps || []);
+    const safeRunId = String(run_id || '').startsWith('local-') ? run_id : Number(run_id);
+    const resetResult = await resetFailedAndDownstreamSteps(safeRunId, latest.steps || []);
     await diRunsService.updateRunStatus({
-      run_id: Number(run_id),
+      run_id: safeRunId,
       status: 'running',
       stage: resetResult.resetFromStep || latest.run?.stage || WORKFLOW_A_STEPS[0],
       finished_at: null,
@@ -1434,9 +1444,10 @@ export async function resumeRun(run_id, options = {}) {
     });
     latest = await buildRunSnapshot(run_id);
   } else if (currentStatus === 'waiting_user') {
-    const resetResult = await resetBlockedAndDownstreamSteps(Number(run_id), latest.steps || []);
+    const safeRunIdW = String(run_id || '').startsWith('local-') ? run_id : Number(run_id);
+    const resetResult = await resetBlockedAndDownstreamSteps(safeRunIdW, latest.steps || []);
     await diRunsService.updateRunStatus({
-      run_id: Number(run_id),
+      run_id: safeRunIdW,
       status: 'running',
       stage: resetResult.resetFromStep || latest.run?.stage || WORKFLOW_A_STEPS[0],
       finished_at: null,
@@ -1474,8 +1485,8 @@ export async function resumeRun(run_id, options = {}) {
 }
 
 export async function submitBlockingAnswers(run_id, answers = {}) {
-  const runId = Number(run_id);
-  if (!Number.isFinite(runId)) throw new Error('run_id must be numeric');
+  const runId = String(run_id || '').startsWith('local-') ? run_id : Number(run_id);
+  if (typeof runId === 'number' && !Number.isFinite(runId)) throw new Error('run_id must be numeric or a local ID');
 
   const snapshot = await buildRunSnapshot(runId);
   const currentStatus = normalizeStatus(snapshot.run?.status);
@@ -1513,7 +1524,7 @@ export async function replayRun(run_id, { use_cached_forecast = false, use_cache
     dataset_profile_id: sourceRun.dataset_profile_id,
     settings: {
       ...sourceSettings,
-      replay_of_run_id: Number(run_id),
+      replay_of_run_id: String(run_id || '').startsWith('local-') ? run_id : Number(run_id),
       use_cached_forecast: Boolean(use_cached_forecast),
       use_cached_plan: Boolean(use_cached_plan)
     }
