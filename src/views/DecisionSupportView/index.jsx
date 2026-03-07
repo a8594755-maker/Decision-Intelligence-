@@ -87,6 +87,7 @@ import ProactiveAlertCard from '../../components/chat/ProactiveAlertCard';
 import AIErrorCard from '../../components/chat/AIErrorCard';
 import PlanComparisonCard from '../../components/chat/PlanComparisonCard';
 import EnhancedPlanApprovalCard from '../../components/chat/EnhancedPlanApprovalCard';
+import RetrainApprovalCard from '../../components/chat/RetrainApprovalCard';
 import ApprovalReminderCard from '../../components/chat/ApprovalReminderCard';
 import DigitalTwinSimulationCard from '../../components/chat/DigitalTwinSimulationCard';
 import NegotiationPanel from '../../components/chat/NegotiationPanel';
@@ -4283,6 +4284,26 @@ export default function DecisionSupportView({ user, addNotification }) {
           onRequestApproval={handleRequestPlanApproval}
           onApprove={handleApprovePlanApproval}
           onReject={handleRejectPlanApproval}
+        />
+      );
+    }
+    if (message.type === 'retrain_approval_card') {
+      return (
+        <RetrainApprovalCard
+          payload={message.payload}
+          onApprove={async (details) => {
+            try {
+              const mlApiUrl = import.meta.env.VITE_ML_API_URL || 'http://127.0.0.1:8000';
+              await fetch(`${mlApiUrl}/ml/retrain/run`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ series_id: details.series_id, approved_by: 'ui_user', note: details.note }),
+              });
+            } catch (e) { console.error('Retrain approve error:', e); }
+          }}
+          onReject={async (details) => {
+            console.log('Retrain rejected:', details);
+          }}
         />
       );
     }

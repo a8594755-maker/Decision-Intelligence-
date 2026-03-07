@@ -185,6 +185,29 @@ class LightGBMStrategy(TrainingStrategy):
                 )
             ),
         }
+
+        # --- SHAP values (optional, tree-based) ---
+        try:
+            import shap
+            explainer = shap.TreeExplainer(model)
+            # Use a sample of validation data to keep cost manageable
+            shap_sample = bundle.X_val.head(min(200, len(bundle.X_val)))
+            shap_values = explainer.shap_values(shap_sample)
+            mean_abs_shap = dict(
+                zip(
+                    list(bundle.feature_columns),
+                    [float(v) for v in np.mean(np.abs(shap_values), axis=0)],
+                )
+            )
+            extra["shap_importance"] = mean_abs_shap
+            extra["shap_method"] = "TreeExplainer"
+            extra["shap_sample_size"] = len(shap_sample)
+            logger.info("SHAP values computed for LightGBM (%d samples)", len(shap_sample))
+        except ImportError:
+            logger.debug("shap not installed, skipping SHAP computation")
+        except Exception as e:
+            logger.warning("SHAP computation failed: %s", e)
+
         if hpo_report:
             extra["hpo_report"] = hpo_report
 
@@ -487,6 +510,28 @@ class XGBoostStrategy(TrainingStrategy):
                 )
             ),
         }
+
+        # --- SHAP values (optional, tree-based) ---
+        try:
+            import shap
+            explainer = shap.TreeExplainer(model)
+            shap_sample = bundle.X_val.head(min(200, len(bundle.X_val)))
+            shap_values = explainer.shap_values(shap_sample)
+            mean_abs_shap = dict(
+                zip(
+                    list(bundle.feature_columns),
+                    [float(v) for v in np.mean(np.abs(shap_values), axis=0)],
+                )
+            )
+            extra["shap_importance"] = mean_abs_shap
+            extra["shap_method"] = "TreeExplainer"
+            extra["shap_sample_size"] = len(shap_sample)
+            logger.info("SHAP values computed for XGBoost (%d samples)", len(shap_sample))
+        except ImportError:
+            logger.debug("shap not installed, skipping SHAP computation")
+        except Exception as e:
+            logger.warning("SHAP computation failed: %s", e)
+
         if hpo_report:
             extra["hpo_report"] = hpo_report
 

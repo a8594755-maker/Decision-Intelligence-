@@ -2098,36 +2098,45 @@ async def feature_importance(request: ExplainRequest):
         if not feat_imp:
             return {"error": "模型元數據中無特徵重要性資訊"}
 
-        # 2. 排序 & 計算百分比
-        total_gain = sum(feat_imp.values()) or 1
-        sorted_feats = sorted(feat_imp.items(), key=lambda x: x[1], reverse=True)
+        # 2. Check for SHAP values (prefer SHAP over gain-based importance)
+        shap_imp = meta.get('shap_importance', {})
+        importance_method = "shap" if shap_imp else "gain"
+        active_imp = shap_imp if shap_imp else feat_imp
+
+        # 3. 排序 & 計算百分比
+        total_value = sum(active_imp.values()) or 1
+        sorted_feats = sorted(active_imp.items(), key=lambda x: x[1], reverse=True)
 
         features = []
-        for feat_name, gain in sorted_feats:
-            pct = round(gain / total_gain * 100, 1)
+        for feat_name, value in sorted_feats:
+            pct = round(value / total_value * 100, 1)
             features.append({
                 "feature": feat_name,
-                "importance_gain": gain,
+                "importance_value": value,
                 "importance_pct": pct,
+                "importance_method": importance_method,
                 "explanation": _explain_feature(feat_name, pct),
             })
 
-        # 3. 生成整體摘要
+        # 4. 生成整體摘要
         top3 = features[:3]
+        method_label = "SHAP" if importance_method == "shap" else "Gain"
         summary = (
-            f"模型預測主要依據: "
+            f"模型預測主要依據 ({method_label}): "
             f"{top3[0]['feature']}({top3[0]['importance_pct']}%), "
             f"{top3[1]['feature']}({top3[1]['importance_pct']}%), "
             f"{top3[2]['feature']}({top3[2]['importance_pct']}%)"
         ) if len(top3) >= 3 else "特徵不足"
 
-        # 4. Optuna 調參資訊
+        # 5. Optuna 調參資訊
         optuna_info = meta.get('optuna', None)
 
         return {
             "success": True,
             "features": features,
             "summary": summary,
+            "importance_method": importance_method,
+            "shap_sample_size": meta.get('shap_sample_size'),
             "model_mape": meta.get('val_mape'),
             "trained_at": meta.get('trained_at'),
             "optuna": optuna_info,

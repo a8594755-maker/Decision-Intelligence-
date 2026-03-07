@@ -7,7 +7,7 @@ import {
   TrendingUp, TrendingDown, Package, Building2, AlertTriangle, Database,
   DollarSign, Activity, ArrowUpRight, ArrowDownRight, RefreshCw, Clock,
   CheckCircle, XCircle, Upload, BarChart3, Layers, ShieldAlert, Cloud,
-  ChevronRight, Loader2, Box, FileText
+  ChevronRight, Loader2, Box, FileText, Target, Truck
 } from 'lucide-react';
 import { supabase } from '../services/supabaseClient';
 import { Card } from '../components/ui';
@@ -141,6 +141,7 @@ const DashboardView = ({ setView, user, globalDataSource, setGlobalDataSource })
     imports: { totalBatches: 0, completed: 0, failed: 0, totalRows: 0, byType: {} },
     risk: { totalScored: 0, highRisk: 0, medRisk: 0, lowRisk: 0, avgScore: 0 },
     bom: { totalEdges: 0, totalDemandFg: 0 },
+    decisionKpis: { serviceLevel: null, stockoutUnits: null, holdingUnits: null, totalCost: null, solverStatus: null, runDate: null },
   });
 
   const userId = user?.id;
@@ -160,6 +161,7 @@ const DashboardView = ({ setView, user, globalDataSource, setGlobalDataSource })
         riskRes,
         bomEdgesRes,
         demandFgRes,
+        planRunsRes,
       ] = await Promise.allSettled([
         // 1. Suppliers
         supabase.from('suppliers').select('id, status', { count: 'exact' }),
@@ -175,6 +177,8 @@ const DashboardView = ({ setView, user, globalDataSource, setGlobalDataSource })
         supabase.from('bom_edges').select('id', { count: 'exact', head: true }).eq('user_id', userId),
         // 7. Demand FG count
         supabase.from('demand_fg').select('id', { count: 'exact', head: true }).eq('user_id', userId),
+        // 8. Latest plan run with solver KPIs
+        supabase.from('forecast_runs').select('id, status, kind, metadata, created_at').eq('user_id', userId).in('kind', ['plan', 'workflow_a', 'planning']).eq('status', 'completed').order('created_at', { ascending: false }).limit(1),
       ]);
 
       // Process suppliers
@@ -221,6 +225,24 @@ const DashboardView = ({ setView, user, globalDataSource, setGlobalDataSource })
       const bomEdgeCount = bomEdgesRes.status === 'fulfilled' ? (bomEdgesRes.value.count || 0) : 0;
       const demandFgCount = demandFgRes.status === 'fulfilled' ? (demandFgRes.value.count || 0) : 0;
 
+      // Decision KPIs from latest plan run
+      const planRuns = planRunsRes.status === 'fulfilled' ? (planRunsRes.value.data || []) : [];
+      let decisionKpis = { serviceLevel: null, stockoutUnits: null, holdingUnits: null, totalCost: null, solverStatus: null, runDate: null };
+      if (planRuns.length > 0) {
+        const latestPlan = planRuns[0];
+        const meta = latestPlan.metadata || {};
+        const kpis = meta.kpis || meta.solver_kpis || {};
+        const solverMeta = meta.solver_meta || {};
+        decisionKpis = {
+          serviceLevel: kpis.estimated_service_level ?? kpis.service_level ?? null,
+          stockoutUnits: kpis.estimated_stockout_units ?? kpis.stockout_units ?? null,
+          holdingUnits: kpis.estimated_holding_units ?? kpis.holding_units ?? null,
+          totalCost: kpis.estimated_total_cost ?? kpis.total_cost ?? null,
+          solverStatus: solverMeta.status || latestPlan.status || null,
+          runDate: latestPlan.created_at || null,
+        };
+      }
+
       setStats({
         suppliers: { total: suppliersData.length, active: activeSuppliers, inactive: inactiveSuppliers },
         inventory: { totalItems: latestInv.length, totalOnHand, belowSafety, uniqueMaterials: invByKey.size },
@@ -228,6 +250,7 @@ const DashboardView = ({ setView, user, globalDataSource, setGlobalDataSource })
         imports: { totalBatches: batches.length, completed: completedBatches, failed: failedBatches, totalRows: totalImportedRows, byType, rawBatches: batches },
         risk: { totalScored: riskData.length, highRisk, medRisk, lowRisk, avgScore },
         bom: { totalEdges: bomEdgeCount, totalDemandFg: demandFgCount },
+        decisionKpis,
       });
     } catch (err) {
       console.error('Dashboard fetch error:', err);
@@ -415,6 +438,48 @@ const DashboardView = ({ setView, user, globalDataSource, setGlobalDataSource })
             onClick={() => setView('import-history')}
           />
         </div>
+
+        {/* ─── Decision KPIs Row ─── */}
+        {(stats.decisionKpis.serviceLevel !== null || stats.decisionKpis.totalCost !== null) && (
+          <>
+            <SectionHeader
+              title="Decision KPIs"
+              subtitle={stats.decisionKpis.runDate ? `Latest plan: ${new Date(stats.decisionKpis.runDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}` : 'From latest plan run'}
+              icon={Target}
+              color={COLORS.emerald}
+            />
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <KpiCard
+                title="Service Level"
+                value={stats.decisionKpis.serviceLevel !== null ? `${(stats.decisionKpis.serviceLevel * 100).toFixed(1)}%` : '-'}
+                subtitle="Estimated fill rate"
+                icon={Target}
+                color={stats.decisionKpis.serviceLevel >= 0.95 ? COLORS.emerald : stats.decisionKpis.serviceLevel >= 0.85 ? COLORS.amber : COLORS.red}
+              />
+              <KpiCard
+                title="Stockout Units"
+                value={stats.decisionKpis.stockoutUnits !== null ? Math.round(stats.decisionKpis.stockoutUnits).toLocaleString() : '-'}
+                subtitle="Estimated shortage"
+                icon={AlertTriangle}
+                color={stats.decisionKpis.stockoutUnits === 0 ? COLORS.emerald : COLORS.red}
+              />
+              <KpiCard
+                title="Holding Units"
+                value={stats.decisionKpis.holdingUnits !== null ? Math.round(stats.decisionKpis.holdingUnits).toLocaleString() : '-'}
+                subtitle="Avg inventory carried"
+                icon={Truck}
+                color={COLORS.blue}
+              />
+              <KpiCard
+                title="Total Cost"
+                value={stats.decisionKpis.totalCost !== null ? `$${Math.round(stats.decisionKpis.totalCost).toLocaleString()}` : '-'}
+                subtitle="Order + holding + stockout"
+                icon={DollarSign}
+                color={COLORS.indigo}
+              />
+            </div>
+          </>
+        )}
 
         {/* ─── Charts Row ─── */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
