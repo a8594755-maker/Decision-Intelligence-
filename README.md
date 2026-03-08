@@ -1,24 +1,44 @@
 # Decision Intelligence
 
-Decision Intelligence is a chat-first supply chain decision workspace that combines demand forecasting, replenishment planning, risk monitoring, and digital-twin simulation across a React frontend, Supabase services, and a Python ML API.
+Decision Intelligence is a chat-first supply chain decision workspace for turning uploaded planning data into forecast diagnostics, replenishment plans, risk review, and scenario decisions.
 
-Current documented baseline: `0.1.0`
+Built as a multi-service product prototype rather than a single-page CRUD demo.
 
-- Demo script: [docs/DEMO.md](docs/DEMO.md)
-- Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
-- Deployment: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
-- Known limitations: [docs/KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md)
-- Release notes: [CHANGELOG.md](CHANGELOG.md)
-- Chinese product docs: [docs/USER_MANUAL_zh-TW.md](docs/USER_MANUAL_zh-TW.md), [docs/SPECIFICATION_zh-TW.md](docs/SPECIFICATION_zh-TW.md)
+| Proof point | Evidence |
+| --- | --- |
+| Product shape | Chat-first planning + forecasting workspace |
+| Runtime stack | React + Supabase + FastAPI ML API |
+| Engineering signal | Regression-gated repo with demo flow, CI workflows, and in-repo release notes |
 
-## Product Surface
+<p align="center">
+  <img src="docs/assets/readme-product-preview.svg" alt="Decision Intelligence product preview" width="100%" />
+</p>
 
-- Command Center for KPI, health, and recent activity.
-- Plan Studio for chat-driven data intake, plan generation, and approval flow.
-- Forecast Studio for multi-model forecasting and forecast diagnostics.
-- Risk Center for supplier and supply risk analysis with what-if views.
-- Digital Twin and Scenario Studio for simulation and scenario comparison.
-- Governance, audit, async jobs, and regression gates for operational control.
+## What You Can Do In 5 Minutes
+
+- Upload the sample workbook in [public/sample_data/test_data.xlsx](public/sample_data/test_data.xlsx).
+- Generate a replenishment plan from Plan Studio.
+- Inspect forecast diagnostics and demand outputs in Forecast Studio.
+- Review supplier risk, digital-twin what-if results, and scenario comparisons.
+
+Follow the guided walkthrough in [docs/DEMO.md](docs/DEMO.md).
+
+## Core Workflows
+
+### 1. Intake and normalize planning data
+
+- Upload workbook or CSV inputs, map fields, and persist operational data through Supabase-backed services.
+- Use Plan Studio as the entry point for data readiness, plan generation, inline edits, and approval flow.
+
+### 2. Generate and compare forecasts and plans
+
+- Run forecasting and planning logic through the FastAPI ML service instead of the frontend bundle.
+- Review forecast diagnostics, demand artifacts, replenishment outputs, and regression-backed solver behavior.
+
+### 3. Review risk, simulate scenarios, and approve actions
+
+- Explore supplier risk and supply exceptions in Risk Center.
+- Use Digital Twin and Scenario Studio to compare outcomes before approving action.
 
 ## System Overview
 
@@ -34,35 +54,20 @@ flowchart LR
     ML --> ERP[Synthetic ERP / SAP Adapters]
 ```
 
-## Demo In 5 Minutes
-
-1. Start the frontend and ML API.
-2. Configure `.env.local` from `.env.example`.
-3. Log in with a Supabase user.
-4. In Plan Studio, upload [public/sample_data/test_data.xlsx](public/sample_data/test_data.xlsx).
-5. Walk through `/forecast`, `/risk`, `/digital-twin`, and `/scenarios`.
-
-The detailed walkthrough is in [docs/DEMO.md](docs/DEMO.md).
-
-## Quick Start
+## Fast Path
 
 Recommended local baseline:
 
-- Node.js `22` for frontend parity with CI
-- Python `3.12` for ML API and regression suite
+- Node.js `22`
+- Python `3.12`
 - A Supabase project
 - Gemini / DeepSeek keys stored in Supabase Edge Function secrets
-
-Clone the real repository path:
-
-```bash
-git clone https://github.com/a8594755-maker/Decision-Intelligence-.git
-cd Decision-Intelligence-
-```
 
 Start the frontend:
 
 ```bash
+git clone https://github.com/a8594755-maker/Decision-Intelligence-.git
+cd Decision-Intelligence-
 npm ci
 cp .env.example .env.local
 npm run dev
@@ -82,62 +87,59 @@ Default local endpoints:
 - Frontend: `http://localhost:5173`
 - ML API: `http://127.0.0.1:8000`
 
-Database migrations, Edge Functions, and hosted deployment are documented in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+For migrations, Edge Functions, and hosted deployment, use [docs/SETUP.md](docs/SETUP.md) and [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
-## Deployment Shape
+## Engineering Confidence
 
-This repo is currently organized around a three-service topology:
+- Frontend checks cover lint, unit, component, build, and E2E paths.
+- Planning and forecast behavior is backed by a deterministic regression suite.
+- CI workflows cover frontend CI, ML CI, guardrail checks, and release gating.
+- Repository-level release notes are tracked in [CHANGELOG.md](CHANGELOG.md).
 
-- Frontend: static Vite build on Netlify or another SPA host
-- Platform services: Supabase for auth, Postgres, storage, and Edge Functions
-- ML backend: Dockerized FastAPI service, with Railway config included in [`railway.toml`](railway.toml)
-
-Operational details are in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
-
-## Testing And Release Discipline
-
-Frontend:
+Common verification commands:
 
 ```bash
 npm run lint
-npm run test:run
+npm run test:unit
+npm run test:components
 npm run build
 npm run test:e2e
+python -m pytest -q tests/regression
+npm run test:phase4-guardrails
 ```
 
-Planning and forecast regression:
+## Current Status
 
-```bash
-npm run test:regression
-```
-
-CI workflows in `.github/workflows/` cover frontend CI, planning and forecast regression, ML CI, guardrails, and release gating. Release notes live in [CHANGELOG.md](CHANGELOG.md).
-
-## Repository Layout
-
-```text
-src/                 Frontend application, views, services, and Python ML code
-supabase/functions/  Edge Functions for AI proxy, BOM explosion, and sync jobs
-sql/migrations/      Curated Supabase SQL migration set
-tests/               Frontend, ML, and regression suites
-docs/                Product and engineering documentation
-sample_data/         Local sample CSV/XLSX assets
-public/sample_data/  Bundled demo workbook served by the frontend
-```
+- Baseline: `0.1.0` as documented on `2026-03-08`
+- Scope: working product prototype in a private repository
+- Main verified paths: demo flow, planning regression, forecast diagnostics, and core multi-page workspace navigation
+- Full behavior boundary: requires the frontend, Supabase, Edge Functions, and the ML API together
 
 ## Known Limitations
 
+### Environment dependencies
+
 - Full product behavior depends on Supabase, Edge Functions, and the ML API. Frontend-only bring-up is partial.
-- Database bootstrap is curated but not yet a single-command install.
-- Chronos is excluded from the default Docker image to keep the ML container lean.
-- SAP sync functions are integration points, not turnkey ERP connectors.
+- AI workflows require server-side Gemini / DeepSeek secrets plus live network access.
+- Some import and async hardening depends on optional migrations in `sql/migrations/`.
 
-See [docs/KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md) for the current boundary conditions.
+### Current scope boundaries
 
-## Documentation Policy
+- Environment bootstrap is curated, not yet a single-command full-stack install.
+- Chronos-heavy capabilities are excluded from the default ML container image.
+- SAP sync functions are adapter entry points, not turnkey enterprise connectors.
 
-Primary entry documents are kept intentionally small. Historical implementation notes, refactor reports, and agent execution logs are retained under `docs/archive/` for reference, not as the main reading path.
+See [docs/KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md) for the detailed operating boundary.
 
-## License
+## Docs
 
-Private repository. No open-source license is granted by default.
+- Demo script: [docs/DEMO.md](docs/DEMO.md)
+- Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+- Deployment: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
+- Known limitations: [docs/KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md)
+- Release notes: [CHANGELOG.md](CHANGELOG.md)
+- Chinese product docs: [docs/USER_MANUAL_zh-TW.md](docs/USER_MANUAL_zh-TW.md), [docs/SPECIFICATION_zh-TW.md](docs/SPECIFICATION_zh-TW.md)
+
+Historical implementation notes remain under `docs/archive/`, but they are not part of the primary reading path.
+
+Private repository for portfolio / evaluation use. License terms are not published.
