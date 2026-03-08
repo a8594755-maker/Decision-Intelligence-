@@ -1,6 +1,6 @@
 # Decision-Intelligence 環境設定指南
 
-> 本文件說明如何從零開始設定 Decision-Intelligence 開發和生產環境
+> 本文件說明如何從零開始設定本機開發環境。部署拓撲、Supabase migration 清單與 Edge Functions 佈署請以 [DEPLOYMENT.md](./DEPLOYMENT.md) 為準。
 
 ## 📋 目錄
 
@@ -16,14 +16,16 @@
 
 ### 軟體需求
 
-- **Node.js**: 18.0.0 或更高版本
-- **npm**: 9.0.0 或更高版本 (或 **yarn**: 1.22.0+)
+- **Node.js**: 22.x（與 CI 一致，18+ 亦可）
+- **npm**: 10.x（或相容版本）
+- **Python**: 3.12（ML API 推薦版本）
 - **瀏覽器**: Chrome 90+, Firefox 88+, Safari 14+
 
 ### 外部服務
 
 - **Supabase 帳號**: [註冊免費方案](https://supabase.com)
 - **Google AI Studio**: [取得 Gemini API Key](https://ai.google.dev/)
+- **DeepSeek 帳號**: 供 `ai-proxy` 使用
 
 ---
 
@@ -32,14 +34,14 @@
 ### 1. Clone 專案
 
 ```bash
-git clone https://github.com/your-username/decision-intelligence.git
-cd decision-intelligence
+git clone https://github.com/a8594755-maker/Decision-Intelligence-.git
+cd Decision-Intelligence-
 ```
 
 ### 2. 安裝依賴
 
 ```bash
-npm install
+npm ci
 ```
 
 **安裝的主要套件**:
@@ -80,17 +82,20 @@ cp .env.example .env.local
 
 ### Step 3: 執行資料庫 Schema
 
-按照以下順序執行 SQL 腳本:
+請使用 `sql/migrations/` 下的 curated baseline，而不是手動拼湊零散 SQL。建議最少依序執行：
 
-1. **基礎表結構**:
-   ```bash
-   # 在 Supabase SQL Editor 中執行
-   database/supplier_kpi_schema.sql
-   database/import_batches_schema.sql
-   database/upload_mappings_schema.sql
-   database/cost_analysis_schema.sql
-   database/bom_forecast_schema.sql
-   ```
+```text
+sql/migrations/supabase-setup.sql
+sql/migrations/supplier_kpi_schema.sql
+sql/migrations/import_batches_schema.sql
+sql/migrations/upload_mappings_schema.sql
+sql/migrations/step1_supply_inventory_financials_schema.sql
+sql/migrations/bom_forecast_schema.sql
+sql/migrations/ingest_rpc.sql
+sql/migrations/release_ingest_rpc_permissions.sql
+```
+
+可選強化項目請參考 [DEPLOYMENT.md](./DEPLOYMENT.md)。
 
 2. **驗證安裝**:
    ```sql
@@ -130,50 +135,33 @@ cp .env.example .env.local
 
 ## 環境變數設定
 
-### 方法 1: 修改 supabaseClient.js (開發環境)
-
-編輯 `src/services/supabaseClient.js`:
-
-```javascript
-const supabaseUrl = 'https://your-project.supabase.co';
-const supabaseKey = 'your-anon-key';
-```
-
-### 方法 2: 使用 .env.local (生產環境推薦)
-
-編輯 `.env.local`:
+複製 `.env.example` 成 `.env.local`，再依實際環境調整：
 
 ```bash
-VITE_SUPABASE_URL=https://your-project.supabase.co
-VITE_SUPABASE_ANON_KEY=your-anon-key
-VITE_GEMINI_API_KEY=your-gemini-key  # 可選
+cp .env.example .env.local
 ```
 
-然後修改 `supabaseClient.js`:
+最小可運作範例：
 
-```javascript
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'fallback-url';
-const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'fallback-key';
+```bash
+VITE_ENV=development
+VITE_SUPABASE_URL=https://decision-intelligence-dev.supabase.co
+VITE_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.dev-anon-key
+VITE_ML_API_URL=http://127.0.0.1:8000
+VITE_DI_GEMINI_MODEL=gemini-3.1-pro-preview
+VITE_DI_DEEPSEEK_MODEL=deepseek-chat
+DI_SOLVER_ENGINE=ortools
+DI_CHRONOS_ENABLED=false
+USE_MOCK_ERP=true
 ```
 
-### Gemini API Key 設定
+AI provider key 不應放在前端 `.env.local`，請改用 Supabase Edge Function secrets：
 
-有 3 種方式設定:
-
-1. **應用內設定** (推薦):
-   - 登入後前往 **Settings**
-   - 在 "Gemini API Key" 欄位輸入
-   - 儲存 (存在 localStorage)
-
-2. **環境變數**:
-   ```bash
-   VITE_GEMINI_API_KEY=your-gemini-api-key
-   ```
-
-3. **直接修改 geminiAPI.js** (不推薦):
-   ```javascript
-   const GEMINI_API_KEY = 'your-api-key';
-   ```
+```bash
+supabase secrets set GEMINI_API_KEY=...
+supabase secrets set DEEPSEEK_API_KEY=...
+supabase secrets set FRONTEND_ORIGIN=http://localhost:5173
+```
 
 ---
 
@@ -186,6 +174,15 @@ npm run dev
 ```
 
 應用會在 `http://localhost:5173` 啟動。
+
+### ML API
+
+```bash
+python3.12 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements-ml.txt
+python run_ml_api.py
+```
 
 ### 生產建置
 

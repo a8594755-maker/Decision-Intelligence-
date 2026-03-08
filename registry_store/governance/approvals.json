@@ -1,0 +1,17 @@
+{
+  "apr_20260308091002_1cab20f2": {
+    "approval_id": "apr_20260308091002_1cab20f2",
+    "action_type": "APPROVE_PLAN",
+    "entity_id": "97",
+    "payload_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+    "status": "PENDING",
+    "requested_by": "test",
+    "requested_at": "2026-03-08T09:10:02.224478+00:00",
+    "approved_by": null,
+    "approved_at": null,
+    "rejected_by": null,
+    "rejected_at": null,
+    "reason": "test",
+    "note": ""
+  }
+}

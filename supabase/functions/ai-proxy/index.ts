@@ -114,18 +114,22 @@ const postGeminiWithModelFallback = async ({
 
   for (const model of modelCandidates) {
     const apiUrl = buildGeminiApiUrl({ model, action: 'generateContent' });
+    const t = performance.now();
     const response = await fetch(apiUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(requestBody),
     });
+    const elapsed = Math.round(performance.now() - t);
 
     if (response.ok) {
+      console.info(`[ai-proxy] Gemini model=${model} OK in ${elapsed}ms`);
       return { ok: true, response, model };
     }
 
     const errorData = await parseJsonSafe(response);
     const errorMessage = String((errorData?.error as { message?: string })?.message || 'Unknown error');
+    console.warn(`[ai-proxy] Gemini model=${model} failed (${response.status}) in ${elapsed}ms: ${errorMessage}`);
     const failure = {
       ok: false,
       response,
@@ -583,6 +587,7 @@ const handleDiPrompt = async (payload: Record<string, unknown>) => {
 };
 
 Deno.serve(async (req) => {
+  const t0 = performance.now();
   const cors = buildCorsHeaders(req.headers.get('origin'));
 
   if (req.method === 'OPTIONS') {
@@ -592,14 +597,18 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: 'Method not allowed' }, 405, cors);
   }
 
-  // Fast ping for warmup — no auth required, just wake the runtime
+  // Parse body once — used for both ping check and handler dispatch
+  let body: ProxyRequestBody;
   try {
-    const cloned = req.clone();
-    const peek = await cloned.json().catch(() => null) as { mode?: string } | null;
-    if (peek?.mode === 'ping') {
-      return jsonResponse({ ok: true, mode: 'ping' }, 200, cors);
-    }
-  } catch { /* ignore parse errors, proceed normally */ }
+    body = await req.json() as ProxyRequestBody;
+  } catch {
+    return jsonResponse({ error: 'Invalid JSON body' }, 400, cors);
+  }
+
+  // Fast ping for warmup — no auth required, just wake the runtime
+  if (body?.mode === 'ping') {
+    return jsonResponse({ ok: true, mode: 'ping' }, 200, cors);
+  }
 
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
     return jsonResponse({ error: 'Supabase environment is not configured on Edge Function.' }, 500, cors);
@@ -622,20 +631,24 @@ Deno.serve(async (req) => {
     data: { user },
     error: authError,
   } = await supabase.auth.getUser(token);
+  const authMs = Math.round(performance.now() - t0);
   if (authError || !user) {
+    console.warn(`[ai-proxy] auth failed in ${authMs}ms`);
     return jsonResponse({ error: 'Unauthorized', details: authError?.message || null }, 401, cors);
   }
 
   try {
-    const body = await req.json() as ProxyRequestBody;
     const mode = body?.mode;
     const payload = (body?.payload || {}) as Record<string, unknown>;
 
     if (!mode) return jsonResponse({ error: 'Missing required field: mode' }, 400, cors);
 
+    console.info(`[ai-proxy] mode=${mode} auth=${authMs}ms`);
+
     // Handlers return jsonResponse internally; wrap to ensure CORS headers
     const wrapCors = (response: Response) => {
       Object.entries(cors).forEach(([key, value]) => response.headers.set(key, value));
+      console.info(`[ai-proxy] mode=${mode} total=${Math.round(performance.now() - t0)}ms`);
       return response;
     };
 
@@ -648,6 +661,7 @@ Deno.serve(async (req) => {
   } catch (error) {
     const status = Number((error as Error & { status?: number })?.status || 500);
     const message = error instanceof Error ? error.message : String(error);
+    console.error(`[ai-proxy] error after ${Math.round(performance.now() - t0)}ms:`, message);
     return jsonResponse(
       { error: message, code: 'runtime_error' },
       status >= 400 && status < 600 ? status : 500,

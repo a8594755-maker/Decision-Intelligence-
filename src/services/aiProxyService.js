@@ -52,7 +52,7 @@ export const warmupEdgeFunction = () => {
     .catch((e) => console.warn(`[aiProxy] warmup failed in ${Math.round(performance.now() - t0)}ms:`, e.message));
 };
 
-export const invokeAiProxy = async (mode, payload = {}) => {
+export const invokeAiProxy = async (mode, payload = {}, { signal } = {}) => {
   acquireOrThrow('ai_proxy');
 
   if (!EDGE_FN_URL) {
@@ -75,6 +75,7 @@ export const invokeAiProxy = async (mode, payload = {}) => {
     method: 'POST',
     headers,
     body: JSON.stringify({ mode, payload }),
+    signal,
   });
 
   const elapsed = Math.round(performance.now() - t0);

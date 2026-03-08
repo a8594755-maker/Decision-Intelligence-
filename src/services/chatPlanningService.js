@@ -419,7 +419,11 @@ const toForecastDemandSeries = (forecastArtifact = {}) => {
 
     const points = Array.isArray(group.points) ? group.points : [];
     points.forEach((point) => {
-      const p50Candidate = toNumber(point.p50 ?? point.forecast, NaN);
+      // Guard: null/undefined must not be coerced to 0 via Number(null)===0
+      const rawP50 = point.p50 ?? point.forecast;
+      const p50Candidate = (rawP50 === null || rawP50 === undefined)
+        ? NaN
+        : toNumber(rawP50, NaN);
       const isForecastPoint = point.is_forecast === true || Number.isFinite(p50Candidate);
       if (!isForecastPoint) return;
 
@@ -1853,20 +1857,36 @@ export async function runPlanFromDatasetProfile({
     }
     // ────────────────────────────────────────────────────────────────────────
 
-    // Diagnostic: log solver input summary
+    // Diagnostic: log solver input summary (expanded — console.warn avoids structured logger truncation)
     const demandSkus = new Set(demandForecastSeries.map((p) => p.sku));
     const invSkus = new Set(inventoryRowsForPlanning.map((r) => r.sku));
     const matchedSkus = [...demandSkus].filter((s) => invSkus.has(s));
+    const totalP50 = demandForecastSeries.reduce((sum, p) => sum + (p.p50 || 0), 0);
+    const forecastOnlyPoints = demandForecastSeries.filter((p) => p.p50 > 0);
+    console.warn('[planning-pipeline] Solver input diagnostic:', JSON.stringify({
+      demandPoints: demandForecastSeries.length,
+      nonZeroDemandPoints: forecastOnlyPoints.length,
+      totalP50,
+      demandSkus: [...demandSkus],
+      inventorySkus: [...invSkus],
+      matchedSkus,
+      horizonDays,
+      sampleDemand: demandForecastSeries.slice(0, 5).map((p) => ({ sku: p.sku, date: p.date, p50: p.p50, p90: p.p90 })),
+      sampleInventory: inventoryRowsForPlanning.slice(0, 5).map((r) => ({
+        sku: r.sku, plant_id: r.plant_id, on_hand: r.on_hand,
+        safety_stock: r.safety_stock, lead_time_days: r.lead_time_days
+      })),
+    }));
     logger.info('planning-pipeline', 'Solver input summary', {
       _traceId: planSpan.traceId,
       demandPoints: demandForecastSeries.length,
+      nonZeroDemandPoints: forecastOnlyPoints.length,
+      totalP50,
       demandSkus: demandSkus.size,
       inventoryRows: inventoryRowsForPlanning.length,
       inventorySkus: invSkus.size,
       matchedSkus: matchedSkus.length,
       horizonDays,
-      sampleDemand: demandForecastSeries.slice(0, 3).map((p) => ({ sku: p.sku, date: p.date, p50: p.p50 })),
-      sampleInventory: inventoryRowsForPlanning.slice(0, 3).map((r) => ({ sku: r.sku, on_hand: r.on_hand, safety_stock: r.safety_stock })),
     });
 
     const solverSpan = createSpan('planning', 'solver', planSpan.traceId);

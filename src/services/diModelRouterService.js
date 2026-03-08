@@ -12,13 +12,20 @@ import { invokeAiProxy } from './aiProxyService';
 const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY || '';
 const DEEPSEEK_API_KEY = import.meta.env.VITE_DEEPSEEK_API_KEY || '';
 const DEEPSEEK_BASE_URL = String(import.meta.env.VITE_DI_DEEPSEEK_BASE_URL || 'https://api.deepseek.com').replace(/\/+$/, '');
-const EDGE_FN_TIMEOUT_MS = 15000;
+const EDGE_FN_TIMEOUT_MS = 25000;
 
-const withTimeout = (promise, ms) =>
-  Promise.race([
-    promise,
-    new Promise((_, reject) => setTimeout(() => reject(new Error(`Edge Function timed out after ${ms}ms`)), ms))
+const withTimeout = (promiseOrFn, ms) => {
+  const controller = new AbortController();
+  const tid = setTimeout(() => controller.abort(), ms);
+  const promise = typeof promiseOrFn === 'function' ? promiseOrFn(controller.signal) : promiseOrFn;
+  return Promise.race([
+    promise.finally(() => clearTimeout(tid)),
+    new Promise((_, reject) => {
+      controller.signal.addEventListener('abort', () =>
+        reject(new Error(`Edge Function timed out after ${ms}ms`)), { once: true });
+    })
   ]);
+};
 
 export const DI_PROMPT_IDS = Object.freeze({
   DATA_PROFILER: 'prompt_1_data_profiler',
@@ -186,7 +193,7 @@ const callGeminiPrompt = async ({ prompt, model, temperature = 0.15, maxOutputTo
   if (GEMINI_API_KEY) {
     try {
       const response = await withTimeout(
-        invokeAiProxy('di_prompt', {
+        (signal) => invokeAiProxy('di_prompt', {
           provider: 'gemini',
           prompt,
           model,
@@ -194,7 +201,7 @@ const callGeminiPrompt = async ({ prompt, model, temperature = 0.15, maxOutputTo
           temperature,
           maxOutputTokens,
           responseMimeType: 'application/json'
-        }),
+        }, { signal }),
         EDGE_FN_TIMEOUT_MS
       );
       const text = typeof response?.text === 'string' ? response.text : '';
@@ -240,13 +247,13 @@ const callDeepSeekPrompt = async ({ prompt, model, temperature = 0.15, maxOutput
   if (DEEPSEEK_API_KEY) {
     try {
       const response = await withTimeout(
-        invokeAiProxy('di_prompt', {
+        (signal) => invokeAiProxy('di_prompt', {
           provider: 'deepseek',
           prompt,
           model,
           temperature,
           maxOutputTokens
-        }),
+        }, { signal }),
         EDGE_FN_TIMEOUT_MS
       );
       const text = typeof response?.text === 'string' ? response.text : '';

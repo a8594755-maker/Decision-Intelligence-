@@ -568,6 +568,23 @@ function runLocalHeuristic(payload = {}) {
         keysWithDerivedSafetyStock += 1;
       }
     }
+
+    // Demand-based safety stock derivation: when there is NO matching inventory
+    // entry (so on_hand/safety_stock defaulted to 0), AND no p90 data exists for
+    // quantile-based derivation, use 1x average period demand as a minimum safety
+    // buffer so the solver generates orders instead of returning 0 rows.
+    if (safetyStock < 1e-9 && p90Values.length === 0
+        && !inventoryByKey.has(key)
+        && (closedLoopSafetyStock === null || closedLoopSafetyStock === undefined)) {
+      const avgDemand = horizonSeries.reduce(
+        (sum, p) => sum + Math.max(0, toNumber(p.p50, 0)), 0
+      ) / Math.max(1, horizonSeries.length);
+      if (avgDemand > 0) {
+        safetyStock = avgDemand;
+        keysWithDerivedSafetyStock += 1;
+      }
+    }
+
     const leadTimeDays = Math.max(0, Math.floor(toNumber(inv.lead_time_days, 0)));
 
     const inboundMap = inboundByKey.get(key) || new Map();
@@ -731,6 +748,11 @@ function runLocalHeuristic(payload = {}) {
 
   if (plan.length === 0 && totalDemand > 0) {
     uniqueReasons.push('No replenishment orders generated for non-zero demand horizon.');
+  }
+  if (plan.length === 0 && totalDemand <= 0 && demandByKey.size > 0) {
+    console.warn('[heuristic-solver] totalDemand=0 despite', demandByKey.size, 'demand keys /',
+      demandSeries.length, 'series points. Possible data issue: all p50 values are 0.');
+    uniqueReasons.push('All demand p50 values summed to zero — check forecast data or column mapping.');
   }
   if (roundingAdjustments.length > 0) {
     uniqueReasons.push(`Rounding adjustments applied: ${roundingAdjustments.length} events.`);

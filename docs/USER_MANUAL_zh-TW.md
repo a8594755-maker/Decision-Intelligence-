@@ -59,8 +59,12 @@
 ### 2.2 前端啟動
 
 ```bash
+# clone 真實 repo path
+git clone https://github.com/a8594755-maker/Decision-Intelligence-.git
+cd Decision-Intelligence-
+
 # 安裝依賴
-npm install
+npm ci
 
 # 開發模式啟動
 npm run dev
@@ -74,12 +78,12 @@ npm run preview
 
 ```bash
 # 建立虛擬環境
-python -m venv venv
-source venv/bin/activate  # macOS/Linux
-# 或 venv\Scripts\activate  (Windows)
+python3.12 -m venv .venv
+source .venv/bin/activate  # macOS/Linux
+# 或 .venv\Scripts\activate  (Windows)
 
 # 安裝依賴
-pip install -r requirements.txt
+pip install -r requirements-ml.txt
 
 # 啟動 ML API
 python run_ml_api.py
@@ -87,27 +91,34 @@ python run_ml_api.py
 
 ### 2.4 環境變數設定
 
-在專案根目錄建立 `.env` 檔案：
+複製 `.env.example` 為 `.env.local`，再填入實際值：
 
 ```env
+VITE_ENV=development
 # Supabase 連線
-VITE_SUPABASE_URL=https://your-project.supabase.co
-VITE_SUPABASE_ANON_KEY=your-anon-key
+VITE_SUPABASE_URL=https://decision-intelligence-dev.supabase.co
+VITE_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.dev-anon-key
+VITE_ML_API_URL=http://127.0.0.1:8000
 
 # 功能旗標
 VITE_DI_RISK_AWARE=false          # 全域啟用風險感知計畫
 VITE_DI_PROACTIVE_ALERTS=true     # 啟用主動警示輪詢
-VITE_DI_CLOSED_LOOP=false         # 啟用閉環自動重規劃
-VITE_DI_ALLOW_PLAN_DEFAULTS=true  # 允許預設前置時間/安全庫存
 
 # ML API
 DI_SOLVER_ENGINE=ortools          # 求解器引擎 (ortools/cplex/gurobi/heuristic)
 DI_CHRONOS_ENABLED=false          # 啟用 Chronos 基礎模型
-DI_RATE_LIMIT_ENABLED=true        # 啟用速率限制
 USE_MOCK_ERP=true                 # 使用模擬 ERP 連接器
 
 # 可選：錯誤監控
-SENTRY_DSN=your-sentry-dsn
+VITE_SENTRY_DSN=https://PUBLIC_KEY@o000.ingest.sentry.io/0000000
+```
+
+AI provider keys 不再建議放在前端環境變數，請改由 Supabase Edge Function secrets 管理：
+
+```bash
+supabase secrets set GEMINI_API_KEY=...
+supabase secrets set DEEPSEEK_API_KEY=...
+supabase secrets set FRONTEND_ORIGIN=http://localhost:5173
 ```
 
 ---
