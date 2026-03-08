@@ -45,7 +45,7 @@ export default function useConversationManager({
   useEffect(() => {
     if (!user?.id) return;
     let active = true;
-    queueMicrotask(() => setIsConversationsLoading(true));
+    setIsConversationsLoading(true);
 
     const load = async () => {
       if (isTableUnavailable()) {

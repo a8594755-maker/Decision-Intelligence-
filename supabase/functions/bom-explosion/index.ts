@@ -31,15 +31,17 @@ import {
 // Initialize Supabase client
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-const FRONTEND_ORIGIN = (Deno.env.get('FRONTEND_ORIGIN') || 'http://localhost:5173').trim();
+const ALLOWED_ORIGINS = (Deno.env.get('FRONTEND_ORIGIN') || 'http://localhost:5173,http://localhost:5174').split(',').map(s => s.trim());
 
 /**
  * Main request handler
  */
 Deno.serve(async (req) => {
-  // CORS headers
+  // CORS headers — match request origin against allowed list
+  const reqOrigin = req.headers.get('origin') || '';
+  const matchedOrigin = ALLOWED_ORIGINS.includes(reqOrigin) ? reqOrigin : ALLOWED_ORIGINS[0];
   const corsHeaders = {
-    'Access-Control-Allow-Origin': FRONTEND_ORIGIN,
+    'Access-Control-Allow-Origin': matchedOrigin,
     'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
   };
 

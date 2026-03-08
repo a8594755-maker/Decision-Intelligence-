@@ -13,7 +13,7 @@ export default function ViewToggle({ viewMode, onViewChange }) {
 
   return (
     <div className="inline-flex items-center bg-slate-100 dark:bg-slate-700 rounded-lg p-1">
-      {modes.map(({ key, icon: _Icon, label }) => (
+      {modes.map(({ key, icon: Icon, label }) => (
         <button
           key={key}
           type="button"

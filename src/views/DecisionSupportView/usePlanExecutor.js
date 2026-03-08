@@ -220,6 +220,7 @@ export default function usePlanExecutor({
               type: 'negotiation_card',
               payload: {
                 planRunId: planResult?.run?.id,
+                dataset_profile_id: resolvedProfileRow?.id || null,
                 trigger: negTrigger,
                 negotiation_options: null,
                 negotiation_evaluation: null,

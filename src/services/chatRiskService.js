@@ -395,17 +395,16 @@ export async function computeRiskArtifactsFromDatasetProfile({
 }) {
   if (!userId) throw new Error('userId is required');
   if (!datasetProfileRow?.id) throw new Error('datasetProfileRow is required');
-  if (!datasetProfileRow.user_file_id) {
-    throw createBlockingError('Dataset profile has no linked source file.', [
-      'Re-upload PO and goods receipt data from chat.'
-    ]);
+  let sourceRows = [];
+  if (datasetProfileRow.user_file_id) {
+    const fileRecord = await userFilesService.getFileById(userId, datasetProfileRow.user_file_id);
+    sourceRows = normalizeRowsFromUserFile(fileRecord);
+  } else if (Array.isArray(datasetProfileRow._inlineRawRows) && datasetProfileRow._inlineRawRows.length > 0) {
+    sourceRows = datasetProfileRow._inlineRawRows;
   }
-
-  const fileRecord = await userFilesService.getFileById(userId, datasetProfileRow.user_file_id);
-  const sourceRows = normalizeRowsFromUserFile(fileRecord);
   if (sourceRows.length === 0) {
-    throw createBlockingError('Source rows are unavailable for this dataset profile.', [
-      'Re-upload source sheets and regenerate profile.'
+    throw createBlockingError('Dataset profile has no linked source file or inline rows.', [
+      'Re-upload PO and goods receipt data from chat.'
     ]);
   }
 

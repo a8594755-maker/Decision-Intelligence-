@@ -396,12 +396,18 @@ export default function DecisionSupportView({ user, addNotification }) {
     if (numericProfileId && activeProfileId && numericProfileId === activeProfileId) {
       return {
         id: activeProfileId, user_file_id: activeDatasetContext?.user_file_id || null,
-        profile_json: activeDatasetContext?.profileJson || {}, contract_json: activeDatasetContext?.contractJson || {}
+        profile_json: activeDatasetContext?.profileJson || {}, contract_json: activeDatasetContext?.contractJson || {},
+        _inlineRawRows: activeDatasetContext?.rawRowsForStorage || _rawRowsCache.get(activeProfileIdStr) || null
       };
     }
     if (numericProfileId) {
       const row = await datasetProfilesService.getDatasetProfileById(user.id, numericProfileId);
-      if (row) return row;
+      if (row) {
+        if (!row.user_file_id && numericProfileId === activeProfileId) {
+          row._inlineRawRows = activeDatasetContext?.rawRowsForStorage || _rawRowsCache.get(activeProfileIdStr) || null;
+        }
+        return row;
+      }
     }
     if (isActiveLocal) {
       return {
@@ -413,7 +419,8 @@ export default function DecisionSupportView({ user, addNotification }) {
     if (activeProfileId) {
       return {
         id: activeProfileId, user_file_id: activeDatasetContext?.user_file_id || null,
-        profile_json: activeDatasetContext?.profileJson || {}, contract_json: activeDatasetContext?.contractJson || {}
+        profile_json: activeDatasetContext?.profileJson || {}, contract_json: activeDatasetContext?.contractJson || {},
+        _inlineRawRows: activeDatasetContext?.rawRowsForStorage || _rawRowsCache.get(activeProfileIdStr) || null
       };
     }
     return datasetProfilesService.getLatestDatasetProfile(user.id);
@@ -702,19 +709,15 @@ export default function DecisionSupportView({ user, addNotification }) {
     setIsNegotiationGenerating(true);
 
     try {
-      const profileId = activeDatasetContext?.dataset_profile_id;
+      const profileId = activeDatasetContext?.dataset_profile_id || cardPayload?.dataset_profile_id;
       if (!profileId) {
         appendMessagesToCurrentConversation([{ role: 'ai', content: 'No dataset profile is linked to this session. Please upload a dataset first, then rerun forecast + plan.', timestamp: new Date().toISOString() }]);
         return;
       }
 
-      let resolvedProfileRow = null;
-      try { resolvedProfileRow = await datasetProfilesService.getProfile(profileId); } catch (profileErr) {
-        console.error('[DSV] Failed to load dataset profile for negotiation:', profileErr?.message);
-      }
-
-      if (!resolvedProfileRow?.user_file_id) {
-        appendMessagesToCurrentConversation([{ role: 'ai', content: 'Dataset profile has no linked source file. Re-upload the dataset from chat and rerun forecast + plan.', timestamp: new Date().toISOString() }]);
+      const resolvedProfileRow = await resolveDatasetProfileRow(profileId);
+      if (!resolvedProfileRow?.id) {
+        appendMessagesToCurrentConversation([{ role: 'ai', content: 'Could not resolve dataset profile. Re-upload the dataset and rerun forecast + plan.', timestamp: new Date().toISOString() }]);
         return;
       }
 
@@ -724,7 +727,7 @@ export default function DecisionSupportView({ user, addNotification }) {
         sessionCtx.updateNegotiation(result, cardPayload.planRunId);
         appendMessagesToCurrentConversation([{
           role: 'ai', type: 'negotiation_card',
-          payload: { planRunId: cardPayload.planRunId, trigger: result.trigger, negotiation_options: result.negotiation_options, negotiation_evaluation: result.negotiation_evaluation, negotiation_report: result.negotiation_report, round: sessionCtx.context?.negotiation?.round || 1 },
+          payload: { planRunId: cardPayload.planRunId, dataset_profile_id: profileId, trigger: result.trigger, negotiation_options: result.negotiation_options, negotiation_evaluation: result.negotiation_evaluation, negotiation_report: result.negotiation_report, round: sessionCtx.context?.negotiation?.round || 1 },
           timestamp: new Date().toISOString()
         }]);
       } else {
@@ -735,7 +738,7 @@ export default function DecisionSupportView({ user, addNotification }) {
     } finally {
       setIsNegotiationGenerating(false);
     }
-  }, [user?.id, activeDatasetContext, sessionCtx, appendMessagesToCurrentConversation]);
+  }, [user?.id, activeDatasetContext, sessionCtx, appendMessagesToCurrentConversation, resolveDatasetProfileRow]);
 
   const handleApplyNegotiationOption = useCallback(async (option, _evalResult, _cardPayload) => {
     if (!user?.id || !option?.option_id) return;
@@ -746,19 +749,15 @@ export default function DecisionSupportView({ user, addNotification }) {
     sessionCtx.rotatePlan();
 
     try {
-      const profileId = activeDatasetContext?.dataset_profile_id;
+      const profileId = activeDatasetContext?.dataset_profile_id || _cardPayload?.dataset_profile_id;
       if (!profileId) {
         appendMessagesToCurrentConversation([{ role: 'ai', content: 'No dataset profile is linked to this session. Please upload a dataset first, then rerun forecast + plan before applying negotiation options.', timestamp: new Date().toISOString() }]);
         return;
       }
 
-      let resolvedProfileRow = null;
-      try { resolvedProfileRow = await datasetProfilesService.getProfile(profileId); } catch (profileErr) {
-        console.error('[DSV] Failed to load dataset profile for negotiation apply:', profileErr?.message);
-      }
-
-      if (!resolvedProfileRow?.user_file_id) {
-        appendMessagesToCurrentConversation([{ role: 'ai', content: 'Dataset profile has no linked source file. Re-upload the dataset from chat and rerun forecast + plan before applying negotiation options.', timestamp: new Date().toISOString() }]);
+      const resolvedProfileRow = await resolveDatasetProfileRow(profileId);
+      if (!resolvedProfileRow?.id) {
+        appendMessagesToCurrentConversation([{ role: 'ai', content: 'Could not resolve dataset profile. Re-upload the dataset and rerun forecast + plan.', timestamp: new Date().toISOString() }]);
         return;
       }
 
@@ -793,7 +792,7 @@ export default function DecisionSupportView({ user, addNotification }) {
           const nextRound = (sessionCtx.context?.negotiation?.round || 1) + 1;
           appendMessagesToCurrentConversation([
             { role: 'ai', content: `Plan still has issues (${newTrigger}). Starting negotiation round ${nextRound}...`, timestamp: new Date().toISOString() },
-            { role: 'ai', type: 'negotiation_card', payload: { planRunId: planResult?.run?.id, trigger: newTrigger, negotiation_options: null, negotiation_evaluation: null, negotiation_report: null, round: nextRound }, timestamp: new Date().toISOString() },
+            { role: 'ai', type: 'negotiation_card', payload: { planRunId: planResult?.run?.id, dataset_profile_id: profileId, trigger: newTrigger, negotiation_options: null, negotiation_evaluation: null, negotiation_report: null, round: nextRound }, timestamp: new Date().toISOString() },
           ]);
         } else {
           appendMessagesToCurrentConversation([{ role: 'ai', content: 'Negotiation option applied successfully. The new plan is feasible.', timestamp: new Date().toISOString() }]);
@@ -808,7 +807,7 @@ export default function DecisionSupportView({ user, addNotification }) {
     } catch (err) {
       appendMessagesToCurrentConversation([{ role: 'ai', content: `Failed to apply option ${optionId}: ${err.message}`, timestamp: new Date().toISOString() }]);
     }
-  }, [user?.id, activeDatasetContext, sessionCtx, appendMessagesToCurrentConversation, addNotification, setLatestPlanRunId]);
+  }, [user?.id, activeDatasetContext, sessionCtx, appendMessagesToCurrentConversation, addNotification, setLatestPlanRunId, resolveDatasetProfileRow]);
 
   // ── Topology handler ────────────────────────────────────────────────────
   const handleRunTopology = useCallback(async (requestedRunId = null) => {
@@ -885,16 +884,18 @@ export default function DecisionSupportView({ user, addNotification }) {
       console.timeEnd('[DSV] upload:parse');
       const datasetFingerprint = buildFingerprintFromUpload(uploadPreparation.sheetsRaw, uploadPreparation.mappingPlans);
 
-      setUploadStatusText('Building profile...');
+      setUploadStatusText('Saving file...');
       let fileRecord = null;
-      userFilesService.saveFile(user.id, file.name, uploadPreparation.rawRowsForStorage)
-        .then((rec) => { fileRecord = rec; console.log('[DSV] upload:saveFile OK'); })
-        .catch((err) => console.warn('[DSV] Raw file save skipped:', err?.message));
+      try {
+        fileRecord = await userFilesService.saveFile(user.id, file.name, uploadPreparation.rawRowsForStorage);
+        console.log('[DSV] upload:saveFile OK, id:', fileRecord?.id);
+      } catch (err) { console.warn('[DSV] Raw file save skipped:', err?.message); }
 
+      setUploadStatusText('Building profile...');
       console.time('[DSV] upload:createProfile');
       const PROFILE_TIMEOUT_MS = 20000;
       let profileRecord = await Promise.race([
-        createDatasetProfileFromSheets({ userId: user.id, userFileId: null, fileName: file.name, sheetsRaw: uploadPreparation.sheetsRaw, mappingPlans: uploadPreparation.mappingPlans, allowLLM: false }),
+        createDatasetProfileFromSheets({ userId: user.id, userFileId: fileRecord?.id || null, fileName: file.name, sheetsRaw: uploadPreparation.sheetsRaw, mappingPlans: uploadPreparation.mappingPlans, allowLLM: false }),
         new Promise((resolve) => setTimeout(() => { console.warn('[DSV] createProfile DB timed out, using local-only profile'); resolve(null); }, PROFILE_TIMEOUT_MS))
       ]);
       console.timeEnd('[DSV] upload:createProfile');
@@ -1010,7 +1011,7 @@ export default function DecisionSupportView({ user, addNotification }) {
           ...(prev[currentConversationId] || {}),
           dataset_profile_id: profileRecord?.id, dataset_fingerprint: datasetFingerprint, user_file_id: fileRecord?.id || null,
           summary: cardPayload.context_summary || '', profileJson: profileRecord?.profile_json || {}, contractJson: profileRecord?.contract_json || {},
-          validationPayload, sheetsRaw: uploadPreparation.sheetsRaw, rawRowsForStorage: profileRecord?._local ? (uploadPreparation.rawRowsForStorage || []) : null,
+          validationPayload, sheetsRaw: uploadPreparation.sheetsRaw, rawRowsForStorage: uploadPreparation.rawRowsForStorage || null,
           fileName: file.name, contractConfirmed, minimalQuestions: cardPayload.minimal_questions || [],
           reuse_enabled: reuseEnabledForConversation, force_retrain: Boolean(prev[currentConversationId]?.force_retrain),
           reused_settings_template: reusedSettingsTemplate,

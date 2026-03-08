@@ -57,15 +57,104 @@ if (!isSupabaseConfigured) {
 
 const SUPABASE_FETCH_TIMEOUT_MS = 20000;
 
-const supabaseFetchWithTimeout = (url, options = {}) => {
+// ── Table-availability circuit breaker ──────────────────────────────────────
+// 1. At module load, probe PostgREST's OpenAPI spec to discover available tables.
+// 2. Any request to a table NOT in the spec is short-circuited with a synthetic
+//    404 — zero network calls, zero browser console errors.
+// 3. If the probe fails, fall back to the reactive pattern: first 404 from a
+//    real fetch marks the table unavailable for all future requests.
+const _unavailableTables = new Set();
+let _knownTables = null; // null = not yet probed, Set = probed
+
+function _extractTable(url) {
+  const m = String(url).match(/\/rest\/v1\/([a-z_]+)/);
+  return m ? m[1] : null;
+}
+
+function _synthetic404(table) {
+  return new Response(
+    JSON.stringify({
+      message: `Could not find the table 'public.${table}' in the schema cache`,
+      code: 'PGRST205',
+    }),
+    { status: 404, statusText: 'Not Found', headers: { 'content-type': 'application/json' } },
+  );
+}
+
+// Probe PostgREST OpenAPI spec to discover available tables (runs once at startup)
+let _schemaProbePromise = null;
+async function _probeAvailableTables() {
+  try {
+    const controller = new AbortController();
+    const tid = setTimeout(() => controller.abort(), 5000);
+    const res = await fetch(`${supabaseUrl}/rest/v1/`, {
+      headers: {
+        'apikey': supabaseKey,
+        'Authorization': `Bearer ${supabaseKey}`,
+        'Accept': 'application/json',
+      },
+      signal: controller.signal,
+    });
+    clearTimeout(tid);
+    if (!res.ok) return;
+    const spec = await res.json();
+    if (spec.paths) {
+      _knownTables = new Set(
+        Object.keys(spec.paths).map(p => p.replace(/^\//, '')),
+      );
+    }
+  } catch {
+    // Probe failed or timed out — fall through to reactive 404 detection
+  }
+}
+
+if (isSupabaseConfigured) {
+  _schemaProbePromise = _probeAvailableTables();
+}
+
+/** Manually mark a table as unavailable (used by external services). */
+export function markTableUnavailable(table) {
+  _unavailableTables.add(table);
+}
+
+const supabaseFetchWithTimeout = async (url, options = {}) => {
+  const urlStr = String(url);
+  const table = _extractTable(urlStr);
+
+  if (table) {
+    // Fast path: already known unavailable
+    if (_unavailableTables.has(table)) {
+      return _synthetic404(table);
+    }
+
+    // Wait for the one-time schema probe (no-op if already resolved)
+    if (_schemaProbePromise) {
+      await _schemaProbePromise;
+    }
+
+    // Probe completed — check if this table exists in the schema
+    if (_knownTables && !_knownTables.has(table)) {
+      _unavailableTables.add(table);
+      return _synthetic404(table);
+    }
+  }
+
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), SUPABASE_FETCH_TIMEOUT_MS);
   // Listen to caller's signal so upstream aborts still propagate
   if (options.signal) {
     options.signal.addEventListener('abort', () => controller.abort(), { once: true });
   }
-  return fetch(url, { ...options, signal: controller.signal })
-    .finally(() => clearTimeout(timeoutId));
+  try {
+    const response = await fetch(url, { ...options, signal: controller.signal });
+    // Reactive fallback: track 404 tables discovered at runtime
+    if (table && response.status === 404) {
+      _unavailableTables.add(table);
+    }
+    return response;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 };
 
 // ── Preserve Supabase client across Vite HMR reloads ─────────────────────────

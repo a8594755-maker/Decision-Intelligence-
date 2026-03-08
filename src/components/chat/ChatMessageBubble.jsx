@@ -14,16 +14,18 @@ const markdownComponents = {
   thead: ({ children }) => <thead className="bg-slate-100 dark:bg-slate-700">{children}</thead>,
   th: ({ children }) => <th className="border border-slate-300 dark:border-slate-600 px-2 py-1 text-left font-semibold">{children}</th>,
   td: ({ children }) => <td className="border border-slate-300 dark:border-slate-600 px-2 py-1">{children}</td>,
-  code: ({ inline, children, ...props }) => {
-    if (inline) {
-      return <code className="bg-slate-200 dark:bg-slate-600 px-1 py-0.5 rounded text-xs" {...props}>{children}</code>;
-    }
-    return (
-      <pre className="bg-slate-900 text-slate-100 p-3 rounded-lg overflow-x-auto my-2 text-xs">
-        <code {...props}>{children}</code>
-      </pre>
-    );
-  }
+  p: ({ children, node }) => {
+    const hasBlock = node?.children?.some(c => c.type === 'element' && /^(pre|div|table|ul|ol|blockquote)$/.test(c.tagName));
+    return hasBlock ? <div className="mb-3">{children}</div> : <p>{children}</p>;
+  },
+  pre: ({ children }) => (
+    <pre className="bg-slate-900 text-slate-100 p-3 rounded-lg overflow-x-auto my-2 text-xs [&>code]:bg-transparent [&>code]:p-0">
+      {children}
+    </pre>
+  ),
+  code: ({ children, className, ...props }) => (
+    <code className={`${className || 'bg-slate-200 dark:bg-slate-600 px-1 py-0.5 rounded'} text-xs`} {...props}>{children}</code>
+  )
 };
 
 function ChatMessageBubble({ message, renderSpecialMessage, timestampText = '' }) {

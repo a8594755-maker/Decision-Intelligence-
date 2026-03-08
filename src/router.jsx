@@ -12,6 +12,7 @@ const SettingsPage = lazy(() => import('./pages/SettingsPage'));
 const DigitalTwin = lazy(() => import('./pages/DigitalTwin'));
 const ScenarioStudio = lazy(() => import('./pages/ScenarioStudio'));
 const OpsDashboard = lazy(() => import('./pages/OpsDashboard'));
+const SyntheticERPSandbox = lazy(() => import('./pages/SyntheticERPSandbox'));
 
 export const router = createBrowserRouter([
   {
@@ -29,6 +30,7 @@ export const router = createBrowserRouter([
       { path: 'digital-twin', element: <DigitalTwin /> },
       { path: 'scenarios', element: <ScenarioStudio /> },
       { path: 'ops', element: <OpsDashboard /> },
+      { path: 'sandbox', element: <SyntheticERPSandbox /> },
       { path: 'settings', element: <SettingsPage /> },
 
       // Legacy redirects (previously handled by src/utils/router.js)

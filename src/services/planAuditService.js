@@ -5,7 +5,7 @@
  * decision history.
  */
 
-import { supabase } from './supabaseClient';
+import { supabase, markTableUnavailable } from './supabaseClient';
 
 const TABLE = 'di_plan_audit_log';
 let isAuditTableUnavailable = false;
@@ -45,6 +45,7 @@ function isMissingTableOrSchemaCacheError(error, tableName = TABLE) {
 
 function markAuditTableUnavailable(error) {
   isAuditTableUnavailable = true;
+  markTableUnavailable(TABLE); // also register with fetch-level circuit breaker
   if (!hasWarnedAuditTableUnavailable) {
     console.warn(
       '[planAuditService] di_plan_audit_log table unavailable. Run sql/migrations/di_plan_audit_log.sql, then NOTIFY pgrst, \'reload schema\'.',

@@ -12,7 +12,7 @@ import {
 } from 'lucide-react';
 import { Card, Badge } from '../components/ui';
 import { useAuth } from '../contexts/AuthContext';
-import { getOperationalSummary } from '../services/observability/operationalMetrics';
+import { getOperationalHealthSummary as getOperationalSummary } from '../services/observability/operationalMetrics';
 
 function MetricCard({ icon: Icon, label, value, sub, accent = 'text-indigo-600' }) {
   return (

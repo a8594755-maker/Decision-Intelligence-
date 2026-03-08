@@ -1555,17 +1555,16 @@ export async function runPlanFromDatasetProfile({
       ]);
     }
 
-    if (!datasetProfileRow.user_file_id) {
-      throw createBlockingError('Dataset profile has no linked source file.', [
-        'Re-upload the dataset from chat and rerun forecast + plan.'
-      ]);
+    let rawRows = [];
+    if (datasetProfileRow.user_file_id) {
+      const fileRecord = await userFilesService.getFileById(userId, datasetProfileRow.user_file_id);
+      rawRows = normalizeRowsFromUserFile(fileRecord);
+    } else if (Array.isArray(datasetProfileRow._inlineRawRows) && datasetProfileRow._inlineRawRows.length > 0) {
+      rawRows = datasetProfileRow._inlineRawRows;
     }
-
-    const fileRecord = await userFilesService.getFileById(userId, datasetProfileRow.user_file_id);
-    const rawRows = normalizeRowsFromUserFile(fileRecord);
     if (rawRows.length === 0) {
-      throw createBlockingError('Source rows are unavailable for this dataset profile.', [
-        'Re-upload source data and regenerate profile.'
+      throw createBlockingError('Dataset profile has no linked source file or inline rows.', [
+        'Re-upload the dataset from chat and rerun forecast + plan.'
       ]);
     }
 
@@ -1854,6 +1853,22 @@ export async function runPlanFromDatasetProfile({
     }
     // ────────────────────────────────────────────────────────────────────────
 
+    // Diagnostic: log solver input summary
+    const demandSkus = new Set(demandForecastSeries.map((p) => p.sku));
+    const invSkus = new Set(inventoryRowsForPlanning.map((r) => r.sku));
+    const matchedSkus = [...demandSkus].filter((s) => invSkus.has(s));
+    logger.info('planning-pipeline', 'Solver input summary', {
+      _traceId: planSpan.traceId,
+      demandPoints: demandForecastSeries.length,
+      demandSkus: demandSkus.size,
+      inventoryRows: inventoryRowsForPlanning.length,
+      inventorySkus: invSkus.size,
+      matchedSkus: matchedSkus.length,
+      horizonDays,
+      sampleDemand: demandForecastSeries.slice(0, 3).map((p) => ({ sku: p.sku, date: p.date, p50: p.p50 })),
+      sampleInventory: inventoryRowsForPlanning.slice(0, 3).map((r) => ({ sku: r.sku, on_hand: r.on_hand, safety_stock: r.safety_stock })),
+    });
+
     const solverSpan = createSpan('planning', 'solver', planSpan.traceId);
     const solverResult = await optimizationApiClient.createReplenishmentPlan(optimizationPayload, {
       timeoutMs: 25000,
@@ -1864,6 +1879,8 @@ export async function runPlanFromDatasetProfile({
     solverSpan.end();
     logger.info('planning-pipeline', `Solver completed: ${solverResult?.status || 'unknown'}`, {
       _traceId: planSpan.traceId, planRows: solverResult?.plan?.length || 0, durationMs: solverSpan.durationMs,
+      infeasibleReasons: solverResult?.infeasible_reasons?.slice(0, 5) || [],
+      solverEngine: solverResult?.solver_meta?.solver || 'unknown',
     });
 
     const normalizedPlan = Array.isArray(solverResult?.plan)

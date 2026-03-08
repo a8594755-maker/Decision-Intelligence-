@@ -69,6 +69,7 @@ from ml.api.async_runs import (
     AsyncRunStatusResponse,
     AsyncRunSubmitRequest,
     AsyncRunSubmitResponse,
+    AsyncRunWorker,
     InMemoryAsyncRunStore,
     PostgresAsyncRunStore,
     TERMINAL_JOB_STATUSES,
@@ -193,6 +194,10 @@ app.add_middleware(
 app.include_router(excel_export_router)
 app.include_router(registry_router)
 
+# Synthetic ERP Sandbox endpoints
+from ml.synthetic_erp.synthetic_router import router as synthetic_router
+app.include_router(synthetic_router)
+
 # Health endpoints (liveness + readiness probes)
 from ml.api.observability import health_router, request_id_middleware as _request_id_mw
 app.include_router(health_router)
@@ -272,6 +277,18 @@ async def request_id_mw(request: Request, call_next):
     return await _request_id_mw(request, call_next)
 
 
+@app.on_event("startup")
+async def _start_embedded_job_worker():
+    """Start async job worker in a daemon thread, sharing the API's store."""
+    import threading
+    svc = get_async_run_service()
+    config = svc.config
+    worker = AsyncRunWorker(store=svc.store, config=config)
+    t = threading.Thread(target=worker.run_forever, daemon=True, name="di-job-worker")
+    t.start()
+    logger.info("[di-job-worker] started (embedded, poll every %ss)", config.worker_poll_seconds)
+
+
 @app.on_event("shutdown")
 async def _shutdown_rate_limiter():
     await _rate_limiter.close()
@@ -318,15 +335,22 @@ async def global_exception_handler(request: Request, exc: Exception):
         headers={"Access-Control-Allow-Origin": _resolve_cors_origin(request)},
     )
 
-# Configuration
+# Configuration — ERP connector selection
 ERP_API_ENDPOINT = os.getenv("ERP_ENDPOINT", "https://erp-api.example.com")
 USE_MOCK_ERP = os.getenv("USE_MOCK_ERP", "true").lower() == "true"
 ERP_API_KEY = os.getenv("ERP_API_KEY", "")
-if not USE_MOCK_ERP and not ERP_API_KEY:
-    raise ValueError("ERP_API_KEY environment variable is required when USE_MOCK_ERP is not true")
+ERP_SOURCE = os.getenv("ERP_SOURCE", "MOCK" if USE_MOCK_ERP else "REAL").upper()
 
-# Initialize services - 根据环境变量选择真实或Mock ERP连接器
-if USE_MOCK_ERP:
+if ERP_SOURCE == "REAL" and not ERP_API_KEY:
+    raise ValueError("ERP_API_KEY environment variable is required when ERP_SOURCE=REAL")
+
+# Initialize services - 根据 ERP_SOURCE 选择连接器
+if ERP_SOURCE == "SYNTHETIC":
+    from ml.synthetic_erp.synthetic_erp_connector import SyntheticERPConnector
+    _synth_seed = int(os.getenv("SYNTHETIC_SEED", "42"))
+    erp_connector = SyntheticERPConnector(seed=_synth_seed)
+    print(f"🧪 使用Synthetic ERP连接器 (sandbox模式, seed={_synth_seed})")
+elif ERP_SOURCE == "MOCK":
     from ml.demand_forecasting.mock_erp_connector import MockERPConnector
     erp_connector = MockERPConnector(ERP_API_ENDPOINT, ERP_API_KEY)
     print("🧪 使用Mock ERP连接器 (测试模式)")

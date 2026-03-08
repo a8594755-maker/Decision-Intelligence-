@@ -424,6 +424,7 @@ export function buildDataSummaryCardPayload(profileRow) {
       sheet_name: sheet.sheet_name,
       upload_type: contractSheet.upload_type || sheet.likely_role || 'unknown',
       confidence: Number(sheet.confidence || 0),
+      mapped_fields: Object.values(contractSheet.mapping || {}),
       missing_required_fields: contractSheet.missing_required_fields || [],
       validation_status: contractSheet.validation?.status || 'fail',
       validation_reasons: contractSheet.validation?.reasons || []

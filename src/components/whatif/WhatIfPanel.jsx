@@ -147,7 +147,7 @@ export default function WhatIfPanel({
     setIsLoadingScenarios(true);
     try {
       const list = await listScenariosForBaseRun(userId, activeBaseRunId, 15);
-      setScenarios(list);
+      setScenarios((list || []).filter(Boolean));
     } catch (err) {
       console.warn('[WhatIfPanel] loadScenarios failed:', err.message);
     } finally {
@@ -516,7 +516,7 @@ export default function WhatIfPanel({
                   </h4>
                 </div>
                 <div className="space-y-1.5">
-                  {scenarios.map((scenario) => (
+                  {scenarios.filter(Boolean).map((scenario) => (
                     <ScenarioRow
                       key={scenario.id}
                       scenario={scenario}

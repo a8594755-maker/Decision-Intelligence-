@@ -740,8 +740,8 @@ export function initTableAvailability() {
   return !tableUnavailableAtLoad;
 }
 
-export function isTableUnavailable(conversationsDb) {
-  return !conversationsDb || sessionStorage.getItem(TABLE_UNAVAILABLE_KEY) === '1';
+export function isTableUnavailable() {
+  return sessionStorage.getItem(TABLE_UNAVAILABLE_KEY) === '1';
 }
 
 export function markTableUnavailable() {

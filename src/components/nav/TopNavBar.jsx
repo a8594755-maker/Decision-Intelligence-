@@ -3,7 +3,7 @@ import { NavLink as RouterNavLink } from 'react-router-dom';
 import {
   Activity, LayoutDashboard, Calculator, TrendingUp,
   ShieldAlert, Settings, Moon, Sun, LogOut, Cpu,
-  ChevronsLeft, ChevronsRight, GitCompare, BarChart3,
+  ChevronsLeft, ChevronsRight, GitCompare, BarChart3, Database,
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useApp } from '../../contexts/AppContext';
@@ -19,6 +19,7 @@ const NAV_ITEMS = [
 ];
 
 const BOTTOM_ITEMS = [
+  { to: '/sandbox', label: 'ERP Sandbox', icon: Database },
   { to: '/ops', label: 'Ops Dashboard', icon: BarChart3 },
   { to: '/settings', label: 'Settings', icon: Settings },
 ];
