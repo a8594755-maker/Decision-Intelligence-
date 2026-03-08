@@ -7,9 +7,10 @@
  * - Actionable hints (upload X to unlock Y)
  */
 
-import React from 'react';
-import { ShieldCheck, AlertTriangle, Lock, Upload, Info } from 'lucide-react';
+import React, { useMemo } from 'react';
+import { ShieldCheck, AlertTriangle, Lock, Upload, Info, Sparkles } from 'lucide-react';
 import { Card, Badge } from '../ui';
+import { rankCapabilityUnlocks } from '../../utils/capabilityUnlockRanker';
 
 const LEVEL_CONFIG = {
   full: {
@@ -65,6 +66,11 @@ export default function DataQualityCard({ payload }) {
 
   const config = LEVEL_CONFIG[coverage_level] || LEVEL_CONFIG.minimal;
   const Icon = config.icon;
+
+  const unlockRanking = useMemo(() => {
+    if (!capabilities) return [];
+    return rankCapabilityUnlocks(capabilities);
+  }, [capabilities]);
 
   return (
     <Card className={`w-full border ${config.border} ${config.bg}`}>
@@ -175,6 +181,36 @@ export default function DataQualityCard({ payload }) {
                 <span className="text-red-600 dark:text-red-400">{import_quality.totalRejected} rejected</span>
               )}
             </div>
+          </div>
+        )}
+
+        {/* Ranked capability unlock recommendations */}
+        {unlockRanking.length > 0 && (
+          <div className="space-y-1.5">
+            <p className="text-[11px] font-medium text-slate-700 dark:text-slate-200 flex items-center gap-1">
+              <Sparkles className="w-3.5 h-3.5 text-indigo-500" />
+              Recommended Uploads
+            </p>
+            {unlockRanking.slice(0, 3).map((rec, i) => (
+              <div key={rec.dataset} className="flex items-start gap-2 px-2.5 py-1.5 rounded bg-indigo-50/50 dark:bg-indigo-900/10 text-[11px]">
+                <span className="font-bold text-indigo-600 dark:text-indigo-400 mt-0.5 flex-shrink-0">
+                  #{i + 1}
+                </span>
+                <div>
+                  <p className="font-medium text-slate-700 dark:text-slate-200">{rec.label}</p>
+                  <p className="text-slate-500 dark:text-slate-400">{rec.hint}</p>
+                  {rec.unlocks.length > 0 && (
+                    <div className="flex flex-wrap gap-1 mt-0.5">
+                      {rec.unlocks.map(u => (
+                        <span key={u} className="text-[9px] px-1 py-0.5 rounded bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400">
+                          Unlocks: {u}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
           </div>
         )}
 

@@ -4,6 +4,7 @@
  */
 
 import { buildSchemaContractMappingPrompt } from '../prompts/diJsonContracts';
+import { mapHeaderWithInference } from '../config/headerSynonyms';
 
 const parseJson = (value) => {
   try {
@@ -174,7 +175,7 @@ export const extractAiJson = (text, options = {}) => {
  * @param {Array} schemaFields - Schema field definitions
  * @returns {Array} Mapping suggestions
  */
-export const ruleBasedMapping = (originalColumns, uploadType) => {
+export const ruleBasedMapping = (originalColumns, uploadType, _schemaFields, sampleRows = []) => {
   const mappings = [];
   
   // Define rules: Excel column pattern -> system field key
@@ -515,11 +516,25 @@ export const ruleBasedMapping = (originalColumns, uploadType) => {
       });
     });
 
+    // Layer 3: Fall back to header synonym + value-based inference for unmapped columns
+    if (!bestMatch && sampleRows.length > 0) {
+      const values = sampleRows.map(row => row[col]).filter(v => v != null && v !== '');
+      const alreadyMapped = mappings.filter(m => m.target).map(m => m.target);
+      const candidates = Object.keys(typeRules).filter(k => !alreadyMapped.includes(k));
+      const inferred = mapHeaderWithInference(col, values, candidates);
+      if (inferred.canonical && inferred.confidence >= 0.5) {
+        bestMatch = inferred.canonical;
+        bestConfidence = inferred.confidence;
+      }
+    }
+
     mappings.push({
       source: col,
       target: bestMatch,
       confidence: bestConfidence,
-      reason: bestMatch ? 'rule-based match' : 'no match found'
+      reason: bestMatch
+        ? (bestConfidence >= 0.8 ? 'rule-based match' : 'inference')
+        : 'no match found'
     });
   });
 

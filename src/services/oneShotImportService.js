@@ -117,8 +117,8 @@ export function generateSheetPlans(workbook, fileName = 'unknown', fileSize = 0,
       if (uploadType && UPLOAD_SCHEMAS[uploadType]) {
         const schema = UPLOAD_SCHEMAS[uploadType];
 
-        // Use rule-based mapping to calculate initial coverage
-        const ruleMappings = ruleBasedMapping(headers, uploadType, schema.fields);
+        // Use rule-based mapping to calculate initial coverage (with value-based inference fallback)
+        const ruleMappings = ruleBasedMapping(headers, uploadType, schema.fields, sampleRows);
         initialMapping = {};
         ruleMappings.forEach(m => {
           if (m.target && m.confidence >= 0.7) {
@@ -253,7 +253,7 @@ export function generateSheetPlansFromParsed(parsed, fileName = 'unknown', fileS
 
       if (uploadType && UPLOAD_SCHEMAS[uploadType]) {
         const schema = UPLOAD_SCHEMAS[uploadType];
-        const ruleMappings = ruleBasedMapping(headers, uploadType, schema.fields);
+        const ruleMappings = ruleBasedMapping(headers, uploadType, schema.fields, sampleRows);
         ruleMappings.forEach(m => {
           if (m.target && m.confidence >= 0.7) {
             initialMapping[m.source] = m.target;

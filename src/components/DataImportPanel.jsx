@@ -466,18 +466,45 @@ function ImportReport({ report, onReset }) {
       {/* Per-sheet results */}
       <div className="space-y-2">
         {report.sheetReports?.map((sr, i) => (
-          <div key={i} className="flex items-center justify-between p-3 rounded-lg border border-slate-200 dark:border-slate-700">
-            <div className="flex items-center gap-2 min-w-0">
-              <FileSpreadsheet className="w-4 h-4 text-slate-400 flex-shrink-0" />
-              <span className="text-sm truncate">{sr.sheetName}</span>
-              <span className="text-xs text-slate-400">{sr.uploadType}</span>
+          <div key={i} className="p-3 rounded-lg border border-slate-200 dark:border-slate-700 space-y-2">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 min-w-0">
+                <FileSpreadsheet className="w-4 h-4 text-slate-400 flex-shrink-0" />
+                <span className="text-sm truncate">{sr.sheetName}</span>
+                <span className="text-xs text-slate-400">{sr.uploadType}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                {sr.savedCount != null && (
+                  <span className="text-xs text-slate-500">{sr.savedCount} rows</span>
+                )}
+                <Badge type={STATUS_STYLES[sr.status] || 'info'}>{sr.status}</Badge>
+              </div>
             </div>
-            <div className="flex items-center gap-2">
-              {sr.savedCount != null && (
-                <span className="text-xs text-slate-500">{sr.savedCount} rows</span>
-              )}
-              <Badge type={STATUS_STYLES[sr.status] || 'info'}>{sr.status}</Badge>
-            </div>
+            {/* Row-level quality breakdown per sheet */}
+            {sr.quarantineReport && (
+              <div className="flex flex-wrap gap-1">
+                {sr.quarantineReport.accepted > 0 && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400">
+                    {sr.quarantineReport.accepted} accepted
+                  </span>
+                )}
+                {sr.quarantineReport.warnings > 0 && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow-50 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400">
+                    {sr.quarantineReport.warnings} warnings
+                  </span>
+                )}
+                {sr.quarantineReport.quarantined > 0 && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
+                    {sr.quarantineReport.quarantined} quarantined
+                  </span>
+                )}
+                {sr.quarantineReport.rejected > 0 && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-400">
+                    {sr.quarantineReport.rejected} rejected
+                  </span>
+                )}
+              </div>
+            )}
           </div>
         ))}
       </div>
@@ -510,6 +537,47 @@ function ImportReport({ report, onReset }) {
           <p className="text-xs text-amber-600 dark:text-amber-400">
             Download the error report to see reason codes per row. Fix errors in your file and re-upload to import corrected data.
           </p>
+          {/* Expandable quarantine detail per sheet */}
+          {report.sheetReports?.map((sr, i) => (
+            sr.quarantineReport && (sr.quarantineReport.quarantined > 0 || sr.quarantineReport.rejected > 0) && (
+              <details key={`q-${i}`} className="border border-amber-200 dark:border-amber-800 rounded-lg overflow-hidden">
+                <summary className="p-2 cursor-pointer hover:bg-amber-100/50 dark:hover:bg-amber-900/30 text-xs font-medium text-amber-800 dark:text-amber-300">
+                  {sr.sheetName}: {sr.quarantineReport.quarantined} quarantined, {sr.quarantineReport.rejected} rejected
+                </summary>
+                <div className="max-h-60 overflow-y-auto">
+                  <table className="w-full text-[10px]">
+                    <thead className="bg-amber-100/50 dark:bg-amber-900/20 sticky top-0">
+                      <tr>
+                        <th className="px-2 py-1 text-left">Row</th>
+                        <th className="px-2 py-1 text-left">Status</th>
+                        <th className="px-2 py-1 text-left">Reason</th>
+                        <th className="px-2 py-1 text-left">Details</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(sr.quarantineReport.quarantined_rows || []).slice(0, 50).map((qr, j) => (
+                        <tr key={j} className="border-t border-amber-100 dark:border-amber-900/30">
+                          <td className="px-2 py-1">{qr.rowIndex != null ? qr.rowIndex + 1 : '-'}</td>
+                          <td className="px-2 py-1">
+                            <span className={qr.disposition === 'rejected' ? 'text-red-600 dark:text-red-400' : 'text-amber-600 dark:text-amber-400'}>
+                              {qr.disposition || 'quarantined'}
+                            </span>
+                          </td>
+                          <td className="px-2 py-1">{(qr.reasonCodes || []).join(', ')}</td>
+                          <td className="px-2 py-1 truncate max-w-[200px]">{qr.errorSummary || ''}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {(sr.quarantineReport.quarantined_rows || []).length > 50 && (
+                    <p className="p-2 text-[10px] text-amber-600 dark:text-amber-400">
+                      Showing first 50 rows. Download error report for full details.
+                    </p>
+                  )}
+                </div>
+              </details>
+            )
+          ))}
         </div>
       )}
 

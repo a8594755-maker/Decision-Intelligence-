@@ -15,8 +15,11 @@ const ENGINE_VERSION = '1.0.0';
 
 /**
  * @typedef {Object} WhatIfAction
- * @property {string} type - 'expedite' | 'substitute' | 'do_nothing'
+ * @property {string} type - 'expedite' | 'exclude_open_po' | 'stressed_demand' | 'lead_time_stress' | 'change_safety_stock' | 'do_nothing'
  * @property {number} byBuckets - Number of buckets to expedite (for expedite type)
+ * @property {number} demandMultiplier - Demand multiplier (for stressed_demand, default 1.2)
+ * @property {number} leadTimeDelta - Days to add to lead time (for lead_time_stress)
+ * @property {number} newSafetyStock - New safety stock level (for change_safety_stock)
  * @property {string} scope - 'single_key' | 'top_n'
  */
 
@@ -217,6 +220,18 @@ export function runWhatIfScenario(input, action) {
     case 'expedite':
       after = calculateExpediteAfter(input, action);
       break;
+    case 'exclude_open_po':
+      after = calculateExcludeOpenPoAfter(input);
+      break;
+    case 'stressed_demand':
+      after = calculateStressedDemandAfter(input, action);
+      break;
+    case 'lead_time_stress':
+      after = calculateLeadTimeStressAfter(input, action);
+      break;
+    case 'change_safety_stock':
+      after = calculateChangeSafetyStockAfter(input, action);
+      break;
     case 'do_nothing':
       after = { ...before }; // No change
       break;
@@ -310,6 +325,127 @@ function calculateExpediteAfter(input, action) {
     impactUsd: Math.round(newImpactUsd * 100) / 100,
     costUsd: expediteCost,
     expeditedInbound
+  };
+}
+
+// ============================================================
+// Exclude Open PO Scenario
+// ============================================================
+
+/**
+ * What if all open POs are removed? Shows worst-case with no inbound.
+ */
+function calculateExcludeOpenPoAfter(input) {
+  const { onHand = 0, safetyStock = 0, gapQty = 0, impactUsd = 0 } = input;
+  const netAvailable = onHand - safetyStock;
+  const newPStockout = netAvailable <= 0 ? 1.0 : Math.min(1.0, gapQty / Math.max(netAvailable, 1));
+  const newImpactUsd = impactUsd * (1 + (1 - newPStockout) * 0.5);
+  return {
+    pStockout: Math.round(newPStockout * 1000) / 1000,
+    score: Math.round(newPStockout * newImpactUsd * 100) / 100,
+    impactUsd: Math.round(newImpactUsd * 100) / 100,
+    costUsd: 0,
+    note: 'All open POs excluded from projection'
+  };
+}
+
+// ============================================================
+// Stressed Demand Scenario
+// ============================================================
+
+/**
+ * What if demand increases by a multiplier (e.g. 1.2 = +20%)?
+ */
+function calculateStressedDemandAfter(input, action) {
+  const multiplier = action.demandMultiplier || 1.2;
+  const { onHand = 0, safetyStock = 0, gapQty = 0, impactUsd = 0, inboundLines = [] } = input;
+  const totalInbound = inboundLines.reduce((s, l) => s + (l.qty || 0), 0);
+  const stressedGap = Math.max(0, gapQty * multiplier);
+  const available = onHand - safetyStock + totalInbound;
+  const newPStockout = available <= 0 ? 1.0 : Math.min(1.0, stressedGap / Math.max(available, 1));
+  const newImpactUsd = impactUsd * multiplier;
+  return {
+    pStockout: Math.round(newPStockout * 1000) / 1000,
+    score: Math.round(newPStockout * newImpactUsd * 100) / 100,
+    impactUsd: Math.round(newImpactUsd * 100) / 100,
+    costUsd: 0,
+    note: `Demand stressed by ${((multiplier - 1) * 100).toFixed(0)}%`
+  };
+}
+
+// ============================================================
+// Lead Time Stress Scenario
+// ============================================================
+
+/**
+ * What if lead times increase by N days?
+ */
+function calculateLeadTimeStressAfter(input, action) {
+  const delta = action.leadTimeDelta || 7;
+  const { onHand = 0, safetyStock = 0, gapQty = 0, impactUsd = 0, inboundLines = [] } = input;
+  // Delay all inbound by delta buckets (approximate: 1 bucket ≈ 7 days)
+  const delayBuckets = Math.ceil(delta / 7);
+  const delayedInbound = inboundLines.map(l => ({
+    ...l,
+    bucket: shiftBucketLater(l.bucket, delayBuckets),
+    delayed: true
+  }));
+  // With delayed inbound, more gap
+  const additionalGap = gapQty * (delta / 7) * 0.3; // rough heuristic
+  const newGap = gapQty + additionalGap;
+  const available = onHand - safetyStock;
+  const newPStockout = available <= 0 ? 1.0 : Math.min(1.0, newGap / Math.max(available + gapQty, 1));
+  return {
+    pStockout: Math.round(newPStockout * 1000) / 1000,
+    score: Math.round(newPStockout * impactUsd * 100) / 100,
+    impactUsd: Math.round(impactUsd * 100) / 100,
+    costUsd: 0,
+    delayedInbound,
+    note: `Lead time increased by ${delta} days`
+  };
+}
+
+function shiftBucketLater(bucket, byBuckets) {
+  if (!bucket || typeof bucket !== 'string') return bucket;
+  const weekMatch = bucket.match(/^(\d{4})-W(\d{1,2})$/i);
+  if (weekMatch) {
+    let year = parseInt(weekMatch[1], 10);
+    let week = parseInt(weekMatch[2], 10) + byBuckets;
+    while (week > 52) { year++; week -= 52; }
+    return `${year}-W${String(week).padStart(2, '0')}`;
+  }
+  const monthMatch = bucket.match(/^(\d{4})-(\d{2})$/);
+  if (monthMatch) {
+    let year = parseInt(monthMatch[1], 10);
+    let month = parseInt(monthMatch[2], 10) + byBuckets;
+    while (month > 12) { year++; month -= 12; }
+    return `${year}-${String(month).padStart(2, '0')}`;
+  }
+  return bucket;
+}
+
+// ============================================================
+// Change Safety Stock Scenario
+// ============================================================
+
+/**
+ * What if safety stock level changes?
+ */
+function calculateChangeSafetyStockAfter(input, action) {
+  const newSS = action.newSafetyStock ?? 0;
+  const { onHand = 0, safetyStock = 0, gapQty = 0, impactUsd = 0, inboundLines = [] } = input;
+  const totalInbound = inboundLines.reduce((s, l) => s + (l.qty || 0), 0);
+  const ssDelta = newSS - safetyStock;
+  const newGap = Math.max(0, gapQty + ssDelta);
+  const available = onHand - newSS + totalInbound;
+  const newPStockout = available >= newGap ? 0 : Math.min(1.0, newGap / Math.max(available + newGap, 1));
+  const holdingCostIncrease = ssDelta > 0 ? ssDelta * 2 : 0; // rough $2/unit/period
+  return {
+    pStockout: Math.round(newPStockout * 1000) / 1000,
+    score: Math.round(newPStockout * impactUsd * 100) / 100,
+    impactUsd: Math.round(impactUsd * 100) / 100,
+    costUsd: holdingCostIncrease,
+    note: `Safety stock changed from ${safetyStock} to ${newSS} (delta: ${ssDelta > 0 ? '+' : ''}${ssDelta})`
   };
 }
 

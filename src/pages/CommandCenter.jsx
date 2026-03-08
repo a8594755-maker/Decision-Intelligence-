@@ -4,12 +4,15 @@ import {
   TrendingUp, TrendingDown, Minus,
   Calculator, ShieldAlert, Activity, Clock,
   ArrowRight, CheckCircle, AlertCircle, Loader2,
-  FileText, BarChart3, RefreshCw,
+  FileText, BarChart3, RefreshCw, Database, Upload,
+  ShieldCheck, AlertTriangle, Lock,
 } from 'lucide-react';
 import { Card, Badge } from '../components/ui';
 import { useAuth } from '../contexts/AuthContext';
 import { getRecentAuditTrail } from '../services/planAuditService';
 import { useSystemHealth } from '../hooks/useSystemHealth';
+import { useDecisionOverview } from '../hooks/useDecisionOverview';
+import FirstRunGuide from '../components/onboarding/FirstRunGuide';
 
 /* ───── Hero KPI (primary) ───── */
 function HeroKpi({ label, value, sub, gradient }) {
@@ -85,6 +88,7 @@ export default function CommandCenter() {
   const [recentActivity, setRecentActivity] = useState([]);
   const [loadingActivity, setLoadingActivity] = useState(true);
   const { health, refresh: refreshHealth } = useSystemHealth();
+  const { overview } = useDecisionOverview(user?.id);
 
   useEffect(() => {
     if (!user?.id) return;
@@ -108,6 +112,7 @@ export default function CommandCenter() {
 
   return (
     <div className="h-full overflow-y-auto scrollbar-thin">
+      <FirstRunGuide />
       <div className="max-w-7xl mx-auto px-4 md:px-8 py-8 space-y-8">
         {/* ── Page header ── */}
         <div className="mb-2">
@@ -160,6 +165,81 @@ export default function CommandCenter() {
             />
           </Card>
         </div>
+
+        {/* ── Decision Overview ── */}
+        {overview && (
+          <Card variant="elevated" className="!p-5 space-y-3">
+            <h2 className="text-sm font-semibold uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>
+              Today&apos;s Decision Overview
+            </h2>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              {/* Coverage */}
+              <div className="flex items-center gap-2">
+                {overview.coverage_level === 'full' ? (
+                  <ShieldCheck className="w-5 h-5 text-emerald-500" />
+                ) : overview.coverage_level === 'partial' ? (
+                  <AlertTriangle className="w-5 h-5 text-amber-500" />
+                ) : (
+                  <Lock className="w-5 h-5 text-red-500" />
+                )}
+                <div>
+                  <p className="text-[10px] text-slate-500">Data Coverage</p>
+                  <p className="text-sm font-semibold capitalize" style={{ color: 'var(--text-primary)' }}>
+                    {overview.coverage_level || 'Unknown'}
+                  </p>
+                </div>
+              </div>
+
+              {/* Estimated vs Verified */}
+              {overview.estimated_ratio && (
+                <div className="flex items-center gap-2">
+                  <Database className="w-5 h-5 text-indigo-500" />
+                  <div>
+                    <p className="text-[10px] text-slate-500">Verified vs Estimated</p>
+                    <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                      {overview.estimated_ratio.verified} / {overview.estimated_ratio.total}
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Missing Datasets */}
+              {overview.missing_datasets.length > 0 && (
+                <div className="flex items-center gap-2">
+                  <Upload className="w-5 h-5 text-amber-500" />
+                  <div>
+                    <p className="text-[10px] text-slate-500">Missing Datasets</p>
+                    <p className="text-xs text-amber-600 dark:text-amber-400">
+                      {overview.missing_datasets.join(', ')}
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Open Actions */}
+              {overview.open_actions_count > 0 && (
+                <div className="flex items-center gap-2">
+                  <AlertCircle className="w-5 h-5 text-red-500" />
+                  <div>
+                    <p className="text-[10px] text-slate-500">Actions Pending</p>
+                    <p className="text-sm font-semibold text-red-600 dark:text-red-400">
+                      {overview.open_actions_count}
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Import quality line */}
+            {overview.import_quality && (
+              <div className="flex gap-3 text-[10px] text-slate-500 pt-1 border-t border-slate-200/50 dark:border-slate-700/50">
+                {overview.import_quality.totalWarnings > 0 && <span>{overview.import_quality.totalWarnings} import warnings</span>}
+                {overview.import_quality.totalQuarantined > 0 && <span className="text-amber-600">{overview.import_quality.totalQuarantined} quarantined</span>}
+                {overview.import_quality.totalRejected > 0 && <span className="text-red-600">{overview.import_quality.totalRejected} rejected</span>}
+              </div>
+            )}
+          </Card>
+        )}
 
         {/* ── Two-column: Quick Actions + Recent Activity ── */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

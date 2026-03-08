@@ -756,7 +756,9 @@ const stepHandlers = {
       // Risk-aware planning (opt-in via settings.plan.risk_mode='on' or settings.risk_mode='on')
       riskMode: planSettings.risk_mode,
       riskRunId: planSettings.risk_run_id,
-      riskConfigOverrides: planSettings.risk_config_overrides
+      riskConfigOverrides: planSettings.risk_config_overrides,
+      // Cross-pipeline trace ID propagation
+      parentTraceId: ctx.settings?.import_trace_id || null
     });
 
     // ── Closed-loop evaluation (non-blocking, feature-flagged) ──────────────────

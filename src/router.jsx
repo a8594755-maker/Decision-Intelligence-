@@ -10,6 +10,8 @@ const ForecastStudio = lazy(() => import('./pages/ForecastStudio'));
 const RiskCenter = lazy(() => import('./pages/RiskCenter'));
 const SettingsPage = lazy(() => import('./pages/SettingsPage'));
 const DigitalTwin = lazy(() => import('./pages/DigitalTwin'));
+const ScenarioStudio = lazy(() => import('./pages/ScenarioStudio'));
+const OpsDashboard = lazy(() => import('./pages/OpsDashboard'));
 
 export const router = createBrowserRouter([
   {
@@ -25,6 +27,8 @@ export const router = createBrowserRouter([
       { path: 'forecast', element: <ForecastStudio /> },
       { path: 'risk', element: <RiskCenter /> },
       { path: 'digital-twin', element: <DigitalTwin /> },
+      { path: 'scenarios', element: <ScenarioStudio /> },
+      { path: 'ops', element: <OpsDashboard /> },
       { path: 'settings', element: <SettingsPage /> },
 
       // Legacy redirects (previously handled by src/utils/router.js)

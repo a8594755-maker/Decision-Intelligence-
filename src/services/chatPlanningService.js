@@ -599,10 +599,12 @@ const buildEvidencePack = ({
   decisionNarrative,
   multiEchelon = null,
   componentPlan = null,
-  bottlenecks = null
+  bottlenecks = null,
+  traceId = null
 }) => ({
   generated_at: new Date().toISOString(),
   run_id: runId,
+  ...(traceId ? { _traceId: traceId } : {}),
   dataset_profile_id: datasetProfileId,
   forecast_run_id: forecastRunId,
   solver_status: solverResult?.status || 'unknown',
@@ -1636,9 +1638,24 @@ export async function runPlanFromDatasetProfile({
       throw createBlockingError('Critical planning fields are missing (lead_time_days or safety_stock).', questions);
     }
 
+    // Build per-row lineage map during fallback application
+    const rowLineageMap = new Map(); // key: `sku|plant_id` -> { fallback_fields, datasets_used, confidence }
+
     const inventoryRowsForPlanning = inventoryResult.rows.map((row, i) => {
-      const lt = fallbackAudit.apply('lead_time_days', row.lead_time_days, {}, i);
-      const ss = fallbackAudit.apply('safety_stock', row.safety_stock, {}, i);
+      const rowKey = `${normalizeText(row.sku || row.material_code)}|${normalizeText(row.plant_id) || ''}`;
+      const lt = fallbackAudit.apply('lead_time_days', row.lead_time_days, { _rowKey: rowKey }, i);
+      const ss = fallbackAudit.apply('safety_stock', row.safety_stock, { _rowKey: rowKey }, i);
+
+      const fallback_fields = [];
+      if (lt.isFallback) fallback_fields.push({ field: 'lead_time_days', source: lt.source, value: lt.value });
+      if (ss.isFallback) fallback_fields.push({ field: 'safety_stock', source: ss.source, value: ss.value });
+
+      rowLineageMap.set(rowKey, {
+        fallback_fields,
+        datasets_used: ['demand_fg', 'inventory_snapshots'],
+        confidence: fallback_fields.length === 0 ? 1.0 : Math.max(0.3, 1.0 - fallback_fields.length * 0.15),
+      });
+
       return {
         ...row,
         lead_time_days: lt.value,
@@ -1851,13 +1868,22 @@ export async function runPlanFromDatasetProfile({
 
     const normalizedPlan = Array.isArray(solverResult?.plan)
       ? solverResult.plan
-          .map((row) => ({
-            sku: normalizeText(row?.sku),
-            plant_id: normalizeText(row?.plant_id) || null,
-            order_date: toIsoDay(parseDateValue(row?.order_date)),
-            arrival_date: toIsoDay(parseDateValue(row?.arrival_date)),
-            order_qty: Math.max(0, toNumber(row?.order_qty, 0))
-          }))
+          .map((row) => {
+            const base = {
+              sku: normalizeText(row?.sku),
+              plant_id: normalizeText(row?.plant_id) || null,
+              order_date: toIsoDay(parseDateValue(row?.order_date)),
+              arrival_date: toIsoDay(parseDateValue(row?.arrival_date)),
+              order_qty: Math.max(0, toNumber(row?.order_qty, 0))
+            };
+            // Attach per-row lineage metadata
+            const lineageKey = `${base.sku}|${base.plant_id || ''}`;
+            const lineage = rowLineageMap.get(lineageKey);
+            if (lineage) {
+              base._meta = lineage;
+            }
+            return base;
+          })
           .filter((row) => row.sku && row.order_date && row.arrival_date && Number.isFinite(row.order_qty))
           .sort((a, b) => {
             if (a.sku !== b.sku) return a.sku.localeCompare(b.sku);
@@ -1949,6 +1975,23 @@ export async function runPlanFromDatasetProfile({
     if (bomDataset && bomRequiredMappingMissing.length === 0) availableDatasets.push('bom_edge');
     else missingDatasets.push('bom_edge');
 
+    // Enrich row lineage map with optional dataset presence
+    if (openPoDataset) {
+      for (const [key, lineage] of rowLineageMap) {
+        lineage.datasets_used.push('po_open_lines');
+      }
+    }
+    if (financialsDataset) {
+      for (const [key, lineage] of rowLineageMap) {
+        lineage.datasets_used.push('fg_financials');
+      }
+    }
+    if (bomDataset && bomRequiredMappingMissing.length === 0) {
+      for (const [key, lineage] of rowLineageMap) {
+        lineage.datasets_used.push('bom_edge');
+      }
+    }
+
     // Evaluate capabilities based on available datasets
     const capDatasets = availableDatasets.map(t => ({ type: t, fields: [] }));
     const capabilities = evaluateCapabilities(capDatasets);
@@ -1981,6 +2024,7 @@ export async function runPlanFromDatasetProfile({
     });
 
     const solverMetaArtifact = {
+      _traceId: planSpan.traceId,
       status: solverResult?.status || 'unknown',
       kpis: solverResult?.kpis || {},
       solver_meta: {
@@ -2383,7 +2427,13 @@ export async function runPlanFromDatasetProfile({
     const planArtifact = {
       total_rows: normalizedPlan.length,
       rows: normalizedPlan.slice(0, MAX_PLAN_ROWS_IN_ARTIFACT),
-      truncated: normalizedPlan.length > MAX_PLAN_ROWS_IN_ARTIFACT
+      truncated: normalizedPlan.length > MAX_PLAN_ROWS_IN_ARTIFACT,
+      lineage_summary: {
+        rows_with_fallback: normalizedPlan.filter(r => r._meta?.fallback_fields?.length > 0).length,
+        rows_with_full_data: normalizedPlan.filter(r => !r._meta || r._meta.fallback_fields?.length === 0).length,
+        datasets_used: [...new Set(availableDatasets)],
+        datasets_missing: [...new Set(missingDatasets)],
+      }
     };
 
     const projectionArtifact = {
@@ -2524,7 +2574,8 @@ export async function runPlanFromDatasetProfile({
       decisionNarrative,
       multiEchelon: multiEchelonDiagnostics,
       componentPlan: componentPlanArtifact,
-      bottlenecks: normalizedBottlenecks
+      bottlenecks: normalizedBottlenecks,
+      traceId: planSpan.traceId
     });
 
     const evidenceSaved = await saveJsonArtifact(run.id, 'evidence_pack', evidencePack, ARTIFACT_SIZE_THRESHOLD, {

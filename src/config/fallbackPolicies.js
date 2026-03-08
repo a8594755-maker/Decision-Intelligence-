@@ -58,6 +58,7 @@ export function createFallbackAudit() {
   const fieldFallbacks = [];   // Per-row field-level fallbacks
   const datasetFallbacks = []; // Dataset-level (missing open_pos, financials, etc.)
   const rowsWithFallback = new Set(); // Track which rows used at least one fallback
+  const perRowFallbacks = new Map();  // rowKey -> [{ field, source, value }]
 
   return {
     /**
@@ -87,14 +88,24 @@ export function createFallbackAudit() {
         if (strategy.source === 'supplier_default' && context.supplierDefaults?.[fieldKey] != null) {
           const val = context.supplierDefaults[fieldKey];
           fieldFallbacks.push({ field: fieldKey, source: strategy.source, value: val, description: strategy.description });
-          if (rowIndex != null) rowsWithFallback.add(rowIndex);
+          if (rowIndex != null) {
+            rowsWithFallback.add(rowIndex);
+            const key = context._rowKey ?? rowIndex;
+            if (!perRowFallbacks.has(key)) perRowFallbacks.set(key, []);
+            perRowFallbacks.get(key).push({ field: fieldKey, source: strategy.source, value: val });
+          }
           return { value: val, source: strategy.source, isFallback: true };
         }
 
         if (strategy.source === 'plant_default' && context.plantDefaults?.[fieldKey] != null) {
           const val = context.plantDefaults[fieldKey];
           fieldFallbacks.push({ field: fieldKey, source: strategy.source, value: val, description: strategy.description });
-          if (rowIndex != null) rowsWithFallback.add(rowIndex);
+          if (rowIndex != null) {
+            rowsWithFallback.add(rowIndex);
+            const key = context._rowKey ?? rowIndex;
+            if (!perRowFallbacks.has(key)) perRowFallbacks.set(key, []);
+            perRowFallbacks.get(key).push({ field: fieldKey, source: strategy.source, value: val });
+          }
           return { value: val, source: strategy.source, isFallback: true };
         }
 
@@ -113,7 +124,12 @@ export function createFallbackAudit() {
             }
           }
           fieldFallbacks.push({ field: fieldKey, source: strategy.source, value: val, description: strategy.description });
-          if (rowIndex != null) rowsWithFallback.add(rowIndex);
+          if (rowIndex != null) {
+            rowsWithFallback.add(rowIndex);
+            const key = context._rowKey ?? rowIndex;
+            if (!perRowFallbacks.has(key)) perRowFallbacks.set(key, []);
+            perRowFallbacks.get(key).push({ field: fieldKey, source: strategy.source, value: val });
+          }
           return { value: val, source: strategy.source, isFallback: true };
         }
       }
@@ -137,6 +153,25 @@ export function createFallbackAudit() {
         degradesCapability: policy.degradesCapability || null,
         message: policy.message || `${datasetKey} data not available.`,
       });
+    },
+
+    /**
+     * Get per-row fallback details for a specific row key.
+     *
+     * @param {string|number} rowKey – Row key (e.g. 'SKU001|PLANT1') or row index
+     * @returns {Array<{ field: string, source: string, value: any }>}
+     */
+    getRowFallbacks(rowKey) {
+      return perRowFallbacks.get(rowKey) || [];
+    },
+
+    /**
+     * Get the entire per-row fallback map (for bulk lineage attachment).
+     *
+     * @returns {Map<string|number, Array<{ field: string, source: string, value: any }>>}
+     */
+    getPerRowFallbackMap() {
+      return perRowFallbacks;
     },
 
     /**
