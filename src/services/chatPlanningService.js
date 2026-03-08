@@ -25,7 +25,12 @@ import {
 import { applyScenarioOverridesToPayload } from '../utils/applyScenarioOverrides';
 import { createFallbackAudit } from '../config/fallbackPolicies';
 import { buildDataQualityReport } from '../utils/dataQualityReport';
-import { logger, createSpan } from './observability';
+import { evaluateCapabilities } from '../config/capabilityMatrix';
+import {
+  logger, createSpan,
+  recordPlanningAttempt, recordPlanningSuccess, recordPlanningFailure,
+  recordFallbackUsed, recordDegradedCapability, recordZeroResultPlan
+} from './observability';
 
 const MAX_PLAN_ROWS_IN_CARD = 50;
 const MAX_PLAN_ROWS_IN_ARTIFACT = 2000;
@@ -1492,12 +1497,16 @@ export async function runPlanFromDatasetProfile({
   riskConfigOverrides = {},  // optional overrides for RISK_ADJ_CONFIG thresholds
   // What-If scenario overrides (opt-in; null = regular plan run, no changes)
   scenarioOverrides = null,  // object | null
-  scenarioEngineFlags = {}   // engine flags from di_scenarios.engine_flags
+  scenarioEngineFlags = {},  // engine flags from di_scenarios.engine_flags
+  // Import quality metadata (opt-in; passed from import pipeline)
+  importQuality = null,      // { totalRejected, totalWarnings, totalQuarantined, bySheet }
+  parentTraceId = null        // trace id from import pipeline for cross-pipeline tracing
 }) {
   if (!userId) throw new Error('userId is required');
   if (!datasetProfileRow?.id) throw new Error('datasetProfileRow is required');
 
-  const planSpan = createSpan('planning', 'full-pipeline');
+  const planSpan = createSpan('planning', 'full-pipeline', parentTraceId);
+  recordPlanningAttempt();
   logger.info('planning-pipeline', 'Planning started', {
     _traceId: planSpan.traceId, datasetProfileId: datasetProfileRow.id, riskMode,
   });
@@ -1627,9 +1636,9 @@ export async function runPlanFromDatasetProfile({
       throw createBlockingError('Critical planning fields are missing (lead_time_days or safety_stock).', questions);
     }
 
-    const inventoryRowsForPlanning = inventoryResult.rows.map((row) => {
-      const lt = fallbackAudit.apply('lead_time_days', row.lead_time_days);
-      const ss = fallbackAudit.apply('safety_stock', row.safety_stock);
+    const inventoryRowsForPlanning = inventoryResult.rows.map((row, i) => {
+      const lt = fallbackAudit.apply('lead_time_days', row.lead_time_days, {}, i);
+      const ss = fallbackAudit.apply('safety_stock', row.safety_stock, {}, i);
       return {
         ...row,
         lead_time_days: lt.value,
@@ -1940,17 +1949,28 @@ export async function runPlanFromDatasetProfile({
     if (bomDataset && bomRequiredMappingMissing.length === 0) availableDatasets.push('bom_edge');
     else missingDatasets.push('bom_edge');
 
+    // Evaluate capabilities based on available datasets
+    const capDatasets = availableDatasets.map(t => ({ type: t, fields: [] }));
+    const capabilities = evaluateCapabilities(capDatasets);
+
     const dataQuality = buildDataQualityReport({
       availableDatasets,
       missingDatasets,
       fallbackAudit: audit,
+      capabilities,
       rowStats: {
         total: inventoryResult.rows.length,
-        clean: inventoryResult.rows.length - audit.summary.totalFieldFallbacks,
-        with_fallback: audit.summary.totalFieldFallbacks > 0 ? inventoryResult.rows.length : 0,
+        clean: inventoryResult.rows.length - (audit.summary.rowsWithFallbackCount || 0),
+        with_fallback: audit.summary.rowsWithFallbackCount || 0,
         dropped: inventoryResult.dropped || 0,
       },
+      importQuality: importQuality || undefined,
+      quarantinedCount: importQuality?.totalRejected || 0,
     });
+
+    // Record operational metrics for fallbacks and degraded capabilities
+    recordFallbackUsed(audit.summary.totalFieldFallbacks + audit.summary.totalDatasetFallbacks);
+    recordDegradedCapability(audit.summary.degradedCapabilities.length);
 
     logger.info('planning-pipeline', `Data quality: ${dataQuality.coverage_level}`, {
       _traceId: planSpan.traceId,
@@ -2634,6 +2654,8 @@ export async function runPlanFromDatasetProfile({
     planSpan.addMetric('solver', solverResult?.status || 'unknown');
     planSpan.addMetric('coverageLevel', dataQuality.coverage_level);
     planSpan.end();
+    recordPlanningSuccess(planSpan.durationMs);
+    if (normalizedPlan.length === 0) recordZeroResultPlan();
     logger.info('planning-pipeline', 'Planning completed successfully', {
       _traceId: planSpan.traceId, durationMs: planSpan.durationMs, planRows: normalizedPlan.length,
     });
@@ -2690,6 +2712,7 @@ export async function runPlanFromDatasetProfile({
 
     planSpan.addMetric('error', error.message || 'unknown');
     planSpan.end();
+    recordPlanningFailure();
     logger.error('planning-pipeline', `Planning failed: ${error.message}`, {
       _traceId: planSpan.traceId, durationMs: planSpan.durationMs, isBlocking: !!error.isBlocking,
     });

@@ -104,13 +104,14 @@ describe('dataValidation – degradation scenarios', () => {
     const validationResult = validateAndCleanRows(rows, 'demand_fg');
     const report = buildQuarantineReport(validationResult, 'Sheet1', 'demand_fg');
 
-    expect(report.version).toBe('1');
+    expect(report.version).toBe('2');
     expect(report.sheet_name).toBe('Sheet1');
     expect(report.upload_type).toBe('demand_fg');
     expect(typeof report.generated_at).toBe('string');
     expect(report.total_rows).toBe(2);
     expect(report.accepted).toBeGreaterThanOrEqual(1);
-    expect(report.rejected).toBeGreaterThanOrEqual(1);
+    // v2: missing required field is "quarantined" (fixable), not "rejected"
+    expect((report.quarantined || 0) + report.rejected).toBeGreaterThanOrEqual(1);
     expect(Array.isArray(report.quarantined_rows)).toBe(true);
     expect(Array.isArray(report.warning_rows)).toBe(true);
     expect(report.stats).toBeDefined();
@@ -118,7 +119,7 @@ describe('dataValidation – degradation scenarios', () => {
     // Each quarantined row should have the expected structure
     report.quarantined_rows.forEach(qr => {
       expect(qr).toHaveProperty('rowIndex');
-      expect(qr).toHaveProperty('disposition', 'rejected');
+      expect(['quarantined', 'rejected']).toContain(qr.disposition);
       expect(qr).toHaveProperty('errors');
       expect(qr).toHaveProperty('errorSummary');
     });

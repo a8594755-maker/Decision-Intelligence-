@@ -57,6 +57,7 @@ export const FALLBACK_POLICIES = {
 export function createFallbackAudit() {
   const fieldFallbacks = [];   // Per-row field-level fallbacks
   const datasetFallbacks = []; // Dataset-level (missing open_pos, financials, etc.)
+  const rowsWithFallback = new Set(); // Track which rows used at least one fallback
 
   return {
     /**
@@ -65,9 +66,10 @@ export function createFallbackAudit() {
      * @param {string}  fieldKey   – e.g. 'lead_time_days'
      * @param {any}     rowValue   – The current value (may be null/undefined)
      * @param {object}  [context]  – Optional context (supplier, plant, etc.)
+     * @param {number}  [rowIndex] – Optional row index for per-row tracking
      * @returns {{ value: any, source: string, isFallback: boolean }}
      */
-    apply(fieldKey, rowValue, context = {}) {
+    apply(fieldKey, rowValue, context = {}, rowIndex) {
       const policy = FALLBACK_POLICIES[fieldKey];
       if (!policy || !policy.strategies) {
         return { value: rowValue, source: 'original', isFallback: false };
@@ -85,12 +87,14 @@ export function createFallbackAudit() {
         if (strategy.source === 'supplier_default' && context.supplierDefaults?.[fieldKey] != null) {
           const val = context.supplierDefaults[fieldKey];
           fieldFallbacks.push({ field: fieldKey, source: strategy.source, value: val, description: strategy.description });
+          if (rowIndex != null) rowsWithFallback.add(rowIndex);
           return { value: val, source: strategy.source, isFallback: true };
         }
 
         if (strategy.source === 'plant_default' && context.plantDefaults?.[fieldKey] != null) {
           const val = context.plantDefaults[fieldKey];
           fieldFallbacks.push({ field: fieldKey, source: strategy.source, value: val, description: strategy.description });
+          if (rowIndex != null) rowsWithFallback.add(rowIndex);
           return { value: val, source: strategy.source, isFallback: true };
         }
 
@@ -109,6 +113,7 @@ export function createFallbackAudit() {
             }
           }
           fieldFallbacks.push({ field: fieldKey, source: strategy.source, value: val, description: strategy.description });
+          if (rowIndex != null) rowsWithFallback.add(rowIndex);
           return { value: val, source: strategy.source, isFallback: true };
         }
       }
@@ -159,6 +164,7 @@ export function createFallbackAudit() {
         summary: {
           totalFieldFallbacks: fieldFallbacks.length,
           totalDatasetFallbacks: datasetFallbacks.length,
+          rowsWithFallbackCount: rowsWithFallback.size,
           fallbackFields: [...new Set(fieldFallbacks.map(f => f.field))],
           degradedCapabilities: datasetFallbacks
             .map(d => d.degradesCapability)

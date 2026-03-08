@@ -39,11 +39,23 @@ function DataQualityBadge({ dataQuality }) {
   );
 }
 
-function DatasetFallbackHints({ datasetFallbacks = [] }) {
-  if (datasetFallbacks.length === 0) return null;
+function DatasetFallbackHints({ datasetFallbacks = [], capabilities }) {
+  const unavailable = capabilities
+    ? Object.entries(capabilities).filter(([, cap]) => {
+        const level = typeof cap === 'string' ? cap : cap?.level;
+        return level === 'unavailable';
+      })
+    : [];
+
+  if (datasetFallbacks.length === 0 && unavailable.length === 0) return null;
 
   return (
     <div className="mt-2 space-y-1">
+      {unavailable.map(([key]) => (
+        <p key={key} className="text-[10px] text-slate-500 dark:text-slate-400 leading-tight">
+          <span className="font-medium">{key.replace(/_/g, ' ')}</span> is unavailable due to missing data.
+        </p>
+      ))}
       {datasetFallbacks.map((fb, i) => (
         <p key={i} className="text-[10px] text-slate-500 dark:text-slate-400 leading-tight">
           {fb.message}
@@ -100,7 +112,7 @@ export default function PlanSummaryCard({ payload }) {
           )}
         </div>
 
-        {dataQuality && <DatasetFallbackHints datasetFallbacks={dataQuality.dataset_fallbacks} />}
+        {dataQuality && <DatasetFallbackHints datasetFallbacks={dataQuality.dataset_fallbacks} capabilities={dataQuality.capabilities} />}
       </div>
     </Card>
   );

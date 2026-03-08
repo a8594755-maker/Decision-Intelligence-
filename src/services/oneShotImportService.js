@@ -23,7 +23,10 @@ import {
 } from './sheetRunsService';
 import { autoFillRows, validateRequiredFields } from '../utils/dataAutoFill';
 import { getRequiredMappingStatus } from '../utils/requiredMappingStatus';
-import { logger, createSpan, createImportMetricsCollector } from './observability';
+import {
+  logger, createSpan, createImportMetricsCollector,
+  recordImportAttempt, recordImportSuccess, recordImportFailure, recordMappingReviewRequired
+} from './observability';
 
 /**
  * Wrap a promise with a timeout. Returns fallbackValue on timeout if provided.
@@ -333,6 +336,7 @@ export async function importWorkbookSheets({ userId, workbook, fileName, sheetPl
   const importId = `import-${Date.now()}`;
   const metrics = createImportMetricsCollector(importId);
   const pipelineSpan = createSpan('import', 'workbook', null);
+  recordImportAttempt();
   logger.info('import-pipeline', `Starting import: ${fileName}`, { _traceId: pipelineSpan.traceId, fileName, sheetsCount: sheetPlans.length });
 
   // Check if ingest_key support is deployed
@@ -362,7 +366,7 @@ export async function importWorkbookSheets({ userId, workbook, fileName, sheetPl
     mode,
     rolledBack: false, // Flag whether rollback was triggered
     sheetReports: [],
-    quarantineSummary: { totalRejected: 0, totalWarnings: 0, bySheet: {} }
+    quarantineSummary: { totalRejected: 0, totalQuarantined: 0, totalWarnings: 0, bySheet: {} }
   };
   
   // Track succeeded sheets for rollback (All-or-nothing mode)
@@ -497,7 +501,8 @@ export async function importWorkbookSheets({ userId, workbook, fileName, sheetPl
       
       if (sheetResult.status === 'IMPORTED') {
         report.succeededSheets++;
-        
+        recordImportSuccess();
+
         // Track for rollback (All-or-nothing mode)
         if (mode === 'all-or-nothing' && hasIngestKeySupport && sheetResult.idempotencyKey) {
           succeededSheetsForRollback.push({
@@ -512,8 +517,10 @@ export async function importWorkbookSheets({ userId, workbook, fileName, sheetPl
         report.skippedSheets++;
       } else if (sheetResult.status === 'NEEDS_REVIEW') {
         report.needsReviewSheets++;
+        recordMappingReviewRequired();
       } else {
         report.failedSheets++;
+        recordImportFailure();
         
         // All-or-nothing: rollback on any failure
         if (mode === 'all-or-nothing' && hasIngestKeySupport && succeededSheetsForRollback.length > 0) {
@@ -528,9 +535,11 @@ export async function importWorkbookSheets({ userId, workbook, fileName, sheetPl
       // Aggregate quarantine data
       if (sheetResult.quarantineReport) {
         report.quarantineSummary.totalRejected += sheetResult.quarantineReport.rejected;
+        report.quarantineSummary.totalQuarantined += sheetResult.quarantineReport.quarantined || 0;
         report.quarantineSummary.totalWarnings += sheetResult.quarantineReport.warnings;
         report.quarantineSummary.bySheet[sheetResult.sheetName] = {
           rejected: sheetResult.quarantineReport.rejected,
+          quarantined: sheetResult.quarantineReport.quarantined || 0,
           warnings: sheetResult.quarantineReport.warnings,
         };
       }
@@ -578,7 +587,8 @@ export async function importWorkbookSheets({ userId, workbook, fileName, sheetPl
   // Observability: finalize pipeline span + log summary
   pipelineSpan.addMetric('sheetsProcessed', report.succeededSheets);
   pipelineSpan.addMetric('totalRowsIngested', metrics.getSummary().totalRowsIngested);
-  pipelineSpan.addMetric('quarantined', report.quarantineSummary.totalRejected);
+  pipelineSpan.addMetric('rejected', report.quarantineSummary.totalRejected);
+  pipelineSpan.addMetric('quarantined', report.quarantineSummary.totalQuarantined);
   pipelineSpan.end();
 
   logger.info('import-pipeline', `Import complete: ${report.succeededSheets}/${report.totalSheets} sheets`, {
@@ -587,7 +597,8 @@ export async function importWorkbookSheets({ userId, workbook, fileName, sheetPl
     succeeded: report.succeededSheets,
     failed: report.failedSheets,
     skipped: report.skippedSheets,
-    quarantined: report.quarantineSummary.totalRejected,
+    rejected: report.quarantineSummary.totalRejected,
+    quarantined: report.quarantineSummary.totalQuarantined,
   });
 
   report.observability = { traceId: pipelineSpan.traceId, metrics: metrics.getSummary(), span: pipelineSpan.toJSON() };

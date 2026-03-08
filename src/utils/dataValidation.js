@@ -6,6 +6,19 @@
 import UPLOAD_SCHEMAS from './uploadSchemas';
 import { autoFillRows } from './dataAutoFill';
 
+// ── Structured reason codes for quarantine reporting ────────────────────────
+export const REASON_CODES = {
+  MISSING_REQUIRED: { code: 'MISSING_REQUIRED', label: '必填欄位缺失', fixable: true },
+  INVALID_DATE:     { code: 'INVALID_DATE', label: '日期格式錯誤', fixable: true },
+  INVALID_NUMBER:   { code: 'INVALID_NUMBER', label: '數值格式錯誤', fixable: true },
+  NEGATIVE_VALUE:   { code: 'NEGATIVE_VALUE', label: '數值不可為負', fixable: true },
+  OUT_OF_RANGE:     { code: 'OUT_OF_RANGE', label: '數值超出範圍', fixable: true },
+  INVALID_STATUS:   { code: 'INVALID_STATUS', label: '狀態值無效', fixable: true },
+  INVALID_FORMAT:   { code: 'INVALID_FORMAT', label: '格式錯誤', fixable: true },
+  TYPE_MISMATCH:    { code: 'TYPE_MISMATCH', label: '欄位型別不符', fixable: false },
+  DUPLICATE_ROW:    { code: 'DUPLICATE_ROW', label: '重複資料列', fixable: false },
+};
+
 /**
  * Try parsing dates in multiple formats
  * Supports common date formats: YYYY-MM-DD, YYYY/MM/DD, DD-MM-YYYY, MM/DD/YYYY, Excel numeric format, etc.
@@ -241,7 +254,7 @@ const validateAndCleanField = (value, fieldDef, uploadType, _row = {}) => {
         return { value: cleanedValue, errors: [] };
       }
       
-      errors.push(`${fieldDef.label} is required and cannot be empty`);
+      errors.push({ message: `${fieldDef.label} is required and cannot be empty`, reasonCode: 'MISSING_REQUIRED' });
       return { value: null, errors };
     }
   }
@@ -258,7 +271,7 @@ const validateAndCleanField = (value, fieldDef, uploadType, _row = {}) => {
       
       // Check abnormal text content (for supplier_master)
       if (uploadType === 'supplier_master' && isAbnormalText(cleanedValue)) {
-        errors.push(`${fieldDef.label} contains abnormal content: ${cleanedValue} (e.g. '??', '---' invalid markers)`);
+        errors.push({ message: `${fieldDef.label} contains abnormal content: ${cleanedValue} (e.g. '??', '---' invalid markers)`, reasonCode: 'TYPE_MISMATCH' });
       }
       
       // Special handling: phone field
@@ -266,7 +279,7 @@ const validateAndCleanField = (value, fieldDef, uploadType, _row = {}) => {
         const phoneResult = parsePhone(cleanedValue);
         cleanedValue = phoneResult.value;
         if (phoneResult.errors.length > 0) {
-          errors.push(...phoneResult.errors);
+          phoneResult.errors.forEach(e => errors.push({ message: e, reasonCode: 'INVALID_FORMAT' }));
         }
       }
       // Special handling for week_bucket format - supports Excel date number auto-conversion
@@ -295,7 +308,7 @@ const validateAndCleanField = (value, fieldDef, uploadType, _row = {}) => {
             const weekNo = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
             cleanedValue = `${year}-W${weekNo.toString().padStart(2, '0')}`;
           } else {
-            errors.push(`${fieldDef.label} format incorrect, Excel date number conversion failed: ${strValue}`);
+            errors.push({ message: `${fieldDef.label} format incorrect, Excel date number conversion failed: ${strValue}`, reasonCode: 'INVALID_DATE' });
           }
         }
         // Try parsing as regular date then convert to week bucket
@@ -312,7 +325,7 @@ const validateAndCleanField = (value, fieldDef, uploadType, _row = {}) => {
             const weekNo = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
             cleanedValue = `${year}-W${weekNo.toString().padStart(2, '0')}`;
           } else {
-            errors.push(`${fieldDef.label} format incorrect, should be YYYY-W## format (e.g. 2026-W02) or valid date`);
+            errors.push({ message: `${fieldDef.label} format incorrect, should be YYYY-W## format (e.g. 2026-W02) or valid date`, reasonCode: 'INVALID_DATE' });
           }
         }
       }
@@ -321,14 +334,14 @@ const validateAndCleanField = (value, fieldDef, uploadType, _row = {}) => {
     case 'date':
       cleanedValue = parseDate(value);
       if (cleanedValue === null && value !== null && value !== '') {
-        errors.push(`${fieldDef.label} date format incorrect: ${value} (supported formats: YYYY-MM-DD, DD/MM/YYYY, etc.)`);
+        errors.push({ message: `${fieldDef.label} date format incorrect: ${value} (supported formats: YYYY-MM-DD, DD/MM/YYYY, etc.)`, reasonCode: 'INVALID_DATE' });
       }
       break;
 
     case 'boolean':
       cleanedValue = parseBoolean(value);
       if (cleanedValue === null && value !== null && value !== '') {
-        errors.push(`${fieldDef.label} must be a boolean (true/false, yes/no), but got: ${value}`);
+        errors.push({ message: `${fieldDef.label} must be a boolean (true/false, yes/no), but got: ${value}`, reasonCode: 'TYPE_MISMATCH' });
       }
       break;
 
@@ -548,7 +561,7 @@ const processTimeBucket = (row) => {
     if (parsedDate) {
       timeBucket = parsedDate;
     } else {
-      errors.push('Date format incorrect, should be YYYY-MM-DD format');
+      errors.push({ message: 'Date format incorrect, should be YYYY-MM-DD format', reasonCode: 'INVALID_DATE' });
     }
   } else if (weekBucket) {
     const trimmed = String(weekBucket).trim();
@@ -571,10 +584,10 @@ const processTimeBucket = (row) => {
           const weekNo = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
           timeBucket = `${year}-W${weekNo.toString().padStart(2, '0')}`;
         } else {
-          errors.push('Week bucket format incorrect, Excel date number conversion failed');
+          errors.push({ message: 'Week bucket format incorrect, Excel date number conversion failed', reasonCode: 'INVALID_DATE' });
         }
       } else {
-        errors.push('Week bucket format incorrect, should be YYYY-W## format (e.g. 2026-W02)');
+        errors.push({ message: 'Week bucket format incorrect, should be YYYY-W## format (e.g. 2026-W02)', reasonCode: 'INVALID_DATE' });
       }
     }
   } else if (timeBucketRaw) {
@@ -603,14 +616,14 @@ const processTimeBucket = (row) => {
           const weekNo = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
           timeBucket = `${year}-W${weekNo.toString().padStart(2, '0')}`;
         } else {
-          errors.push('time_bucket format incorrect, Excel date number conversion failed');
+          errors.push({ message: 'time_bucket format incorrect, Excel date number conversion failed', reasonCode: 'INVALID_DATE' });
         }
       } else {
-        errors.push('time_bucket format incorrect, should be YYYY-W## (e.g. 2026-W05) or YYYY-MM-DD (e.g. 2026-02-10)');
+        errors.push({ message: 'time_bucket format incorrect, should be YYYY-W## (e.g. 2026-W05) or YYYY-MM-DD (e.g. 2026-02-10)', reasonCode: 'INVALID_DATE' });
       }
     }
   } else {
-    errors.push('Must fill in one of week_bucket, date, or time_bucket');
+    errors.push({ message: 'Must fill in one of week_bucket, date, or time_bucket', reasonCode: 'MISSING_REQUIRED' });
   }
 
   return { time_bucket: timeBucket, errors };
@@ -627,7 +640,7 @@ const validateBomEdgeRules = (row) => {
   // Validate qty_per > 0
   if (row.qty_per !== null && row.qty_per !== undefined) {
     if (row.qty_per <= 0) {
-      errors.push({ field: 'qty_per', fieldLabel: 'Quantity Per Unit', error: 'qty_per must be greater than 0', originalValue: row.qty_per });
+      errors.push({ field: 'qty_per', fieldLabel: 'Quantity Per Unit', error: 'qty_per must be greater than 0', originalValue: row.qty_per, reasonCode: 'OUT_OF_RANGE' });
     }
   }
 
@@ -636,7 +649,7 @@ const validateBomEdgeRules = (row) => {
     const fromDate = new Date(row.valid_from);
     const toDate = new Date(row.valid_to);
     if (fromDate > toDate) {
-      errors.push({ field: 'valid_from', fieldLabel: 'Valid From', error: 'valid_from cannot be later than valid_to', originalValue: row.valid_from });
+      errors.push({ field: 'valid_from', fieldLabel: 'Valid From', error: 'valid_from cannot be later than valid_to', originalValue: row.valid_from, reasonCode: 'OUT_OF_RANGE' });
     }
   }
 
@@ -645,7 +658,7 @@ const validateBomEdgeRules = (row) => {
     const scrapRate = parseNumber(row.scrap_rate);
     if (scrapRate !== null) {
       if (scrapRate < 0 || scrapRate >= 1) {
-        errors.push({ field: 'scrap_rate', fieldLabel: 'Scrap Rate', error: 'scrap_rate must be in range 0 <= scrap_rate < 1', originalValue: row.scrap_rate });
+        errors.push({ field: 'scrap_rate', fieldLabel: 'Scrap Rate', error: 'scrap_rate must be in range 0 <= scrap_rate < 1', originalValue: row.scrap_rate, reasonCode: 'OUT_OF_RANGE' });
       }
     }
   }
@@ -655,7 +668,7 @@ const validateBomEdgeRules = (row) => {
     const yieldRate = parseNumber(row.yield_rate);
     if (yieldRate !== null) {
       if (yieldRate <= 0 || yieldRate > 1) {
-        errors.push({ field: 'yield_rate', fieldLabel: 'Yield Rate', error: 'yield_rate must be in range 0 < yield_rate <= 1', originalValue: row.yield_rate });
+        errors.push({ field: 'yield_rate', fieldLabel: 'Yield Rate', error: 'yield_rate must be in range 0 < yield_rate <= 1', originalValue: row.yield_rate, reasonCode: 'OUT_OF_RANGE' });
       }
     }
   }
@@ -675,11 +688,12 @@ const validatePoOpenLinesRules = (row) => {
   // Validate open_qty >= 0 (extra check, although schema already has min setting)
   if (row.open_qty !== null && row.open_qty !== undefined) {
     if (row.open_qty < 0) {
-      errors.push({ 
-        field: 'open_qty', 
-        fieldLabel: 'Open Quantity', 
-        error: 'open_qty cannot be less than 0', 
-        originalValue: row.open_qty 
+      errors.push({
+        field: 'open_qty',
+        fieldLabel: 'Open Quantity',
+        error: 'open_qty cannot be less than 0',
+        originalValue: row.open_qty,
+        reasonCode: 'NEGATIVE_VALUE'
       });
     }
   }
@@ -692,12 +706,13 @@ const validatePoOpenLinesRules = (row) => {
     if (!validStatuses.includes(normalizedStatus)) {
       // Auto-correct to 'open' and log warning
       row.status = 'open';
-      warnings.push({ 
-        field: 'status', 
-        fieldLabel: 'Status', 
-        error: `status value "${row.status}" not in allowed range (open/closed/cancelled), auto-set to 'open'`, 
+      warnings.push({
+        field: 'status',
+        fieldLabel: 'Status',
+        error: `status value "${row.status}" not in allowed range (open/closed/cancelled), auto-set to 'open'`,
         originalValue: row.status,
-        type: 'warning' 
+        type: 'warning',
+        reasonCode: 'INVALID_STATUS'
       });
     } else {
       // Normalize to lowercase
@@ -707,11 +722,12 @@ const validatePoOpenLinesRules = (row) => {
 
   // Validate time_bucket must exist (checked after processTimeBucket)
   if (!row.time_bucket || row.time_bucket === '') {
-    errors.push({ 
-      field: 'time_bucket', 
-      fieldLabel: 'Time Bucket', 
-      error: 'time_bucket field must exist (requires week_bucket or date)', 
-      originalValue: null 
+    errors.push({
+      field: 'time_bucket',
+      fieldLabel: 'Time Bucket',
+      error: 'time_bucket field must exist (requires week_bucket or date)',
+      originalValue: null,
+      reasonCode: 'MISSING_REQUIRED'
     });
   }
 
@@ -728,11 +744,12 @@ const validateInventorySnapshotsRules = (row) => {
 
   // Validate snapshot_date must be a valid date
   if (!row.snapshot_date || row.snapshot_date === '') {
-    errors.push({ 
-      field: 'snapshot_date', 
-      fieldLabel: 'Snapshot Date', 
-      error: 'snapshot_date is required', 
-      originalValue: row.snapshot_date 
+    errors.push({
+      field: 'snapshot_date',
+      fieldLabel: 'Snapshot Date',
+      error: 'snapshot_date is required',
+      originalValue: row.snapshot_date,
+      reasonCode: 'MISSING_REQUIRED'
     });
   }
 
@@ -748,11 +765,12 @@ const validateInventorySnapshotsRules = (row) => {
   // Validate allocated_qty >= 0
   if (row.allocated_qty !== null && row.allocated_qty !== undefined) {
     if (row.allocated_qty < 0) {
-      errors.push({ 
-        field: 'allocated_qty', 
-        fieldLabel: 'Allocated Quantity', 
-        error: 'allocated_qty cannot be less than 0', 
-        originalValue: row.allocated_qty 
+      errors.push({
+        field: 'allocated_qty',
+        fieldLabel: 'Allocated Quantity',
+        error: 'allocated_qty cannot be less than 0',
+        originalValue: row.allocated_qty,
+        reasonCode: 'NEGATIVE_VALUE'
       });
     }
   }
@@ -760,11 +778,12 @@ const validateInventorySnapshotsRules = (row) => {
   // Validate safety_stock >= 0
   if (row.safety_stock !== null && row.safety_stock !== undefined) {
     if (row.safety_stock < 0) {
-      errors.push({ 
-        field: 'safety_stock', 
-        fieldLabel: 'Safety Stock', 
-        error: 'safety_stock cannot be less than 0', 
-        originalValue: row.safety_stock 
+      errors.push({
+        field: 'safety_stock',
+        fieldLabel: 'Safety Stock',
+        error: 'safety_stock cannot be less than 0',
+        originalValue: row.safety_stock,
+        reasonCode: 'NEGATIVE_VALUE'
       });
     }
   }
@@ -797,11 +816,12 @@ const validateFgFinancialsRules = (row) => {
   // Validate unit_margin >= 0 (extra check)
   if (row.unit_margin !== null && row.unit_margin !== undefined) {
     if (row.unit_margin < 0) {
-      errors.push({ 
-        field: 'unit_margin', 
-        fieldLabel: 'Unit Margin', 
-        error: 'unit_margin cannot be less than 0', 
-        originalValue: row.unit_margin 
+      errors.push({
+        field: 'unit_margin',
+        fieldLabel: 'Unit Margin',
+        error: 'unit_margin cannot be less than 0',
+        originalValue: row.unit_margin,
+        reasonCode: 'NEGATIVE_VALUE'
       });
     }
   }
@@ -809,11 +829,12 @@ const validateFgFinancialsRules = (row) => {
   // Validate unit_price >= 0 (if provided)
   if (row.unit_price !== null && row.unit_price !== undefined && row.unit_price !== '') {
     if (row.unit_price < 0) {
-      errors.push({ 
-        field: 'unit_price', 
-        fieldLabel: 'Unit Price', 
-        error: 'unit_price cannot be less than 0', 
-        originalValue: row.unit_price 
+      errors.push({
+        field: 'unit_price',
+        fieldLabel: 'Unit Price',
+        error: 'unit_price cannot be less than 0',
+        originalValue: row.unit_price,
+        reasonCode: 'NEGATIVE_VALUE'
       });
     }
   }
@@ -826,11 +847,12 @@ const validateFgFinancialsRules = (row) => {
     // Check if dates are valid
     if (!isNaN(fromDate.getTime()) && !isNaN(toDate.getTime())) {
       if (fromDate > toDate) {
-        errors.push({ 
-          field: 'valid_from', 
-          fieldLabel: 'Valid From', 
-          error: 'valid_from cannot be later than valid_to', 
-          originalValue: row.valid_from 
+        errors.push({
+          field: 'valid_from',
+          fieldLabel: 'Valid From',
+          error: 'valid_from cannot be later than valid_to',
+          originalValue: row.valid_from,
+          reasonCode: 'OUT_OF_RANGE'
         });
       }
     }
@@ -876,11 +898,14 @@ export const validateAndCleanRows = (cleanRows, uploadType) => {
       cleanedRow[fieldKey] = value;
 
       if (errors.length > 0) {
-        errors.forEach(error => {
+        errors.forEach(err => {
+          // errors from validateAndCleanField are { message, reasonCode } objects
+          const isObj = typeof err === 'object' && err !== null;
           rowErrors.push({
             field: fieldKey,
             fieldLabel: fieldDef.label,
-            error,
+            error: isObj ? err.message : err,
+            reasonCode: isObj ? err.reasonCode : undefined,
             originalValue
           });
         });
@@ -892,11 +917,13 @@ export const validateAndCleanRows = (cleanRows, uploadType) => {
       const { time_bucket, errors: timeErrors } = processTimeBucket(cleanedRow);
       cleanedRow.time_bucket = time_bucket;
       if (timeErrors.length > 0) {
-        timeErrors.forEach(error => {
+        timeErrors.forEach(err => {
+          const isObj = typeof err === 'object' && err !== null;
           rowErrors.push({
             field: 'time_bucket',
             fieldLabel: 'Time Bucket',
-            error,
+            error: isObj ? err.message : err,
+            reasonCode: isObj ? err.reasonCode : 'INVALID_DATE',
             originalValue: cleanedRow.week_bucket || cleanedRow.date
           });
         });
@@ -997,37 +1024,59 @@ export const validateAndCleanData = (rawRows, uploadType, columnMapping) => {
 export const buildQuarantineReport = (validationResult, sheetName, uploadType, maxRows = 5000) => {
   const { validRows = [], errorRows = [], duplicateGroups = [], stats = {} } = validationResult;
 
-  // Separate warnings (errors with type === 'warning') from hard rejects
+  // Classify error rows into: warning / quarantined (fixable) / rejected (structural)
   const warningRows = [];
+  const quarantinedRows = [];
   const rejectedRows = [];
+
   errorRows.forEach(row => {
     const allWarnings = row.errors.every(e => e.type === 'warning');
     if (allWarnings) {
       warningRows.push(row);
+      return;
+    }
+
+    // Check if all non-warning errors are fixable (based on REASON_CODES)
+    const nonWarningErrors = row.errors.filter(e => e.type !== 'warning');
+    const allFixable = nonWarningErrors.every(e => {
+      const rc = REASON_CODES[e.reasonCode];
+      return rc ? rc.fixable : true; // unknown reason codes default to fixable
+    });
+
+    if (allFixable) {
+      quarantinedRows.push(row);
     } else {
       rejectedRows.push(row);
     }
   });
 
+  const mapRow = (row, disposition) => ({
+    rowIndex: row.rowIndex,
+    disposition,
+    reasonCodes: [...new Set(row.errors.filter(e => e.reasonCode).map(e => e.reasonCode))],
+    originalData: row.originalData,
+    errors: row.errors,
+    errorSummary: row.errors.map(e => `${e.fieldLabel || e.field}: ${e.error}`).join('; ').slice(0, 300)
+  });
+
   return {
-    version: '1',
+    version: '2',
     generated_at: new Date().toISOString(),
     sheet_name: sheetName,
     upload_type: uploadType,
     total_rows: stats.total || 0,
     accepted: validRows.length,
     warnings: warningRows.length,
+    quarantined: quarantinedRows.length,
     rejected: rejectedRows.length,
-    quarantined_rows: rejectedRows.slice(0, maxRows).map(row => ({
-      rowIndex: row.rowIndex,
-      disposition: 'rejected',
-      originalData: row.originalData,
-      errors: row.errors,
-      errorSummary: row.errors.map(e => `${e.fieldLabel || e.field}: ${e.error}`).join('; ').slice(0, 300)
-    })),
+    quarantined_rows: [
+      ...quarantinedRows.slice(0, maxRows).map(r => mapRow(r, 'quarantined')),
+      ...rejectedRows.slice(0, Math.max(0, maxRows - quarantinedRows.length)).map(r => mapRow(r, 'rejected')),
+    ],
     warning_rows: warningRows.slice(0, 500).map(row => ({
       rowIndex: row.rowIndex,
       disposition: 'warning',
+      reasonCodes: [...new Set(row.errors.filter(e => e.reasonCode).map(e => e.reasonCode))],
       errors: row.errors,
       errorSummary: row.errors.map(e => `${e.fieldLabel || e.field}: ${e.error}`).join('; ').slice(0, 300)
     })),
@@ -1045,6 +1094,7 @@ export const quarantineRowsToCsvData = (quarantineReport) => {
   return (quarantineReport.quarantined_rows || []).map(qr => ({
     row_number: qr.rowIndex,
     disposition: qr.disposition,
+    reason_codes: (qr.reasonCodes || []).join(', '),
     error_reason: qr.errorSummary,
     ...qr.originalData
   }));

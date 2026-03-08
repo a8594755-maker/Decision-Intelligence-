@@ -60,6 +60,7 @@ export default function DataQualityCard({ payload }) {
     dataset_fallbacks = [],
     capabilities,
     row_stats,
+    import_quality,
   } = payload;
 
   const config = LEVEL_CONFIG[coverage_level] || LEVEL_CONFIG.minimal;
@@ -104,7 +105,9 @@ export default function DataQualityCard({ payload }) {
           <div className="space-y-1">
             <p className="text-[11px] font-medium text-slate-700 dark:text-slate-200">Capabilities</p>
             <div className="flex flex-wrap gap-1.5">
-              {Object.entries(capabilities).map(([key, level]) => {
+              {Object.entries(capabilities).map(([key, cap]) => {
+                // Support both old shape (string) and new shape ({ available, level })
+                const level = typeof cap === 'string' ? cap : (cap?.level || 'unavailable');
                 const capColors = {
                   full: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300',
                   partial: 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300',
@@ -157,13 +160,33 @@ export default function DataQualityCard({ payload }) {
           </div>
         )}
 
+        {/* Import quality (per-dataset stats from import pipeline) */}
+        {import_quality && typeof import_quality === 'object' && (
+          <div className="space-y-1">
+            <p className="text-[11px] font-medium text-slate-700 dark:text-slate-200">Import Quality</p>
+            <div className="flex flex-wrap gap-2 text-[10px] text-slate-600 dark:text-slate-400">
+              {import_quality.totalWarnings > 0 && (
+                <span>{import_quality.totalWarnings} warnings</span>
+              )}
+              {import_quality.totalQuarantined > 0 && (
+                <span className="text-amber-600 dark:text-amber-400">{import_quality.totalQuarantined} quarantined</span>
+              )}
+              {import_quality.totalRejected > 0 && (
+                <span className="text-red-600 dark:text-red-400">{import_quality.totalRejected} rejected</span>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Row stats */}
         {row_stats && (
           <div className="flex gap-3 text-[10px] text-slate-500 dark:text-slate-400 pt-1 border-t border-slate-200/50 dark:border-slate-700/50">
             <span>Total rows: {row_stats.total}</span>
             <span>Clean: {row_stats.clean}</span>
             {row_stats.with_fallback > 0 && <span>With fallback: {row_stats.with_fallback}</span>}
-            {row_stats.dropped > 0 && <span className="text-red-500">Dropped: {row_stats.dropped}</span>}
+            {(row_stats.quarantined > 0 || row_stats.dropped > 0) && (
+              <span className="text-red-500">Excluded: {(row_stats.quarantined || 0) + (row_stats.dropped || 0)}</span>
+            )}
           </div>
         )}
       </div>

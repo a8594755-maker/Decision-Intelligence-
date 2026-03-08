@@ -432,7 +432,7 @@ function ImportReport({ report, onReset }) {
       const wb = XLSX.utils.book_new();
 
       (report.sheetReports || []).forEach((sr) => {
-        if (sr.quarantineReport && sr.quarantineReport.rejected > 0) {
+        if (sr.quarantineReport && (sr.quarantineReport.rejected > 0 || sr.quarantineReport.quarantined > 0)) {
           const csvData = quarantineRowsToCsvData(sr.quarantineReport);
           if (csvData.length > 0) {
             const ws = XLSX.utils.json_to_sheet(csvData);
@@ -483,20 +483,33 @@ function ImportReport({ report, onReset }) {
       </div>
 
       {/* Quarantine summary banner */}
-      {report.quarantineSummary?.totalRejected > 0 && (
-        <div className="flex items-center justify-between p-3 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800">
-          <div>
-            <p className="text-sm font-medium text-amber-800 dark:text-amber-200">
-              {report.quarantineSummary.totalRejected} rows quarantined
-            </p>
-            <p className="text-xs text-amber-600 dark:text-amber-400 mt-0.5">
-              These rows failed validation and were not imported. Fix errors and re-import.
-            </p>
+      {(report.quarantineSummary?.totalRejected > 0 || report.quarantineSummary?.totalQuarantined > 0) && (
+        <div className="p-3 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 space-y-2">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium text-amber-800 dark:text-amber-200">
+                Import Quality Summary
+              </p>
+              <div className="flex gap-3 mt-1 text-xs text-amber-700 dark:text-amber-300">
+                {report.quarantineSummary.totalWarnings > 0 && (
+                  <span>{report.quarantineSummary.totalWarnings} warnings (auto-corrected)</span>
+                )}
+                {report.quarantineSummary.totalQuarantined > 0 && (
+                  <span className="font-medium">{report.quarantineSummary.totalQuarantined} quarantined (fixable)</span>
+                )}
+                {report.quarantineSummary.totalRejected > 0 && (
+                  <span className="text-red-600 dark:text-red-400 font-medium">{report.quarantineSummary.totalRejected} rejected</span>
+                )}
+              </div>
+            </div>
+            <Button variant="outline" size="sm" onClick={handleDownloadQuarantine}>
+              <Download className="w-4 h-4 mr-1.5" />
+              Download Error Report
+            </Button>
           </div>
-          <Button variant="outline" size="sm" onClick={handleDownloadQuarantine}>
-            <Download className="w-4 h-4 mr-1.5" />
-            Download Error Report
-          </Button>
+          <p className="text-xs text-amber-600 dark:text-amber-400">
+            Download the error report to see reason codes per row. Fix errors in your file and re-upload to import corrected data.
+          </p>
         </div>
       )}
 
