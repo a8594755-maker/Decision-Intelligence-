@@ -1,8 +1,8 @@
 # Decision Intelligence
 
-Decision Intelligence is a chat-first supply chain decision workspace for turning uploaded planning data into forecast diagnostics, replenishment plans, risk review, and scenario decisions.
+Decision Intelligence is a chat-first supply chain planning workspace for turning uploaded operational data into forecast diagnostics, replenishment decisions, and scenario review.
 
-Built as a multi-service product prototype rather than a single-page CRUD demo.
+It is built as a multi-service product prototype with a React frontend, Supabase platform services, and a FastAPI planning / forecasting backend.
 
 | Proof point | Evidence |
 | --- | --- |
@@ -16,10 +16,10 @@ Built as a multi-service product prototype rather than a single-page CRUD demo.
 
 ## What You Can Do In 5 Minutes
 
-- Upload the sample workbook in [public/sample_data/test_data.xlsx](public/sample_data/test_data.xlsx).
-- Generate a replenishment plan from Plan Studio.
-- Inspect forecast diagnostics and demand outputs in Forecast Studio.
-- Review supplier risk, digital-twin what-if results, and scenario comparisons.
+- Load the sample workbook and bootstrap a planning workspace.
+- Generate a replenishment plan and review editable planning outputs.
+- Inspect forecast diagnostics, demand artifacts, and model-facing results.
+- Compare supplier risk and what-if scenarios before approving action.
 
 Follow the guided walkthrough in [docs/DEMO.md](docs/DEMO.md).
 
@@ -27,32 +27,16 @@ Follow the guided walkthrough in [docs/DEMO.md](docs/DEMO.md).
 
 ### 1. Intake and normalize planning data
 
-- Upload workbook or CSV inputs, map fields, and persist operational data through Supabase-backed services.
-- Use Plan Studio as the entry point for data readiness, plan generation, inline edits, and approval flow.
+Upload workbook or CSV inputs, map operational fields, and persist a planning-ready dataset through Supabase-backed services.
+Plan Studio acts as the entry point for readiness checks, plan generation, inline edits, and approval flow.
 
 ### 2. Generate and compare forecasts and plans
 
-- Run forecasting and planning logic through the FastAPI ML service instead of the frontend bundle.
-- Review forecast diagnostics, demand artifacts, replenishment outputs, and regression-backed solver behavior.
+Run forecasting and planning logic through the FastAPI ML service and review diagnostics, demand artifacts, and regression-backed solver outputs.
 
 ### 3. Review risk, simulate scenarios, and approve actions
 
-- Explore supplier risk and supply exceptions in Risk Center.
-- Use Digital Twin and Scenario Studio to compare outcomes before approving action.
-
-## System Overview
-
-```mermaid
-flowchart LR
-    U[Planner / Analyst] --> FE[React + Vite Frontend]
-    FE --> SB[(Supabase Auth + Postgres + Storage)]
-    FE --> EF[Supabase Edge Functions<br/>ai-proxy / bom-explosion / sync-*]
-    FE --> ML[FastAPI ML API]
-    EF --> LLM[Gemini / DeepSeek]
-    ML --> REG[(Model Registry + Governance Store)]
-    ML --> SB
-    ML --> ERP[Synthetic ERP / SAP Adapters]
-```
+Explore supplier risk and supply exceptions in Risk Center, then use Digital Twin and Scenario Studio to compare outcomes before approving action.
 
 ## Fast Path
 
@@ -87,14 +71,36 @@ Default local endpoints:
 - Frontend: `http://localhost:5173`
 - ML API: `http://127.0.0.1:8000`
 
-For migrations, Edge Functions, and hosted deployment, use [docs/SETUP.md](docs/SETUP.md) and [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+Expected first-success path:
+
+1. Open the frontend at `http://localhost:5173`
+2. Upload `public/sample_data/test_data.xlsx`
+3. Follow the walkthrough in [docs/DEMO.md](docs/DEMO.md)
+
+For migrations, Edge Functions, and hosted deployment, see [docs/SETUP.md](docs/SETUP.md) and [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+
+## System Overview
+
+```mermaid
+flowchart LR
+    U[Planner / Analyst] --> FE[React + Vite Frontend]
+    FE --> SB[(Supabase Auth + Postgres + Storage)]
+    FE --> EF[Supabase Edge Functions<br/>ai-proxy / bom-explosion / sync-*]
+    FE --> ML[FastAPI ML API]
+    EF --> LLM[Gemini / DeepSeek]
+    ML --> REG[(Model Registry + Governance Store)]
+    ML --> SB
+    ML --> ERP[Synthetic ERP / SAP Adapters]
+```
 
 ## Engineering Confidence
 
-- Frontend checks cover lint, unit, component, build, and E2E paths.
-- Planning and forecast behavior is backed by a deterministic regression suite.
-- CI workflows cover frontend CI, ML CI, guardrail checks, and release gating.
-- Repository-level release notes are tracked in [CHANGELOG.md](CHANGELOG.md).
+| Area | Evidence |
+| --- | --- |
+| Frontend quality | lint, unit, component, build, and E2E checks |
+| Planning reliability | deterministic regression suite |
+| Delivery discipline | frontend CI, ML CI, guardrail checks, release gating |
+| Change history | in-repo release notes in [CHANGELOG.md](CHANGELOG.md) |
 
 Common verification commands:
 
@@ -108,38 +114,28 @@ python -m pytest -q tests/regression
 npm run test:phase4-guardrails
 ```
 
-## Current Status
+## Prototype Scope
 
-- Baseline: `0.1.0` as documented on `2026-03-08`
-- Scope: working product prototype in a private repository
-- Main verified paths: demo flow, planning regression, forecast diagnostics, and core multi-page workspace navigation
-- Full behavior boundary: requires the frontend, Supabase, Edge Functions, and the ML API together
+**Current baseline**
 
-## Known Limitations
+- `0.1.0` documented on `2026-03-08`
+- Verified on demo flow, planning regression, forecast diagnostics, and core workspace navigation
 
-### Environment dependencies
+**Operating boundary**
 
-- Full product behavior depends on Supabase, Edge Functions, and the ML API. Frontend-only bring-up is partial.
-- AI workflows require server-side Gemini / DeepSeek secrets plus live network access.
-- Some import and async hardening depends on optional migrations in `sql/migrations/`.
-
-### Current scope boundaries
-
-- Environment bootstrap is curated, not yet a single-command full-stack install.
-- Chronos-heavy capabilities are excluded from the default ML container image.
-- SAP sync functions are adapter entry points, not turnkey enterprise connectors.
+- Full behavior requires the frontend, Supabase, Edge Functions, and the ML API together
+- Frontend-only bring-up is partial
+- SAP sync functions are adapter entry points, not turnkey enterprise connectors
 
 See [docs/KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md) for the detailed operating boundary.
 
 ## Docs
 
-- Demo script: [docs/DEMO.md](docs/DEMO.md)
-- Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
-- Deployment: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
-- Known limitations: [docs/KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md)
+- Demo walkthrough: [docs/DEMO.md](docs/DEMO.md)
+- Architecture and request flow: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+- Deployment and environment setup: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
+- Operating boundary: [docs/KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md)
 - Release notes: [CHANGELOG.md](CHANGELOG.md)
-- Chinese product docs: [docs/USER_MANUAL_zh-TW.md](docs/USER_MANUAL_zh-TW.md), [docs/SPECIFICATION_zh-TW.md](docs/SPECIFICATION_zh-TW.md)
+- Full docs index: [docs/README.md](docs/README.md)
 
-Historical implementation notes remain under `docs/archive/`, but they are not part of the primary reading path.
-
-Private repository for portfolio / evaluation use. License terms are not published.
+This repository is maintained as a private product prototype for evaluation and portfolio review.
