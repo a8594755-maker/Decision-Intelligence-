@@ -22,7 +22,7 @@ const buildCorsHeaders = (requestOrigin?: string | null): Record<string, string>
   const origin = String(requestOrigin || '').trim();
   const isAllowed =
     ALLOWED_ORIGINS.has(origin) ||
-    /^https?:\/\/localhost(:\d+)?$/.test(origin) ||
+    /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin) ||
     /^https?:\/\/[\w-]+\.supabase\.co$/.test(origin);
   return {
     'Access-Control-Allow-Origin': isAllowed ? origin : (FRONTEND_ORIGIN || 'http://localhost:5173'),

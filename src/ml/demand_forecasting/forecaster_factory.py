@@ -1470,7 +1470,7 @@ class ForecasterFactory:
                 "level": "high",
                 "deviation_pct": float(deviation),
                 "threshold_used": float(threshold_high),
-                "message": f"模型预测差异较大 ({deviation:.1f}% > {threshold_high:.0f}% 阈值)，建议检查是否有未记录的市场活动",
+                "message": f"High model divergence ({deviation:.1f}% > {threshold_high:.0f}% threshold) — consider checking for unrecorded market events",
                 "recommendation": "consider_external_factors"
             }
         elif deviation > threshold_medium:
@@ -1479,7 +1479,7 @@ class ForecasterFactory:
                 "level": "medium",
                 "deviation_pct": float(deviation),
                 "threshold_used": float(threshold_medium),
-                "message": f"模型预测存在中等差异 ({deviation:.1f}% > {threshold_medium:.0f}% 阈值)",
+                "message": f"Moderate model divergence ({deviation:.1f}% > {threshold_medium:.0f}% threshold)",
                 "recommendation": "monitor_closely"
             }
         else:

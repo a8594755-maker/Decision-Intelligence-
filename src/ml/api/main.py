@@ -848,12 +848,12 @@ async def demand_forecast(request: ForecastRequest, raw_request: Request = None)
         # 8. Wrap in forecast contract v1.0 envelope
         response["_prediction_data"] = prediction_data
         response = finalize_forecast_response(
-            response,
+            sanitize_numpy(response),
             material_code=request.materialCode,
             horizon=request.horizonDays,
         )
 
-        return sanitize_numpy(response)
+        return response
 
     except Exception as e:
         return {"error": str(e)}

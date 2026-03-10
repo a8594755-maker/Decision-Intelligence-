@@ -1,11 +1,11 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  TrendingUp, TrendingDown, Minus,
+  TrendingUp, TrendingDown,
   Calculator, ShieldAlert, Activity, Clock,
-  ArrowRight, CheckCircle, AlertCircle, Loader2,
+  CheckCircle, AlertCircle,
   FileText, BarChart3, RefreshCw, Database, Upload,
-  ShieldCheck, AlertTriangle, Lock,
+  ShieldCheck, AlertTriangle, Lock, X,
 } from 'lucide-react';
 import { Card, Badge } from '../components/ui';
 import { useAuth } from '../contexts/AuthContext';
@@ -14,33 +14,28 @@ import { useSystemHealth } from '../hooks/useSystemHealth';
 import { useDecisionOverview } from '../hooks/useDecisionOverview';
 import FirstRunGuide from '../components/onboarding/FirstRunGuide';
 
-/* ───── Hero KPI (primary) ───── */
-function HeroKpi({ label, value, sub, gradient }) {
+/* ───── Uniform KPI Card ───── */
+function KpiCard({ label, value, trend, icon: Icon, iconColor = 'var(--brand-600)' }) {
   return (
-    <div
-      className="col-span-1 lg:col-span-2 p-6 rounded-2xl text-white relative overflow-hidden"
-      style={{ background: gradient, boxShadow: '0 8px 24px rgba(79,70,229,0.25)' }}
-    >
-      <span className="text-white/70 text-sm font-medium">{label}</span>
-      <div className="text-5xl font-bold mt-2 font-numeric tracking-tight">{value}</div>
-      {sub && <div className="text-white/60 text-sm mt-1.5">{sub}</div>}
-    </div>
-  );
-}
-
-/* ───── Secondary KPI ───── */
-function MetricStrip({ label, value, sub, accentColor = '#d97706' }) {
-  return (
-    <div className="flex items-start gap-3 py-3">
-      <div className="w-1 self-stretch rounded-full flex-shrink-0" style={{ backgroundColor: accentColor }} />
-      <div>
-        <span className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>{label}</span>
-        <div className="text-2xl font-bold font-numeric mt-0.5" style={{ color: 'var(--text-primary)' }}>
-          {value}
-        </div>
-        {sub && <div className="text-xs mt-0.5" style={{ color: 'var(--text-secondary)' }}>{sub}</div>}
+    <Card variant="elevated" className="!p-4 flex flex-col gap-1.5">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>
+          {label}
+        </span>
+        {Icon && <Icon className="w-4 h-4" style={{ color: iconColor }} />}
       </div>
-    </div>
+      <div
+        className="text-2xl font-bold font-numeric tracking-tight"
+        style={{ color: 'var(--text-primary)' }}
+      >
+        {value}
+      </div>
+      {trend && (
+        <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>
+          {trend}
+        </span>
+      )}
+    </Card>
   );
 }
 
@@ -87,6 +82,7 @@ export default function CommandCenter() {
   const navigate = useNavigate();
   const [recentActivity, setRecentActivity] = useState([]);
   const [loadingActivity, setLoadingActivity] = useState(true);
+  const [overviewDismissed, setOverviewDismissed] = useState(false);
   const { health, refresh: refreshHealth } = useSystemHealth();
   const { overview } = useDecisionOverview(user?.id);
 
@@ -103,6 +99,8 @@ export default function CommandCenter() {
     [recentActivity]
   );
 
+  const hasOfflineService = Object.values(health).some(s => s === 'offline');
+
   const fillRateVal = latestKpi?.service_level != null
     ? `${(latestKpi.service_level * 100).toFixed(1)}%`
     : '--';
@@ -111,315 +109,309 @@ export default function CommandCenter() {
     : 'Run a plan to see metrics';
 
   return (
-    <div className="h-full overflow-y-auto scrollbar-thin">
+    <div className="h-full overflow-y-auto scrollbar-thin relative">
       <FirstRunGuide />
-      <div className="max-w-7xl mx-auto px-4 md:px-8 py-8 space-y-8">
-        {/* ── Page header ── */}
-        <div className="mb-2">
-          <p className="text-xs font-semibold tracking-widest uppercase text-indigo-500 mb-1">
-            OVERVIEW
-          </p>
-          <h1
-            className="text-3xl font-bold tracking-tight"
-            style={{ color: 'var(--text-primary)' }}
-          >
-            Command Center
-          </h1>
-          <p className="text-sm mt-1" style={{ color: 'var(--text-secondary)' }}>
-            {new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
-          </p>
+      <div className="max-w-7xl mx-auto px-4 md:px-8 py-8 space-y-6">
+
+        {/* ── Header with inline quick actions ── */}
+        <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3 mb-2">
+          <div>
+            <p className="text-xs font-semibold tracking-widest uppercase text-indigo-500 mb-1">
+              OVERVIEW
+            </p>
+            <h1
+              className="text-3xl font-bold tracking-tight"
+              style={{ color: 'var(--text-primary)' }}
+            >
+              Command Center
+            </h1>
+            <p className="text-sm mt-1" style={{ color: 'var(--text-secondary)' }}>
+              {new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => navigate('/plan')}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-full border transition-colors hover:shadow-sm"
+              style={{
+                borderColor: 'var(--border-default)',
+                backgroundColor: 'var(--surface-card)',
+                color: 'var(--text-primary)',
+              }}
+            >
+              <Calculator className="w-3.5 h-3.5 text-indigo-600" />
+              Plan
+            </button>
+            <button
+              onClick={() => navigate('/risk')}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-full border transition-colors hover:shadow-sm"
+              style={{
+                borderColor: 'var(--border-default)',
+                backgroundColor: 'var(--surface-card)',
+                color: 'var(--text-primary)',
+              }}
+            >
+              <ShieldAlert className="w-3.5 h-3.5 text-red-600" />
+              Risk
+            </button>
+            <button
+              onClick={() => navigate('/forecast')}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-full border transition-colors hover:shadow-sm"
+              style={{
+                borderColor: 'var(--border-default)',
+                backgroundColor: 'var(--surface-card)',
+                color: 'var(--text-primary)',
+              }}
+            >
+              <TrendingUp className="w-3.5 h-3.5 text-emerald-600" />
+              Forecast
+            </button>
+          </div>
         </div>
 
-        {/* ── KPI Grid: 1 hero + 3 strips ── */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 items-start">
-          <HeroKpi
+        {/* ── Uniform KPI row ── */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <KpiCard
             label="Fill Rate"
             value={fillRateVal}
-            sub={fillRateSub}
-            gradient="linear-gradient(135deg, #4f46e5, #7c3aed)"
+            trend={fillRateSub}
+            icon={Activity}
+            iconColor="var(--brand-600)"
           />
-          <Card variant="elevated" className="col-span-1 space-y-1 !p-5">
-            <MetricStrip
-              label="Stockout Risk"
-              value={latestKpi?.stockout_units != null
+          <KpiCard
+            label="Stockout Risk"
+            value={
+              latestKpi?.stockout_units != null
                 ? `${Number(latestKpi.stockout_units).toLocaleString()} units`
-                : '--'}
-              sub={trendLabel(latestKpi?.stockout_units, prevKpi?.stockout_units, v => `${v.toLocaleString()} units`)}
-              accentColor="var(--risk-critical)"
-            />
-          </Card>
-          <Card variant="elevated" className="col-span-1 space-y-1 !p-5">
-            <MetricStrip
-              label="Total Cost"
-              value={latestKpi?.total_cost != null
+                : '--'
+            }
+            trend={trendLabel(
+              latestKpi?.stockout_units,
+              prevKpi?.stockout_units,
+              v => `${v.toLocaleString()} units`
+            )}
+            icon={ShieldAlert}
+            iconColor="var(--risk-critical)"
+          />
+          <KpiCard
+            label="Total Cost"
+            value={
+              latestKpi?.total_cost != null
                 ? `$${Number(latestKpi.total_cost).toLocaleString()}`
-                : '--'}
-              sub={trendLabel(latestKpi?.total_cost, prevKpi?.total_cost, v => `$${v.toLocaleString()}`)}
-              accentColor="var(--brand-600)"
-            />
-            <MetricStrip
-              label="Last Plan Run"
-              value={latestEvent?.created_at ? formatRelativeTime(latestEvent.created_at) : '--'}
-              sub={latestEvent?.created_at ? `Run #${latestEvent.run_id || '\u2014'}` : 'No recent runs'}
-              accentColor="var(--risk-warning)"
-            />
-          </Card>
+                : '--'
+            }
+            trend={trendLabel(
+              latestKpi?.total_cost,
+              prevKpi?.total_cost,
+              v => `$${v.toLocaleString()}`
+            )}
+            icon={Calculator}
+            iconColor="var(--brand-600)"
+          />
+          <KpiCard
+            label="Last Plan Run"
+            value={latestEvent?.created_at ? formatRelativeTime(latestEvent.created_at) : '--'}
+            trend={latestEvent?.created_at ? `Run #${latestEvent.run_id || '\u2014'}` : 'No recent runs'}
+            icon={Clock}
+            iconColor="var(--risk-warning)"
+          />
         </div>
 
-        {/* ── Decision Overview ── */}
-        {overview && (
-          <Card variant="elevated" className="!p-5 space-y-3">
-            <h2 className="text-sm font-semibold uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>
-              Today&apos;s Decision Overview
-            </h2>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              {/* Coverage */}
-              <div className="flex items-center gap-2">
-                {overview.coverage_level === 'full' ? (
-                  <ShieldCheck className="w-5 h-5 text-emerald-500" />
-                ) : overview.coverage_level === 'partial' ? (
-                  <AlertTriangle className="w-5 h-5 text-amber-500" />
-                ) : (
-                  <Lock className="w-5 h-5 text-red-500" />
-                )}
-                <div>
-                  <p className="text-[10px] text-slate-500">Data Coverage</p>
-                  <p className="text-sm font-semibold capitalize" style={{ color: 'var(--text-primary)' }}>
-                    {overview.coverage_level || 'Unknown'}
-                  </p>
-                </div>
-              </div>
-
-              {/* Estimated vs Verified */}
-              {overview.estimated_ratio && (
-                <div className="flex items-center gap-2">
-                  <Database className="w-5 h-5 text-indigo-500" />
-                  <div>
-                    <p className="text-[10px] text-slate-500">Verified vs Estimated</p>
-                    <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
-                      {overview.estimated_ratio.verified} / {overview.estimated_ratio.total}
-                    </p>
-                  </div>
-                </div>
+        {/* ── Decision Overview alert banner ── */}
+        {overview && !overviewDismissed && (
+          <div
+            className="flex flex-wrap items-center gap-x-6 gap-y-2 px-4 py-3 rounded-xl text-sm"
+            style={{
+              borderLeft: `4px solid ${overview.coverage_level === 'full' ? 'var(--risk-safe)' : 'var(--risk-warning)'}`,
+              backgroundColor: 'var(--surface-subtle)',
+              border: '1px solid var(--border-default)',
+              borderLeftWidth: '4px',
+              borderLeftColor: overview.coverage_level === 'full' ? 'var(--risk-safe)' : 'var(--risk-warning)',
+            }}
+          >
+            {/* Coverage */}
+            <div className="flex items-center gap-1.5">
+              {overview.coverage_level === 'full' ? (
+                <ShieldCheck className="w-4 h-4 text-emerald-500" />
+              ) : overview.coverage_level === 'partial' ? (
+                <AlertTriangle className="w-4 h-4 text-amber-500" />
+              ) : (
+                <Lock className="w-4 h-4 text-red-500" />
               )}
-
-              {/* Missing Datasets */}
-              {overview.missing_datasets.length > 0 && (
-                <div className="flex items-center gap-2">
-                  <Upload className="w-5 h-5 text-amber-500" />
-                  <div>
-                    <p className="text-[10px] text-slate-500">Missing Datasets</p>
-                    <p className="text-xs text-amber-600 dark:text-amber-400">
-                      {overview.missing_datasets.join(', ')}
-                    </p>
-                  </div>
-                </div>
-              )}
-
-              {/* Open Actions */}
-              {overview.open_actions_count > 0 && (
-                <div className="flex items-center gap-2">
-                  <AlertCircle className="w-5 h-5 text-red-500" />
-                  <div>
-                    <p className="text-[10px] text-slate-500">Actions Pending</p>
-                    <p className="text-sm font-semibold text-red-600 dark:text-red-400">
-                      {overview.open_actions_count}
-                    </p>
-                  </div>
-                </div>
-              )}
+              <span style={{ color: 'var(--text-primary)' }}>
+                Coverage: <strong className="capitalize">{overview.coverage_level || 'Unknown'}</strong>
+              </span>
             </div>
 
-            {/* Import quality line */}
+            {/* Verified ratio */}
+            {overview.estimated_ratio && (
+              <div className="flex items-center gap-1.5">
+                <Database className="w-4 h-4 text-indigo-500" />
+                <span style={{ color: 'var(--text-secondary)' }}>
+                  {overview.estimated_ratio.verified}/{overview.estimated_ratio.total} verified
+                </span>
+              </div>
+            )}
+
+            {/* Missing datasets */}
+            {overview.missing_datasets.length > 0 && (
+              <div className="flex items-center gap-1.5">
+                <Upload className="w-4 h-4 text-amber-500" />
+                <span style={{ color: 'var(--text-secondary)' }}>
+                  Missing: {overview.missing_datasets.join(', ')}
+                </span>
+              </div>
+            )}
+
+            {/* Open actions */}
+            {overview.open_actions_count > 0 && (
+              <div className="flex items-center gap-1.5">
+                <AlertCircle className="w-4 h-4 text-red-500" />
+                <span className="text-red-600 dark:text-red-400">
+                  {overview.open_actions_count} actions pending
+                </span>
+              </div>
+            )}
+
+            {/* Import quality */}
             {overview.import_quality && (
-              <div className="flex gap-3 text-[10px] text-slate-500 pt-1 border-t border-slate-200/50 dark:border-slate-700/50">
-                {overview.import_quality.totalWarnings > 0 && <span>{overview.import_quality.totalWarnings} import warnings</span>}
-                {overview.import_quality.totalQuarantined > 0 && <span className="text-amber-600">{overview.import_quality.totalQuarantined} quarantined</span>}
-                {overview.import_quality.totalRejected > 0 && <span className="text-red-600">{overview.import_quality.totalRejected} rejected</span>}
+              <div className="flex gap-3 text-xs" style={{ color: 'var(--text-muted)' }}>
+                {overview.import_quality.totalWarnings > 0 && (
+                  <span>{overview.import_quality.totalWarnings} warnings</span>
+                )}
+                {overview.import_quality.totalQuarantined > 0 && (
+                  <span className="text-amber-600">{overview.import_quality.totalQuarantined} quarantined</span>
+                )}
+                {overview.import_quality.totalRejected > 0 && (
+                  <span className="text-red-600">{overview.import_quality.totalRejected} rejected</span>
+                )}
+              </div>
+            )}
+
+            {/* Dismiss */}
+            <button
+              onClick={() => setOverviewDismissed(true)}
+              className="ml-auto p-1 rounded hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
+              style={{ color: 'var(--text-muted)' }}
+              aria-label="Dismiss overview"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
+
+        {/* ── Recent Activity (full width) ── */}
+        <div className="space-y-3">
+          <h2
+            className="text-sm font-semibold tracking-wide uppercase"
+            style={{ color: 'var(--text-muted)' }}
+          >
+            Recent Activity
+          </h2>
+          <Card>
+            {loadingActivity ? (
+              <div className="flex items-center justify-center py-10">
+                <div className="w-5 h-5 rounded-md bg-indigo-600 animate-pulse" />
+              </div>
+            ) : recentActivity.length === 0 ? (
+              <div className="text-center py-10">
+                <Activity className="w-8 h-8 mx-auto mb-3" style={{ color: 'var(--text-muted)' }} />
+                <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>No recent activity.</p>
+                <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
+                  Run a plan or risk analysis to see activity here.
+                </p>
+              </div>
+            ) : (
+              <div className="divide-y" style={{ borderColor: 'var(--border-default)' }}>
+                {recentActivity.map((event) => {
+                  const EventIcon = ACTION_ICONS[event.action] || Activity;
+                  return (
+                    <div key={event.id || event.created_at} className="flex items-start gap-3 py-3.5 first:pt-0 last:pb-0">
+                      <div
+                        className="p-1.5 rounded-lg mt-0.5"
+                        style={{ backgroundColor: 'var(--surface-subtle)' }}
+                      >
+                        <EventIcon className="w-4 h-4" style={{ color: 'var(--text-muted)' }} />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+                          {ACTION_LABELS[event.action] || event.action}
+                          {event.run_id && (
+                            <span className="ml-1" style={{ color: 'var(--text-muted)' }}>#{event.run_id}</span>
+                          )}
+                        </div>
+                        {event.narrative_summary && (
+                          <p className="text-xs mt-0.5 line-clamp-2" style={{ color: 'var(--text-secondary)' }}>
+                            {event.narrative_summary}
+                          </p>
+                        )}
+                        {event.kpi_snapshot && event.kpi_snapshot.service_level != null && (
+                          <div className="flex gap-2 mt-1.5">
+                            <Badge type="info">SL {(event.kpi_snapshot.service_level * 100).toFixed(1)}%</Badge>
+                            {event.kpi_snapshot.total_cost != null && (
+                              <Badge type="info">${Number(event.kpi_snapshot.total_cost).toLocaleString()}</Badge>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                      <span className="text-xs whitespace-nowrap mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                        {formatRelativeTime(event.created_at)}
+                      </span>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </Card>
-        )}
-
-        {/* ── Two-column: Quick Actions + Recent Activity ── */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Quick Actions */}
-          <div className="lg:col-span-1 space-y-5">
-            <h2 className="text-sm font-semibold tracking-wide uppercase" style={{ color: 'var(--text-muted)' }}>
-              Quick Actions
-            </h2>
-            <div className="space-y-2">
-              <ActionCard
-                onClick={() => navigate('/plan')}
-                icon={Calculator}
-                accent="#4f46e5"
-                title="New Plan Run"
-                desc="Upload data & run replenishment plan"
-              />
-              <ActionCard
-                onClick={() => navigate('/risk')}
-                icon={ShieldAlert}
-                accent="#dc2626"
-                title="Risk Analysis"
-                desc="Supply coverage risk dashboard"
-              />
-              <ActionCard
-                onClick={() => navigate('/forecast')}
-                icon={TrendingUp}
-                accent="#059669"
-                title="View Forecasts"
-                desc="BOM & component demand forecasts"
-              />
-            </div>
-
-            {/* System Health */}
-            <div className="pt-2">
-              <div className="flex items-center justify-between mb-3">
-                <h2 className="text-sm font-semibold tracking-wide uppercase" style={{ color: 'var(--text-muted)' }}>
-                  System Health
-                </h2>
-                <button
-                  onClick={refreshHealth}
-                  className="p-1.5 rounded-lg transition-colors hover:bg-[var(--surface-subtle)]"
-                  style={{ color: 'var(--text-muted)' }}
-                  title="Refresh health checks"
-                >
-                  <RefreshCw className="w-3.5 h-3.5" />
-                </button>
-              </div>
-              <Card>
-                <div className="space-y-3">
-                  <HealthRow label="Supabase" status={health.supabase} />
-                  <HealthRow label="AI Proxy" status={health.aiProxy} />
-                  <HealthRow
-                    label="ML API"
-                    status={health.mlApi}
-                    hint={health.mlApi === 'offline' ? 'Start with: python run_ml_api.py' : undefined}
-                  />
-                </div>
-              </Card>
-            </div>
-          </div>
-
-          {/* Recent Activity */}
-          <div className="lg:col-span-2 space-y-5">
-            <h2 className="text-sm font-semibold tracking-wide uppercase" style={{ color: 'var(--text-muted)' }}>
-              Recent Activity
-            </h2>
-            <Card>
-              {loadingActivity ? (
-                <div className="flex items-center justify-center py-10">
-                  <div className="w-5 h-5 rounded-md bg-indigo-600 animate-pulse" />
-                </div>
-              ) : recentActivity.length === 0 ? (
-                <div className="text-center py-10">
-                  <Activity className="w-8 h-8 mx-auto mb-3" style={{ color: 'var(--text-muted)' }} />
-                  <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>No recent activity.</p>
-                  <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
-                    Run a plan or risk analysis to see activity here.
-                  </p>
-                </div>
-              ) : (
-                <div className="divide-y" style={{ borderColor: 'var(--border-default)' }}>
-                  {recentActivity.map((event) => {
-                    const EventIcon = ACTION_ICONS[event.action] || Activity;
-                    return (
-                      <div key={event.id || event.created_at} className="flex items-start gap-3 py-3.5 first:pt-0 last:pb-0">
-                        <div
-                          className="p-1.5 rounded-lg mt-0.5"
-                          style={{ backgroundColor: 'var(--surface-subtle)' }}
-                        >
-                          <EventIcon className="w-4 h-4" style={{ color: 'var(--text-muted)' }} />
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
-                            {ACTION_LABELS[event.action] || event.action}
-                            {event.run_id && (
-                              <span className="ml-1" style={{ color: 'var(--text-muted)' }}>#{event.run_id}</span>
-                            )}
-                          </div>
-                          {event.narrative_summary && (
-                            <p className="text-xs mt-0.5 line-clamp-2" style={{ color: 'var(--text-secondary)' }}>
-                              {event.narrative_summary}
-                            </p>
-                          )}
-                          {event.kpi_snapshot && event.kpi_snapshot.service_level != null && (
-                            <div className="flex gap-2 mt-1.5">
-                              <Badge type="info">SL {(event.kpi_snapshot.service_level * 100).toFixed(1)}%</Badge>
-                              {event.kpi_snapshot.total_cost != null && (
-                                <Badge type="info">${Number(event.kpi_snapshot.total_cost).toLocaleString()}</Badge>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                        <span className="text-xs whitespace-nowrap mt-0.5" style={{ color: 'var(--text-muted)' }}>
-                          {formatRelativeTime(event.created_at)}
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </Card>
-          </div>
         </div>
       </div>
+
+      {/* ── System Health footer (only when offline) ── */}
+      {hasOfflineService && (
+        <div
+          className="sticky bottom-0 z-30 flex items-center justify-between gap-3 px-4 py-2.5 text-sm border-t"
+          style={{
+            backgroundColor: 'var(--surface-card)',
+            borderColor: 'var(--border-default)',
+          }}
+        >
+          <div className="flex items-center gap-4">
+            {['supabase', 'aiProxy', 'mlApi'].map(key => {
+              const status = health[key];
+              if (status === 'online') return null;
+              const label = key === 'mlApi' ? 'ML API' : key === 'aiProxy' ? 'AI Proxy' : 'Supabase';
+              return (
+                <div key={key} className="flex items-center gap-1.5">
+                  <div className={`w-2 h-2 rounded-full ${
+                    status === 'offline' ? 'bg-red-500' : 'bg-amber-400 animate-pulse'
+                  }`} />
+                  <span style={{ color: 'var(--text-secondary)' }}>{label}</span>
+                  <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                    {status === 'offline' ? 'Offline' : 'Checking...'}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+          <button
+            onClick={refreshHealth}
+            className="flex items-center gap-1 px-2 py-1 rounded text-xs transition-colors"
+            style={{
+              backgroundColor: 'var(--surface-subtle)',
+              color: 'var(--text-secondary)',
+            }}
+            title="Refresh health checks"
+          >
+            <RefreshCw className="w-3 h-3" />
+            Retry
+          </button>
+        </div>
+      )}
     </div>
   );
 }
 
-/* ───── Sub-components ───── */
-
-// eslint-disable-next-line no-unused-vars -- Icon is used in JSX below; ESLint false positive on destructured rename
-function ActionCard({ onClick, icon: Icon, accent, title, desc }) {
-  return (
-    <button
-      onClick={onClick}
-      className="w-full flex items-center gap-3 p-4 rounded-xl border transition-all text-left group hover:shadow-[var(--shadow-card)]"
-      style={{ borderColor: 'var(--border-default)', backgroundColor: 'var(--surface-card)' }}
-    >
-      <div
-        className="p-2 rounded-lg flex-shrink-0"
-        style={{ backgroundColor: `${accent}12`, color: accent }}
-      >
-        <Icon className="w-5 h-5" />
-      </div>
-      <div className="flex-1 min-w-0">
-        <div className="font-medium text-sm" style={{ color: 'var(--text-primary)' }}>{title}</div>
-        <div className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>{desc}</div>
-      </div>
-      <ArrowRight
-        className="w-4 h-4 transition-transform group-hover:translate-x-0.5"
-        style={{ color: 'var(--text-muted)' }}
-      />
-    </button>
-  );
-}
-
-function HealthRow({ label, status, hint }) {
-  const dot = status === 'online'
-    ? 'bg-emerald-500'
-    : status === 'offline'
-      ? 'bg-red-500'
-      : status === 'checking'
-        ? 'bg-amber-400 animate-pulse'
-        : 'bg-stone-400';
-  const text = status === 'online' ? 'Online'
-    : status === 'offline' ? 'Offline'
-      : status === 'checking' ? 'Checking...'
-        : 'Unknown';
-
-  return (
-    <div className="flex items-center justify-between">
-      <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>{label}</span>
-      <div className="flex items-center gap-2">
-        <div className={`w-2 h-2 rounded-full ${dot}`} />
-        <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{text}</span>
-        {hint && <span className="text-xs hidden sm:inline" style={{ color: 'var(--text-muted)' }}>({hint})</span>}
-      </div>
-    </div>
-  );
-}
+/* ───── Utilities ───── */
 
 function formatRelativeTime(isoString) {
   if (!isoString) return '';
