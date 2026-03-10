@@ -41,6 +41,7 @@ import RetrainApprovalCard from '../../components/chat/RetrainApprovalCard';
 import ApprovalReminderCard from '../../components/chat/ApprovalReminderCard';
 import DigitalTwinSimulationCard from '../../components/chat/DigitalTwinSimulationCard';
 import NegotiationPanel from '../../components/chat/NegotiationPanel';
+import NegotiationActionCard from '../../components/chat/NegotiationActionCard';
 import { toPositiveRunId } from './helpers.js';
 
 /**
@@ -77,6 +78,7 @@ export default function MessageCardRenderer({ message, handlers, state }) {
     handleConfigureApiKey,
     handleGenerateNegotiationOptions,
     handleApplyNegotiationOption,
+    handleNegotiationAction,
     updateCanvasState,
     sessionCtx,
     batchApprove,
@@ -372,6 +374,16 @@ export default function MessageCardRenderer({ message, handlers, state }) {
       <AIErrorCard
         payload={message.payload}
         onConfigure={handleConfigureApiKey}
+      />
+    );
+  }
+  if (message.type === 'negotiation_action_card') {
+    return (
+      <NegotiationActionCard
+        payload={message.payload}
+        onAction={handleNegotiationAction
+          ? (action, details) => handleNegotiationAction(action, details, message.payload)
+          : undefined}
       />
     );
   }

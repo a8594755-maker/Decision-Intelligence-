@@ -1,15 +1,17 @@
 /**
- * Negotiation Orchestrator - Step 9 Agentic Negotiation Loop v0
+ * Negotiation Orchestrator - Step 9 Agentic Negotiation Loop v1
  *
  * Main entry point for the agentic negotiation loop. Orchestrates:
  *   1. Trigger detection
  *   2. Deterministic option generation
  *   3. Artifact persistence (negotiation_options)
+ *   3.5. CFR game-theory enrichment (GTO strategy weights)
  *   4. Scenario re-solve for each option (negotiation_evaluation)
  *   5. LLM explanation with evidence-first validation (negotiation_report)
  *
  * Backward compatible: called only when trigger conditions are met.
  * Normal workflow runs are unchanged.
+ * CFR enrichment is additive: if unavailable, cfr_influence = 0 → pure fallback.
  */
 
 import { generateNegotiationOptions, detectTrigger } from './negotiationOptionsGenerator';
@@ -17,6 +19,11 @@ import { evaluateNegotiationOptions } from './negotiationEvaluator';
 import { buildNegotiationReport } from './negotiationReportBuilder';
 import { saveJsonArtifact, loadArtifact } from '../../utils/artifactStore';
 import { diRunsService } from '../diRunsService';
+import { getLookupService } from './cfr/negotiation-lookup-service.js';
+import { computePositionBucket } from './cfr/negotiation-position-buckets.js';
+import { DEFAULT_CFR_INFLUENCE } from './cfr/negotiation-types.js';
+import { generateAllDrafts, buildDraftContext } from './cfr/negotiation-draft-generator.js';
+import { getStateTracker } from './cfr/negotiation-state-tracker.js';
 
 const ARTIFACT_SIZE_THRESHOLD = 200 * 1024;
 const nowIso = () => new Date().toISOString();
@@ -279,6 +286,86 @@ export async function runNegotiation({
   }
 
   // -------------------------------------------------------------------------
+  // Step 3.5: CFR Game-Theory Enrichment (additive, zero-regression)
+  // -------------------------------------------------------------------------
+  let cfrEnrichment = null;
+  try {
+    const lookupService = getLookupService();
+    if (lookupService.isLoaded) {
+      // Derive buyer position bucket from risk signals
+      const riskScore = datasetProfileRow?.risk_score ?? null;
+      const { bucket: buyerBucket } = computePositionBucket({
+        risk_score: riskScore,
+      });
+
+      // Auto-detect nearest scenario from supplier KPIs
+      const supplierKpis = datasetProfileRow?.supplier_kpis || {};
+      const scenarioId = lookupService.findNearestScenario(supplierKpis);
+
+      if (scenarioId) {
+        // Build the buyer's OPENING info key for initial strategy lookup
+        const openingInfoKey = `B|${buyerBucket}|OPENING|`;
+
+        const cfrResult = lookupService.computeOptionWeights({
+          scenarioId,
+          buyerBucket,
+          infoKey: openingInfoKey,
+          options: optionsPayload.options,
+          kpis: supplierKpis,
+        });
+
+        if (cfrResult.available) {
+          // Attach CFR weights to each option
+          for (const option of optionsPayload.options) {
+            option.cfr_weight = cfrResult.cfr_weights[option.option_id] ?? null;
+          }
+
+          cfrEnrichment = {
+            scenario_id: scenarioId,
+            buyer_bucket: buyerBucket,
+            cfr_action_probs: cfrResult.cfr_action_probs,
+            cfr_influence: DEFAULT_CFR_INFLUENCE,
+            source: cfrResult.source,
+          };
+
+          optionsPayload.cfr_enrichment = cfrEnrichment;
+        }
+      }
+    }
+  } catch (cfrErr) {
+    // CFR enrichment is non-critical — log and continue
+    console.warn(
+      '[negotiationOrchestrator] CFR enrichment failed (non-critical):',
+      cfrErr?.message
+    );
+  }
+
+  // -------------------------------------------------------------------------
+  // Step 3.6: Initialize negotiation state tracker (multi-round tracking)
+  // -------------------------------------------------------------------------
+  let negotiationId = null;
+  try {
+    const stateTracker = getStateTracker();
+    const riskScore = datasetProfileRow?.risk_score ?? null;
+    const supplierKpis = datasetProfileRow?.supplier_kpis || {};
+
+    const negState = stateTracker.startNegotiation({
+      planRunId: runId,
+      trigger,
+      riskScore: riskScore ?? 100,
+      supplierKpis,
+      scenarioId: cfrEnrichment?.scenario_id || null,
+    });
+
+    negotiationId = negState.negotiation_id;
+  } catch (stateErr) {
+    console.warn(
+      '[negotiationOrchestrator] State tracker init failed (non-critical):',
+      stateErr?.message
+    );
+  }
+
+  // -------------------------------------------------------------------------
   // Step 4: Persist negotiation_options artifact
   // -------------------------------------------------------------------------
   const optionsSaved = await saveJsonArtifact(
@@ -398,6 +485,79 @@ export async function runNegotiation({
   );
   artifactRefs.negotiation_report = reportSaved.ref;
 
+  // -------------------------------------------------------------------------
+  // Step 9: Generate email drafts for negotiation action card (non-blocking)
+  // -------------------------------------------------------------------------
+  let negotiationDrafts = [];
+  let actionCardPayload = null;
+  try {
+    const supplierKpis = datasetProfileRow?.supplier_kpis || {};
+    const draftContext = buildDraftContext({
+      cfrEnrichment,
+      solverMeta: solverMeta || {},
+      replayMetrics: replayMetrics || {},
+      supplierKpis,
+      userIntent,
+      datasetProfileRow: datasetProfileRow || {},
+      trigger,
+    });
+
+    negotiationDrafts = await generateAllDrafts(draftContext);
+
+    // Build action card payload for UI rendering
+    const posStrength = cfrEnrichment
+      ? ['VERY_WEAK', 'WEAK', 'NEUTRAL', 'STRONG', 'VERY_STRONG'][cfrEnrichment.buyer_bucket] || 'NEUTRAL'
+      : null;
+
+    actionCardPayload = {
+      negotiation_id: negotiationId,
+      cfr_strategy: cfrEnrichment ? {
+        cfr_action_probs: cfrEnrichment.cfr_action_probs,
+        position_strength: posStrength,
+        exploitability: null, // available via cfr_negotiation_strategy artifact
+        scenario_id: cfrEnrichment.scenario_id,
+        source: cfrEnrichment.source,
+      } : null,
+      drafts: negotiationDrafts,
+      options: optionsPayload.options,
+      trigger,
+      planRunId: runId,
+    };
+  } catch (draftErr) {
+    console.warn(
+      '[negotiationOrchestrator] Draft generation failed (non-critical):',
+      draftErr?.message
+    );
+  }
+
+  // -------------------------------------------------------------------------
+  // Step 10: Persist negotiation state artifact (multi-round tracking)
+  // -------------------------------------------------------------------------
+  if (negotiationId) {
+    try {
+      const stateTracker = getStateTracker();
+      const stateArtifact = stateTracker.exportAsArtifact(negotiationId);
+      if (stateArtifact) {
+        const stateSaved = await saveJsonArtifact(
+          runId,
+          'cfr_negotiation_state',
+          stateArtifact,
+          ARTIFACT_SIZE_THRESHOLD,
+          {
+            user_id: userId,
+            filename: `cfr_negotiation_state_run_${runId}.json`,
+          }
+        );
+        artifactRefs.cfr_negotiation_state = stateSaved.ref;
+      }
+    } catch (stateErr) {
+      console.warn(
+        '[negotiationOrchestrator] State artifact persist failed (non-critical):',
+        stateErr?.message
+      );
+    }
+  }
+
   // Record trigger for cooldown/dedupe
   recordTriggerEvent(runId, trigger);
 
@@ -407,6 +567,8 @@ export async function runNegotiation({
     negotiation_options: optionsPayload,
     negotiation_evaluation: evaluationPayload,
     negotiation_report: reportPayload,
+    cfr_enrichment: cfrEnrichment,
+    negotiation_action_card: actionCardPayload,
     artifact_refs: artifactRefs
   };
 }

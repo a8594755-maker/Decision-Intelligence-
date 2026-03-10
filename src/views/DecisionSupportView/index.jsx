@@ -4,6 +4,7 @@
 // ============================================
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useLocation } from 'react-router-dom';
 import { FileText } from 'lucide-react';
 import { Card, Button } from '../../components/ui';
 import { supabase, userFilesService } from '../../services/supabaseClient';
@@ -171,6 +172,53 @@ export default function DecisionSupportView({ user, addNotification }) {
     handleNewConversation,
     handleDeleteConversation,
   } = convManager;
+
+  // ── Synthetic ERP Sandbox → Planning bridge ────────────────────────────
+  const location = useLocation();
+  const synthInjectedRef = useRef(null);
+
+  useEffect(() => {
+    const synth = location.state?.syntheticDataset;
+    if (!synth || !currentConversationId) return;
+    // Prevent re-injection on same dataset
+    if (synthInjectedRef.current === synth.descriptor?.dataset_id) return;
+    synthInjectedRef.current = synth.descriptor?.dataset_id;
+
+    // Build rawRows with __sheet_name markers (same format as file upload)
+    const rawRows = [];
+    for (const [sheetName, rows] of Object.entries(synth.sheets || {})) {
+      rows.forEach(row => rawRows.push({ ...row, __sheet_name: sheetName }));
+    }
+
+    const profileId = `local-synth-${synth.descriptor?.dataset_id || 'unknown'}`;
+    _rawRowsCache.set(profileId, rawRows);
+
+    setConversationDatasetContext(prev => ({
+      ...prev,
+      [currentConversationId]: {
+        dataset_profile_id: profileId,
+        dataset_fingerprint: synth.descriptor?.dataset_id || null,
+        user_file_id: null,
+        profileJson: synth.profile_json || {},
+        contractJson: synth.contract_json || {},
+        rawRowsForStorage: rawRows,
+        contractConfirmed: true,
+        fileName: `synthetic-${synth.descriptor?.dataset_id || 'dataset'}.xlsx`,
+        minimalQuestions: [],
+        reuse_enabled: true,
+      },
+    }));
+
+    const desc = synth.descriptor || {};
+    appendMessagesToCurrentConversation([{
+      role: 'ai',
+      content: `Synthetic dataset **${desc.dataset_id || 'unknown'}** loaded (${desc.n_materials || '?'} materials, ${desc.n_plants || '?'} plants, ${desc.n_days || '?'} days). You can now run /forecast, /plan, or /workflowa.`,
+      timestamp: new Date().toISOString(),
+    }]);
+
+    // Clear navigation state to prevent re-trigger on route changes
+    window.history.replaceState({}, '');
+  }, [location.state, currentConversationId, setConversationDatasetContext, appendMessagesToCurrentConversation]);
 
   // SmartOps 2.0: Session context for stateful conversations
   const sessionCtx = useSessionContext(user?.id, currentConversationId);

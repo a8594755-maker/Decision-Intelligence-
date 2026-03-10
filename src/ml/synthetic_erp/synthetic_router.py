@@ -6,7 +6,10 @@ Follows the registry_router.py pattern using APIRouter.
 The /forecast endpoint calls ForecasterFactory directly (no HTTP self-call)
 to avoid extra overhead, exception handling complexity, and test difficulty.
 """
+from io import BytesIO
+
 from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 from dataclasses import asdict
@@ -200,6 +203,65 @@ async def get_sales_by_plant(
 
 
 # ══════════════════════════════════════════════
+#  Planning export endpoints
+# ══════════════════════════════════════════════
+
+@router.get("/datasets/{dataset_id}/planning-export")
+async def get_planning_export(dataset_id: str):
+    """Export dataset in the format expected by the JS planning pipeline.
+
+    Returns sheets, profile_json, contract_json, and descriptor — ready to
+    inject as activeDatasetContext in the frontend.
+    """
+    connector = _get_connector(dataset_id)
+    export = connector.get_planning_export()
+    if not export:
+        raise HTTPException(status_code=404, detail=f"Dataset {dataset_id} has no data")
+    return export
+
+
+@router.get("/datasets/{dataset_id}/export-excel")
+async def export_excel(dataset_id: str):
+    """Download synthetic dataset as an Excel file (one sheet per table).
+
+    The sheet names and column headers match DataImportPanel's classification
+    so the file can be directly re-imported via the standard upload flow.
+    """
+    connector = _get_connector(dataset_id)
+    export = connector.get_planning_export()
+    if not export:
+        raise HTTPException(status_code=404, detail=f"Dataset {dataset_id} has no data")
+
+    import openpyxl
+
+    wb = openpyxl.Workbook()
+    first = True
+    for sheet_name, rows in export["sheets"].items():
+        if not rows:
+            continue
+        ws = wb.active if first else wb.create_sheet()
+        first = False
+        ws.title = sheet_name
+        # Header row
+        headers = list(rows[0].keys())
+        ws.append(headers)
+        # Data rows
+        for row in rows:
+            ws.append([row.get(h) for h in headers])
+
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    filename = f"synthetic_{dataset_id}.xlsx"
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+# ══════════════════════════════════════════════
 #  Forecast endpoint (direct ForecasterFactory call)
 # ══════════════════════════════════════════════
 
@@ -245,10 +307,13 @@ async def forecast_on_synthetic(dataset_id: str, request: ForecastOnSyntheticReq
 
 @router.get("/scenario-templates")
 async def list_scenario_templates():
-    """List available scenario templates."""
-    return {
-        "templates": ScenarioEngine.list_templates(),
-    }
+    """List available scenario templates with disruption descriptions."""
+    engine = ScenarioEngine(seed=0)
+    result = {}
+    for name in ScenarioEngine.list_templates():
+        specs = ScenarioEngine.get_template(name)
+        result[name] = {"disruptions": engine.describe(specs), "count": len(specs)}
+    return {"templates": result}
 
 
 # ══════════════════════════════════════════════

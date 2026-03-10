@@ -32,11 +32,12 @@ import {
  * @returns {number} Position bucket (0=VERY_WEAK, 4=VERY_STRONG)
  */
 export function riskScoreToBucket(riskScore) {
+  if (riskScore === null || riskScore === undefined) return POSITION_BUCKETS.NEUTRAL;
   const score = Number(riskScore);
   if (!Number.isFinite(score)) return POSITION_BUCKETS.NEUTRAL;
 
   const clamped = Math.max(0, Math.min(200, score));
-  return Math.min(NUM_POSITION_BUCKETS - 1, Math.floor((200 - clamped) / 40));
+  return Math.max(0, Math.floor((199 - clamped) / 40));
 }
 
 /**

@@ -3,6 +3,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import '@testing-library/jest-dom';
 
 // Mock all heavy service dependencies before importing component
@@ -214,14 +215,18 @@ describe('DecisionSupportView', () => {
 
   it('renders without crashing', () => {
     const { container } = render(
-      <DecisionSupportView user={mockUser} addNotification={mockAddNotification} />
+      <MemoryRouter>
+        <DecisionSupportView user={mockUser} addNotification={mockAddNotification} />
+      </MemoryRouter>
     );
     expect(container).toBeTruthy();
   });
 
   it('shows empty state when no conversation is selected', () => {
     render(
-      <DecisionSupportView user={mockUser} addNotification={mockAddNotification} />
+      <MemoryRouter>
+        <DecisionSupportView user={mockUser} addNotification={mockAddNotification} />
+      </MemoryRouter>
     );
     const matches = screen.getAllByText(/select a conversation|start a new/i);
     expect(matches.length).toBeGreaterThan(0);
@@ -229,7 +234,9 @@ describe('DecisionSupportView', () => {
 
   it('renders the new chat button', () => {
     render(
-      <DecisionSupportView user={mockUser} addNotification={mockAddNotification} />
+      <MemoryRouter>
+        <DecisionSupportView user={mockUser} addNotification={mockAddNotification} />
+      </MemoryRouter>
     );
     const newChatBtn = screen.getByRole('button', { name: /new/i });
     expect(newChatBtn).toBeInTheDocument();

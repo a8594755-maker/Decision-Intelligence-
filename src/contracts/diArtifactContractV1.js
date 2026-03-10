@@ -34,7 +34,11 @@ const V1_VALIDATORS = {
   // Plan Baseline Comparison (approved plan write-back)
   plan_baseline_comparison: validatePlanBaselineComparison,
   // Data Quality Report (data resilience architecture)
-  data_quality_report: validateDataQualityReport
+  data_quality_report: validateDataQualityReport,
+  // CFR Game-Theory Negotiation (v3.0)
+  cfr_negotiation_strategy: validateCfrNegotiationStrategy,
+  cfr_negotiation_state: validateCfrNegotiationState,
+  cfr_negotiation_recommendation: validateCfrNegotiationRecommendation
 };
 
 const MAX_ISSUES = 50;
@@ -716,6 +720,60 @@ function validateDataQualityReport(payload, issues) {
   requireArrayField(issues, root, 'missing_datasets', 'payload');
   requireArrayField(issues, root, 'fallbacks_used', 'payload');
   requireArrayField(issues, root, 'dataset_fallbacks', 'payload');
+}
+
+// ---------------------------------------------------------------------------
+// CFR Game-Theory Negotiation v3.0 validators
+// ---------------------------------------------------------------------------
+
+function validateCfrNegotiationStrategy(payload, issues) {
+  const root = ensureObjectPayload(issues, payload);
+  if (!root) return;
+
+  requireStringField(issues, root, 'version', 'payload');
+  requireStringField(issues, root, 'generated_at', 'payload');
+  requireStringField(issues, root, 'scenario_id', 'payload');
+  requireNumberField(issues, root, 'buyer_bucket', 'payload');
+  requireNumberField(issues, root, 'iterations', 'payload');
+  requireNumberField(issues, root, 'exploitability', 'payload');
+  requireObjectField(issues, root, 'supplier_priors', 'payload');
+
+  const strategies = requireArrayField(issues, root, 'strategies', 'payload');
+  if (!strategies) return;
+
+  strategies.slice(0, 5).forEach((strat, i) => {
+    const p = `payload.strategies[${i}]`;
+    if (!isObject(strat)) { addTypeIssue(issues, p, 'object', strat); return; }
+    requireStringField(issues, strat, 'info_key', p);
+    requireNumberField(issues, strat, 'num_actions', p);
+    requireArrayField(issues, strat, 'average_strategy', p);
+  });
+}
+
+function validateCfrNegotiationState(payload, issues) {
+  const root = ensureObjectPayload(issues, payload);
+  if (!root) return;
+
+  requireStringField(issues, root, 'version', 'payload');
+  requireStringField(issues, root, 'generated_at', 'payload');
+  requireStringField(issues, root, 'negotiation_id', 'payload');
+  requireNumberField(issues, root, 'current_round', 'payload');
+  requireStringField(issues, root, 'status', 'payload');
+  requireArrayField(issues, root, 'action_history', 'payload');
+  requireObjectField(issues, root, 'buyer_position', 'payload');
+}
+
+function validateCfrNegotiationRecommendation(payload, issues) {
+  const root = ensureObjectPayload(issues, payload);
+  if (!root) return;
+
+  requireStringField(issues, root, 'version', 'payload');
+  requireStringField(issues, root, 'generated_at', 'payload');
+  requireStringField(issues, root, 'recommended_action', 'payload');
+  requireObjectField(issues, root, 'action_probabilities', 'payload');
+  requireNumberField(issues, root, 'expected_value', 'payload');
+  requireStringField(issues, root, 'position_strength', 'payload');
+  requireArrayField(issues, root, 'evidence_refs', 'payload');
 }
 
 const buildValidationErrorMessage = (artifactType, issues) => {

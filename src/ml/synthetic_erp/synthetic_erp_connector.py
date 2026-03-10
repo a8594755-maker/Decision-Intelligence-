@@ -204,6 +204,123 @@ class SyntheticERPConnector:
 
         return records
 
+    def get_planning_export(self) -> Dict[str, Any]:
+        """Export synthetic dataset in the format expected by the JS planning pipeline.
+
+        Returns a dict with:
+          - sheets: {inventory_snapshots, po_open_lines, bom_edge} as flat row lists
+          - profile_json: synthetic dataset profile
+          - contract_json: field mapping contract (identity mapping — fields already match)
+          - descriptor: dataset descriptor for display
+        """
+        data = self._registry.get(self._dataset_id)
+        if data is None:
+            return {}
+
+        master = data.get("master_data", {})
+        inv = data.get("inventory_data") or {}
+        descriptor = self._registry.get_descriptor(self._dataset_id)
+
+        # Build material lookup for enrichment
+        mat_lookup = {}
+        for m in master.get("materials", []):
+            mat_lookup[m.material_code] = m
+
+        # ── inventory_snapshots: latest snapshot per (material, plant) ──
+        raw_snapshots = inv.get("stock_snapshots", [])
+        latest = {}  # (material_code, plant_id) → snapshot
+        for s in raw_snapshots:
+            key = (s["material_code"], s["plant_id"])
+            latest[key] = s  # last wins (data is chronological)
+
+        inventory_rows = []
+        for (mat_code, plant_id), snap in latest.items():
+            mat = mat_lookup.get(mat_code)
+            safety = round(mat.safety_stock_days * mat.base_demand, 1) if mat else 0
+            inventory_rows.append({
+                "material_code": mat_code,
+                "plant_id": plant_id,
+                "snapshot_date": snap["snapshot_at"],
+                "onhand_qty": snap["qty"],
+                "safety_stock": safety,
+                "lead_time_days": mat.lead_time_days if mat else 7,
+                "moq": mat.moq if mat else 1,
+                "unit_cost": mat.unit_cost if mat else 10.0,
+            })
+
+        # ── po_open_lines: only in_transit POs ──
+        raw_pos = inv.get("purchase_orders", [])
+        po_rows = []
+        for po in raw_pos:
+            if po.get("status") != "in_transit":
+                continue
+            po_rows.append({
+                "material_code": po["material_code"],
+                "plant_id": po["plant_id"],
+                "open_qty": po["ordered_qty"],
+                "date": po["expected_receipt_date"],
+            })
+
+        # ── bom_edge ──
+        bom_edges = self.get_bom_edges()
+        bom_rows = []
+        for edge in bom_edges:
+            bom_rows.append({
+                "parent_material": edge["parent_material"],
+                "child_material": edge["child_material"],
+                "qty_per": edge["qty_per"],
+                "uom": edge.get("uom", "PCS"),
+            })
+
+        sheets = {
+            "inventory_snapshots": inventory_rows,
+            "po_open_lines": po_rows,
+            "bom_edge": bom_rows,
+        }
+
+        # Identity mapping — field names already match planning pipeline expectations
+        def _make_dataset_entry(sheet_name, upload_type, fields):
+            return {
+                "sheet_name": sheet_name,
+                "upload_type": upload_type,
+                "mapping": {f: f for f in fields},
+                "validation": {"status": "pass", "reasons": []},
+                "requiredCoverage": 100,
+                "missing_required_fields": [],
+            }
+
+        contract_json = {
+            "datasets": [
+                _make_dataset_entry("inventory_snapshots", "inventory_snapshots",
+                    ["material_code", "plant_id", "snapshot_date", "onhand_qty",
+                     "safety_stock", "lead_time_days", "moq", "unit_cost"]),
+                _make_dataset_entry("po_open_lines", "po_open_lines",
+                    ["material_code", "plant_id", "open_qty", "date"]),
+                _make_dataset_entry("bom_edge", "bom_edge",
+                    ["parent_material", "child_material", "qty_per", "uom"]),
+            ],
+            "validation": {"status": "pass", "reasons": []},
+        }
+
+        profile_json = {
+            "global": {
+                "workflow_guess": "replenishment",
+                "time_range_guess": f"{descriptor.n_days}d" if descriptor else "365d",
+            },
+            "sheets": [
+                {"sheet_name": "inventory_snapshots", "likely_role": "inventory_snapshots", "confidence": 1.0},
+                {"sheet_name": "po_open_lines", "likely_role": "po_open_lines", "confidence": 1.0},
+                {"sheet_name": "bom_edge", "likely_role": "bom_edge", "confidence": 1.0},
+            ],
+        }
+
+        return {
+            "sheets": sheets,
+            "profile_json": profile_json,
+            "contract_json": contract_json,
+            "descriptor": asdict(descriptor) if descriptor else {},
+        }
+
     @property
     def dataset_id(self) -> str:
         return self._dataset_id
