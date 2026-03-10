@@ -272,10 +272,38 @@ class SyntheticERPConnector:
                 "uom": edge.get("uom", "PCS"),
             })
 
+        # ── demand_fg: plant-level demand (required for planning) ──
+        demand_data = data.get("demand_data", {})
+        demand_rows = []
+        for (mat_code, plt_id), df in demand_data.items():
+            for _, row in df.iterrows():
+                date_val = row["date"]
+                demand_rows.append({
+                    "material_code": mat_code,
+                    "plant_id": plt_id,
+                    "date": str(date_val.date()) if hasattr(date_val, "date") else str(date_val),
+                    "demand_qty": round(float(row["demand"]), 2),
+                })
+
+        # ── supplier_master ──
+        supplier_rows = []
+        for s in master.get("suppliers", []):
+            supplier_rows.append({
+                "supplier_id": s.supplier_id,
+                "name": s.name,
+                "country": s.country,
+                "reliability": round(s.reliability, 3),
+                "defect_rate": round(s.defect_rate, 4),
+                "base_lead_time": s.base_lead_time,
+                "materials": ",".join(s.materials) if s.materials else "",
+            })
+
         sheets = {
+            "demand_fg": demand_rows,
             "inventory_snapshots": inventory_rows,
             "po_open_lines": po_rows,
             "bom_edge": bom_rows,
+            "supplier_master": supplier_rows,
         }
 
         # Identity mapping — field names already match planning pipeline expectations
@@ -291,6 +319,8 @@ class SyntheticERPConnector:
 
         contract_json = {
             "datasets": [
+                _make_dataset_entry("demand_fg", "demand_fg",
+                    ["material_code", "plant_id", "date", "demand_qty"]),
                 _make_dataset_entry("inventory_snapshots", "inventory_snapshots",
                     ["material_code", "plant_id", "snapshot_date", "onhand_qty",
                      "safety_stock", "lead_time_days", "moq", "unit_cost"]),
@@ -298,6 +328,9 @@ class SyntheticERPConnector:
                     ["material_code", "plant_id", "open_qty", "date"]),
                 _make_dataset_entry("bom_edge", "bom_edge",
                     ["parent_material", "child_material", "qty_per", "uom"]),
+                _make_dataset_entry("supplier_master", "supplier_master",
+                    ["supplier_id", "name", "country", "reliability",
+                     "defect_rate", "base_lead_time", "materials"]),
             ],
             "validation": {"status": "pass", "reasons": []},
         }
@@ -308,9 +341,11 @@ class SyntheticERPConnector:
                 "time_range_guess": f"{descriptor.n_days}d" if descriptor else "365d",
             },
             "sheets": [
+                {"sheet_name": "demand_fg", "likely_role": "demand_fg", "confidence": 1.0},
                 {"sheet_name": "inventory_snapshots", "likely_role": "inventory_snapshots", "confidence": 1.0},
                 {"sheet_name": "po_open_lines", "likely_role": "po_open_lines", "confidence": 1.0},
                 {"sheet_name": "bom_edge", "likely_role": "bom_edge", "confidence": 1.0},
+                {"sheet_name": "supplier_master", "likely_role": "supplier_master", "confidence": 1.0},
             ],
         }
 

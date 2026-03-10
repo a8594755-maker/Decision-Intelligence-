@@ -3,7 +3,7 @@ import { NavLink as RouterNavLink } from 'react-router-dom';
 import {
   Activity, LayoutDashboard, Calculator, TrendingUp,
   ShieldAlert, Settings, Moon, Sun, LogOut, Cpu,
-  ChevronsLeft, ChevronsRight, GitCompare, BarChart3, Database,
+  ChevronsLeft, ChevronsRight, GitCompare, BarChart3, Database, Handshake,
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useApp } from '../../contexts/AppContext';
@@ -16,6 +16,7 @@ const NAV_ITEMS = [
   { to: '/risk',       label: 'Risk Center',     icon: ShieldAlert },
   { to: '/digital-twin', label: 'Digital Twin',  icon: Cpu },
   { to: '/scenarios',    label: 'Scenarios',      icon: GitCompare },
+  { to: '/negotiation',  label: 'Negotiation',    icon: Handshake },
 ];
 
 const BOTTOM_ITEMS = [

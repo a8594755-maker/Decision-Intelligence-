@@ -24,6 +24,7 @@ import { computePositionBucket } from './cfr/negotiation-position-buckets.js';
 import { DEFAULT_CFR_INFLUENCE } from './cfr/negotiation-types.js';
 import { generateAllDrafts, buildDraftContext } from './cfr/negotiation-draft-generator.js';
 import { getStateTracker } from './cfr/negotiation-state-tracker.js';
+import * as negotiationPersistence from '../negotiationPersistenceService.js';
 
 const ARTIFACT_SIZE_THRESHOLD = 200 * 1024;
 const nowIso = () => new Date().toISOString();
@@ -366,6 +367,32 @@ export async function runNegotiation({
   }
 
   // -------------------------------------------------------------------------
+  // Step 3.7: Persist negotiation case to Supabase (durable storage)
+  // -------------------------------------------------------------------------
+  let persistedCaseId = null;
+  try {
+    const riskScore = datasetProfileRow?.risk_score ?? null;
+    const supplierKpis = datasetProfileRow?.supplier_kpis || {};
+    const { bucket: buyerBucket, name: bucketName } = computePositionBucket({
+      risk_score: riskScore,
+    });
+
+    const persistedCase = await negotiationPersistence.createCase(userId, {
+      planRunId: runId,
+      trigger,
+      buyerPosition: { bucket: buyerBucket, name: bucketName, risk_score: riskScore },
+      scenarioId: cfrEnrichment?.scenario_id || null,
+      supplierKpis,
+    });
+    persistedCaseId = persistedCase?.id || null;
+  } catch (persistErr) {
+    console.warn(
+      '[negotiationOrchestrator] Case persistence failed (non-critical):',
+      persistErr?.message
+    );
+  }
+
+  // -------------------------------------------------------------------------
   // Step 4: Persist negotiation_options artifact
   // -------------------------------------------------------------------------
   const optionsSaved = await saveJsonArtifact(
@@ -569,6 +596,7 @@ export async function runNegotiation({
     negotiation_report: reportPayload,
     cfr_enrichment: cfrEnrichment,
     negotiation_action_card: actionCardPayload,
+    persisted_case_id: persistedCaseId,
     artifact_refs: artifactRefs
   };
 }

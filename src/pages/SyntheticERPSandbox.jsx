@@ -250,7 +250,86 @@ const SCENARIO_TEMPLATES = [
   { value: 'quality_recall', label: 'Quality Recall' },
   { value: 'multi_disruption', label: 'Multi-Disruption' },
   { value: 'plant_emergency', label: 'Plant Emergency' },
+  { value: '__custom', label: 'Custom...' },
 ];
+
+const DISRUPTION_TYPES = [
+  { value: 'demand_spike', label: 'Demand Spike', side: 'demand' },
+  { value: 'demand_crash', label: 'Demand Crash', side: 'demand' },
+  { value: 'supplier_delay', label: 'Supplier Delay', side: 'supply' },
+  { value: 'quality_issue', label: 'Quality Defect', side: 'supply' },
+  { value: 'plant_shutdown', label: 'Plant Shutdown', side: 'supply' },
+];
+
+const EMPTY_DISRUPTION = { name: 'demand_spike', severity: 'medium', start_day: 60, duration_days: 14, target_material: '', target_plant: '' };
+
+function CustomDisruptionEditor({ disruptions, onChange, totalDays }) {
+  const addDisruption = () => onChange([...disruptions, { ...EMPTY_DISRUPTION }]);
+  const removeDisruption = (i) => onChange(disruptions.filter((_, idx) => idx !== i));
+  const updateDisruption = (i, field, value) => {
+    const updated = [...disruptions];
+    updated[i] = { ...updated[i], [field]: value };
+    onChange(updated);
+  };
+
+  return (
+    <div className="mt-3 pt-3 border-t space-y-2" style={{ borderColor: 'var(--border-default)' }}>
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <ShieldAlert className="w-3.5 h-3.5 text-indigo-600" />
+          <span className="text-xs font-semibold" style={{ color: 'var(--text-secondary)' }}>Custom Disruptions</span>
+          <Badge type="info">{disruptions.length}</Badge>
+        </div>
+        <Button variant="secondary" onClick={addDisruption} className="!text-xs !px-2 !py-1">+ Add</Button>
+      </div>
+      {disruptions.map((d, i) => (
+        <div key={i} className="grid grid-cols-2 md:grid-cols-7 gap-2 items-end p-2 rounded-lg bg-slate-50 dark:bg-slate-800/50">
+          <label className="space-y-0.5">
+            <span className="text-[10px] text-slate-400">Type</span>
+            <select value={d.name} onChange={e => updateDisruption(i, 'name', e.target.value)} className={selectCls}>
+              {DISRUPTION_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+            </select>
+          </label>
+          <label className="space-y-0.5">
+            <span className="text-[10px] text-slate-400">Severity</span>
+            <select value={d.severity} onChange={e => updateDisruption(i, 'severity', e.target.value)} className={selectCls}>
+              {['low', 'medium', 'high', 'critical'].map(v => <option key={v} value={v}>{v}</option>)}
+            </select>
+          </label>
+          <label className="space-y-0.5">
+            <span className="text-[10px] text-slate-400">Start Day</span>
+            <input type="number" min={0} max={totalDays} value={d.start_day} onChange={e => updateDisruption(i, 'start_day', Number(e.target.value))} className={selectCls} />
+          </label>
+          <label className="space-y-0.5">
+            <span className="text-[10px] text-slate-400">Duration</span>
+            <input type="number" min={1} max={365} value={d.duration_days} onChange={e => updateDisruption(i, 'duration_days', Number(e.target.value))} className={selectCls} />
+          </label>
+          <label className="space-y-0.5">
+            <span className="text-[10px] text-slate-400">Target Material</span>
+            <input type="text" placeholder="all" value={d.target_material} onChange={e => updateDisruption(i, 'target_material', e.target.value)} className={selectCls} />
+          </label>
+          <label className="space-y-0.5">
+            <span className="text-[10px] text-slate-400">Target Plant</span>
+            <input type="text" placeholder="all" value={d.target_plant} onChange={e => updateDisruption(i, 'target_plant', e.target.value)} className={selectCls} />
+          </label>
+          <div className="flex items-end">
+            <button onClick={() => removeDisruption(i)} className="text-red-400 hover:text-red-600 p-1"><Trash2 className="w-3.5 h-3.5" /></button>
+          </div>
+        </div>
+      ))}
+      {disruptions.length > 0 && (
+        <DisruptionTimeline
+          disruptions={disruptions.map(d => ({
+            ...d,
+            side: DISRUPTION_TYPES.find(t => t.value === d.name)?.side || 'demand',
+            target_material: d.target_material || 'all',
+          }))}
+          totalDays={totalDays}
+        />
+      )}
+    </div>
+  );
+}
 
 function GeneratorForm({ onGenerate, loading }) {
   const [cfg, setCfg] = useState({
@@ -263,6 +342,7 @@ function GeneratorForm({ onGenerate, loading }) {
     scenario: '',
   });
   const [templateInfo, setTemplateInfo] = useState(null);
+  const [customDisruptions, setCustomDisruptions] = useState([{ ...EMPTY_DISRUPTION }]);
 
   useEffect(() => {
     api('/synthetic/scenario-templates').then(r => setTemplateInfo(r.templates)).catch(() => {});
@@ -272,6 +352,19 @@ function GeneratorForm({ onGenerate, loading }) {
 
   const handleSubmit = (e) => {
     e.preventDefault();
+    let disruptions = [];
+    if (cfg.scenario === '__custom') {
+      disruptions = customDisruptions.map(d => ({
+        name: d.name,
+        severity: d.severity,
+        start_day: d.start_day,
+        duration_days: d.duration_days,
+        ...(d.target_material ? { target_material: d.target_material } : {}),
+        ...(d.target_plant ? { target_plant: d.target_plant } : {}),
+      }));
+    } else if (cfg.scenario) {
+      disruptions = [cfg.scenario];
+    }
     onGenerate({
       seed: Number(cfg.seed),
       n_materials: Number(cfg.n_materials),
@@ -279,11 +372,11 @@ function GeneratorForm({ onGenerate, loading }) {
       n_suppliers: Number(cfg.n_suppliers),
       days: Number(cfg.days),
       chaos_intensity: cfg.chaos_intensity,
-      disruptions: cfg.scenario ? [cfg.scenario] : [],
+      disruptions,
     });
   };
 
-  const selectedTemplate = cfg.scenario && templateInfo?.[cfg.scenario];
+  const selectedTemplate = cfg.scenario && cfg.scenario !== '__custom' && templateInfo?.[cfg.scenario];
 
   return (
     <Card>
@@ -330,6 +423,9 @@ function GeneratorForm({ onGenerate, loading }) {
       {selectedTemplate && (
         <ScenarioExplainer disruptions={selectedTemplate.disruptions} totalDays={Number(cfg.days)} />
       )}
+      {cfg.scenario === '__custom' && (
+        <CustomDisruptionEditor disruptions={customDisruptions} onChange={setCustomDisruptions} totalDays={Number(cfg.days)} />
+      )}
     </Card>
   );
 }
@@ -338,10 +434,19 @@ function GeneratorForm({ onGenerate, loading }) {
 //  Forecast Lab
 // ══════════════════════════════════════════════
 
-function ForecastLab({ datasetId, skus }) {
+const FORECAST_MODELS = [
+  { value: '', label: 'Auto (best fit)' },
+  { value: 'holtwinters', label: 'Holt-Winters' },
+  { value: 'prophet', label: 'Prophet' },
+  { value: 'linear', label: 'Linear' },
+];
+
+function ForecastLab({ datasetId, skus, salesLoader }) {
   const [sku, setSku] = useState(skus[0] || '');
   const [horizon, setHorizon] = useState(30);
+  const [modelType, setModelType] = useState('');
   const [result, setResult] = useState(null);
+  const [historyData, setHistoryData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -350,11 +455,19 @@ function ForecastLab({ datasetId, skus }) {
     setLoading(true);
     setError('');
     try {
-      const res = await api(`/synthetic/datasets/${datasetId}/forecast`, {
-        method: 'POST',
-        body: JSON.stringify({ material_code: sku, horizon_days: Number(horizon) }),
-      });
-      setResult(res);
+      const [fcRes, salesRes] = await Promise.all([
+        api(`/synthetic/datasets/${datasetId}/forecast`, {
+          method: 'POST',
+          body: JSON.stringify({
+            material_code: sku,
+            horizon_days: Number(horizon),
+            ...(modelType ? { model_type: modelType } : {}),
+          }),
+        }),
+        api(`/synthetic/datasets/${datasetId}/sales?material_code=${sku}&days=365`),
+      ]);
+      setResult(fcRes);
+      setHistoryData(salesRes.records || []);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -368,13 +481,25 @@ function ForecastLab({ datasetId, skus }) {
     const fc = result.forecast;
     const preds = fc.predictions || fc.forecast || [];
     if (preds.length === 0) return null;
-    return preds.map((p, i) => ({
-      idx: i + 1,
-      forecast: typeof p === 'number' ? p : (p.value ?? p.yhat ?? p.predicted),
-      lower: p.lower ?? p.yhat_lower ?? undefined,
-      upper: p.upper ?? p.yhat_upper ?? undefined,
-    }));
-  }, [result]);
+
+    const data = [];
+    // Last 60 days of history
+    const histTail = (historyData || []).slice(-60);
+    histTail.forEach((h, i) => {
+      data.push({ idx: i - histTail.length, history: h.sales, forecast: null });
+    });
+    // Forecast
+    preds.forEach((p, i) => {
+      data.push({
+        idx: i + 1,
+        history: i === 0 && histTail.length > 0 ? histTail[histTail.length - 1].sales : null,
+        forecast: typeof p === 'number' ? p : (p.value ?? p.yhat ?? p.predicted),
+        lower: p.lower ?? p.yhat_lower ?? undefined,
+        upper: p.upper ?? p.yhat_upper ?? undefined,
+      });
+    });
+    return data;
+  }, [result, historyData]);
 
   const metrics = result?.forecast?.metrics || result?.forecast?.evaluation || {};
   const modelUsed = result?.forecast?.model || result?.forecast?.model_type || 'auto';
@@ -393,6 +518,12 @@ function ForecastLab({ datasetId, skus }) {
           <label className="space-y-1">
             <span className="text-xs text-slate-500">Horizon (days)</span>
             <input type="number" min={7} max={90} value={horizon} onChange={e => setHorizon(e.target.value)} className={inputCls} style={{ width: 80 }} />
+          </label>
+          <label className="space-y-1">
+            <span className="text-xs text-slate-500">Model</span>
+            <select value={modelType} onChange={e => setModelType(e.target.value)} className={selectCls}>
+              {FORECAST_MODELS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+            </select>
           </label>
           <Button variant="primary" icon={Zap} onClick={runForecast} disabled={loading || !sku}>
             {loading ? 'Running...' : 'Run Forecast'}
@@ -425,13 +556,15 @@ function ForecastLab({ datasetId, skus }) {
                   <XAxis dataKey="idx" tick={{ fontSize: 10 }} label={{ value: 'Day', position: 'insideBottom', offset: -2, fontSize: 10 }} />
                   <YAxis tick={{ fontSize: 10 }} />
                   <Tooltip contentStyle={TOOLTIP_STYLE} />
-                  {chartData[0]?.upper != null && (
+                  {chartData.some(d => d.upper != null) && (
                     <Area type="monotone" dataKey="upper" fill="rgba(99,102,241,0.08)" stroke="none" name="Upper" />
                   )}
-                  {chartData[0]?.lower != null && (
+                  {chartData.some(d => d.lower != null) && (
                     <Area type="monotone" dataKey="lower" fill="rgba(99,102,241,0.08)" stroke="none" name="Lower" />
                   )}
-                  <Line type="monotone" dataKey="forecast" stroke="rgb(99,102,241)" strokeWidth={2} dot={false} name="Forecast" />
+                  <Line type="monotone" dataKey="history" stroke="rgb(156,163,175)" strokeWidth={1.5} dot={false} name="History" connectNulls={false} />
+                  <Line type="monotone" dataKey="forecast" stroke="rgb(99,102,241)" strokeWidth={2} dot={false} name="Forecast" strokeDasharray="6 3" />
+                  <ReferenceLine x={0} stroke="var(--border-default)" strokeDasharray="3 3" />
                 </ComposedChart>
               </ResponsiveContainer>
             </Card>
@@ -474,12 +607,14 @@ function CompareMetricTile({ icon: Icon, label, leftVal, rightVal, format = v =>
   );
 }
 
-function CompareView({ leftDataset, rightDataset }) {
+function CompareView({ leftDataset, rightDataset, templateInfo }) {
   if (!leftDataset || !rightDataset) return null;
   const lk = leftDataset.kpis?.aggregate || {};
   const rk = rightDataset.kpis?.aggregate || {};
   const lId = leftDataset.descriptor.dataset_id;
   const rId = rightDataset.descriptor.dataset_id;
+  const lDisruptions = leftDataset.descriptor.disruptions || [];
+  const rDisruptions = rightDataset.descriptor.disruptions || [];
 
   // Overlay time series
   const overlayData = React.useMemo(() => {
@@ -523,8 +658,57 @@ function CompareView({ leftDataset, rightDataset }) {
   const fmtPct = v => v != null ? `${(v * 100).toFixed(1)}%` : '--';
   const fmtCost = v => `$${(v || 0).toLocaleString()}`;
 
+  // Resolve template disruption descriptions for display
+  const resolveDisruptions = (names) => {
+    if (!names || names.length === 0) return null;
+    const all = [];
+    for (const n of names) {
+      if (templateInfo?.[n]?.disruptions) all.push(...templateInfo[n].disruptions);
+      else all.push({ name: n, side: '?', severity: '?', start_day: 0, duration_days: 0, target_material: 'all' });
+    }
+    return all.length > 0 ? all : null;
+  };
+
   return (
     <div className="space-y-4">
+      {/* Scenario Details */}
+      {(lDisruptions.length > 0 || rDisruptions.length > 0) && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <Card className="!p-4">
+            <p className="text-xs font-semibold mb-2" style={{ color: 'var(--text-secondary)' }}>Baseline Scenarios</p>
+            {lDisruptions.length === 0 ? (
+              <Badge type="success">No disruptions</Badge>
+            ) : (
+              <div className="space-y-1">
+                {(resolveDisruptions(lDisruptions) || lDisruptions.map(n => ({ name: n }))).map((d, i) => (
+                  <div key={i} className="flex items-center gap-1.5 text-xs">
+                    <Badge type={d.side === 'demand' ? 'warning' : d.side === 'supply' ? 'danger' : 'info'}>{d.side || d.name}</Badge>
+                    <span style={{ color: 'var(--text-primary)' }}>{DISRUPTION_LABELS[d.name] || d.name}</span>
+                    {d.severity && d.severity !== '?' && <Badge type={SEVERITY_BADGE[d.severity] || 'info'}>{d.severity}</Badge>}
+                  </div>
+                ))}
+              </div>
+            )}
+          </Card>
+          <Card className="!p-4">
+            <p className="text-xs font-semibold mb-2" style={{ color: 'var(--text-secondary)' }}>Compare Scenarios</p>
+            {rDisruptions.length === 0 ? (
+              <Badge type="success">No disruptions</Badge>
+            ) : (
+              <div className="space-y-1">
+                {(resolveDisruptions(rDisruptions) || rDisruptions.map(n => ({ name: n }))).map((d, i) => (
+                  <div key={i} className="flex items-center gap-1.5 text-xs">
+                    <Badge type={d.side === 'demand' ? 'warning' : d.side === 'supply' ? 'danger' : 'info'}>{d.side || d.name}</Badge>
+                    <span style={{ color: 'var(--text-primary)' }}>{DISRUPTION_LABELS[d.name] || d.name}</span>
+                    {d.severity && d.severity !== '?' && <Badge type={SEVERITY_BADGE[d.severity] || 'info'}>{d.severity}</Badge>}
+                  </div>
+                ))}
+              </div>
+            )}
+          </Card>
+        </div>
+      )}
+
       {/* KPI Comparison */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         <CompareMetricTile icon={TrendingUp} label="Fill Rate" leftVal={lk.fill_rate ?? 0} rightVal={rk.fill_rate ?? 0} format={v => `${(v * 100).toFixed(1)}%`} />
@@ -644,6 +828,7 @@ function HandoffPanel({ datasetId, descriptor, navigate, onUseAsDataset, onExpor
 
 const EXPLORER_TABS = [
   { key: 'overview', label: 'Overview', icon: BarChart3 },
+  { key: 'plant_sales', label: 'Plant Sales', icon: Factory },
   { key: 'inventory', label: 'Stock Snapshots', icon: Package },
   { key: 'purchase_orders', label: 'Purchase Orders', icon: Truck },
   { key: 'bom', label: 'BOM Explorer', icon: GitBranch },
@@ -669,6 +854,9 @@ function DatasetExplorer({ dataset, onDelete, onRefresh, onUseAsDataset, onExpor
   // BOM state
   const [bomData, setBomData] = useState(null);
   const [bomFilter, setBomFilter] = useState('');
+  // Plant sales state
+  const [plantSalesData, setPlantSalesData] = useState(null);
+  const [plantSalesFilter, setPlantSalesFilter] = useState({ material: '', plant: '' });
 
   const id = descriptor.dataset_id;
 
@@ -685,6 +873,13 @@ function DatasetExplorer({ dataset, onDelete, onRefresh, onUseAsDataset, onExpor
   }, [id, skus.length]);
 
   useEffect(() => { loadSkus(); }, [loadSkus]);
+
+  // Auto-load tab data on first visit
+  useEffect(() => {
+    if (activeTab === 'stock' && !stockData && loadingSection !== 'stock') loadStock();
+    if (activeTab === 'purchase_orders' && !poData && loadingSection !== 'po') loadPOs();
+    if (activeTab === 'bom' && !bomData && loadingSection !== 'bom') loadBom();
+  }, [activeTab]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadSales = useCallback(async (sku) => {
     if (!sku) return;
@@ -741,6 +936,18 @@ function DatasetExplorer({ dataset, onDelete, onRefresh, onUseAsDataset, onExpor
     } catch (err) { console.error(err); }
     finally { setLoadingSection(''); }
   }, [id, bomFilter]);
+
+  const loadPlantSales = useCallback(async () => {
+    if (!plantSalesFilter.material) return;
+    setLoadingSection('plant_sales');
+    try {
+      const params = new URLSearchParams({ material_code: plantSalesFilter.material, days: '365' });
+      if (plantSalesFilter.plant) params.set('plant_id', plantSalesFilter.plant);
+      const res = await api(`/synthetic/datasets/${id}/sales-by-plant?${params}`);
+      setPlantSalesData(res);
+    } catch (err) { console.error(err); }
+    finally { setLoadingSection(''); }
+  }, [id, plantSalesFilter]);
 
   const agg = kpis?.aggregate || {};
 
@@ -886,6 +1093,62 @@ function DatasetExplorer({ dataset, onDelete, onRefresh, onUseAsDataset, onExpor
         </>
       )}
 
+      {/* ── Plant Sales Tab ── */}
+      {activeTab === 'plant_sales' && (
+        <Card>
+          <SectionHeader icon={Factory} title="Plant-Level Sales" count={plantSalesData?.count} />
+          <div className="flex items-end gap-3 flex-wrap mb-3">
+            <label className="space-y-1">
+              <span className="text-xs text-slate-500">Material (required)</span>
+              <select value={plantSalesFilter.material} onChange={e => setPlantSalesFilter(p => ({ ...p, material: e.target.value }))} className={selectCls}>
+                <option value="">Select SKU...</option>
+                {skus.map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </label>
+            <label className="space-y-1">
+              <span className="text-xs text-slate-500">Plant</span>
+              <select value={plantSalesFilter.plant} onChange={e => setPlantSalesFilter(p => ({ ...p, plant: e.target.value }))} className={selectCls}>
+                <option value="">All</option>
+                {plantIds.map(p => <option key={p} value={p}>{p}</option>)}
+              </select>
+            </label>
+            <Button variant="secondary" icon={RefreshCw} onClick={loadPlantSales} disabled={loadingSection === 'plant_sales' || !plantSalesFilter.material} className="!text-xs">
+              {loadingSection === 'plant_sales' ? 'Loading...' : 'Load'}
+            </Button>
+          </div>
+          {plantSalesData && plantSalesData.records?.length > 0 ? (
+            <>
+              <ResponsiveContainer width="100%" height={220}>
+                <LineChart data={plantSalesData.records.filter((_, i) => i % Math.max(1, Math.ceil(plantSalesData.records.length / 180)) === 0)}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border-default)" />
+                  <XAxis dataKey="date" tick={{ fontSize: 9 }} interval="preserveStartEnd" />
+                  <YAxis tick={{ fontSize: 10 }} />
+                  <Tooltip contentStyle={TOOLTIP_STYLE} />
+                  <Legend wrapperStyle={{ fontSize: 10 }} />
+                  <Line type="monotone" dataKey="sales" stroke="rgb(99,102,241)" strokeWidth={1.5} dot={false} name="Sales" />
+                </LineChart>
+              </ResponsiveContainer>
+              <div className="mt-3">
+                <DataTable
+                  rows={plantSalesData.records.slice(-50)}
+                  columns={[
+                    { key: 'date', label: 'Date' },
+                    { key: 'sku', label: 'Material' },
+                    { key: 'plant_id', label: 'Plant' },
+                    { key: 'sales', label: 'Demand', render: v => Number(v).toLocaleString() },
+                  ]}
+                  maxRows={50}
+                />
+              </div>
+            </>
+          ) : plantSalesData ? (
+            <p className="text-xs text-slate-400 py-4 text-center">No plant-level sales data found</p>
+          ) : (
+            <p className="text-xs text-slate-400 py-4 text-center">Select a material and click Load to see plant-level sales</p>
+          )}
+        </Card>
+      )}
+
       {/* ── Stock Snapshots Tab ── */}
       {activeTab === 'inventory' && (
         <Card>
@@ -923,7 +1186,7 @@ function DatasetExplorer({ dataset, onDelete, onRefresh, onUseAsDataset, onExpor
               maxRows={200}
             />
           ) : (
-            <p className="text-xs text-slate-400 py-4 text-center">Click Load to fetch stock snapshots</p>
+            <p className="text-xs text-slate-400 py-4 text-center">{loadingSection === 'stock' ? 'Loading stock snapshots...' : 'No stock data available. Click Load to retry.'}</p>
           )}
         </Card>
       )}
@@ -976,7 +1239,7 @@ function DatasetExplorer({ dataset, onDelete, onRefresh, onUseAsDataset, onExpor
               />
             </>
           ) : (
-            <p className="text-xs text-slate-400 py-4 text-center">Click Load to fetch purchase orders</p>
+            <p className="text-xs text-slate-400 py-4 text-center">{loadingSection === 'po' ? 'Loading purchase orders...' : 'No purchase order data available. Click Load to retry.'}</p>
           )}
         </Card>
       )}
@@ -1010,7 +1273,7 @@ function DatasetExplorer({ dataset, onDelete, onRefresh, onUseAsDataset, onExpor
               maxRows={100}
             />
           ) : (
-            <p className="text-xs text-slate-400 py-4 text-center">Click Load to fetch BOM edges</p>
+            <p className="text-xs text-slate-400 py-4 text-center">{loadingSection === 'bom' ? 'Loading BOM edges...' : 'No BOM data available. Click Load to retry.'}</p>
           )}
         </Card>
       )}
@@ -1051,6 +1314,7 @@ export default function SyntheticERPSandbox() {
   const [datasets, setDatasets] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [templateInfo, setTemplateInfo] = useState(null);
   // Compare mode
   const [compareMode, setCompareMode] = useState(false);
   const [compareLeft, setCompareLeft] = useState('');
@@ -1069,6 +1333,9 @@ export default function SyntheticERPSandbox() {
   }, []);
 
   useEffect(() => { refreshList(); }, [refreshList]);
+  useEffect(() => {
+    api('/synthetic/scenario-templates').then(r => setTemplateInfo(r.templates)).catch(() => {});
+  }, []);
 
   const handleGenerate = useCallback(async (payload) => {
     setLoading(true);
@@ -1187,7 +1454,7 @@ export default function SyntheticERPSandbox() {
             </div>
           </Card>
           {leftDataset && rightDataset && (
-            <CompareView leftDataset={leftDataset} rightDataset={rightDataset} />
+            <CompareView leftDataset={leftDataset} rightDataset={rightDataset} templateInfo={templateInfo} />
           )}
         </div>
       )}

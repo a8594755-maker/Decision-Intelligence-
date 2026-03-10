@@ -13,6 +13,7 @@ const DigitalTwin = lazy(() => import('./pages/DigitalTwin'));
 const ScenarioStudio = lazy(() => import('./pages/ScenarioStudio'));
 const OpsDashboard = lazy(() => import('./pages/OpsDashboard'));
 const SyntheticERPSandbox = lazy(() => import('./pages/SyntheticERPSandbox'));
+const NegotiationWorkbench = lazy(() => import('./pages/NegotiationWorkbench'));
 
 export const router = createBrowserRouter([
   {
@@ -29,6 +30,7 @@ export const router = createBrowserRouter([
       { path: 'risk', element: <RiskCenter /> },
       { path: 'digital-twin', element: <DigitalTwin /> },
       { path: 'scenarios', element: <ScenarioStudio /> },
+      { path: 'negotiation', element: <NegotiationWorkbench /> },
       { path: 'ops', element: <OpsDashboard /> },
       { path: 'sandbox', element: <SyntheticERPSandbox /> },
       { path: 'settings', element: <SettingsPage /> },
