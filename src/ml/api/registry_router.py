@@ -1058,3 +1058,136 @@ async def run_retrain(request: RetrainRunRequest):
             "POST /ml/registry/register, then promote via POST /ml/registry/promote."
         ),
     }
+
+
+# =============================================================================
+# Negotiation Policy Registry Endpoints
+# =============================================================================
+
+try:
+    from ml.registry.negotiation_policy_registry import (
+        NegotiationPolicyRegistry,
+        evaluate_negotiation_policy_gates,
+    )
+    _neg_registry = NegotiationPolicyRegistry()
+except ImportError:
+    _neg_registry = None
+
+
+class RegisterPolicyRequest(BaseModel):
+    scenario_id: str
+    strategy_path: str
+    iterations: int = 0
+    exploitability: float = 0.0
+    info_set_count: int = 0
+    game_config: Dict[str, Any] = Field(default_factory=dict)
+    metrics_summary: Dict[str, Any] = Field(default_factory=dict)
+
+
+class PromotePolicyRequest(BaseModel):
+    scenario_id: str
+    artifact_id: str
+    approved_by: str = ""
+    note: str = ""
+    override: bool = False
+
+
+class RollbackPolicyRequest(BaseModel):
+    scenario_id: str
+    steps: int = 1
+
+
+@router.post("/ml/negotiation-policy/register")
+async def register_negotiation_policy(request: RegisterPolicyRequest):
+    """Register a new CFR negotiation strategy as CANDIDATE."""
+    if not _neg_registry:
+        raise HTTPException(500, "Negotiation policy registry not available")
+
+    artifact_id = _neg_registry.register_artifact(
+        strategy_path=request.strategy_path,
+        metadata=request.model_dump(),
+    )
+    record = _neg_registry.get_artifact(artifact_id)
+    return {"artifact_id": artifact_id, "record": record}
+
+
+@router.post("/ml/negotiation-policy/promote")
+async def promote_negotiation_policy(request: PromotePolicyRequest):
+    """Promote a negotiation policy to PROD with gate enforcement."""
+    if not _neg_registry:
+        raise HTTPException(500, "Negotiation policy registry not available")
+
+    try:
+        record = _neg_registry.promote_to_prod(
+            scenario_id=request.scenario_id,
+            artifact_id=request.artifact_id,
+            approved_by=request.approved_by,
+            note=request.note,
+            override=request.override,
+        )
+        return {"status": "promoted", "record": record}
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@router.post("/ml/negotiation-policy/rollback")
+async def rollback_negotiation_policy(request: RollbackPolicyRequest):
+    """Rollback to a previous PROD negotiation policy."""
+    if not _neg_registry:
+        raise HTTPException(500, "Negotiation policy registry not available")
+
+    record = _neg_registry.rollback_prod(
+        scenario_id=request.scenario_id,
+        steps=request.steps,
+    )
+    if not record:
+        raise HTTPException(404, f"No previous PROD found for scenario {request.scenario_id}")
+    return {"status": "rolled_back", "record": record}
+
+
+@router.get("/ml/negotiation-policy/active")
+async def get_active_negotiation_policy(
+    scenario_id: Optional[str] = Query(None),
+):
+    """Get current PROD negotiation policy for a scenario (or all)."""
+    if not _neg_registry:
+        raise HTTPException(500, "Negotiation policy registry not available")
+
+    if scenario_id:
+        record = _neg_registry.get_prod_artifact(scenario_id)
+        return {"scenario_id": scenario_id, "record": record}
+
+    pointers = _neg_registry.get_all_prod_pointers()
+    return {"prod_pointers": pointers}
+
+
+@router.get("/ml/negotiation-policy/artifacts")
+async def list_negotiation_policies(
+    scenario_id: Optional[str] = Query(None),
+    lifecycle_state: Optional[str] = Query(None),
+):
+    """List negotiation policy artifacts with optional filters."""
+    if not _neg_registry:
+        raise HTTPException(500, "Negotiation policy registry not available")
+
+    filters = {}
+    if scenario_id:
+        filters["scenario_id"] = scenario_id
+    if lifecycle_state:
+        filters["lifecycle_state"] = lifecycle_state
+
+    artifacts = _neg_registry.list_artifacts(filters or None)
+    return {"artifacts": artifacts, "count": len(artifacts)}
+
+
+@router.get("/ml/negotiation-policy/promotion-log")
+async def get_negotiation_policy_promotion_log(
+    scenario_id: Optional[str] = Query(None),
+    limit: int = Query(100, ge=1, le=1000),
+):
+    """Get negotiation policy promotion history."""
+    if not _neg_registry:
+        raise HTTPException(500, "Negotiation policy registry not available")
+
+    log = _neg_registry.get_promotion_log(scenario_id=scenario_id, limit=limit)
+    return {"events": log, "count": len(log)}

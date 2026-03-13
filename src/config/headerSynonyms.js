@@ -16,6 +16,94 @@ export function setInferenceFn(fn) {
   _inferFn = fn;
 }
 
+// ── Custom Synonym Store ─────────────────────────────────────────────────────
+// Lazily-injected loader/saver keeps this file free of direct DB/service deps.
+
+/** @type {{ [canonical: string]: string[] }} */
+let _customSynonyms = {};
+
+/** @type {((userId: string) => Promise<{ [canonical: string]: string[] }>) | null} */
+let _synonymLoader = null;
+
+/** @type {((canonical: string, synonym: string) => Promise<void>) | null} */
+let _synonymSaver = null;
+
+/**
+ * Register the async function that loads user-defined synonyms from DB.
+ * Called once at app startup (e.g. in main.jsx).
+ * @param {(userId: string) => Promise<{ [canonical: string]: string[] }>} fn
+ */
+export function setSynonymLoader(fn) {
+  _synonymLoader = fn;
+}
+
+/**
+ * Register the async function that persists a new custom synonym to DB.
+ * @param {(canonical: string, synonym: string) => Promise<void>} fn
+ */
+export function setSynonymSaver(fn) {
+  _synonymSaver = fn;
+}
+
+/**
+ * Load custom synonyms for a user and merge them into the in-memory store.
+ * Idempotent — safe to call multiple times (overwrites previous custom state).
+ * @param {string} userId
+ */
+export async function loadCustomSynonyms(userId) {
+  if (!_synonymLoader) return;
+  try {
+    const custom = await _synonymLoader(userId);
+    _customSynonyms = custom || {};
+  } catch (err) {
+    console.error('[headerSynonyms] Failed to load custom synonyms:', err);
+  }
+}
+
+/**
+ * Add a new synonym for a canonical field.
+ * Updates the in-memory store immediately and persists via the registered saver.
+ * @param {string} canonical – e.g. 'material_code'
+ * @param {string} synonym   – e.g. 'internal_part_no'
+ */
+export async function saveCustomSynonym(canonical, synonym) {
+  const normalized = normalizeHeader(synonym);
+  if (!_customSynonyms[canonical]) _customSynonyms[canonical] = [];
+  if (!_customSynonyms[canonical].includes(normalized)) {
+    _customSynonyms[canonical].push(normalized);
+  }
+  if (_synonymSaver) {
+    try {
+      await _synonymSaver(canonical, normalized);
+    } catch (err) {
+      console.error('[headerSynonyms] Failed to persist custom synonym:', err);
+    }
+  }
+}
+
+/**
+ * Return the effective synonym map: system defaults merged with user-defined overrides.
+ * Custom entries are appended; existing canonical keys are extended, not replaced.
+ * @returns {{ [canonical: string]: string[] }}
+ */
+export function getEffectiveSynonyms() {
+  if (Object.keys(_customSynonyms).length === 0) return HEADER_SYNONYMS;
+  const merged = { ...HEADER_SYNONYMS };
+  for (const [canonical, synonyms] of Object.entries(_customSynonyms)) {
+    if (merged[canonical]) {
+      // Deduplicate while preserving order
+      const existing = new Set(merged[canonical].map(s => normalizeHeader(s)));
+      const extras = synonyms.filter(s => !existing.has(normalizeHeader(s)));
+      if (extras.length > 0) {
+        merged[canonical] = [...merged[canonical], ...extras];
+      }
+    } else {
+      merged[canonical] = synonyms;
+    }
+  }
+  return merged;
+}
+
 export const HEADER_SYNONYMS = {
   // Material / Part Number
   'material_code': ['part_no', 'part_number', 'item', 'item_code', 'item_id', 'part', 'sku', 'sku_id', 'product_code', 'product_id', 'article', 'pn', 'material_no'],
@@ -124,20 +212,20 @@ export function normalizeHeader(header) {
  */
 export function mapHeaderToCanonical(rawHeader) {
   const normalized = normalizeHeader(rawHeader);
-  
+  const synonyms = getEffectiveSynonyms();
+
   // Check if it's already canonical
-  if (normalized in HEADER_SYNONYMS) {
+  if (normalized in synonyms) {
     return normalized;
   }
-  
+
   // Search through synonyms
-  for (const [canonical, synonyms] of Object.entries(HEADER_SYNONYMS)) {
-    const normalizedSynonyms = synonyms.map(s => normalizeHeader(s));
-    if (normalizedSynonyms.includes(normalized)) {
+  for (const [canonical, syns] of Object.entries(synonyms)) {
+    if (syns.map(s => normalizeHeader(s)).includes(normalized)) {
       return canonical;
     }
   }
-  
+
   return null;
 }
 
@@ -167,7 +255,7 @@ export function batchMapHeaders(headers) {
  * @returns {string[]} Array of synonyms (including canonical name)
  */
 export function getSynonymsFor(canonicalField) {
-  const synonyms = HEADER_SYNONYMS[canonicalField] || [];
+  const synonyms = getEffectiveSynonyms()[canonicalField] || [];
   return [canonicalField, ...synonyms];
 }
 
@@ -183,13 +271,15 @@ export function getSynonymsFor(canonicalField) {
 export function mapHeaderWithInference(rawHeader, sampleValues = [], candidateFields = []) {
   const normalized = normalizeHeader(rawHeader);
 
+  const effectiveSynonyms = getEffectiveSynonyms();
+
   // Layer 1: exact canonical match
-  if (normalized in HEADER_SYNONYMS) {
+  if (normalized in effectiveSynonyms) {
     return { canonical: normalized, confidence: 1.0, matchType: 'exact' };
   }
 
-  // Layer 2: synonym dictionary match
-  for (const [canonical, synonyms] of Object.entries(HEADER_SYNONYMS)) {
+  // Layer 2: synonym dictionary match (system + custom)
+  for (const [canonical, synonyms] of Object.entries(effectiveSynonyms)) {
     const normalizedSynonyms = synonyms.map(s => normalizeHeader(s));
     if (normalizedSynonyms.includes(normalized)) {
       return { canonical, confidence: 0.9, matchType: 'synonym' };
@@ -239,7 +329,7 @@ export function batchMapHeadersWithInference(headers, sampleRows = []) {
     for (const header of unmapped) {
       const values = sampleRows.map(row => row[header]).filter(v => v !== undefined && v !== null);
       const candidates = [...new Set(
-        Object.keys(HEADER_SYNONYMS).filter(f => !alreadyMapped.has(f))
+        Object.keys(getEffectiveSynonyms()).filter(f => !alreadyMapped.has(f))
       )];
       const result = mapHeaderWithInference(header, values, candidates);
       if (result.canonical && !alreadyMapped.has(result.canonical)) {
@@ -252,11 +342,3 @@ export function batchMapHeadersWithInference(headers, sampleRows = []) {
   return mapping;
 }
 
-/**
- * TODO: 擴充點 - 允許使用者自訂 synonyms
- *
- * 未來可實作：
- * - loadCustomSynonyms(userId): 從 DB 載入使用者自訂 synonyms
- * - saveCustomSynonym(userId, canonical, synonym): 儲存新的 synonym
- * - mergeWithCustomSynonyms(customSynonyms): 合併系統與自訂 synonyms
- */

@@ -13,5 +13,20 @@
     "rejected_at": null,
     "reason": "test",
     "note": ""
+  },
+  "apr_20260311053605_5a8aad4b": {
+    "approval_id": "apr_20260311053605_5a8aad4b",
+    "action_type": "APPROVE_PLAN",
+    "entity_id": "104",
+    "payload_hash": "4bba7130a786f9996b067339c7cbfa292a57b44c158c16c49170986ed277cee1",
+    "status": "APPROVED",
+    "requested_by": "291075be-3bee-43ff-a296-17c8eecd26a1",
+    "requested_at": "2026-03-11T05:36:05.207539+00:00",
+    "approved_by": "291075be-3bee-43ff-a296-17c8eecd26a1",
+    "approved_at": "2026-03-11T05:36:06.612176+00:00",
+    "rejected_by": null,
+    "rejected_at": null,
+    "reason": "Plan requires manual approval based on solver/narrative risk criteria.",
+    "note": ""
   }
 }

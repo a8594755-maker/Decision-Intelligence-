@@ -69,5 +69,6 @@ export const TRIGGER_TYPES = {
   COVERAGE_OUTSIDE_BAND:  'coverage_outside_band',
   UNCERTAINTY_WIDENS:     'uncertainty_widens',
   P50_SHIFT:              'p50_shift',
-  RISK_SEVERITY_CROSSED:  'risk_severity_crossed'
+  RISK_SEVERITY_CROSSED:  'risk_severity_crossed',
+  NEGOTIATION_RESOLVED:   'negotiation_resolved'
 };

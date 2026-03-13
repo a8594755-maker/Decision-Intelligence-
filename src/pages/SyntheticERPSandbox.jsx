@@ -12,7 +12,7 @@ import {
   Package, Factory, Truck, GitBranch, BarChart3,
   TrendingUp, AlertTriangle, RefreshCw, Layers,
   Zap, ShieldAlert, ClipboardList, Upload, Download,
-  ArrowRightLeft, ExternalLink,
+  ArrowRightLeft, ExternalLink, CheckCircle, XCircle,
 } from 'lucide-react';
 import { Card, Badge, Button } from '../components/ui';
 import {
@@ -160,20 +160,29 @@ function CollapsibleSection({ icon: Icon, title, count, defaultOpen = false, chi
 
 function TabBar({ tabs, active, onChange }) {
   return (
-    <div className="flex gap-1 overflow-x-auto border-b" style={{ borderColor: 'var(--border-default)' }}>
-      {tabs.map(t => (
-        <button
-          key={t.key}
-          onClick={() => onChange(t.key)}
-          className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium whitespace-nowrap transition-colors border-b-2 ${
-            active === t.key
-              ? 'text-indigo-600 border-indigo-600'
-              : 'border-transparent text-slate-500 hover:text-slate-700'
-          }`}
-        >
-          <t.icon className="w-3.5 h-3.5" />{t.label}
-        </button>
-      ))}
+    <div className="flex gap-0.5 overflow-x-auto border-b" style={{ borderColor: 'var(--border-default)' }}>
+      {tabs.map((t, i) => {
+        const showDivider = i > 0 && t.group !== tabs[i - 1].group;
+        return (
+          <React.Fragment key={t.key}>
+            {showDivider && (
+              <div className="self-stretch flex items-center px-1">
+                <div className="w-px h-4 bg-slate-200 dark:bg-slate-700" />
+              </div>
+            )}
+            <button
+              onClick={() => onChange(t.key)}
+              className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium whitespace-nowrap transition-colors border-b-2 ${
+                active === t.key
+                  ? 'text-indigo-600 border-indigo-600'
+                  : 'border-transparent text-slate-500 hover:text-slate-700'
+              }`}
+            >
+              <t.icon className="w-3.5 h-3.5" />{t.label}
+            </button>
+          </React.Fragment>
+        );
+      })}
     </div>
   );
 }
@@ -261,6 +270,51 @@ const DISRUPTION_TYPES = [
   { value: 'plant_shutdown', label: 'Plant Shutdown', side: 'supply' },
 ];
 
+const QUICK_START_PRESETS = [
+  {
+    icon: Play, label: 'Quick Demo',
+    desc: '10 products, 3 factories, 1 year of baseline data',
+    config: { seed: 42, n_materials: 10, n_plants: 3, n_suppliers: 5, days: 365, chaos_intensity: 'medium', disruptions: [] },
+  },
+  {
+    icon: Truck, label: 'Supplier Crisis',
+    desc: 'See what happens when a key supplier goes down',
+    config: { seed: 42, n_materials: 10, n_plants: 3, n_suppliers: 5, days: 365, chaos_intensity: 'high', disruptions: ['supplier_crisis'] },
+  },
+  {
+    icon: TrendingUp, label: 'Demand Spike',
+    desc: 'Sudden surge in orders — can your supply chain cope?',
+    config: { seed: 42, n_materials: 10, n_plants: 3, n_suppliers: 5, days: 365, chaos_intensity: 'medium', disruptions: ['single_spike'] },
+  },
+  {
+    icon: Zap, label: 'Stress Test',
+    desc: 'Multiple disruptions at once with extreme variability',
+    config: { seed: 99, n_materials: 20, n_plants: 5, n_suppliers: 8, days: 365, chaos_intensity: 'extreme', disruptions: ['multi_disruption'] },
+  },
+];
+
+function QuickStartPanel({ onGenerate, loading }) {
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+      {QUICK_START_PRESETS.map(p => (
+        <Card
+          key={p.label}
+          className="!p-4 cursor-pointer hover:ring-2 hover:ring-indigo-500/30 transition-all hover:shadow-md"
+          onClick={() => !loading && onGenerate(p.config)}
+        >
+          <div className="flex items-center gap-2 mb-2">
+            <div className="p-1.5 rounded-lg bg-indigo-50 dark:bg-indigo-900/20">
+              <p.icon className="w-4 h-4 text-indigo-600" />
+            </div>
+            <span className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{p.label}</span>
+          </div>
+          <p className="text-xs text-slate-400 leading-relaxed">{p.desc}</p>
+        </Card>
+      ))}
+    </div>
+  );
+}
+
 const EMPTY_DISRUPTION = { name: 'demand_spike', severity: 'medium', start_day: 60, duration_days: 14, target_material: '', target_plant: '' };
 
 function CustomDisruptionEditor({ disruptions, onChange, totalDays }) {
@@ -343,6 +397,7 @@ function GeneratorForm({ onGenerate, loading }) {
   });
   const [templateInfo, setTemplateInfo] = useState(null);
   const [customDisruptions, setCustomDisruptions] = useState([{ ...EMPTY_DISRUPTION }]);
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   useEffect(() => {
     api('/synthetic/scenario-templates').then(r => setTemplateInfo(r.templates)).catch(() => {});
@@ -381,44 +436,61 @@ function GeneratorForm({ onGenerate, loading }) {
   return (
     <Card>
       <SectionHeader icon={Database} title="Generate Dataset" />
-      <form onSubmit={handleSubmit} className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <label className="space-y-1">
-          <span className="text-xs text-slate-500">Seed</span>
-          <input type="number" value={cfg.seed} onChange={e => set('seed', e.target.value)} className={inputCls} />
-        </label>
-        <label className="space-y-1">
-          <span className="text-xs text-slate-500">FG Materials</span>
-          <input type="number" min={1} max={50} value={cfg.n_materials} onChange={e => set('n_materials', e.target.value)} className={inputCls} />
-        </label>
-        <label className="space-y-1">
-          <span className="text-xs text-slate-500">Plants</span>
-          <input type="number" min={1} max={10} value={cfg.n_plants} onChange={e => set('n_plants', e.target.value)} className={inputCls} />
-        </label>
-        <label className="space-y-1">
-          <span className="text-xs text-slate-500">Days</span>
-          <input type="number" min={30} max={1095} value={cfg.days} onChange={e => set('days', e.target.value)} className={inputCls} />
-        </label>
-        <label className="space-y-1">
-          <span className="text-xs text-slate-500">Chaos Intensity</span>
-          <select value={cfg.chaos_intensity} onChange={e => set('chaos_intensity', e.target.value)} className={inputCls}>
-            {['calm', 'low', 'medium', 'high', 'extreme'].map(v => <option key={v} value={v}>{v}</option>)}
-          </select>
-        </label>
-        <label className="space-y-1">
-          <span className="text-xs text-slate-500">Scenario</span>
-          <select value={cfg.scenario} onChange={e => set('scenario', e.target.value)} className={inputCls}>
-            {SCENARIO_TEMPLATES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
-          </select>
-        </label>
-        <label className="space-y-1">
-          <span className="text-xs text-slate-500">Suppliers</span>
-          <input type="number" min={1} max={20} value={cfg.n_suppliers} onChange={e => set('n_suppliers', e.target.value)} className={inputCls} />
-        </label>
-        <div className="flex items-end">
-          <Button variant="primary" icon={Play} disabled={loading} type="submit" className="w-full">
-            {loading ? 'Generating...' : 'Generate'}
-          </Button>
+      <form onSubmit={handleSubmit} className="space-y-3">
+        {/* Primary row — the 3 choices that matter + Generate */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <label className="space-y-1">
+            <span className="text-xs text-slate-500">Products</span>
+            <input type="number" min={1} max={50} value={cfg.n_materials} onChange={e => set('n_materials', e.target.value)} className={inputCls} title="Number of finished goods to simulate" />
+          </label>
+          <label className="space-y-1">
+            <span className="text-xs text-slate-500">Disruption Scenario</span>
+            <select value={cfg.scenario} onChange={e => set('scenario', e.target.value)} className={inputCls}>
+              {SCENARIO_TEMPLATES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+            </select>
+          </label>
+          <label className="space-y-1">
+            <span className="text-xs text-slate-500">Variability</span>
+            <select value={cfg.chaos_intensity} onChange={e => set('chaos_intensity', e.target.value)} className={inputCls} title="How much randomness in the data">
+              {['calm', 'low', 'medium', 'high', 'extreme'].map(v => <option key={v} value={v}>{v}</option>)}
+            </select>
+          </label>
+          <div className="flex items-end">
+            <Button variant="primary" icon={Play} disabled={loading} type="submit" className="w-full">
+              {loading ? 'Generating...' : 'Generate'}
+            </Button>
+          </div>
         </div>
+        {/* Advanced toggle */}
+        <button
+          type="button"
+          onClick={() => setShowAdvanced(!showAdvanced)}
+          className="flex items-center gap-1 text-xs text-slate-400 hover:text-indigo-600 transition-colors"
+        >
+          {showAdvanced ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+          Advanced Settings
+        </button>
+        {/* Advanced row */}
+        {showAdvanced && (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <label className="space-y-1">
+              <span className="text-xs text-slate-500">Random Seed</span>
+              <input type="number" value={cfg.seed} onChange={e => set('seed', e.target.value)} className={inputCls} title="Same seed = reproducible data" />
+            </label>
+            <label className="space-y-1">
+              <span className="text-xs text-slate-500">Factories</span>
+              <input type="number" min={1} max={10} value={cfg.n_plants} onChange={e => set('n_plants', e.target.value)} className={inputCls} title="Number of manufacturing locations" />
+            </label>
+            <label className="space-y-1">
+              <span className="text-xs text-slate-500">Time Span (days)</span>
+              <input type="number" min={30} max={1095} value={cfg.days} onChange={e => set('days', e.target.value)} className={inputCls} title="Simulation duration" />
+            </label>
+            <label className="space-y-1">
+              <span className="text-xs text-slate-500">Suppliers</span>
+              <input type="number" min={1} max={20} value={cfg.n_suppliers} onChange={e => set('n_suppliers', e.target.value)} className={inputCls} />
+            </label>
+          </div>
+        )}
       </form>
       {selectedTemplate && (
         <ScenarioExplainer disruptions={selectedTemplate.disruptions} totalDays={Number(cfg.days)} />
@@ -448,12 +520,15 @@ function ForecastLab({ datasetId, skus, salesLoader }) {
   const [result, setResult] = useState(null);
   const [historyData, setHistoryData] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [compareLoading, setCompareLoading] = useState(false);
+  const [compareResults, setCompareResults] = useState(null);
   const [error, setError] = useState('');
 
   const runForecast = async () => {
     if (!sku) return;
     setLoading(true);
     setError('');
+    setCompareResults(null);
     try {
       const [fcRes, salesRes] = await Promise.all([
         api(`/synthetic/datasets/${datasetId}/forecast`, {
@@ -472,6 +547,33 @@ function ForecastLab({ datasetId, skus, salesLoader }) {
       setError(err.message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const runModelCompare = async () => {
+    if (!sku) return;
+    setCompareLoading(true);
+    setError('');
+    try {
+      const models = ['holtwinters', 'prophet', 'linear'];
+      const [salesRes, ...fcResults] = await Promise.all([
+        api(`/synthetic/datasets/${datasetId}/sales?material_code=${sku}&days=365`),
+        ...models.map(m =>
+          api(`/synthetic/datasets/${datasetId}/forecast`, {
+            method: 'POST',
+            body: JSON.stringify({ material_code: sku, horizon_days: Number(horizon), model_type: m }),
+          }).catch(() => null)
+        ),
+      ]);
+      setHistoryData(salesRes.records || []);
+      const results = {};
+      models.forEach((m, i) => { if (fcResults[i]) results[m] = fcResults[i]; });
+      setCompareResults(results);
+      setResult(null);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setCompareLoading(false);
     }
   };
 
@@ -525,8 +627,11 @@ function ForecastLab({ datasetId, skus, salesLoader }) {
               {FORECAST_MODELS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
             </select>
           </label>
-          <Button variant="primary" icon={Zap} onClick={runForecast} disabled={loading || !sku}>
+          <Button variant="primary" icon={Zap} onClick={runForecast} disabled={loading || compareLoading || !sku}>
             {loading ? 'Running...' : 'Run Forecast'}
+          </Button>
+          <Button variant="secondary" icon={ArrowRightLeft} onClick={runModelCompare} disabled={loading || compareLoading || !sku} className="!text-xs">
+            {compareLoading ? 'Comparing...' : 'Compare All Models'}
           </Button>
         </div>
         {error && <p className="text-xs text-red-500 mt-2">{error}</p>}
@@ -569,6 +674,80 @@ function ForecastLab({ datasetId, skus, salesLoader }) {
               </ResponsiveContainer>
             </Card>
           )}
+        </>
+      )}
+
+      {/* Model-to-Model Comparison */}
+      {compareResults && Object.keys(compareResults).length > 0 && (
+        <>
+          <Card className="!p-4">
+            <p className="text-xs font-medium mb-3" style={{ color: 'var(--text-secondary)' }}>Model Comparison: {sku}</p>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b" style={{ borderColor: 'var(--border-default)' }}>
+                    <th className="text-left py-1.5 px-2 text-slate-500">Model</th>
+                    <th className="text-right py-1.5 px-2 text-slate-500">MAPE</th>
+                    <th className="text-right py-1.5 px-2 text-slate-500">MAE</th>
+                    <th className="text-right py-1.5 px-2 text-slate-500">History Pts</th>
+                    <th className="text-left py-1.5 px-2 text-slate-500">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {Object.entries(compareResults).map(([model, res]) => {
+                    const m = res?.forecast?.metrics || res?.forecast?.evaluation || {};
+                    const mName = res?.forecast?.model || model;
+                    return (
+                      <tr key={model} className="border-b" style={{ borderColor: 'var(--border-default)' }}>
+                        <td className="py-1.5 px-2 font-semibold" style={{ color: 'var(--text-primary)' }}>{FORECAST_MODELS.find(f => f.value === model)?.label || mName}</td>
+                        <td className="py-1.5 px-2 text-right">{m.mape != null ? <span className={m.mape < 0.15 ? 'text-emerald-600' : m.mape < 0.3 ? 'text-amber-600' : 'text-red-500'}>{(m.mape * 100).toFixed(1)}%</span> : '--'}</td>
+                        <td className="py-1.5 px-2 text-right" style={{ color: 'var(--text-primary)' }}>{m.mae != null ? m.mae.toFixed(1) : '--'}</td>
+                        <td className="py-1.5 px-2 text-right" style={{ color: 'var(--text-primary)' }}>{res?.history_points || '--'}</td>
+                        <td className="py-1.5 px-2"><Badge type="success">OK</Badge></td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+
+          {/* Overlay chart with all models */}
+          <Card className="!p-4">
+            <p className="text-xs font-medium mb-3" style={{ color: 'var(--text-secondary)' }}>Forecast Overlay ({horizon} days)</p>
+            <ResponsiveContainer width="100%" height={260}>
+              <ComposedChart data={(() => {
+                const histTail = (historyData || []).slice(-30);
+                const data = histTail.map((h, i) => ({ idx: i - histTail.length, history: h.sales }));
+                const maxLen = Math.max(...Object.values(compareResults).map(r => {
+                  const p = r?.forecast?.predictions || r?.forecast?.forecast || [];
+                  return p.length;
+                }));
+                for (let i = 0; i < maxLen; i++) {
+                  const pt = { idx: i + 1 };
+                  if (i === 0 && histTail.length > 0) pt.history = histTail[histTail.length - 1].sales;
+                  for (const [model, res] of Object.entries(compareResults)) {
+                    const preds = res?.forecast?.predictions || res?.forecast?.forecast || [];
+                    const p = preds[i];
+                    pt[model] = p != null ? (typeof p === 'number' ? p : (p.value ?? p.yhat ?? p.predicted)) : null;
+                  }
+                  data.push(pt);
+                }
+                return data;
+              })()}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--border-default)" />
+                <XAxis dataKey="idx" tick={{ fontSize: 10 }} />
+                <YAxis tick={{ fontSize: 10 }} />
+                <Tooltip contentStyle={TOOLTIP_STYLE} />
+                <Legend wrapperStyle={{ fontSize: 10 }} />
+                <Line type="monotone" dataKey="history" stroke="rgb(156,163,175)" strokeWidth={1.5} dot={false} name="History" connectNulls={false} />
+                <Line type="monotone" dataKey="holtwinters" stroke="rgb(99,102,241)" strokeWidth={2} dot={false} name="Holt-Winters" strokeDasharray="6 3" />
+                <Line type="monotone" dataKey="prophet" stroke="rgb(16,185,129)" strokeWidth={2} dot={false} name="Prophet" strokeDasharray="6 3" />
+                <Line type="monotone" dataKey="linear" stroke="rgb(249,115,22)" strokeWidth={2} dot={false} name="Linear" strokeDasharray="6 3" />
+                <ReferenceLine x={0} stroke="var(--border-default)" strokeDasharray="3 3" />
+              </ComposedChart>
+            </ResponsiveContainer>
+          </Card>
         </>
       )}
     </div>
@@ -739,6 +918,51 @@ function CompareView({ leftDataset, rightDataset, templateInfo }) {
         </Card>
       )}
 
+      {/* Inventory Level Overlay */}
+      {overlayData.length > 0 && overlayData.some(d => d.left_inventory != null) && (
+        <Card className="!p-4">
+          <p className="text-xs font-medium mb-3" style={{ color: 'var(--text-secondary)' }}>Inventory Level Overlay</p>
+          <ResponsiveContainer width="100%" height={220}>
+            <ComposedChart data={overlayData}>
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--border-default)" />
+              <XAxis dataKey="day" tick={{ fontSize: 10 }} />
+              <YAxis tick={{ fontSize: 10 }} />
+              <Tooltip contentStyle={TOOLTIP_STYLE} />
+              <Legend wrapperStyle={{ fontSize: 10 }} />
+              <Area type="monotone" dataKey="left_inventory" stroke="rgb(99,102,241)" fill="rgba(99,102,241,0.1)" strokeWidth={1.5} dot={false} name={`${lId.slice(-12)} inv`} />
+              <Area type="monotone" dataKey="right_inventory" stroke="rgb(249,115,22)" fill="rgba(249,115,22,0.1)" strokeWidth={1.5} dot={false} name={`${rId.slice(-12)} inv`} />
+            </ComposedChart>
+          </ResponsiveContainer>
+        </Card>
+      )}
+
+      {/* Summary Stats Comparison */}
+      <Card className="!p-4">
+        <p className="text-xs font-medium mb-3" style={{ color: 'var(--text-secondary)' }}>Summary Statistics</p>
+        <div className="grid grid-cols-2 gap-4 text-xs">
+          <div>
+            <p className="font-semibold mb-2 text-indigo-600">{lId.slice(-12)} (Baseline)</p>
+            <div className="space-y-1">
+              <p>Total Demand: <strong style={{ color: 'var(--text-primary)' }}>{(lk.total_demand || 0).toLocaleString()}</strong></p>
+              <p>Total Fulfilled: <strong style={{ color: 'var(--text-primary)' }}>{(lk.total_fulfilled || 0).toLocaleString()}</strong></p>
+              <p>Total Stockout: <strong style={{ color: '#ef4444' }}>{(lk.total_stockout || 0).toLocaleString()}</strong></p>
+              <p>Holding Cost: <strong style={{ color: 'var(--text-primary)' }}>${(lk.total_holding_cost || 0).toLocaleString()}</strong></p>
+              <p>Stockout Cost: <strong style={{ color: '#ef4444' }}>${(lk.total_stockout_cost || 0).toLocaleString()}</strong></p>
+            </div>
+          </div>
+          <div>
+            <p className="font-semibold mb-2 text-orange-600">{rId.slice(-12)} (Compare)</p>
+            <div className="space-y-1">
+              <p>Total Demand: <strong style={{ color: 'var(--text-primary)' }}>{(rk.total_demand || 0).toLocaleString()}</strong></p>
+              <p>Total Fulfilled: <strong style={{ color: 'var(--text-primary)' }}>{(rk.total_fulfilled || 0).toLocaleString()}</strong></p>
+              <p>Total Stockout: <strong style={{ color: '#ef4444' }}>{(rk.total_stockout || 0).toLocaleString()}</strong></p>
+              <p>Holding Cost: <strong style={{ color: 'var(--text-primary)' }}>${(rk.total_holding_cost || 0).toLocaleString()}</strong></p>
+              <p>Stockout Cost: <strong style={{ color: '#ef4444' }}>${(rk.total_stockout_cost || 0).toLocaleString()}</strong></p>
+            </div>
+          </div>
+        </div>
+      </Card>
+
       {/* By-Material Delta Table */}
       <CollapsibleSection icon={ClipboardList} title="By-Material Delta" count={deltaRows.length} defaultOpen>
         <DataTable
@@ -775,34 +999,34 @@ function CompareView({ leftDataset, rightDataset, templateInfo }) {
 //  Handoff Panel
 // ══════════════════════════════════════════════
 
-function HandoffPanel({ datasetId, descriptor, navigate, onUseAsDataset, onExportExcel }) {
+function HandoffPanel({ datasetId, descriptor, navigate, onHandoff, onExportExcel }) {
   const cards = [
     {
       icon: Upload,
       label: 'Use as Plan Dataset',
       desc: 'Load into Plan Studio as active dataset',
-      action: () => onUseAsDataset(datasetId),
+      action: () => onHandoff(datasetId, 'plan'),
       variant: 'primary',
+    },
+    {
+      icon: TrendingUp,
+      label: 'Run Forecast',
+      desc: 'Load dataset + auto-run demand forecast',
+      action: () => onHandoff(datasetId, 'forecast'),
+      variant: 'secondary',
+    },
+    {
+      icon: ShieldAlert,
+      label: 'Risk Analysis',
+      desc: 'Load dataset + run risk workflow',
+      action: () => onHandoff(datasetId, 'risk'),
+      variant: 'secondary',
     },
     {
       icon: Download,
       label: 'Export Excel',
       desc: 'Download as .xlsx for import into any module',
       action: () => onExportExcel(datasetId),
-      variant: 'secondary',
-    },
-    {
-      icon: TrendingUp,
-      label: 'Forecast Studio',
-      desc: 'Open Forecast Studio',
-      action: () => navigate('/forecast'),
-      variant: 'secondary',
-    },
-    {
-      icon: ShieldAlert,
-      label: 'Risk Center',
-      desc: 'Open Risk Center',
-      action: () => navigate('/risk'),
       variant: 'secondary',
     },
   ];
@@ -827,16 +1051,18 @@ function HandoffPanel({ datasetId, descriptor, navigate, onUseAsDataset, onExpor
 // ══════════════════════════════════════════════
 
 const EXPLORER_TABS = [
-  { key: 'overview', label: 'Overview', icon: BarChart3 },
-  { key: 'plant_sales', label: 'Plant Sales', icon: Factory },
-  { key: 'inventory', label: 'Stock Snapshots', icon: Package },
-  { key: 'purchase_orders', label: 'Purchase Orders', icon: Truck },
-  { key: 'bom', label: 'BOM Explorer', icon: GitBranch },
-  { key: 'forecast', label: 'Forecast Lab', icon: Zap },
-  { key: 'handoff', label: 'Handoff', icon: ExternalLink },
+  { key: 'overview', label: 'Overview', icon: BarChart3, group: 'data' },
+  { key: 'plant_sales', label: 'Plant Sales', icon: Factory, group: 'data' },
+  { key: 'inventory', label: 'Stock', icon: Package, group: 'data' },
+  { key: 'purchase_orders', label: 'POs', icon: Truck, group: 'supply' },
+  { key: 'goods_receipts', label: 'Receipts', icon: CheckCircle, group: 'supply' },
+  { key: 'quality', label: 'Quality', icon: AlertTriangle, group: 'supply' },
+  { key: 'bom', label: 'BOM', icon: GitBranch, group: 'supply' },
+  { key: 'forecast', label: 'Forecast Lab', icon: Zap, group: 'tools' },
+  { key: 'handoff', label: 'Handoff', icon: ExternalLink, group: 'tools' },
 ];
 
-function DatasetExplorer({ dataset, onDelete, onRefresh, onUseAsDataset, onExportExcel, navigate }) {
+function DatasetExplorer({ dataset, onDelete, onRefresh, onHandoff, onExportExcel, navigate }) {
   const { descriptor, kpis, summary } = dataset;
   const [activeTab, setActiveTab] = useState('overview');
   // Overview state
@@ -851,6 +1077,12 @@ function DatasetExplorer({ dataset, onDelete, onRefresh, onUseAsDataset, onExpor
   // PO state
   const [poData, setPoData] = useState(null);
   const [poFilter, setPoFilter] = useState({ material: '', plant: '' });
+  // Goods Receipts state
+  const [grData, setGrData] = useState(null);
+  const [grFilter, setGrFilter] = useState({ material: '', plant: '' });
+  // Quality Incidents state
+  const [qiData, setQiData] = useState(null);
+  const [qiFilter, setQiFilter] = useState({ material: '', plant: '' });
   // BOM state
   const [bomData, setBomData] = useState(null);
   const [bomFilter, setBomFilter] = useState('');
@@ -876,8 +1108,10 @@ function DatasetExplorer({ dataset, onDelete, onRefresh, onUseAsDataset, onExpor
 
   // Auto-load tab data on first visit
   useEffect(() => {
-    if (activeTab === 'stock' && !stockData && loadingSection !== 'stock') loadStock();
+    if (activeTab === 'inventory' && !stockData && loadingSection !== 'stock') loadStock();
     if (activeTab === 'purchase_orders' && !poData && loadingSection !== 'po') loadPOs();
+    if (activeTab === 'goods_receipts' && !grData && loadingSection !== 'gr') loadGoodsReceipts();
+    if (activeTab === 'quality' && !qiData && loadingSection !== 'qi') loadQualityIncidents();
     if (activeTab === 'bom' && !bomData && loadingSection !== 'bom') loadBom();
   }, [activeTab]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -926,6 +1160,32 @@ function DatasetExplorer({ dataset, onDelete, onRefresh, onUseAsDataset, onExpor
     } catch (err) { console.error(err); }
     finally { setLoadingSection(''); }
   }, [id, poFilter]);
+
+  const loadGoodsReceipts = useCallback(async () => {
+    setLoadingSection('gr');
+    try {
+      const params = new URLSearchParams();
+      if (grFilter.material) params.set('material_code', grFilter.material);
+      if (grFilter.plant) params.set('plant_id', grFilter.plant);
+      const qs = params.toString();
+      const res = await api(`/synthetic/datasets/${id}/goods-receipts${qs ? `?${qs}` : ''}`);
+      setGrData(res);
+    } catch (err) { console.error(err); }
+    finally { setLoadingSection(''); }
+  }, [id, grFilter]);
+
+  const loadQualityIncidents = useCallback(async () => {
+    setLoadingSection('qi');
+    try {
+      const params = new URLSearchParams();
+      if (qiFilter.material) params.set('material_code', qiFilter.material);
+      if (qiFilter.plant) params.set('plant_id', qiFilter.plant);
+      const qs = params.toString();
+      const res = await api(`/synthetic/datasets/${id}/quality-incidents${qs ? `?${qs}` : ''}`);
+      setQiData(res);
+    } catch (err) { console.error(err); }
+    finally { setLoadingSection(''); }
+  }, [id, qiFilter]);
 
   const loadBom = useCallback(async () => {
     setLoadingSection('bom');
@@ -1244,6 +1504,126 @@ function DatasetExplorer({ dataset, onDelete, onRefresh, onUseAsDataset, onExpor
         </Card>
       )}
 
+      {/* ── Goods Receipts Tab ── */}
+      {activeTab === 'goods_receipts' && (
+        <Card>
+          <SectionHeader icon={CheckCircle} title="Goods Receipts" count={grData?.count} />
+          <div className="flex items-end gap-3 flex-wrap mb-3">
+            <label className="space-y-1">
+              <span className="text-xs text-slate-500">Material</span>
+              <select value={grFilter.material} onChange={e => setGrFilter(p => ({ ...p, material: e.target.value }))} className={selectCls}>
+                <option value="">All</option>
+                {skus.map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </label>
+            <label className="space-y-1">
+              <span className="text-xs text-slate-500">Plant</span>
+              <select value={grFilter.plant} onChange={e => setGrFilter(p => ({ ...p, plant: e.target.value }))} className={selectCls}>
+                <option value="">All</option>
+                {plantIds.map(p => <option key={p} value={p}>{p}</option>)}
+              </select>
+            </label>
+            <Button variant="secondary" icon={RefreshCw} onClick={loadGoodsReceipts} disabled={loadingSection === 'gr'} className="!text-xs">
+              {loadingSection === 'gr' ? 'Loading...' : 'Load'}
+            </Button>
+          </div>
+          {grData ? (
+            <>
+              <div className="flex gap-4 mb-3 text-xs">
+                <span className="text-slate-500">Total GRs: <strong style={{ color: 'var(--text-primary)' }}>{grData.count}</strong></span>
+                {grData.goods_receipts?.length > 0 && (
+                  <>
+                    <span className="text-slate-500">
+                      Total Received: <strong style={{ color: 'var(--text-primary)' }}>{grData.goods_receipts.reduce((s, g) => s + (g.received_qty || 0), 0).toLocaleString()}</strong>
+                    </span>
+                    <span className="text-slate-500">
+                      Total Rejected: <strong style={{ color: '#ef4444' }}>{grData.goods_receipts.reduce((s, g) => s + (g.rejected_qty || 0), 0).toLocaleString()}</strong>
+                    </span>
+                  </>
+                )}
+              </div>
+              <DataTable
+                rows={grData.goods_receipts || []}
+                columns={[
+                  { key: 'receipt_date', label: 'Receipt Date' },
+                  { key: 'gr_id', label: 'GR ID' },
+                  { key: 'po_id', label: 'PO ID' },
+                  { key: 'material_code', label: 'Material' },
+                  { key: 'plant_id', label: 'Plant' },
+                  { key: 'received_qty', label: 'Received', render: v => Number(v).toLocaleString() },
+                  { key: 'accepted_qty', label: 'Accepted', render: v => Number(v).toLocaleString() },
+                  { key: 'rejected_qty', label: 'Rejected', render: v => v > 0 ? <span style={{color:'#ef4444'}}>{Number(v).toLocaleString()}</span> : '0' },
+                  { key: 'total_value', label: 'Value', render: v => `$${Number(v).toLocaleString()}` },
+                ]}
+                maxRows={200}
+              />
+            </>
+          ) : (
+            <p className="text-xs text-slate-400 py-4 text-center">{loadingSection === 'gr' ? 'Loading goods receipts...' : 'No goods receipt data available. Click Load to retry.'}</p>
+          )}
+        </Card>
+      )}
+
+      {/* ── Quality Incidents Tab ── */}
+      {activeTab === 'quality' && (
+        <Card>
+          <SectionHeader icon={AlertTriangle} title="Quality Incidents" count={qiData?.count} />
+          <div className="flex items-end gap-3 flex-wrap mb-3">
+            <label className="space-y-1">
+              <span className="text-xs text-slate-500">Material</span>
+              <select value={qiFilter.material} onChange={e => setQiFilter(p => ({ ...p, material: e.target.value }))} className={selectCls}>
+                <option value="">All</option>
+                {skus.map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </label>
+            <label className="space-y-1">
+              <span className="text-xs text-slate-500">Plant</span>
+              <select value={qiFilter.plant} onChange={e => setQiFilter(p => ({ ...p, plant: e.target.value }))} className={selectCls}>
+                <option value="">All</option>
+                {plantIds.map(p => <option key={p} value={p}>{p}</option>)}
+              </select>
+            </label>
+            <Button variant="secondary" icon={RefreshCw} onClick={loadQualityIncidents} disabled={loadingSection === 'qi'} className="!text-xs">
+              {loadingSection === 'qi' ? 'Loading...' : 'Load'}
+            </Button>
+          </div>
+          {qiData ? (
+            <>
+              <div className="flex gap-4 mb-3 text-xs">
+                <span className="text-slate-500">Total Incidents: <strong style={{ color: 'var(--text-primary)' }}>{qiData.count}</strong></span>
+                {qiData.quality_incidents?.length > 0 && (
+                  <>
+                    <span className="text-slate-500">
+                      Open: <strong style={{ color: '#ef4444' }}>{qiData.quality_incidents.filter(q => q.status === 'open').length}</strong>
+                    </span>
+                    <span className="text-slate-500">
+                      Resolved: <strong style={{ color: '#22c55e' }}>{qiData.quality_incidents.filter(q => q.status === 'resolved').length}</strong>
+                    </span>
+                  </>
+                )}
+              </div>
+              <DataTable
+                rows={qiData.quality_incidents || []}
+                columns={[
+                  { key: 'incident_date', label: 'Date' },
+                  { key: 'incident_id', label: 'ID' },
+                  { key: 'material_code', label: 'Material' },
+                  { key: 'plant_id', label: 'Plant' },
+                  { key: 'severity', label: 'Severity', render: v => <Badge type={v === 'critical' || v === 'high' ? 'danger' : v === 'medium' ? 'warning' : 'info'}>{v}</Badge> },
+                  { key: 'defect_rate', label: 'Defect Rate', render: v => `${(v * 100).toFixed(1)}%` },
+                  { key: 'affected_qty', label: 'Affected Qty', render: v => Number(v).toLocaleString() },
+                  { key: 'status', label: 'Status', render: v => <Badge type={v === 'open' ? 'danger' : 'success'}>{v}</Badge> },
+                  { key: 'description', label: 'Description' },
+                ]}
+                maxRows={200}
+              />
+            </>
+          ) : (
+            <p className="text-xs text-slate-400 py-4 text-center">{loadingSection === 'qi' ? 'Loading quality incidents...' : 'No quality incident data available. Click Load to retry.'}</p>
+          )}
+        </Card>
+      )}
+
       {/* ── BOM Explorer Tab ── */}
       {activeTab === 'bom' && (
         <Card>
@@ -1296,7 +1676,7 @@ function DatasetExplorer({ dataset, onDelete, onRefresh, onUseAsDataset, onExpor
             datasetId={id}
             descriptor={descriptor}
             navigate={navigate}
-            onUseAsDataset={onUseAsDataset}
+            onHandoff={onHandoff}
             onExportExcel={onExportExcel}
           />
         </div>
@@ -1359,13 +1739,25 @@ export default function SyntheticERPSandbox() {
     }
   }, [refreshList]);
 
-  const handleUseAsDataset = useCallback(async (datasetId) => {
+  const handleHandoff = useCallback(async (datasetId, target) => {
     setError('');
     try {
       const exportData = await api(`/synthetic/datasets/${datasetId}/planning-export`);
-      navigate('/plan', { state: { syntheticDataset: exportData } });
+      // Store in localStorage for cross-module access
+      localStorage.setItem('di_synth_handoff', JSON.stringify({
+        ...exportData,
+        handoff_target: target,
+        handoff_at: new Date().toISOString(),
+      }));
+      // Navigate to Plan Studio with synth data + autoRun intent
+      navigate('/plan', {
+        state: {
+          syntheticDataset: exportData,
+          autoRun: target !== 'plan' ? target : undefined,
+        },
+      });
     } catch (err) {
-      setError(`Failed to load dataset for planning: ${err.message}`);
+      setError(`Failed to load dataset for ${target}: ${err.message}`);
     }
   }, [navigate]);
 
@@ -1462,12 +1854,18 @@ export default function SyntheticERPSandbox() {
       {/* Generator */}
       {!compareMode && <GeneratorForm onGenerate={handleGenerate} loading={loading} />}
 
-      {/* Dataset list */}
+      {/* Welcome / Quick-start */}
       {!compareMode && datasets.length === 0 && !loading && (
-        <Card className="text-center !py-12">
-          <Database className="w-10 h-10 mx-auto text-slate-300 dark:text-slate-600 mb-3" />
-          <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>No datasets yet. Generate one above.</p>
-        </Card>
+        <div className="space-y-4">
+          <div className="text-center py-4">
+            <Database className="w-10 h-10 mx-auto text-indigo-300 dark:text-indigo-600 mb-3" />
+            <h2 className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>Create Your First Dataset</h2>
+            <p className="text-sm mt-1" style={{ color: 'var(--text-secondary)' }}>
+              Pick a scenario below to generate synthetic ERP data instantly, or configure your own above.
+            </p>
+          </div>
+          <QuickStartPanel onGenerate={handleGenerate} loading={loading} />
+        </div>
       )}
 
       {!compareMode && datasets.map(ds => (
@@ -1476,7 +1874,7 @@ export default function SyntheticERPSandbox() {
           dataset={ds}
           onDelete={handleDelete}
           onRefresh={refreshList}
-          onUseAsDataset={handleUseAsDataset}
+          onHandoff={handleHandoff}
           onExportExcel={handleExportExcel}
           navigate={navigate}
         />

@@ -13,6 +13,7 @@
 import { NegotiationSolverRunner } from './negotiation-solver-runner.js';
 import { computeSupplierTypePriors } from './negotiation-types.js';
 import { ACTION_LIST, DEFAULT_CFR_INFLUENCE, OPTION_TO_CFR_ACTION } from './negotiation-types.js';
+import { BinaryStrategyReader } from './binary-strategy-format.js';
 
 // ---------------------------------------------------------------------------
 // Lookup Service
@@ -86,6 +87,61 @@ export class NegotiationLookupService {
     }
 
     this._loaded = true;
+  }
+
+  /**
+   * Load strategies from a binary .cfr2 buffer (or gzip-compressed).
+   *
+   * Binary format stores flat key→probs mappings. Keys follow the convention
+   * "scenarioId::buyerBucket|infoKey" so we can reconstruct the nested map
+   * structure. If keys don't contain "::", they are stored under a default
+   * composite key of "default::0".
+   *
+   * @param {Buffer} buffer - Raw or gzip-compressed binary strategy buffer
+   * @param {Object} [keyMap] - Optional map from info-set key → { scenarioId, buyerBucket }
+   *                            If provided, overrides key parsing for all entries.
+   */
+  loadFromBinary(buffer, keyMap) {
+    const reader = new BinaryStrategyReader(buffer);
+    this._binaryReader = reader;
+    this._binaryKeyMap = keyMap || null;
+    this._loaded = true;
+
+    // If a keyMap is provided, pre-populate the in-memory maps for
+    // consistent access via lookupStrategy's existing paths.
+    if (keyMap) {
+      this._strategies = new Map();
+      this._meta = new Map();
+      for (const [key, mapping] of Object.entries(keyMap)) {
+        const probs = reader.lookup(key);
+        if (!probs) continue;
+        const compositeKey = `${mapping.scenarioId}::${mapping.buyerBucket}`;
+        if (!this._strategies.has(compositeKey)) {
+          this._strategies.set(compositeKey, new Map());
+          this._meta.set(compositeKey, {
+            scenario_id: mapping.scenarioId,
+            buyer_bucket: mapping.buyerBucket,
+            stats: { iterations: reader.iterations, entryCount: reader.entryCount },
+          });
+        }
+        this._strategies.get(compositeKey).set(key, {
+          numActions: probs.length,
+          averageStrategy: probs,
+        });
+      }
+    }
+  }
+
+  /**
+   * Direct binary lookup by raw info-set key string.
+   * Bypasses the nested map structure for O(log n) access.
+   *
+   * @param {string} key - Raw info-set key (e.g., 'B|2|OPENING|')
+   * @returns {number[]|null} Dequantized action probabilities, or null
+   */
+  lookupBinary(key) {
+    if (!this._binaryReader) return null;
+    return this._binaryReader.lookup(key);
   }
 
   /**

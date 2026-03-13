@@ -187,8 +187,14 @@ export default function ReleaseTab({
     // Mark completed steps
     steps[0].status = 'complete'; // Draft always complete if exists
 
-    // Sandbox - assume complete if they got here (TODO: check for test runs)
-    steps[1].status = 'complete';
+    // Sandbox — reflect actual regression test results
+    if (regressionSummary.total === 0) {
+      steps[1].status = status === 'draft' ? 'current' : 'pending';
+    } else if (regressionSummary.overallPassed) {
+      steps[1].status = 'complete';
+    } else {
+      steps[1].status = 'failed';
+    }
 
     if (status === 'pending_approval') {
       steps[2].status = 'complete';
@@ -223,10 +229,15 @@ export default function ReleaseTab({
                   ${step.status === 'complete' ? 'bg-green-500 text-white' : ''}
                   ${step.status === 'current' ? 'bg-indigo-600 text-white ring-4 ring-indigo-100' : ''}
                   ${step.status === 'pending' ? 'bg-gray-200 text-gray-500' : ''}
+                  ${step.status === 'failed' ? 'bg-red-500 text-white ring-4 ring-red-100' : ''}
                 `}>
                   {step.status === 'complete' ? (
                     <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
                       <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                    </svg>
+                  ) : step.status === 'failed' ? (
+                    <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
                     </svg>
                   ) : (
                     idx + 1
@@ -234,7 +245,9 @@ export default function ReleaseTab({
                 </div>
                 <span className={`
                   mt-2 text-xs font-medium
-                  ${step.status === 'current' ? 'text-indigo-600' : 'text-gray-500'}
+                  ${step.status === 'current' ? 'text-indigo-600' : ''}
+                  ${step.status === 'failed' ? 'text-red-600' : ''}
+                  ${step.status !== 'current' && step.status !== 'failed' ? 'text-gray-500' : ''}
                 `}>
                   {step.label}
                 </span>
@@ -242,7 +255,9 @@ export default function ReleaseTab({
               {idx < workflowSteps.length - 1 && (
                 <div className={`
                   w-16 h-0.5 mx-2
-                  ${step.status === 'complete' ? 'bg-green-500' : 'bg-gray-200'}
+                  ${step.status === 'complete' ? 'bg-green-500' : ''}
+                  ${step.status === 'failed' ? 'bg-red-400' : ''}
+                  ${step.status !== 'complete' && step.status !== 'failed' ? 'bg-gray-200' : ''}
                 `} />
               )}
             </div>

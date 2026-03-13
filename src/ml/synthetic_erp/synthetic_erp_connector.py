@@ -153,6 +153,42 @@ class SyntheticERPConnector:
             pos = [p for p in pos if p["plant_id"] == plant_id]
         return pos
 
+    def get_goods_receipts(
+        self,
+        material_code: Optional[str] = None,
+        plant_id: Optional[str] = None,
+    ) -> List[Dict]:
+        """Get goods receipt records."""
+        data = self._registry.get(self._dataset_id)
+        if data is None:
+            return []
+        inv = data.get("inventory_data") or {}
+        grs = inv.get("goods_receipts", [])
+
+        if material_code:
+            grs = [g for g in grs if g["material_code"] == material_code]
+        if plant_id:
+            grs = [g for g in grs if g["plant_id"] == plant_id]
+        return grs
+
+    def get_quality_incidents(
+        self,
+        material_code: Optional[str] = None,
+        plant_id: Optional[str] = None,
+    ) -> List[Dict]:
+        """Get quality incident records."""
+        data = self._registry.get(self._dataset_id)
+        if data is None:
+            return []
+        inv = data.get("inventory_data") or {}
+        incidents = inv.get("quality_incidents", [])
+
+        if material_code:
+            incidents = [i for i in incidents if i["material_code"] == material_code]
+        if plant_id:
+            incidents = [i for i in incidents if i["plant_id"] == plant_id]
+        return incidents
+
     def get_bom_edges(self, parent_material: Optional[str] = None) -> List[Dict]:
         """Get BOM edges matching bom_edges table shape."""
         data = self._registry.get(self._dataset_id)
@@ -298,12 +334,20 @@ class SyntheticERPConnector:
                 "materials": ",".join(s.materials) if s.materials else "",
             })
 
+        # ── goods_receipt ──
+        gr_rows = inv.get("goods_receipts", [])
+
+        # ── quality_incident ──
+        qi_rows = inv.get("quality_incidents", [])
+
         sheets = {
             "demand_fg": demand_rows,
             "inventory_snapshots": inventory_rows,
             "po_open_lines": po_rows,
             "bom_edge": bom_rows,
             "supplier_master": supplier_rows,
+            "goods_receipt": gr_rows,
+            "quality_incident": qi_rows,
         }
 
         # Identity mapping — field names already match planning pipeline expectations
@@ -331,6 +375,14 @@ class SyntheticERPConnector:
                 _make_dataset_entry("supplier_master", "supplier_master",
                     ["supplier_id", "name", "country", "reliability",
                      "defect_rate", "base_lead_time", "materials"]),
+                _make_dataset_entry("goods_receipt", "goods_receipt",
+                    ["gr_id", "po_id", "material_code", "plant_id", "receipt_date",
+                     "received_qty", "accepted_qty", "rejected_qty", "unit_cost",
+                     "total_value", "status"]),
+                _make_dataset_entry("quality_incident", "quality_incident",
+                    ["incident_id", "material_code", "plant_id", "incident_date",
+                     "severity", "type", "defect_rate", "affected_qty",
+                     "description", "status"]),
             ],
             "validation": {"status": "pass", "reasons": []},
         }
@@ -346,6 +398,8 @@ class SyntheticERPConnector:
                 {"sheet_name": "po_open_lines", "likely_role": "po_open_lines", "confidence": 1.0},
                 {"sheet_name": "bom_edge", "likely_role": "bom_edge", "confidence": 1.0},
                 {"sheet_name": "supplier_master", "likely_role": "supplier_master", "confidence": 1.0},
+                {"sheet_name": "goods_receipt", "likely_role": "goods_receipt", "confidence": 1.0},
+                {"sheet_name": "quality_incident", "likely_role": "quality_incident", "confidence": 1.0},
             ],
         }
 
@@ -393,8 +447,9 @@ class SyntheticERPConnector:
             days=days, start_date=start_date,
         )
 
-        # 3. Apply scenarios (demand-side only at generation time)
+        # 3. Apply scenarios (demand-side + supply-side)
         disruption_names = []
+        supply_events = []
         if disruptions_raw:
             specs = []
             for d in disruptions_raw:
@@ -407,13 +462,19 @@ class SyntheticERPConnector:
                     disruption_names.append(d.get("name", "custom"))
 
             engine = ScenarioEngine(seed=seed)
+            # Apply demand-side disruptions (demand_spike, demand_crash)
             demand_data = engine.apply_demand(specs, demand_data)
+            # Convert supply-side disruptions to ChaosEvents
+            supply_events = engine.to_supply_events(specs)
 
         # 4. Run inventory simulation
         inv_sim = SyntheticInventorySimulator(
             master_data=master_data, demand_data=demand_data,
             seed=seed, chaos_intensity=chaos_intensity,
         )
+        # Inject supply-side disruption events into chaos engines
+        if supply_events:
+            inv_sim.inject_supply_events(supply_events)
         inventory_data = inv_sim.run(days=days)
 
         # 5. Compute KPIs

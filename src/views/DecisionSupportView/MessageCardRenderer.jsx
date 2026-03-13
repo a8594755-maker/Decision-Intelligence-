@@ -42,6 +42,10 @@ import ApprovalReminderCard from '../../components/chat/ApprovalReminderCard';
 import DigitalTwinSimulationCard from '../../components/chat/DigitalTwinSimulationCard';
 import NegotiationPanel from '../../components/chat/NegotiationPanel';
 import NegotiationActionCard from '../../components/chat/NegotiationActionCard';
+import DecisionBundleCard from '../../components/chat/DecisionBundleCard';
+import CausalGraphCard from '../../components/chat/CausalGraphCard';
+import WarRoomCard from '../../components/chat/WarRoomCard';
+import MacroOracleAlertCard from '../../components/chat/MacroOracleAlertCard';
 import { toPositiveRunId } from './helpers.js';
 
 /**
@@ -387,6 +391,14 @@ export default function MessageCardRenderer({ message, handlers, state }) {
       />
     );
   }
+  if (message.type === 'decision_bundle_card') {
+    return (
+      <DecisionBundleCard
+        payload={message.payload}
+        onActionClick={handlers.handleDecisionBundleAction}
+      />
+    );
+  }
   if (message.type === 'negotiation_card') {
     return (
       <NegotiationPanel
@@ -398,6 +410,38 @@ export default function MessageCardRenderer({ message, handlers, state }) {
         negotiationReport={message.payload?.negotiation_report}
         onGenerateOptions={() => handleGenerateNegotiationOptions(message.payload)}
         onApplyOption={(option, evalResult) => handleApplyNegotiationOption(option, evalResult, message.payload)}
+      />
+    );
+  }
+  if (message.type === 'causal_graph_card') {
+    return (
+      <CausalGraphCard
+        payload={message.payload}
+        onActionClick={handlers.handleDecisionBundleAction}
+      />
+    );
+  }
+  if (message.type === 'war_room_card') {
+    return (
+      <WarRoomCard
+        payload={message.payload}
+        onActionClick={handlers.handleDecisionBundleAction}
+      />
+    );
+  }
+  if (message.type === 'negotiation_approval_card') {
+    return (
+      <DecisionBundleCard
+        payload={message.payload}
+        onActionClick={handlers.handleDecisionBundleAction}
+      />
+    );
+  }
+  if (message.type === 'macro_oracle_alert') {
+    return (
+      <MacroOracleAlertCard
+        payload={message.payload}
+        onAction={handlers.handleDecisionBundleAction}
       />
     );
   }

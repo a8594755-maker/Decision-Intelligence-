@@ -64,11 +64,24 @@ export const mapDomainRiskToTableRow = (domainRisk, inventoryData = {}, options 
     shortageDate.setDate(shortageDate.getDate() + Math.floor(daysToStockout));
   }
 
-  // TODO: Next inbound ETA should be fetched from po_open_lines
-  const nextInboundEta = options.nextInboundEta || null;
+  // Derive next inbound ETA and inbound qty from po_open_lines if provided.
+  // poLines should be pre-filtered to the relevant material + plant by the caller.
+  // Each line: { material_code, plant_id, time_bucket, open_qty, status? }
+  const poLines = (options.poLines || []).filter(
+    l => l.material_code === (item || materialCode) && (!l.plant_id || l.plant_id === plantId)
+  );
 
-  // TODO: Inbound qty (horizon) should be aggregated from po_open_lines
-  const inboundQtyInHorizon = 0;
+  // Next inbound ETA = earliest time_bucket among open PO lines
+  const nextInboundEta = poLines.length > 0
+    ? poLines.reduce((min, l) => (!min || l.time_bucket < min ? l.time_bucket : min), null)
+    : (options.nextInboundEta || null);
+
+  // Inbound qty in horizon = sum of open_qty for lines within the supplied timeBuckets
+  // Fall back to summing all lines when no bucket filter is provided.
+  const horizonBuckets = options.timeBuckets || null;
+  const inboundQtyInHorizon = poLines
+    .filter(l => !horizonBuckets || horizonBuckets.includes(l.time_bucket))
+    .reduce((sum, l) => sum + (Number(l.open_qty) || 0), 0);
 
   return {
     // Identification (unified using item as material code field)
@@ -174,6 +187,29 @@ export const formatNumber = (num) => {
  * @param {Array} warnings - Warning info (optional)
  * @returns {Object} uiRow
  */
+/**
+ * Derive ETA / inbound qty from a raw po_open_lines array.
+ * Returns { nextInboundEta, inboundQtyInHorizon }.
+ * Exported so callers can pre-compute before passing to the mapper.
+ *
+ * @param {Array}  poLines      - Raw rows from po_open_lines (pre-filtered to material+plant)
+ * @param {Array}  [timeBuckets] - Horizon bucket strings to restrict qty aggregation
+ */
+export function derivePoInboundMetrics(poLines = [], timeBuckets = null) {
+  if (!poLines.length) return { nextInboundEta: null, inboundQtyInHorizon: 0 };
+
+  const nextInboundEta = poLines.reduce(
+    (min, l) => (!min || l.time_bucket < min ? l.time_bucket : min),
+    null
+  );
+
+  const inboundQtyInHorizon = poLines
+    .filter(l => !timeBuckets || timeBuckets.includes(l.time_bucket))
+    .reduce((sum, l) => sum + (Number(l.open_qty) || 0), 0);
+
+  return { nextInboundEta, inboundQtyInHorizon };
+}
+
 export const mapSupplyCoverageToUI = (domainResult, warnings = []) => {
   const {
     item,
@@ -252,10 +288,20 @@ export const mapSupplyCoverageToUI = (domainResult, warnings = []) => {
     urgencyScore,
     
     // Supply Coverage specific (Bucket-Based)
+    // If caller passes raw po_open_lines via domainResult.poLines, derive precise metrics.
+    // Otherwise fall back to domain-computed bucket values.
+    ...(() => {
+      if (domainResult.poLines?.length) {
+        return derivePoInboundMetrics(domainResult.poLines);
+      }
+      return {
+        nextInboundEta: nextTimeBucket,
+        inboundQtyInHorizon: inboundQtyHorizon,
+      };
+    })(),
     inboundCount: inboundCountHorizon,
     inboundQty: inboundQtyHorizon,
     nextTimeBucket: nextTimeBucket,        // Display time_bucket (e.g. 2026-W05)
-    nextInboundEta: nextTimeBucket,        // Backward compatible (for Table)
     daysUntilNextInbound: null,            // Not applicable in Bucket-based
     horizonBuckets: horizonBuckets,
     currentBucket: currentBucket,

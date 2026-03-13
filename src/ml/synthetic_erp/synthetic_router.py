@@ -171,6 +171,30 @@ async def get_bom_edges(
     return {"count": len(edges), "bom_edges": edges}
 
 
+@router.get("/datasets/{dataset_id}/goods-receipts")
+async def get_goods_receipts(
+    dataset_id: str,
+    material_code: Optional[str] = None,
+    plant_id: Optional[str] = None,
+):
+    """Get goods receipt records."""
+    connector = _get_connector(dataset_id)
+    grs = connector.get_goods_receipts(material_code, plant_id)
+    return {"count": len(grs), "goods_receipts": grs[:1000]}
+
+
+@router.get("/datasets/{dataset_id}/quality-incidents")
+async def get_quality_incidents(
+    dataset_id: str,
+    material_code: Optional[str] = None,
+    plant_id: Optional[str] = None,
+):
+    """Get quality incident records."""
+    connector = _get_connector(dataset_id)
+    incidents = connector.get_quality_incidents(material_code, plant_id)
+    return {"count": len(incidents), "quality_incidents": incidents[:1000]}
+
+
 @router.get("/datasets/{dataset_id}/kpis")
 async def get_kpis(dataset_id: str):
     """Get computed KPIs for a dataset."""

@@ -600,6 +600,17 @@ const RiskDashboardView = ({ addNotification, user, setView, globalDataSource, _
     setSelectedRow(null);
   };
 
+  // Card-level Expedite/Substitute: open the DetailsPanel for that row.
+  // DetailsPanel already has a full What-if Expedite simulator (M3).
+  // For substitutes, the BOM Trace tab in DetailsPanel shows alt_group data.
+  const handleCardExpedite = (riskData) => {
+    setSelectedRow(riskData);
+  };
+
+  const handleCardSubstitute = (riskData) => {
+    setSelectedRow(riskData);
+  };
+
   const handleClearFilters = () => {
     setSelectedPlant('all');
     setSearchTerm('');
@@ -1273,6 +1284,8 @@ const RiskDashboardView = ({ addNotification, user, setView, globalDataSource, _
                 selectedRowId={selectedRow?.id}
                 onRowSelect={handleRowSelect}
                 loading={loading}
+                onExpedite={handleCardExpedite}
+                onSubstitute={handleCardSubstitute}
               />
             )}
             {viewMode === 'list' && (

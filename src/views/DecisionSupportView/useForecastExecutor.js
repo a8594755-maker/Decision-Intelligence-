@@ -6,6 +6,8 @@
 import { useState, useCallback } from 'react';
 import { runForecastFromDatasetProfile, buildForecastCardPayload } from '../../services/chatForecastService';
 import { buildDataSummaryCardPayload } from '../../services/chatDatasetProfilingService';
+import { buildDecisionBundle } from '../../services/decisionTaskService';
+import { assembleForecastEvidence } from '../../services/evidenceAssembler';
 import {
   buildRuntimeWorkflowSettings,
   buildExecutionGateResult,
@@ -165,6 +167,44 @@ export default function useForecastExecutor({
           timestamp: new Date().toISOString(),
         },
       ]);
+
+      // --- Decision Bundle Card for forecast ---
+      try {
+        const metrics = forecastResult?.metrics || cardPayload?.metrics || {};
+        const forecastEvidence = assembleForecastEvidence({
+          runId: forecastResult?.run?.id,
+          metrics,
+        });
+        const mapeValue = metrics.mape != null ? `${Number(metrics.mape).toFixed(1)}%` : 'N/A';
+        const modelName = metrics.selected_model_global || 'auto';
+        const forecastBundle = buildDecisionBundle({
+          summary: `Forecast completed with MAPE ${mapeValue} using ${modelName} model. ${metrics.groups_processed || 0} group(s) processed over ${metrics.horizon_periods || 0} periods.`,
+          recommendation: {
+            text: 'Proceed with plan optimization using this forecast.',
+            action_type: 'run_plan',
+            confidence: metrics.mape != null && metrics.mape < 20 ? 0.85 : 0.6,
+          },
+          drivers: [
+            { label: 'MAPE', value: mapeValue, direction: metrics.mape != null && metrics.mape < 15 ? 'positive' : metrics.mape > 25 ? 'negative' : 'neutral' },
+            { label: 'Model', value: modelName, direction: 'neutral' },
+            { label: 'Horizon', value: `${metrics.horizon_periods || 0}p`, direction: 'neutral' },
+          ],
+          evidence_refs: forecastEvidence,
+          next_actions: [
+            { action_id: 'run_plan', label: 'Run Plan', priority: 1 },
+            { action_id: 'run_risk_plan', label: 'Risk-Aware Plan', priority: 2 },
+            { action_id: 'run_what_if', label: 'What-If Scenario', priority: 3 },
+          ],
+        });
+        appendMessagesToCurrentConversation([{
+          role: 'ai',
+          type: 'decision_bundle_card',
+          payload: forecastBundle,
+          timestamp: new Date().toISOString(),
+        }]);
+      } catch (bundleErr) {
+        console.warn('[useForecastExecutor] Decision bundle generation failed:', bundleErr?.message);
+      }
 
       if (actualVsForecastRows.length > 0) {
         const forecastSeriesGroups = Array.isArray(cardPayload.series_groups) ? cardPayload.series_groups : [];

@@ -201,6 +201,7 @@ def summarize_solver_health(
     window_label: str = "24h",
     window_start: Optional[datetime] = None,
     queue_snapshot: Optional[Dict[str, Any]] = None,
+    solve_time_slo_ms: Optional[float] = None,
 ) -> Dict[str, Any]:
     now_dt = now or _utc_now()
     if now_dt.tzinfo is None:
@@ -218,6 +219,7 @@ def summarize_solver_health(
     outcome_counts = {"success": 0, "timeout": 0, "infeasible": 0, "other": 0}
     current_backlog_jobs = 0
     current_running_jobs = 0
+    slo_breach_count = 0
 
     for row in rows or []:
         outcome = _classify_outcome(row.get("planning_status"), row.get("termination_reason"))
@@ -227,6 +229,8 @@ def summarize_solver_health(
         solve_time = _safe_float(row.get("solve_time_ms"))
         if solve_time is not None and solve_time >= 0:
             solve_times.append(solve_time)
+            if solve_time_slo_ms is not None and solve_time > solve_time_slo_ms:
+                slo_breach_count += 1
 
         created_at = _parse_datetime(row.get("created_at"))
         started_at = _parse_datetime(row.get("started_at"))
@@ -277,8 +281,11 @@ def summarize_solver_health(
     if queue_wait_for_alert is None:
         queue_wait_for_alert = 0.0
 
+    solve_time_p10 = _percentile(solve_times, 0.10)
     solve_time_p50 = _percentile(solve_times, 0.50)
     solve_time_p95 = _percentile(solve_times, 0.95)
+    n_solve = len(solve_times)
+    slo_breach_rate = round(slo_breach_count / n_solve, 6) if n_solve > 0 else None
 
     return {
         "window": str(window_label),
@@ -296,9 +303,13 @@ def summarize_solver_health(
             "other_rate": round(other_rate, 6),
         },
         "solve_time_ms": {
-            "count": int(len(solve_times)),
+            "count": int(n_solve),
+            "p10": solve_time_p10,
             "p50": solve_time_p50,
             "p95": solve_time_p95,
+            "slo_ms": solve_time_slo_ms,
+            "slo_breach_count": int(slo_breach_count) if solve_time_slo_ms is not None else None,
+            "slo_breach_rate": slo_breach_rate if solve_time_slo_ms is not None else None,
         },
         "queue": {
             "observed_queue_wait_samples": int(len(wait_samples)),
@@ -575,6 +586,7 @@ def collect_solver_health(
             window_label=label,
             window_start=since,
             queue_snapshot=queue_snapshot,
+            solve_time_slo_ms=threshold_cfg.solve_time_slo_ms,
         )
         alerts = evaluate_solver_health_alerts(summary, threshold_cfg)
         if emit_alert_logs and alerts:

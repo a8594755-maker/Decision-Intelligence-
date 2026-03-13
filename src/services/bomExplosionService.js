@@ -207,14 +207,37 @@ export async function pollBomExplosionStatus(
 }
 
 /**
- * Legacy: Local BOM Explosion execution (kept as fallback)
- * @deprecated Please use executeBomExplosion + Edge Function
+ * Legacy: Local BOM Explosion execution — fetches input data from Supabase
+ * and runs the calculation in-process via the domain layer.
+ * Used when USE_EDGE_FUNCTION = false (e.g. offline dev, Edge Function unavailable).
  */
-async function _executeBomExplosionLegacyPlaceholder(_options = {}) {
-  // This is the original local calculation logic, kept but not directly used
-  // Can extract legacy params from options and call when needed
-  console.warn('Using legacy local calculation mode');
-  throw new Error('Legacy mode not implemented in this refactor');
+async function _executeBomExplosionLegacyPlaceholder(options = {}) {
+  console.warn('[BOM] Edge Function disabled — running local legacy BOM explosion');
+
+  const plantId = options.metadata?.plant_id || options.plantId;
+  const timeBuckets = options.metadata?.time_buckets || options.timeBuckets || [];
+  const userId = options.metadata?.user_id || null;
+
+  // Fetch FG demand rows
+  let demandQuery = supabase.from('demand_fg').select('*');
+  if (plantId) demandQuery = demandQuery.eq('plant_id', plantId);
+  if (timeBuckets.length > 0) demandQuery = demandQuery.in('time_bucket', timeBuckets);
+
+  const { data: demandFgRows, error: demandErr } = await demandQuery;
+  if (demandErr) {
+    throw new Error(`Legacy BOM: failed to fetch demand_fg — ${demandErr.message}`);
+  }
+
+  // Fetch BOM edges
+  let bomQuery = supabase.from('bom_edges').select('*');
+  if (plantId) bomQuery = bomQuery.eq('plant_id', plantId);
+
+  const { data: bomEdgesRows, error: bomErr } = await bomQuery;
+  if (bomErr) {
+    throw new Error(`Legacy BOM: failed to fetch bom_edges — ${bomErr.message}`);
+  }
+
+  return executeBomExplosionLegacy(userId, null, demandFgRows || [], bomEdgesRows || [], options);
 }
 
 /**

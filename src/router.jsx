@@ -14,6 +14,10 @@ const ScenarioStudio = lazy(() => import('./pages/ScenarioStudio'));
 const OpsDashboard = lazy(() => import('./pages/OpsDashboard'));
 const SyntheticERPSandbox = lazy(() => import('./pages/SyntheticERPSandbox'));
 const NegotiationWorkbench = lazy(() => import('./pages/NegotiationWorkbench'));
+// @product: ai-employee
+const EmployeesPage       = lazy(() => import('./pages/EmployeesPage'));
+const EmployeeTasksPage   = lazy(() => import('./pages/EmployeeTasksPage'));
+const EmployeeReviewPage  = lazy(() => import('./pages/EmployeeReviewPage'));
 
 export const router = createBrowserRouter([
   {
@@ -31,6 +35,10 @@ export const router = createBrowserRouter([
       { path: 'digital-twin', element: <DigitalTwin /> },
       { path: 'scenarios', element: <ScenarioStudio /> },
       { path: 'negotiation', element: <NegotiationWorkbench /> },
+      // @product: ai-employee
+      { path: 'employees',        element: <EmployeesPage /> },
+      { path: 'employees/tasks',  element: <EmployeeTasksPage /> },
+      { path: 'employees/review', element: <EmployeeReviewPage /> },
       { path: 'ops', element: <OpsDashboard /> },
       { path: 'sandbox', element: <SyntheticERPSandbox /> },
       { path: 'settings', element: <SettingsPage /> },

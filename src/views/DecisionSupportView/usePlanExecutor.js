@@ -26,6 +26,8 @@ import {
 } from '../../services/planAuditService';
 import { writeApprovedPlanBaseline } from '../../services/planWritebackService';
 import { checkNegotiationTrigger } from '../../services/negotiation/negotiationOrchestrator';
+import { buildPlanDecisionBundle } from '../../services/decisionTaskService';
+import { assemblePlanEvidence } from '../../services/evidenceAssembler';
 import {
   buildRuntimeWorkflowSettings,
   buildInventoryProjectionRowsFromCard,
@@ -202,6 +204,50 @@ export default function usePlanExecutor({
           timestamp: new Date().toISOString(),
         }] : []),
       ]);
+
+      // --- Decision Bundle Card (evidence-backed copilot output) ---
+      try {
+        const solverResult = planResult?.solver_result || {
+          status: summaryPayload?.solver_status || 'unknown',
+          kpis: summaryPayload?.kpis || {},
+        };
+        const replayMetrics = planResult?.replay_metrics || null;
+        const constraintCheck = planResult?.constraint_check || null;
+        const hasTopology = !!planResult?.topology;
+        const isRiskAware = riskMode === 'on';
+
+        const evidenceRefs = assemblePlanEvidence({
+          runId: planResult?.run?.id,
+          solverResult,
+          replayMetrics,
+          constraintCheck,
+          hasTopology,
+          isRiskAware,
+        });
+
+        const previousPlanKpis = activeDatasetContext?.previous_plan_kpis || null;
+        const sessionCtxForBundle = previousPlanKpis ? { previous_plan: { kpis: previousPlanKpis } } : {};
+
+        const decisionBundle = buildPlanDecisionBundle({
+          solverResult,
+          sessionCtx: sessionCtxForBundle,
+          evidence: evidenceRefs,
+          nextActions: [
+            { action_id: 'run_what_if', label: 'What-If Scenario', priority: 1 },
+            { action_id: 'request_approval', label: 'Submit for Approval', priority: 2 },
+            { action_id: 'run_risk_plan', label: 'Risk-Aware Replan', priority: 3 },
+          ],
+        });
+
+        appendMessagesToCurrentConversation([{
+          role: 'ai',
+          type: 'decision_bundle_card',
+          payload: decisionBundle,
+          timestamp: new Date().toISOString(),
+        }]);
+      } catch (bundleErr) {
+        console.warn('[usePlanExecutor] Decision bundle generation failed:', bundleErr?.message);
+      }
 
       // --- Negotiation trigger detection ---
       try {

@@ -215,4 +215,85 @@ export class NegotiationSolverRunner {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Batch Solver (parallel + auto-register in policy registry)
+// ---------------------------------------------------------------------------
+
+/**
+ * Solve multiple scenarios in parallel and optionally register results
+ * as CANDIDATE artifacts in the negotiation policy registry.
+ *
+ * @param {Object} config
+ * @param {Object[]}  [config.scenarios]   - scenario definitions (default DEFAULT_SCENARIOS)
+ * @param {number}    [config.iterations]  - CFR iterations per tree (default 50000)
+ * @param {string}    [config.outputDir]   - directory for strategy exports
+ * @param {boolean}   [config.resume]      - resume from checkpoint
+ * @param {boolean}   [config.register]    - auto-register in policy registry (default false)
+ * @param {number}    [config.concurrency] - max parallel solves
+ * @param {Function}  [config.onProgress]  - callback(completed, total)
+ * @returns {Promise<{
+ *   results: Map,
+ *   totalElapsedMs: number,
+ *   skipped: number,
+ *   solved: number,
+ *   registeredArtifacts: string[]
+ * }>}
+ */
+export async function batchSolve(config = {}) {
+  const {
+    scenarios = DEFAULT_SCENARIOS,
+    iterations = 50_000,
+    outputDir = null,
+    resume = false,
+    register = false,
+    concurrency,
+    onProgress = null,
+  } = config;
+
+  // Use parallel solver
+  const { solveParallel } = await import('./parallel-solver.js');
+
+  const parallelResult = await solveParallel({
+    scenarios,
+    iterations,
+    outputDir,
+    resume,
+    concurrency,
+    onProgress,
+  });
+
+  // Auto-register results as CANDIDATE in policy registry
+  const registeredArtifacts = [];
+  if (register && outputDir) {
+    try {
+      // Write a registration manifest for consumption by the Python registry API
+      const manifest = [];
+      for (const [key, result] of parallelResult.results) {
+        manifest.push({
+          key,
+          scenario_id: result.scenarioId,
+          buyer_bucket: result.buyerBucket,
+          output_path: result.outputPath,
+          stats: result.stats,
+          status: 'pending_registration',
+        });
+      }
+
+      if (manifest.length > 0) {
+        const { writeFileSync: wfs } = await import('node:fs');
+        const { join: pjoin } = await import('node:path');
+        const manifestPath = pjoin(outputDir, '_registration_manifest.json');
+        wfs(manifestPath, JSON.stringify(manifest, null, 2));
+      }
+    } catch (err) {
+      console.warn('[batchSolve] Registration manifest write failed:', err?.message);
+    }
+  }
+
+  return {
+    ...parallelResult,
+    registeredArtifacts,
+  };
+}
+
 export default NegotiationSolverRunner;

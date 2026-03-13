@@ -39,6 +39,10 @@ import ChatThread from '../../components/chat/ChatThread';
 import ChatComposer from '../../components/chat/ChatComposer';
 import useSessionContext from '../../hooks/useSessionContext';
 import { parseIntent, routeIntent } from '../../services/chatIntentService';
+import { buildChatSessionContext, buildContextSummaryForPrompt, suggestNextActions } from '../../services/chatSessionContextBuilder';
+import { looksLikeScenario, parseScenarioFromText, validateScenarioOverrides } from '../../services/scenarioIntentParser';
+import { runScenarioFromChat } from '../../services/scenarioChatBridge';
+import { getAvailableActions, resolveActionToIntent } from '../../services/chatActionRegistry';
 import { handleParameterChange, handlePlanComparison, buildComparisonSummaryText } from '../../services/chatRefinementService';
 import { createAlertMonitor, buildAlertChatMessage, isAlertMonitorEnabled } from '../../services/alertMonitorService';
 import { batchApprove, batchReject } from '../../services/approvalWorkflowService';
@@ -210,11 +214,37 @@ export default function DecisionSupportView({ user, addNotification }) {
     }));
 
     const desc = synth.descriptor || {};
+    const autoRun = location.state?.autoRun;
+    const autoRunHint = autoRun === 'forecast'
+      ? ' Auto-running demand forecast...'
+      : autoRun === 'risk'
+        ? ' Auto-running risk analysis...'
+        : '';
+
     appendMessagesToCurrentConversation([{
       role: 'ai',
-      content: `Synthetic dataset **${desc.dataset_id || 'unknown'}** loaded (${desc.n_materials || '?'} materials, ${desc.n_plants || '?'} plants, ${desc.n_days || '?'} days). You can now run /forecast, /plan, or /workflowa.`,
+      content: `Synthetic dataset **${desc.dataset_id || 'unknown'}** loaded (${desc.n_materials || '?'} materials, ${desc.n_plants || '?'} plants, ${desc.n_days || '?'} days).${autoRunHint || ' You can now run /forecast, /plan, or /workflowa.'}`,
       timestamp: new Date().toISOString(),
     }]);
+
+    // Auto-trigger workflow if handoff specified an intent
+    if (autoRun === 'forecast') {
+      setTimeout(() => {
+        appendMessagesToCurrentConversation([{
+          role: 'user',
+          content: 'Run demand forecast on this synthetic dataset',
+          timestamp: new Date().toISOString(),
+        }]);
+      }, 500);
+    } else if (autoRun === 'risk') {
+      setTimeout(() => {
+        appendMessagesToCurrentConversation([{
+          role: 'user',
+          content: 'Run risk analysis workflow on this synthetic dataset',
+          timestamp: new Date().toISOString(),
+        }]);
+      }, 500);
+    }
 
     // Clear navigation state to prevent re-trigger on route changes
     window.history.replaceState({}, '');
@@ -857,6 +887,167 @@ export default function DecisionSupportView({ user, addNotification }) {
     }
   }, [user?.id, activeDatasetContext, sessionCtx, appendMessagesToCurrentConversation, addNotification, setLatestPlanRunId, resolveDatasetProfileRow]);
 
+  // ── Negotiation Action handler (sent/copy/skip from NegotiationActionCard) ──
+  const handleNegotiationAction = useCallback(async (action, details, cardPayload) => {
+    const caseId = details?.negotiation_id || cardPayload?.negotiation_id || null;
+    const draft = details?.draft || null;
+
+    if (action === 'copy') {
+      // Copy to clipboard — no outbound logging needed
+      if (draft?.body) {
+        try { await navigator.clipboard.writeText(draft.body); } catch { /* noop */ }
+      }
+      appendMessagesToCurrentConversation([{
+        role: 'ai',
+        content: 'Draft copied to clipboard.',
+        timestamp: new Date().toISOString(),
+      }]);
+      return;
+    }
+
+    // For 'sent' and 'skip' — log the outbound action
+    try {
+      const { logOutboundAction } = await import('../../services/supplierCommunicationService.js');
+      await logOutboundAction({
+        caseId,
+        channel: action === 'sent' ? 'manual' : 'skip',
+        draft,
+        action,
+        userId: user?.id,
+        metadata: {
+          wasEdited: details?.wasEdited || false,
+          round: cardPayload?.negotiation_state?.current_round || 0,
+          roundName: cardPayload?.negotiation_state?.current_round_name || 'UNKNOWN',
+          planRunId: details?.planRunId,
+          trigger: details?.trigger,
+        },
+      });
+    } catch (err) {
+      console.warn('[DSV] Outbound action logging failed:', err?.message);
+    }
+
+    // Advance negotiation state
+    if (action === 'sent') {
+      appendMessagesToCurrentConversation([{
+        role: 'ai',
+        content: `Negotiation draft (${draft?.tone || 'standard'} tone) marked as sent. Action recorded.`,
+        timestamp: new Date().toISOString(),
+      }]);
+    } else if (action === 'skip') {
+      appendMessagesToCurrentConversation([{
+        role: 'ai',
+        content: 'Round skipped — hold action recorded.',
+        timestamp: new Date().toISOString(),
+      }]);
+    }
+  }, [user?.id, appendMessagesToCurrentConversation]);
+
+  // ── Macro-Oracle handler ─────────────────────────────────────────────────
+  const handleMacroOracleCheck = useCallback(async ({ demoScenario = 'semiconductor_fire' } = {}) => {
+    try {
+      const { fetchAllSignals } = await import('../../services/externalSignalAdapters.js');
+      const { processExternalSignals } = await import('../../services/macroSignalService.js');
+      const { computePositionBucket } = await import('../../services/negotiation/cfr/negotiation-position-buckets.js');
+      const { computeSupplierTypePriors } = await import('../../services/negotiation/cfr/negotiation-types.js');
+      const { deriveSolverParamsFromStrategy } = await import('../../services/negotiation/cfr/cfr-solver-bridge.js');
+
+      const isLive = !demoScenario || demoScenario === 'live';
+      const externalData = await fetchAllSignals({
+        demoScenario: isLive ? null : demoScenario,
+        enableLive: isLive,
+        enableGdelt: false, // GDELT has connectivity issues; Reddit is primary live source
+      });
+      const { signals, supplierEvents } = processExternalSignals({
+        commodityPrices: externalData.commodityPrices,
+        geopoliticalEvents: externalData.geopoliticalEvents,
+        currencyMoves: externalData.currencyMoves,
+      });
+
+      if (signals.length === 0) {
+        appendMessagesToCurrentConversation([{
+          role: 'ai', content: 'Macro-Oracle scan complete. No significant external signals detected.',
+          timestamp: new Date().toISOString(),
+        }]);
+        return;
+      }
+
+      // Compute risk delta (inline — mirrors supplierEventConnectorService)
+      const baseDeltas = { delivery_delay: 15, quality_alert: 20, capacity_change: 10, force_majeure: 40, shipment_status: 8, price_change: 5 };
+      const sevMult = { low: 0.5, medium: 1.0, high: 1.5, critical: 2.0 };
+      const baseRiskScore = 45;
+      const totalDelta = supplierEvents.reduce((sum, e) => {
+        const base = baseDeltas[e.event_type] || 10;
+        return sum + Math.round(base * (sevMult[e.severity] || 1.0) * 10) / 10;
+      }, 0);
+      const newRiskScore = Math.min(200, baseRiskScore + totalDelta);
+
+      // CFR assessment
+      const { bucket } = computePositionBucket({ risk_score: newRiskScore });
+      const supplierKpis = sessionCtx.context?.risk?.supplier_kpis || { on_time_rate: 0.72, defect_rate: 0.03 };
+      const priors = computeSupplierTypePriors(supplierKpis);
+      const adjustment = deriveSolverParamsFromStrategy({
+        cfrActionProbs: { accept: 0.3, reject: 0.4, counter: 0.3 },
+        supplierTypePriors: priors,
+        positionBucket: bucket,
+      });
+
+      const isTrigger = newRiskScore > 60;
+
+      // Build recommendations
+      const recommendations = [];
+      if (adjustment.dual_source_flag) {
+        recommendations.push({ text: 'Activate dual-source procurement for affected materials', action_id: 'run_negotiation' });
+      }
+      recommendations.push({
+        text: `Adjust safety stock alpha: 0.50 → ${(0.50 * adjustment.safety_stock_alpha_multiplier).toFixed(2)}`,
+      });
+      if (isTrigger) {
+        recommendations.push({ text: 'Re-run planning solver with updated parameters', action_id: 'rerun_plan', button_label: 'Replan' });
+      }
+
+      // Build evidence chain
+      const evidenceChain = [
+        { artifact_type: 'macro_signal', label: `${signals.length} external signal(s) detected` },
+        { artifact_type: 'supplier_event', label: `${supplierEvents.length} supplier event(s) generated` },
+        { artifact_type: 'risk_delta', label: `Risk Δ+${totalDelta.toFixed(1)} (${baseRiskScore} → ${newRiskScore.toFixed(0)})` },
+        { artifact_type: 'cfr_assessment', label: `Supplier: ${adjustment.supplier_assessment}, alpha ×${adjustment.safety_stock_alpha_multiplier}` },
+      ];
+
+      appendMessagesToCurrentConversation([{
+        role: 'ai',
+        type: 'macro_oracle_alert',
+        payload: {
+          title: externalData.geopoliticalEvents?.[0]?.description || `${signals.length} external disruption signal(s) detected`,
+          signals: signals.map(s => ({
+            description: s.description,
+            severity: s.severity,
+            commodity: s.commodity,
+            region: s.region,
+            signal_type: s.signal_type,
+          })),
+          risk_delta: { total_delta: totalDelta, base_score: baseRiskScore, new_score: Math.round(newRiskScore) },
+          cfr_assessment: {
+            supplier_assessment: adjustment.supplier_assessment,
+            safety_stock_alpha_multiplier: adjustment.safety_stock_alpha_multiplier,
+            stockout_penalty_multiplier: adjustment.stockout_penalty_multiplier,
+            dual_source_flag: adjustment.dual_source_flag,
+            confidence: adjustment.confidence,
+          },
+          recommendations,
+          evidence_chain: evidenceChain,
+          trigger_status: isTrigger ? 'triggered' : 'monitoring',
+          source: externalData.source,
+        },
+        timestamp: new Date().toISOString(),
+      }]);
+    } catch (err) {
+      appendMessagesToCurrentConversation([{
+        role: 'ai', content: `Macro-Oracle check failed: ${err.message}`,
+        timestamp: new Date().toISOString(),
+      }]);
+    }
+  }, [appendMessagesToCurrentConversation, sessionCtx]);
+
   // ── Topology handler ────────────────────────────────────────────────────
   const handleRunTopology = useCallback(async (requestedRunId = null) => {
     if (!user?.id) { addNotification?.('Please sign in before running topology.', 'error'); return; }
@@ -1289,9 +1480,49 @@ export default function DecisionSupportView({ user, addNotification }) {
       setIsTyping(false); setStreamingContent(''); return;
     }
 
+    if (command === '/macro-oracle' || command === '/oracle') {
+      const parts = trimmed.split(/\s+/);
+      const scenario = parts[1] || null; // e.g., /macro-oracle semiconductor_fire
+      await handleMacroOracleCheck({ demoScenario: scenario });
+      setIsTyping(false); setStreamingContent(''); return;
+    }
+
+    // ── Build chat session context for copilot awareness ──
+    const chatContext = buildChatSessionContext({
+      pathname: location.pathname,
+      sessionCtx: sessionCtx.context,
+      canvasState: activeCanvasState,
+      activeDataset: activeDatasetContext,
+      baselineRunId: latestPlanRunId,
+      userRole: 'planner',
+    });
+
+    // ── Text-to-Simulation: detect scenario descriptions → full bridge ──
+    if (looksLikeScenario(messageText) && chatContext.baseline?.run_id) {
+      try {
+        const scenarioResult = await runScenarioFromChat({
+          messageText,
+          userId: user.id,
+          baseRunId: chatContext.baseline.run_id,
+          onProgress: ({ step, message }) => {
+            console.log(`[DSV] Scenario ${step}: ${message}`);
+          },
+        });
+        if (scenarioResult.messages.length > 0) {
+          appendMessagesToCurrentConversation(scenarioResult.messages);
+        }
+        if (scenarioResult.scenarioRunId) {
+          setLatestPlanRunId(scenarioResult.scenarioRunId);
+        }
+        setIsTyping(false); setStreamingContent(''); return;
+      } catch (scenarioErr) {
+        console.warn('[DSV] Scenario bridge failed, continuing to intent parser:', scenarioErr?.message);
+      }
+    }
+
     // SmartOps 2.0: LLM-powered intent parsing + action routing
     try {
-      const parsedIntent = await parseIntent({ userMessage: messageText, sessionContext: sessionCtx.context, domainContext });
+      const parsedIntent = await parseIntent({ userMessage: messageText, sessionContext: sessionCtx.context, domainContext: { ...domainContext, chatContext: buildContextSummaryForPrompt(chatContext) } });
 
       if (parsedIntent.intent !== 'GENERAL_CHAT' && parsedIntent.confidence > 0.7) {
         const intentHandlers = {
@@ -1439,7 +1670,14 @@ export default function DecisionSupportView({ user, addNotification }) {
       handleApprovePlanApproval: planExec.handleApprovePlanApproval, handleRejectPlanApproval: planExec.handleRejectPlanApproval,
       handleContractConfirmation, handleApplyReuseSuggestion, handleReviewReuseSuggestion,
       handleRiskReplanDecision: planExec.handleRiskReplanDecision, handleConfigureApiKey,
-      handleGenerateNegotiationOptions, handleApplyNegotiationOption, updateCanvasState, sessionCtx, batchApprove, batchReject,
+      handleGenerateNegotiationOptions, handleApplyNegotiationOption, handleNegotiationAction, updateCanvasState, sessionCtx, batchApprove, batchReject,
+      handleDecisionBundleAction: (actionId) => {
+        const intentMapping = resolveActionToIntent(actionId, buildChatSessionContext({ pathname: location.pathname, sessionCtx: sessionCtx.context, canvasState: activeCanvasState, activeDataset: activeDatasetContext, baselineRunId: latestPlanRunId, userRole: 'planner' }));
+        if (intentMapping) {
+          const syntheticInput = `${intentMapping.intent} ${JSON.stringify(intentMapping.entities || {})}`;
+          setInput(syntheticInput);
+        }
+      },
     };
 
     const state = {
@@ -1461,7 +1699,7 @@ export default function DecisionSupportView({ user, addNotification }) {
     handleBlockingQuestionsSubmit, handleSubmitBlockingAnswers, handleCancelAsyncWorkflow,
     handleApplyReuseSuggestion, handleReviewReuseSuggestion, executeRiskAwarePlanFlow,
     planExec.handleRiskReplanDecision, handleRequestRelax, isNegotiationGenerating,
-    handleGenerateNegotiationOptions, handleApplyNegotiationOption
+    handleGenerateNegotiationOptions, handleApplyNegotiationOption, handleNegotiationAction
   ]);
 
   return (

@@ -38,7 +38,19 @@ const V1_VALIDATORS = {
   // CFR Game-Theory Negotiation (v3.0)
   cfr_negotiation_strategy: validateCfrNegotiationStrategy,
   cfr_negotiation_state: validateCfrNegotiationState,
-  cfr_negotiation_recommendation: validateCfrNegotiationRecommendation
+  cfr_negotiation_recommendation: validateCfrNegotiationRecommendation,
+  // Negotiation Outcome → Planning Closed-Loop
+  negotiation_outcome_applied: validateNegotiationOutcomeApplied,
+  // CFR → Solver Parameter Bridge (audit trail)
+  cfr_param_adjustment: validateCfrParamAdjustment,
+  // Decision Copilot — structured reply bundle
+  decision_bundle: validateDecisionBundle,
+  // Phase 3: War Room & Causal Graph
+  war_room_session: validateWarRoomSession,
+  causal_graph: validateCausalGraph,
+  negotiation_approval_request: validateNegotiationApprovalRequest,
+  // AI Employee — run summary artifact (@product: ai-employee)
+  ai_employee_run_summary: validateAiEmployeeRunSummary,
 };
 
 const MAX_ISSUES = 50;
@@ -776,6 +788,104 @@ function validateCfrNegotiationRecommendation(payload, issues) {
   requireArrayField(issues, root, 'evidence_refs', 'payload');
 }
 
+// ---------------------------------------------------------------------------
+// Negotiation Outcome Applied (closed-loop bridge)
+// ---------------------------------------------------------------------------
+
+function validateNegotiationOutcomeApplied(payload, issues) {
+  const root = ensureObjectPayload(issues, payload);
+  if (!root) return;
+
+  requireStringField(issues, root, 'version', 'payload');
+  requireStringField(issues, root, 'generated_at', 'payload');
+  requireStringField(issues, root, 'case_id', 'payload');
+  requireStringField(issues, root, 'status', 'payload');
+  requireStringField(issues, root, 'trigger', 'payload');
+  requireObjectField(issues, root, 'applied_patches', 'payload');
+  requireArrayField(issues, root, 'explanations', 'payload');
+  requireBooleanField(issues, root, 'should_replan', 'payload');
+  requireStringField(issues, root, 'replan_reason', 'payload');
+}
+
+// ---------------------------------------------------------------------------
+// Decision Bundle (copilot structured reply)
+// ---------------------------------------------------------------------------
+
+function validateDecisionBundle(payload, issues) {
+  const root = ensureObjectPayload(issues, payload);
+  if (!root) return;
+
+  requireStringField(issues, root, 'version', 'payload');
+  requireStringField(issues, root, 'generated_at', 'payload');
+  requireStringField(issues, root, 'summary', 'payload');
+
+  const recommendation = root.recommendation;
+  if (recommendation !== null && recommendation !== undefined) {
+    if (!isObject(recommendation)) {
+      addTypeIssue(issues, 'payload.recommendation', 'object|null', recommendation);
+    } else {
+      requireStringField(issues, recommendation, 'text', 'payload.recommendation');
+      requireStringField(issues, recommendation, 'action_type', 'payload.recommendation');
+    }
+  }
+
+  requireArrayField(issues, root, 'drivers', 'payload');
+  requireObjectField(issues, root, 'kpi_impact', 'payload');
+  requireArrayField(issues, root, 'evidence_refs', 'payload');
+  requireArrayField(issues, root, 'blockers', 'payload');
+  requireArrayField(issues, root, 'next_actions', 'payload');
+}
+
+// ---------------------------------------------------------------------------
+// CFR Parameter Adjustment (solver bridge audit)
+// ---------------------------------------------------------------------------
+
+function validateCfrParamAdjustment(payload, issues) {
+  const root = ensureObjectPayload(issues, payload);
+  if (!root) return;
+
+  requireStringField(issues, root, 'version', 'payload');
+  requireStringField(issues, root, 'generated_at', 'payload');
+  requireStringField(issues, root, 'supplier_assessment', 'payload');
+  requireNumberField(issues, root, 'confidence', 'payload');
+  requireStringField(issues, root, 'adjustment_reason', 'payload');
+  requireObjectField(issues, root, 'base_params', 'payload');
+  requireObjectField(issues, root, 'adjusted_params', 'payload');
+  requireObjectField(issues, root, 'multipliers', 'payload');
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3: War Room, Causal Graph, Negotiation Approval
+// ---------------------------------------------------------------------------
+
+function validateWarRoomSession(payload, issues) {
+  const root = ensureObjectPayload(issues, payload);
+  if (!root) return;
+  requireStringField(issues, root, 'session_id', 'payload');
+  requireStringField(issues, root, 'trigger', 'payload');
+  requireArrayField(issues, root, 'agents_activated', 'payload');
+  requireArrayField(issues, root, 'findings', 'payload');
+  requireArrayField(issues, root, 'recommendations', 'payload');
+  requireStringField(issues, root, 'overall_status', 'payload');
+}
+
+function validateCausalGraph(payload, issues) {
+  const root = ensureObjectPayload(issues, payload);
+  if (!root) return;
+  requireArrayField(issues, root, 'nodes', 'payload');
+  requireArrayField(issues, root, 'edges', 'payload');
+  requireArrayField(issues, root, 'roots', 'payload');
+}
+
+function validateNegotiationApprovalRequest(payload, issues) {
+  const root = ensureObjectPayload(issues, payload);
+  if (!root) return;
+  requireStringField(issues, root, 'type', 'payload');
+  requireStringField(issues, root, 'option_id', 'payload');
+  requireStringField(issues, root, 'rationale', 'payload');
+  requireObjectField(issues, root, 'kpi_impact', 'payload');
+}
+
 const buildValidationErrorMessage = (artifactType, issues) => {
   const missing = issues.filter((issue) => issue.kind === 'missing');
   const typeIssues = issues.filter((issue) => issue.kind === 'type');
@@ -799,6 +909,17 @@ const buildValidationErrorMessage = (artifactType, issues) => {
 
   return lines.join('\n');
 };
+
+// ── AI Employee — run summary ────────────────────────────────────────────────
+// @product: ai-employee
+function validateAiEmployeeRunSummary(payload, issues) {
+  const path = 'ai_employee_run_summary';
+  requireField(issues, payload, 'employee_id', path);
+  requireField(issues, payload, 'task_id', path);
+  requireField(issues, payload, 'run_id', path);
+  requireField(issues, payload, 'workflow_type', path);
+  requireField(issues, payload, 'narrative', path);
+}
 
 export function validateArtifactOrThrow({ artifact_type, payload }) {
   const artifactType = String(artifact_type || '').trim();

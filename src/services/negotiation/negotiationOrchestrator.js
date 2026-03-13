@@ -21,7 +21,8 @@ import { saveJsonArtifact, loadArtifact } from '../../utils/artifactStore';
 import { diRunsService } from '../diRunsService';
 import { getLookupService } from './cfr/negotiation-lookup-service.js';
 import { computePositionBucket } from './cfr/negotiation-position-buckets.js';
-import { DEFAULT_CFR_INFLUENCE } from './cfr/negotiation-types.js';
+import { DEFAULT_CFR_INFLUENCE, computeSupplierTypePriors } from './cfr/negotiation-types.js';
+import { deriveSolverParamsFromStrategy, applyCfrAdjustments, buildAdjustmentArtifact } from './cfr/cfr-solver-bridge.js';
 import { generateAllDrafts, buildDraftContext } from './cfr/negotiation-draft-generator.js';
 import { getStateTracker } from './cfr/negotiation-state-tracker.js';
 import * as negotiationPersistence from '../negotiationPersistenceService.js';
@@ -342,6 +343,41 @@ export async function runNegotiation({
   }
 
   // -------------------------------------------------------------------------
+  // Step 3.5b: CFR → Solver Parameter Bridge (derives solver adjustments)
+  // -------------------------------------------------------------------------
+  let cfrParamAdjustment = null;
+  if (cfrEnrichment) {
+    try {
+      const supplierKpis = datasetProfileRow?.supplier_kpis || {};
+      const supplierPriors = computeSupplierTypePriors(supplierKpis);
+
+      const adjustment = deriveSolverParamsFromStrategy({
+        cfrActionProbs: cfrEnrichment.cfr_action_probs,
+        supplierTypePriors: supplierPriors,
+        positionBucket: cfrEnrichment.buyer_bucket,
+      });
+
+      if (adjustment.safety_stock_alpha_multiplier !== 1.0 ||
+          adjustment.stockout_penalty_multiplier !== 1.0) {
+        cfrParamAdjustment = adjustment;
+        optionsPayload.cfr_param_adjustment = {
+          supplier_assessment: adjustment.supplier_assessment,
+          safety_stock_alpha_multiplier: adjustment.safety_stock_alpha_multiplier,
+          stockout_penalty_multiplier: adjustment.stockout_penalty_multiplier,
+          dual_source_flag: adjustment.dual_source_flag,
+          confidence: adjustment.confidence,
+          reason: adjustment.adjustment_reason,
+        };
+      }
+    } catch (bridgeErr) {
+      console.warn(
+        '[negotiationOrchestrator] CFR solver bridge failed (non-critical):',
+        bridgeErr?.message
+      );
+    }
+  }
+
+  // -------------------------------------------------------------------------
   // Step 3.6: Initialize negotiation state tracker (multi-round tracking)
   // -------------------------------------------------------------------------
   let negotiationId = null;
@@ -422,7 +458,8 @@ export async function runNegotiation({
       options: optionsPayload.options,
       datasetProfileRow,
       forecastRunId,
-      userId
+      userId,
+      cfrParamAdjustment: cfrParamAdjustment || null,
     });
   } catch (evalErr) {
     console.error(
@@ -585,6 +622,43 @@ export async function runNegotiation({
     }
   }
 
+  // -------------------------------------------------------------------------
+  // Step 10b: Persist CFR parameter adjustment artifact (audit trail)
+  // -------------------------------------------------------------------------
+  if (cfrParamAdjustment) {
+    try {
+      const baseParams = {
+        safety_stock_alpha: solverMeta?.solver_meta?.safety_stock_alpha ?? 0.5,
+        stockout_penalty_base: solverMeta?.solver_meta?.stockout_penalty_base ?? 10.0,
+      };
+      const adjustedParams = applyCfrAdjustments(baseParams, cfrParamAdjustment);
+      const adjustmentArtifact = buildAdjustmentArtifact({
+        adjustment: cfrParamAdjustment,
+        baseParams,
+        adjustedParams,
+        cfrEnrichment,
+        planRunId: runId,
+      });
+
+      const adjSaved = await saveJsonArtifact(
+        runId,
+        'cfr_param_adjustment',
+        adjustmentArtifact,
+        ARTIFACT_SIZE_THRESHOLD,
+        {
+          user_id: userId,
+          filename: `cfr_param_adjustment_run_${runId}.json`,
+        }
+      );
+      artifactRefs.cfr_param_adjustment = adjSaved.ref;
+    } catch (adjErr) {
+      console.warn(
+        '[negotiationOrchestrator] CFR param adjustment artifact persist failed (non-critical):',
+        adjErr?.message
+      );
+    }
+  }
+
   // Record trigger for cooldown/dedupe
   recordTriggerEvent(runId, trigger);
 
@@ -637,9 +711,153 @@ export async function loadNegotiationResults(planRunId) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Exported: onNegotiationResolved
+// ---------------------------------------------------------------------------
+
+/**
+ * Handle a resolved negotiation case: derive constraint patches, create
+ * scenario re-run, and emit the negotiation_outcome_applied artifact.
+ *
+ * This is the closed-loop bridge between negotiation outcomes and planning.
+ *
+ * @param {Object} params
+ * @param {string}        params.caseId             - resolved case ID
+ * @param {string}        params.userId             - authenticated user ID
+ * @param {Object}        [params.datasetProfileRow] - dataset profile for re-solve
+ * @param {string|number} [params.forecastRunId]     - forecast run for re-solve
+ * @param {string}        [params.appliedOptionId]   - which negotiation option was applied
+ * @param {Object}        [params.optionOverrides]   - snapshot of option overrides
+ * @param {Object}        [params.optionEngineFlags] - snapshot of option engine_flags
+ * @returns {Promise<{
+ *   success: boolean,
+ *   patches: Object,
+ *   explanations: string[],
+ *   should_replan: boolean,
+ *   scenario_run_id: string|number|null,
+ *   artifact_ref: Object|null,
+ *   error: string|null
+ * }>}
+ */
+export async function onNegotiationResolved({
+  caseId,
+  userId,
+  datasetProfileRow = null,
+  forecastRunId = null,
+  appliedOptionId = null,
+  optionOverrides = null,
+  optionEngineFlags = null,
+} = {}) {
+  if (!caseId) throw new Error('caseId is required');
+  if (!userId) throw new Error('userId is required');
+
+  try {
+    // Step 1: Load resolved case with events
+    const caseData = await negotiationPersistence.getCaseWithEvents(caseId);
+    if (!caseData) {
+      return {
+        success: false, patches: {}, explanations: [],
+        should_replan: false, scenario_run_id: null,
+        artifact_ref: null, error: `Case ${caseId} not found`,
+      };
+    }
+
+    // Step 2: Derive constraint patches
+    const { deriveConstraintPatch } = await import('./negotiationOutcomeTranslator.js');
+    const patchResult = deriveConstraintPatch({
+      status: caseData.status,
+      outcome: caseData.outcome || {},
+      applied_option_id: appliedOptionId,
+      option_overrides: optionOverrides,
+      option_engine_flags: optionEngineFlags,
+      events: caseData.events || [],
+      trigger: caseData.trigger,
+    });
+
+    // Step 3: Persist the negotiation_outcome_applied artifact
+    let artifactRef = null;
+    const planRunId = caseData.plan_run_id;
+    if (planRunId) {
+      const artifactPayload = {
+        version: 'v0',
+        generated_at: nowIso(),
+        case_id: caseId,
+        plan_run_id: planRunId,
+        status: caseData.status,
+        trigger: caseData.trigger,
+        applied_option_id: appliedOptionId,
+        applied_patches: patchResult.patches,
+        explanations: patchResult.explanations,
+        rules: patchResult.rules,
+        should_replan: patchResult.should_replan,
+        replan_reason: patchResult.replan_reason,
+      };
+
+      try {
+        const saved = await saveJsonArtifact(
+          planRunId,
+          'negotiation_outcome_applied',
+          artifactPayload,
+          ARTIFACT_SIZE_THRESHOLD,
+          { user_id: userId, filename: `negotiation_outcome_applied_run_${planRunId}.json` }
+        );
+        artifactRef = saved.ref;
+      } catch (saveErr) {
+        console.warn('[negotiationOrchestrator] Outcome artifact save failed:', saveErr?.message);
+      }
+    }
+
+    // Step 4: Trigger scenario re-run if patches warrant it
+    let scenarioRunId = null;
+    if (patchResult.should_replan && planRunId && datasetProfileRow) {
+      try {
+        const { executeScenario } = await import('../scenarioEngine.js');
+        const scenarioResult = await executeScenario({
+          userId,
+          baseRunId: planRunId,
+          overrides: {
+            ...patchResult.patches.constraints,
+            ...patchResult.patches.objective,
+          },
+          engineFlags: patchResult.patches.engine_flags || {},
+          datasetProfileRow,
+          forecastRunId,
+          scenarioLabel: `Negotiation outcome (${caseData.trigger})`,
+          source: 'negotiation_outcome',
+        });
+        scenarioRunId = scenarioResult?.scenario_run_id ?? null;
+      } catch (scenErr) {
+        console.warn('[negotiationOrchestrator] Scenario re-run failed (non-critical):', scenErr?.message);
+      }
+    }
+
+    return {
+      success: true,
+      patches: patchResult.patches,
+      explanations: patchResult.explanations,
+      should_replan: patchResult.should_replan,
+      scenario_run_id: scenarioRunId,
+      artifact_ref: artifactRef,
+      error: null,
+    };
+  } catch (err) {
+    console.error('[negotiationOrchestrator] onNegotiationResolved failed:', err);
+    return {
+      success: false,
+      patches: {},
+      explanations: [],
+      should_replan: false,
+      scenario_run_id: null,
+      artifact_ref: null,
+      error: err?.message || String(err),
+    };
+  }
+}
+
 export default {
   runNegotiation,
   loadNegotiationResults,
   checkNegotiationTrigger,
+  onNegotiationResolved,
   _resetCooldownState
 };

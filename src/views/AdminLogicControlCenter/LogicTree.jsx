@@ -55,8 +55,8 @@ export default function LogicTree({
 
   const LOGIC_TYPES = [
     { id: 'bom_explosion', name: 'BOM Explosion', icon: '📋' },
-    { id: 'risk_score', name: 'Risk Score', icon: '⚠️', disabled: true },
-    { id: 'simulation', name: 'Simulation', icon: '🔮', disabled: true },
+    { id: 'risk_score', name: 'Risk Score', icon: '⚠️' },
+    { id: 'simulation', name: 'Simulation', icon: '🔮' },
   ];
 
   return (

@@ -490,10 +490,23 @@ def solve_replenishment(
             _read_attr(objective, "use_p90_demand_model", None),
             forecast_uncertainty_cfg.get("use_p90_demand_model"),
             _read_path(payload, "settings.use_p90_demand_model", None),
+            True,  # enabled by default for robust (conservative) planning
+        ),
+        True,
+    )
+    # Phase 3 – P3.3: Use p10 as primary demand constraint RHS (optimistic planning)
+    use_p10_demand_model = _to_bool(
+        _first_non_none(
+            _read_attr(objective, "use_p10_demand_model", None),
+            forecast_uncertainty_cfg.get("use_p10_demand_model"),
+            _read_path(payload, "settings.use_p10_demand_model", None),
             False,
         ),
         False,
     )
+    # p10 takes precedence over p90 if both are set (caller responsibility to not set both)
+    if use_p10_demand_model:
+        use_p90_demand_model = False
     closed_loop_safety_stock_by_key_s = _parse_keyed_scaled_qty_map(
         closed_loop_patch.get("safety_stock_by_key")
     )
@@ -749,10 +762,12 @@ def solve_replenishment(
 
     for key_idx, key in enumerate(ordered_keys):
         sku, plant_id = key
-        series = forecast_by_key[key]
-        first_day = series[0][0]
+        raw_series = forecast_by_key[key]
+        raw_p10 = p10_by_key.get(key, [])
+        first_day = raw_series[0][0]
         last_allowed = first_day + timedelta(days=horizon_days - 1)
-        series = [(d, p50, p90) for d, p50, p90 in series if d <= last_allowed]
+        series = [(d, p50, p90) for d, p50, p90 in raw_series if d <= last_allowed]
+        p10_series = [raw_p10[i] for i, (d, _, _) in enumerate(raw_series) if d <= last_allowed]
         if not series:
             continue
 
@@ -770,8 +785,16 @@ def solve_replenishment(
         open_po_cal = open_po_by_key.get(key, {})
 
         days_list = [d for d, _, _ in series]
-        # Phase 3 – P3.2: If use_p90_demand_model, use p90 as primary demand RHS
-        if use_p90_demand_model:
+        # Phase 3 – P3.2/P3.3: Demand basis selection
+        #   use_p10_demand_model → optimistic lower-bound (reduces excess stock)
+        #   use_p90_demand_model → conservative upper-bound (robust, avoids stockouts)
+        #   default (p50)        → expected-value planning
+        if use_p10_demand_model and p10_series:
+            demand_s_list = [
+                (p10 if p10 is not None else p50)
+                for (_, p50, _), p10 in zip(series, p10_series)
+            ]
+        elif use_p90_demand_model:
             demand_s_list = [
                 (p90 if p90 is not None else p50) for _, p50, p90 in series
             ]
@@ -1474,6 +1497,7 @@ def solve_replenishment(
                     "use_p90_for_safety_stock": bool(use_p90_for_safety_stock),
                     "use_p90_for_service_level": bool(use_p90_for_service_level),
                     "use_p90_demand_model": bool(use_p90_demand_model),
+                    "use_p10_demand_model": bool(use_p10_demand_model),
                     "service_level_demand_basis": service_level_basis_label,
                     "keys_with_p90": int(keys_with_p90),
                     "keys_with_derived_safety_stock": int(keys_with_derived_safety_stock),

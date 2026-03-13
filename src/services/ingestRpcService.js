@@ -19,6 +19,13 @@ import { supabase, RPC_JSON_OPTIONS } from './supabaseClient';
 const MAX_ROWS_PER_BATCH = 50000;
 
 /**
+ * Rows-per-chunk threshold for staging mode.
+ * Batches larger than this are staged into `ingest_staging_rows` first,
+ * then committed atomically via `ingest_finalize_v1`.
+ */
+const STAGING_CHUNK_SIZE = 500;
+
+/**
  * RPC call error type
  */
 export class RpcError extends Error {
@@ -41,6 +48,101 @@ export class BatchSizeError extends Error {
     this.maxRows = maxRows;
   }
 }
+
+// ── Staging + Finalize (Phase 3) ─────────────────────────────────────────────
+
+/**
+ * Write rows to `ingest_staging_rows` in STAGING_CHUNK_SIZE chunks, then
+ * call `ingest_finalize_v1` to commit atomically.
+ *
+ * @param {string} rpcName        - Target RPC ('ingest_goods_receipts_v1' | 'ingest_price_history_v1')
+ * @param {string} batchId        - Batch UUID
+ * @param {string} uploadFileId   - Upload file UUID
+ * @param {Array}  rows           - All rows to ingest
+ * @param {Function} [onProgress] - Optional progress callback({ phase, chunk, total, staged, totalRows })
+ * @returns {Promise<Object>}     - Aggregated result (same shape as direct RPC)
+ */
+async function _ingestViaStagingAndFinalize(rpcName, batchId, uploadFileId, rows, onProgress) {
+  const totalRows = rows.length;
+  const chunks = [];
+  for (let i = 0; i < totalRows; i += STAGING_CHUNK_SIZE) {
+    chunks.push(rows.slice(i, i + STAGING_CHUNK_SIZE));
+  }
+
+  console.log(`[ingest/staging] batchId=${batchId}, rpc=${rpcName}, rows=${totalRows}, chunks=${chunks.length}`);
+
+  // ── Phase 1: Stage rows in chunks ───────────────────────────────────────
+  let totalStaged = 0;
+  for (let ci = 0; ci < chunks.length; ci++) {
+    const chunk = chunks[ci];
+    const payload = chunk.map((row, rowIdx) => ({
+      batch_id: batchId,
+      upload_file_id: uploadFileId,
+      rpc_name: rpcName,
+      chunk_index: ci,
+      row_index: ci * STAGING_CHUNK_SIZE + rowIdx,
+      row_data: row,
+    }));
+
+    const { error } = await supabase
+      .from('ingest_staging_rows')
+      .insert(payload);
+
+    if (error) {
+      // Best-effort cleanup: delete already-staged rows for this batch
+      await supabase
+        .from('ingest_staging_rows')
+        .delete()
+        .eq('batch_id', batchId)
+        .catch(() => {});
+
+      throw new RpcError(
+        `Staging chunk ${ci + 1}/${chunks.length} failed: ${error.message}`,
+        error.code,
+        error.details
+      );
+    }
+
+    totalStaged += chunk.length;
+    onProgress?.({
+      phase: 'staging',
+      chunk: ci + 1,
+      total: chunks.length,
+      staged: totalStaged,
+      totalRows,
+    });
+  }
+
+  // ── Phase 2: Finalize atomically via RPC ────────────────────────────────
+  onProgress?.({ phase: 'finalizing', staged: totalStaged, totalRows });
+
+  const { data, error: finalizeError } = await supabase.rpc(
+    'ingest_finalize_v1',
+    {
+      p_batch_id: batchId,
+      p_upload_file_id: uploadFileId,
+      p_rpc_name: rpcName,
+    },
+    RPC_JSON_OPTIONS
+  );
+
+  if (finalizeError) {
+    throw new RpcError(
+      `Finalize RPC failed: ${finalizeError.message}`,
+      finalizeError.code,
+      finalizeError.details
+    );
+  }
+
+  if (!data?.success) {
+    throw new RpcError('Finalize RPC returned success=false', 'FINALIZE_FAILED', data);
+  }
+
+  console.log(`[ingest/staging] Finalized: inserted=${data.inserted_count}, suppliersCreated=${data.suppliers_created}`);
+  return data;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 /**
  * Batch write Goods Receipts
@@ -83,11 +185,12 @@ export class BatchSizeError extends Error {
  *   }
  * }
  */
-export async function ingestGoodsReceiptsRpc({ 
-  batchId, 
-  uploadFileId, 
+export async function ingestGoodsReceiptsRpc({
+  batchId,
+  uploadFileId,
   rows,
-  maxRows = MAX_ROWS_PER_BATCH
+  maxRows = MAX_ROWS_PER_BATCH,
+  onProgress = null,
 }) {
   // ===== Validate parameters =====
   if (!batchId) {
@@ -105,20 +208,22 @@ export async function ingestGoodsReceiptsRpc({
     throw new BatchSizeError(rows.length, maxRows);
   }
 
-  console.log(`[ingestGoodsReceiptsRpc] Starting RPC call for ${rows.length} rows`);
-  console.log(`[ingestGoodsReceiptsRpc] batchId: ${batchId}, uploadFileId: ${uploadFileId}`);
+  console.log(`[ingestGoodsReceiptsRpc] Starting for ${rows.length} rows (batchId: ${batchId})`);
 
-  // TODO: Staging + Finalize mechanism (Phase 3)
-  // If need to handle > 1000 rows:
-  // 1. Write to staging table in batches
-  // 2. Call finalize RPC to complete transaction
+  // ── Large batch: use staging + finalize ──────────────────────────────────
+  if (rows.length > STAGING_CHUNK_SIZE) {
+    console.log(`[ingestGoodsReceiptsRpc] Large batch (${rows.length} > ${STAGING_CHUNK_SIZE}), using staging mode`);
+    return _ingestViaStagingAndFinalize(
+      'ingest_goods_receipts_v1', batchId, uploadFileId, rows, onProgress
+    );
+  }
 
   try {
-    // ===== Call Supabase RPC =====
+    // ── Small batch: direct RPC ──────────────────────────────────────────
     const { data, error } = await supabase.rpc('ingest_goods_receipts_v1', {
       p_batch_id: batchId,
       p_upload_file_id: uploadFileId,
-      p_rows: rows // Pass validRows directly (must be canonical keys)
+      p_rows: rows
     }, RPC_JSON_OPTIONS);
 
     // ===== Error handling =====
@@ -190,11 +295,12 @@ export async function ingestGoodsReceiptsRpc({
  * @throws {BatchSizeError} If rows.length > maxRows
  * @throws {RpcError} If RPC call fails
  */
-export async function ingestPriceHistoryRpc({ 
-  batchId, 
-  uploadFileId, 
+export async function ingestPriceHistoryRpc({
+  batchId,
+  uploadFileId,
   rows,
-  maxRows = MAX_ROWS_PER_BATCH
+  maxRows = MAX_ROWS_PER_BATCH,
+  onProgress = null,
 }) {
   // ===== Validate parameters =====
   if (!batchId) {
@@ -212,17 +318,22 @@ export async function ingestPriceHistoryRpc({
     throw new BatchSizeError(rows.length, maxRows);
   }
 
-  console.log(`[ingestPriceHistoryRpc] Starting RPC call for ${rows.length} rows`);
-  console.log(`[ingestPriceHistoryRpc] batchId: ${batchId}, uploadFileId: ${uploadFileId}`);
+  console.log(`[ingestPriceHistoryRpc] Starting for ${rows.length} rows (batchId: ${batchId})`);
 
-  // TODO: Staging + Finalize mechanism (Phase 3)
+  // ── Large batch: use staging + finalize ──────────────────────────────────
+  if (rows.length > STAGING_CHUNK_SIZE) {
+    console.log(`[ingestPriceHistoryRpc] Large batch (${rows.length} > ${STAGING_CHUNK_SIZE}), using staging mode`);
+    return _ingestViaStagingAndFinalize(
+      'ingest_price_history_v1', batchId, uploadFileId, rows, onProgress
+    );
+  }
 
   try {
-    // ===== Call Supabase RPC =====
+    // ── Small batch: direct RPC ──────────────────────────────────────────
     const { data, error } = await supabase.rpc('ingest_price_history_v1', {
       p_batch_id: batchId,
       p_upload_file_id: uploadFileId,
-      p_rows: rows // Pass validRows directly (must be canonical keys)
+      p_rows: rows
     }, RPC_JSON_OPTIONS);
 
     // ===== Error handling =====
@@ -311,6 +422,6 @@ export async function checkRpcHealth() {
 }
 
 /**
- * Export all error types (for frontend catch handling)
+ * Export all error types and constants (for frontend catch handling / display)
  */
-export { MAX_ROWS_PER_BATCH };
+export { MAX_ROWS_PER_BATCH, STAGING_CHUNK_SIZE };

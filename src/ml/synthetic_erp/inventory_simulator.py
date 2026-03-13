@@ -51,6 +51,18 @@ class SyntheticInventorySimulator:
 
         self._init_simulators()
 
+    def inject_supply_events(self, events: list):
+        """Inject external ChaosEvents (from ScenarioEngine) into all plant ChaosEngines.
+
+        These events affect lead_time, defect_rate, etc. during simulation
+        via ChaosEngine._active_events / event_log.
+        """
+        for event in events:
+            # Inject into all plants (supply disruptions affect the whole network)
+            for plant_id, chaos in self._chaos.items():
+                chaos.event_log.append(event)
+                chaos._active_events.append(event)
+
     def _init_simulators(self):
         """Create InventorySimulator per (mat, plant) and ChaosEngine per plant."""
         plants: List[PlantMaster] = self._master["plants"]
@@ -117,17 +129,27 @@ class SyntheticInventorySimulator:
             }
         """
         if not self._demand:
-            return {"stock_snapshots": [], "purchase_orders": [], "daily_log": {}, "summary": {}}
+            return {"stock_snapshots": [], "purchase_orders": [], "goods_receipts": [],
+                    "quality_incidents": [], "daily_log": {}, "summary": {}}
 
         # Determine simulation length
         first_df = next(iter(self._demand.values()))
         n_days = days if days is not None else len(first_df)
 
+        rng = np.random.RandomState(self._seed + 999)
+
         stock_snapshots: List[Dict] = []
         all_purchase_orders: List[Dict] = []
+        all_goods_receipts: List[Dict] = []
+        all_quality_incidents: List[Dict] = []
         daily_logs: Dict[Tuple[str, str], List[DailyRecord]] = {k: [] for k in self._sims}
 
+        # Track open POs for goods receipt generation
+        open_pos: List[Dict] = []  # POs awaiting receipt
+        po_counter = 0
+
         for day in range(n_days):
+            date_str = None
             for (mat_code, plant_id), sim in self._sims.items():
                 df = self._demand.get((mat_code, plant_id))
                 if df is None or day >= len(df):
@@ -177,15 +199,83 @@ class SyntheticInventorySimulator:
 
                 # Collect POs placed this day
                 for po_info in record.orders_placed:
+                    po_counter += 1
+                    po_id = f"PO-{po_counter:05d}"
+                    expected_receipt = self._day_to_date(first_df, po_info["eta"])
                     all_purchase_orders.append({
+                        "po_id": po_id,
                         "material_code": mat_code,
                         "plant_id": plant_id,
                         "order_date": date_str,
                         "ordered_qty": po_info["qty"],
-                        "expected_receipt_date": self._day_to_date(first_df, po_info["eta"]),
+                        "expected_receipt_date": expected_receipt,
                         "status": "in_transit",
                         "unit_cost": mat.unit_cost if mat else 10.0,
                     })
+                    open_pos.append({
+                        "po_id": po_id,
+                        "material_code": mat_code,
+                        "plant_id": plant_id,
+                        "ordered_qty": po_info["qty"],
+                        "eta_day": po_info["eta"],
+                        "expected_receipt_date": expected_receipt,
+                        "unit_cost": mat.unit_cost if mat else 10.0,
+                        "defect_rate_at_order": defect_rate,
+                    })
+
+                # Generate quality incidents from chaos events
+                for evt in events:
+                    if evt.event_type == "quality_issue":
+                        sev = evt.severity
+                        impact_pct = evt.impact.get("defect_rate_add", 0.05)
+                        affected_qty = round(record.inventory_after * impact_pct, 1) if record.inventory_after > 0 else 0
+                        all_quality_incidents.append({
+                            "incident_id": f"QI-{len(all_quality_incidents)+1:05d}",
+                            "material_code": mat_code,
+                            "plant_id": plant_id,
+                            "incident_date": date_str,
+                            "severity": sev,
+                            "type": "incoming_inspection",
+                            "defect_rate": round(impact_pct, 4),
+                            "affected_qty": affected_qty,
+                            "description": evt.description,
+                            "status": "open" if sev in ("high", "critical") else "resolved",
+                        })
+
+            # Process goods receipts: POs that have reached their ETA
+            if date_str:
+                still_open = []
+                for po in open_pos:
+                    if po["eta_day"] <= day:
+                        # Generate goods receipt
+                        defect = po["defect_rate_at_order"]
+                        received_qty = po["ordered_qty"]
+                        rejected_qty = round(received_qty * defect * rng.uniform(0.5, 1.5), 1)
+                        rejected_qty = min(rejected_qty, received_qty)
+                        accepted_qty = round(received_qty - rejected_qty, 1)
+
+                        all_goods_receipts.append({
+                            "gr_id": f"GR-{len(all_goods_receipts)+1:05d}",
+                            "po_id": po["po_id"],
+                            "material_code": po["material_code"],
+                            "plant_id": po["plant_id"],
+                            "receipt_date": date_str,
+                            "received_qty": received_qty,
+                            "accepted_qty": accepted_qty,
+                            "rejected_qty": rejected_qty,
+                            "unit_cost": po["unit_cost"],
+                            "total_value": round(accepted_qty * po["unit_cost"], 2),
+                            "status": "posted",
+                        })
+
+                        # Update PO status
+                        for existing_po in all_purchase_orders:
+                            if existing_po.get("po_id") == po["po_id"]:
+                                existing_po["status"] = "received"
+                                break
+                    else:
+                        still_open.append(po)
+                open_pos = still_open
 
         # Build summary
         summary = self._build_summary(daily_logs)
@@ -193,6 +283,8 @@ class SyntheticInventorySimulator:
         return {
             "stock_snapshots": stock_snapshots,
             "purchase_orders": all_purchase_orders,
+            "goods_receipts": all_goods_receipts,
+            "quality_incidents": all_quality_incidents,
             "daily_log": daily_logs,
             "summary": summary,
         }

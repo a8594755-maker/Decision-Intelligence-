@@ -439,6 +439,130 @@ export function computeExploitability(root, store) {
   return br0 + br1;
 }
 
+// ---------------------------------------------------------------------------
+// Sampled Exploitability Estimator (ported from CardPilot)
+// ---------------------------------------------------------------------------
+
+/**
+ * LCG random number generator (deterministic, same as CardPilot).
+ * Used for reproducible sampling in exploitability estimation.
+ */
+function lcgRandom(seed) {
+  let state = seed;
+  return () => {
+    state = (state * 1664525 + 1013904223) & 0x7fffffff;
+    return state / 0x7fffffff;
+  };
+}
+
+/**
+ * Estimate exploitability via random sampling of terminal paths.
+ *
+ * Ported from CardPilot's estimateExploitability(). Instead of sampling
+ * poker hand matchups, we sample random paths through the game tree
+ * (choosing chance outcomes randomly and BR player choosing best action
+ * at each info set).
+ *
+ * This is more efficient than brute-force for larger trees while giving
+ * a statistical estimate of exploitability.
+ *
+ * @param {GameNode} root       - root of the game tree
+ * @param {InfoSetStore} store  - converged strategy store
+ * @param {number} sampleCount  - number of random paths to sample (default 200)
+ * @param {number} seed         - RNG seed for reproducibility (default 42)
+ * @returns {{
+ *   brValueP0: number,
+ *   brValueP1: number,
+ *   exploitability: number,
+ *   samples: number,
+ *   elapsedMs: number
+ * }}
+ */
+export function estimateSampledExploitability(root, store, sampleCount = 200, seed = 42) {
+  const startTime = Date.now();
+  const rng = lcgRandom(seed);
+
+  let sumBrP0 = 0;
+  let sumBrP1 = 0;
+
+  for (let s = 0; s < sampleCount; s++) {
+    sumBrP0 += _sampledBestResponse(root, store, 0, rng);
+    sumBrP1 += _sampledBestResponse(root, store, 1, rng);
+  }
+
+  const brValueP0 = sumBrP0 / sampleCount;
+  const brValueP1 = sumBrP1 / sampleCount;
+
+  return {
+    brValueP0,
+    brValueP1,
+    exploitability: brValueP0 + brValueP1,
+    samples: sampleCount,
+    elapsedMs: Date.now() - startTime,
+  };
+}
+
+/**
+ * Single sampled best-response traversal.
+ *
+ * For the BR player: choose the best action at each node.
+ * For the opponent: play according to average strategy.
+ * For chance nodes: sample one outcome randomly.
+ */
+function _sampledBestResponse(node, store, brPlayer, rng) {
+  if (node.type === 'terminal') {
+    return node.payoffs[brPlayer];
+  }
+
+  if (node.type === 'chance') {
+    // Sample one chance outcome
+    const r = rng();
+    let cumProb = 0;
+    for (const outcome of node.outcomes) {
+      cumProb += outcome.prob;
+      if (r <= cumProb) {
+        return _sampledBestResponse(outcome.node, store, brPlayer, rng);
+      }
+    }
+    // Fallback to last outcome (floating-point edge case)
+    return _sampledBestResponse(
+      node.outcomes[node.outcomes.length - 1].node, store, brPlayer, rng
+    );
+  }
+
+  const player = node.player;
+  const numActions = node.actions.length;
+  const infoKey = node.infoSetKey;
+
+  if (player === brPlayer) {
+    // Best response: pick the action with highest value
+    let bestVal = -Infinity;
+    for (let a = 0; a < numActions; a++) {
+      const child = node.children[node.actions[a]];
+      const v = _sampledBestResponse(child, store, brPlayer, rng);
+      if (v > bestVal) bestVal = v;
+    }
+    return bestVal;
+  } else {
+    // Opponent plays average strategy, we sample one action
+    const avgStrategy = store.getAverageStrategy(infoKey, numActions);
+    const r = rng();
+    let cumProb = 0;
+    for (let a = 0; a < numActions; a++) {
+      cumProb += avgStrategy[a];
+      if (r <= cumProb) {
+        return _sampledBestResponse(
+          node.children[node.actions[a]], store, brPlayer, rng
+        );
+      }
+    }
+    // Fallback
+    return _sampledBestResponse(
+      node.children[node.actions[numActions - 1]], store, brPlayer, rng
+    );
+  }
+}
+
 export default {
   InfoSetStore,
   cfrTraverse,
@@ -446,4 +570,5 @@ export default {
   computeGameValue,
   bestResponseValue,
   computeExploitability,
+  estimateSampledExploitability,
 };
