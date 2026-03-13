@@ -1,6 +1,6 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
-type ProxyMode = 'gemini_generate' | 'deepseek_chat' | 'ai_chat' | 'di_prompt';
+type ProxyMode = 'gemini_generate' | 'deepseek_chat' | 'ai_chat' | 'di_prompt' | 'anthropic_chat' | 'openai_chat';
 
 interface ProxyRequestBody {
   mode?: ProxyMode;
@@ -38,6 +38,10 @@ const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY') || Deno.env.get('VITE_GEMI
 const DEEPSEEK_API_KEY = Deno.env.get('DEEPSEEK_API_KEY') || Deno.env.get('VITE_DEEPSEEK_API_KEY') || '';
 const GEMINI_API_VERSION = Deno.env.get('DI_GEMINI_API_VERSION') || 'v1beta';
 const DEEPSEEK_BASE_URL = String(Deno.env.get('DI_DEEPSEEK_BASE_URL') || 'https://api.deepseek.com').replace(/\/+$/, '');
+const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY') || '';
+const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY') || '';
+const OPENAI_BASE_URL = String(Deno.env.get('DI_OPENAI_BASE_URL') || 'https://api.openai.com').replace(/\/+$/, '');
+const ANTHROPIC_API_VERSION = '2023-06-01';
 
 const GEMINI_MODEL_ALIASES = Object.freeze({
   'gemini-3-pro': 'gemini-3-pro-preview',
@@ -73,6 +77,32 @@ const DEEPSEEK_DEFAULT_CANDIDATES = Array.from(new Set(
     DEFAULT_DEEPSEEK_MODEL,
     'deepseek-v3.2-exp',
     'deepseek-chat',
+  ]
+    .map((item) => String(item || '').trim())
+    .filter(Boolean),
+));
+
+const DEFAULT_ANTHROPIC_MODEL = String(
+  Deno.env.get('DI_ANTHROPIC_MODEL') || 'claude-sonnet-4-6',
+).trim();
+const ANTHROPIC_DEFAULT_CANDIDATES = Array.from(new Set(
+  [
+    DEFAULT_ANTHROPIC_MODEL,
+    'claude-sonnet-4-6',
+    'claude-haiku-4-5-20251001',
+  ]
+    .map((item) => String(item || '').trim())
+    .filter(Boolean),
+));
+
+const DEFAULT_OPENAI_MODEL = String(
+  Deno.env.get('DI_OPENAI_MODEL') || 'gpt-4.1-mini',
+).trim();
+const OPENAI_DEFAULT_CANDIDATES = Array.from(new Set(
+  [
+    DEFAULT_OPENAI_MODEL,
+    'gpt-4.1-mini',
+    'gpt-4.1-nano',
   ]
     .map((item) => String(item || '').trim())
     .filter(Boolean),
@@ -435,6 +465,269 @@ const callDeepSeekChat = async ({
   };
 };
 
+// ── Anthropic (Claude) ────────────────────────────────────────────────────
+
+const postAnthropicWithModelFallback = async ({
+  requestBody,
+  modelCandidates = [],
+}: {
+  requestBody: Record<string, unknown>;
+  modelCandidates?: string[];
+}) => {
+  let retryableFailure: Record<string, unknown> | null = null;
+
+  for (const model of modelCandidates) {
+    const t = performance.now();
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': ANTHROPIC_API_KEY,
+        'anthropic-version': ANTHROPIC_API_VERSION,
+      },
+      body: JSON.stringify({ ...requestBody, model }),
+    });
+    const elapsed = Math.round(performance.now() - t);
+
+    if (response.ok) {
+      console.info(`[ai-proxy] Anthropic model=${model} OK in ${elapsed}ms`);
+      return { ok: true, response, model };
+    }
+
+    const errorData = await parseJsonSafe(response);
+    const errorMessage = String((errorData?.error as { message?: string })?.message || 'Unknown error');
+    console.warn(`[ai-proxy] Anthropic model=${model} failed (${response.status}) in ${elapsed}ms: ${errorMessage}`);
+    const failure = { ok: false, response, status: response.status, model, errorData, errorMessage };
+
+    if (!isModelLookupError(response.status, errorMessage)) {
+      return failure;
+    }
+    retryableFailure = failure;
+  }
+
+  return retryableFailure || {
+    ok: false, response: null, status: 0, model: DEFAULT_ANTHROPIC_MODEL,
+    errorData: {}, errorMessage: 'No Anthropic model candidates are available for this request.',
+  };
+};
+
+const extractAnthropicText = (body: Record<string, unknown>): string => {
+  const content = body?.content as Array<Record<string, unknown>> | undefined;
+  if (!Array.isArray(content) || content.length === 0) return '';
+  return content
+    .filter((block) => block?.type === 'text')
+    .map((block) => String(block?.text || ''))
+    .join('');
+};
+
+const callAnthropicChat = async ({
+  message,
+  conversationHistory = [],
+  systemPrompt = '',
+  temperature = 0.7,
+  maxOutputTokens = 8192,
+  model,
+}: {
+  message: string;
+  conversationHistory?: unknown[];
+  systemPrompt?: string;
+  temperature?: number;
+  maxOutputTokens?: number;
+  model?: string;
+}) => {
+  if (!ANTHROPIC_API_KEY) {
+    throw new Error('ANTHROPIC_API_KEY is not configured on Edge Function.');
+  }
+
+  const modelCandidates = Array.from(new Set(
+    [model, ...ANTHROPIC_DEFAULT_CANDIDATES]
+      .map((item) => String(item || '').trim())
+      .filter(Boolean),
+  ));
+
+  // Build messages array (Anthropic format: role must alternate user/assistant)
+  const messages: Array<{ role: 'user' | 'assistant'; content: string }> = [];
+  const historyWindow = Array.isArray(conversationHistory) ? conversationHistory.slice(-10) : [];
+  for (const entry of historyWindow) {
+    const row = entry as { role?: unknown; content?: unknown };
+    const content = typeof row?.content === 'string' ? row.content.trim() : '';
+    if (!content) continue;
+    const role = normalizeChatRole(row.role);
+    // Ensure alternation: skip if same role as last message
+    if (messages.length > 0 && messages[messages.length - 1].role === role) continue;
+    messages.push({ role, content });
+  }
+  // Add current user message (skip if duplicate of last)
+  const cleanMessage = String(message || '').trim();
+  if (messages.length === 0 || messages[messages.length - 1].role !== 'user' ||
+      messages[messages.length - 1].content !== cleanMessage) {
+    messages.push({ role: 'user', content: cleanMessage });
+  }
+
+  const requestBody: Record<string, unknown> = {
+    messages,
+    max_tokens: maxOutputTokens,
+    temperature,
+  };
+  if (systemPrompt.trim()) {
+    requestBody.system = systemPrompt.trim();
+  }
+
+  const request = await postAnthropicWithModelFallback({
+    requestBody,
+    modelCandidates,
+  }) as Record<string, unknown>;
+
+  if (!request.ok) {
+    const status = Number(request.status || 500);
+    const messageText = String(request.errorMessage || 'Anthropic request failed.');
+    const error = new Error(messageText);
+    (error as Error & { status?: number }).status = status;
+    throw error;
+  }
+
+  const response = request.response as Response;
+  const body = await parseJsonSafe(response);
+  const text = extractAnthropicText(body);
+  if (!text) {
+    throw new Error('Anthropic returned empty content.');
+  }
+
+  return {
+    provider: 'anthropic',
+    model: String(request.model || model || DEFAULT_ANTHROPIC_MODEL),
+    text,
+    raw: body,
+    usage: body?.usage || null,
+  };
+};
+
+// ── OpenAI ────────────────────────────────────────────────────────────────
+
+const postOpenAIWithModelFallback = async ({
+  requestBody,
+  modelCandidates = [],
+}: {
+  requestBody: Record<string, unknown>;
+  modelCandidates?: string[];
+}) => {
+  let retryableFailure: Record<string, unknown> | null = null;
+
+  for (const model of modelCandidates) {
+    const t = performance.now();
+    const response = await fetch(`${OPENAI_BASE_URL}/v1/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
+      },
+      body: JSON.stringify({ ...requestBody, model }),
+    });
+    const elapsed = Math.round(performance.now() - t);
+
+    if (response.ok) {
+      console.info(`[ai-proxy] OpenAI model=${model} OK in ${elapsed}ms`);
+      return { ok: true, response, model };
+    }
+
+    const errorData = await parseJsonSafe(response);
+    const errorMessage = String((errorData?.error as { message?: string })?.message || 'Unknown error');
+    console.warn(`[ai-proxy] OpenAI model=${model} failed (${response.status}) in ${elapsed}ms: ${errorMessage}`);
+    const failure = { ok: false, response, status: response.status, model, errorData, errorMessage };
+
+    if (!isModelLookupError(response.status, errorMessage)) {
+      return failure;
+    }
+    retryableFailure = failure;
+  }
+
+  return retryableFailure || {
+    ok: false, response: null, status: 0, model: DEFAULT_OPENAI_MODEL,
+    errorData: {}, errorMessage: 'No OpenAI model candidates are available for this request.',
+  };
+};
+
+const extractOpenAIText = (body: Record<string, unknown>): string => {
+  const choices = body?.choices as Array<Record<string, unknown>> | undefined;
+  if (!Array.isArray(choices) || choices.length === 0) return '';
+  const message = choices[0]?.message as Record<string, unknown> | undefined;
+  return typeof message?.content === 'string' ? message.content : '';
+};
+
+const callOpenAIChat = async ({
+  message,
+  conversationHistory = [],
+  systemPrompt = '',
+  temperature = 0.7,
+  maxOutputTokens = 8192,
+  model,
+}: {
+  message: string;
+  conversationHistory?: unknown[];
+  systemPrompt?: string;
+  temperature?: number;
+  maxOutputTokens?: number;
+  model?: string;
+}) => {
+  if (!OPENAI_API_KEY) {
+    throw new Error('OPENAI_API_KEY is not configured on Edge Function.');
+  }
+
+  const modelCandidates = Array.from(new Set(
+    [model, ...OPENAI_DEFAULT_CANDIDATES]
+      .map((item) => String(item || '').trim())
+      .filter(Boolean),
+  ));
+
+  // Build messages array (OpenAI format: system + user/assistant)
+  const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [];
+  if (systemPrompt.trim()) {
+    messages.push({ role: 'system', content: systemPrompt.trim() });
+  }
+  const historyWindow = Array.isArray(conversationHistory) ? conversationHistory.slice(-10) : [];
+  for (const entry of historyWindow) {
+    const row = entry as { role?: unknown; content?: unknown };
+    const content = typeof row?.content === 'string' ? row.content.trim() : '';
+    if (!content) continue;
+    messages.push({ role: normalizeChatRole(row.role), content });
+  }
+  messages.push({ role: 'user', content: String(message || '').trim() });
+
+  const request = await postOpenAIWithModelFallback({
+    requestBody: {
+      messages,
+      temperature,
+      max_tokens: maxOutputTokens,
+    },
+    modelCandidates,
+  }) as Record<string, unknown>;
+
+  if (!request.ok) {
+    const status = Number(request.status || 500);
+    const messageText = String(request.errorMessage || 'OpenAI request failed.');
+    const error = new Error(messageText);
+    (error as Error & { status?: number }).status = status;
+    throw error;
+  }
+
+  const response = request.response as Response;
+  const body = await parseJsonSafe(response);
+  const text = extractOpenAIText(body);
+  if (!text) {
+    throw new Error('OpenAI returned empty content.');
+  }
+
+  return {
+    provider: 'openai',
+    model: String(request.model || model || DEFAULT_OPENAI_MODEL),
+    text,
+    raw: body,
+    usage: body?.usage || null,
+  };
+};
+
+// ── Mode handlers ─────────────────────────────────────────────────────────
+
 const handleGeminiGenerate = async (payload: Record<string, unknown>) => {
   const prompt = String(payload?.prompt || '').trim();
   if (!prompt) return jsonResponse({ error: 'Missing required field: prompt' }, 400);
@@ -519,6 +812,38 @@ const handleAiChat = async (payload: Record<string, unknown>) => {
   }
 };
 
+const handleAnthropicChat = async (payload: Record<string, unknown>) => {
+  const message = String(payload?.message || '').trim();
+  if (!message) return jsonResponse({ error: 'Missing required field: message' }, 400);
+
+  const result = await callAnthropicChat({
+    message,
+    conversationHistory: Array.isArray(payload?.conversationHistory) ? payload.conversationHistory : [],
+    systemPrompt: String(payload?.systemPrompt || ''),
+    temperature: toFiniteNumber(payload?.temperature, 0.7),
+    maxOutputTokens: Math.max(64, Math.floor(toFiniteNumber(payload?.maxOutputTokens, 8192))),
+    model: String(payload?.model || DEFAULT_ANTHROPIC_MODEL),
+  });
+
+  return jsonResponse({ ok: true, ...result });
+};
+
+const handleOpenAIChat = async (payload: Record<string, unknown>) => {
+  const message = String(payload?.message || '').trim();
+  if (!message) return jsonResponse({ error: 'Missing required field: message' }, 400);
+
+  const result = await callOpenAIChat({
+    message,
+    conversationHistory: Array.isArray(payload?.conversationHistory) ? payload.conversationHistory : [],
+    systemPrompt: String(payload?.systemPrompt || ''),
+    temperature: toFiniteNumber(payload?.temperature, 0.7),
+    maxOutputTokens: Math.max(64, Math.floor(toFiniteNumber(payload?.maxOutputTokens, 8192))),
+    model: String(payload?.model || DEFAULT_OPENAI_MODEL),
+  });
+
+  return jsonResponse({ ok: true, ...result });
+};
+
 const handleDiPrompt = async (payload: Record<string, unknown>) => {
   const provider = String(payload?.provider || '').trim().toLowerCase();
   const prompt = String(payload?.prompt || '').trim();
@@ -580,6 +905,46 @@ const handleDiPrompt = async (payload: Record<string, unknown>) => {
       provider: 'deepseek',
       model: String(request.model || model || DEFAULT_DEEPSEEK_MODEL),
       text,
+    });
+  }
+
+  if (provider === 'anthropic') {
+    if (!ANTHROPIC_API_KEY) {
+      return jsonResponse({ error: 'ANTHROPIC_API_KEY is not configured on Edge Function.' }, 500);
+    }
+    const result = await callAnthropicChat({
+      message: prompt,
+      systemPrompt: '',
+      temperature,
+      maxOutputTokens,
+      model: model || DEFAULT_ANTHROPIC_MODEL,
+    });
+    return jsonResponse({
+      ok: true,
+      provider: 'anthropic',
+      model: result.model,
+      text: result.text,
+      usage: result.usage,
+    });
+  }
+
+  if (provider === 'openai') {
+    if (!OPENAI_API_KEY) {
+      return jsonResponse({ error: 'OPENAI_API_KEY is not configured on Edge Function.' }, 500);
+    }
+    const result = await callOpenAIChat({
+      message: prompt,
+      systemPrompt: '',
+      temperature,
+      maxOutputTokens,
+      model: model || DEFAULT_OPENAI_MODEL,
+    });
+    return jsonResponse({
+      ok: true,
+      provider: 'openai',
+      model: result.model,
+      text: result.text,
+      usage: result.usage,
     });
   }
 
@@ -656,6 +1021,8 @@ Deno.serve(async (req) => {
     if (mode === 'deepseek_chat') return wrapCors(await handleDeepSeekChat(payload));
     if (mode === 'ai_chat') return wrapCors(await handleAiChat(payload));
     if (mode === 'di_prompt') return wrapCors(await handleDiPrompt(payload));
+    if (mode === 'anthropic_chat') return wrapCors(await handleAnthropicChat(payload));
+    if (mode === 'openai_chat') return wrapCors(await handleOpenAIChat(payload));
 
     return jsonResponse({ error: `Unsupported mode: ${mode}` }, 400, cors);
   } catch (error) {

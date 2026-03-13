@@ -21,6 +21,8 @@ import { executeTask } from './aiEmployeeExecutor';
 import { resolveTemplate, initLoopState } from './agentLoopTemplates';
 import { recall, summarizeMemories } from './aiEmployeeMemoryService';
 import { checkBudget, BudgetExceededError } from './taskBudgetService';
+import { reviewStepOutput, shouldReview, MAX_REVISION_ROUNDS } from './aiReviewerService';
+import { isDynamicTemplate, getDynamicTemplateFromTask, initDynamicLoopState } from './dynamicTemplateBuilder';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -89,6 +91,16 @@ function buildStepInputContext(taskInputContext, stepDef, loopState) {
     base.riskMode = 'on';
   }
 
+  // Pass AI review revision instructions (Phase 4)
+  if (stepDef._revision_instructions?.length) {
+    base._revision_instructions = stepDef._revision_instructions;
+  }
+
+  // Pass tool hint and tool_id for dynamic/registered/builtin tool steps
+  if (stepDef.tool_hint) base._tool_hint = stepDef.tool_hint;
+  if (stepDef.tool_id) base._tool_id = stepDef.tool_id;
+  if (stepDef.builtin_tool_id) base._builtin_tool_id = stepDef.builtin_tool_id;
+
   return base;
 }
 
@@ -124,10 +136,19 @@ export async function initAgentLoop(taskId, userId) {
   if (task.loop_state?.steps?.length > 0) return task;
 
   const templateId = task.template_id || task.input_context?.template_id || task.input_context?.workflow_type;
-  const template = resolveTemplate(templateId);
-  if (!template) throw new Error(`Unknown template: ${templateId}`);
 
-  const loopState = initLoopState(template);
+  // Dynamic templates are stored in input_context, not the static registry
+  let template;
+  let loopState;
+  if (isDynamicTemplate(templateId)) {
+    template = getDynamicTemplateFromTask(task);
+    if (!template) throw new Error(`Dynamic template not found in task input_context: ${templateId}`);
+    loopState = initDynamicLoopState(template);
+  } else {
+    template = resolveTemplate(templateId);
+    if (!template) throw new Error(`Unknown template: ${templateId}`);
+    loopState = initLoopState(template);
+  }
   loopState.started_at = new Date().toISOString();
 
   await aiEmployeeService.updateTaskLoopState(taskId, loopState);
@@ -260,6 +281,50 @@ export async function tickAgentLoop(taskId, userId) {
 
   try {
     const result = await executeTask(syntheticTask, userId);
+
+    // ── AI Review gate (Phase 4) ─────────────────────────────────────────
+    // If the step has ai_review enabled, score the output before marking succeeded.
+    // On failure: store revision instructions, reset to PENDING, increment retry.
+    if (nextStep.ai_review && shouldReview(nextStep.workflow_type)) {
+      try {
+        const priorReviews = nextStep._revision_log || [];
+        const review = await reviewStepOutput({
+          taskId,
+          stepName: nextStep.name,
+          workflowType: nextStep.workflow_type,
+          output: result?.run || result?.result || result,
+          priorReviews,
+        });
+
+        // Track review in step's revision log
+        if (!nextStep._revision_log) nextStep._revision_log = [];
+        nextStep._revision_log.push(review);
+
+        if (!review.passed && nextStep.retry_count < MAX_RETRIES) {
+          // Revision needed — send back
+          nextStep.status = STEP_STATUS.PENDING;
+          nextStep._revision_instructions = review.suggestions || [];
+          nextStep.retry_count += 1;
+          nextStep.error = `AI review: ${review.score}/${review.threshold} — revision needed`;
+          nextStep.finished_at = new Date().toISOString();
+          await aiEmployeeService.updateTaskLoopState(taskId, loopState);
+
+          return {
+            done: false,
+            step_event: {
+              step_name: nextStep.name,
+              status: 'revision_needed',
+              review_score: review.score,
+              review_threshold: review.threshold,
+              suggestions: review.suggestions,
+            },
+            task: await aiEmployeeService.getTask(taskId),
+          };
+        }
+      } catch (reviewErr) {
+        console.warn('[agentLoopService] AI review failed, proceeding anyway:', reviewErr?.message);
+      }
+    }
 
     // Step succeeded
     nextStep.status = nextStep.requires_review ? STEP_STATUS.REVIEW_HOLD : STEP_STATUS.SUCCEEDED;

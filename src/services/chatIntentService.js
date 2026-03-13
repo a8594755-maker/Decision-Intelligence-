@@ -16,19 +16,19 @@ const VALID_INTENTS = new Set([
   'RUN_PLAN', 'RUN_FORECAST', 'RUN_WORKFLOW_A', 'RUN_WORKFLOW_B',
   'QUERY_DATA', 'COMPARE_PLANS', 'CHANGE_PARAM', 'WHAT_IF',
   'APPROVE', 'REJECT', 'GENERAL_CHAT', 'RUN_DIGITAL_TWIN',
-  'ACCEPT_NEGOTIATION_OPTION',
+  'ACCEPT_NEGOTIATION_OPTION', 'ASSIGN_TASK',
 ]);
 
 const EXECUTION_INTENTS = new Set([
   'RUN_PLAN', 'RUN_FORECAST', 'RUN_WORKFLOW_A', 'RUN_WORKFLOW_B',
   'CHANGE_PARAM', 'WHAT_IF', 'RUN_DIGITAL_TWIN',
-  'ACCEPT_NEGOTIATION_OPTION',
+  'ACCEPT_NEGOTIATION_OPTION', 'ASSIGN_TASK',
 ]);
 
 // ── Local Fast-Path Intent Detection ─────────────────────────────────────────
 // Skip expensive LLM call for messages that are clearly general chat.
 
-const ACTION_KEYWORDS = /\b(run|execute|plan|forecast|optimize|approval|approve|reject|compare|what.?if|scenario|simulate|digital.?twin|change|set|update|budget|service.?level|horizon|risk|workflow|分析|執行|預測|比較|審批|核准|否決|模擬|情境)\b/i;
+const ACTION_KEYWORDS = /\b(run|execute|plan|forecast|optimize|approval|approve|reject|compare|what.?if|scenario|simulate|digital.?twin|change|set|update|budget|service.?level|horizon|risk|workflow|assign|task|create|generate|build|make|produce|分析|執行|預測|比較|審批|核准|否決|模擬|情境|任務|生成|建立|製作|指派)\b/i;
 
 /**
  * Returns true if the message likely needs LLM-powered intent parsing.
@@ -239,6 +239,15 @@ export async function routeIntent(parsedIntent, sessionContext, handlers, option
         await handlers.applyNegotiationOption({
           optionId: entities.negotiation_option_id,
           optionTitle: entities.negotiation_option_title,
+        });
+      }
+      return { handled: true, intent };
+
+    case 'ASSIGN_TASK':
+      if (handlers.assignTask) {
+        await handlers.assignTask({
+          userMessage: entities.freeform_query || '',
+          employeeId: entities.employee_id || null,
         });
       }
       return { handled: true, intent };

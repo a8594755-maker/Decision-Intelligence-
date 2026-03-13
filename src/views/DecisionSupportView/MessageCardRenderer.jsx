@@ -46,6 +46,10 @@ import DecisionBundleCard from '../../components/chat/DecisionBundleCard';
 import CausalGraphCard from '../../components/chat/CausalGraphCard';
 import WarRoomCard from '../../components/chat/WarRoomCard';
 import MacroOracleAlertCard from '../../components/chat/MacroOracleAlertCard';
+import TaskPlanCard from '../../components/chat/TaskPlanCard';
+import AIReviewCard from '../../components/chat/AIReviewCard';
+import RevisionLogCard from '../../components/chat/RevisionLogCard';
+import ToolRegistryCard from '../../components/chat/ToolRegistryCard';
 import { toPositiveRunId } from './helpers.js';
 
 /**
@@ -444,6 +448,24 @@ export default function MessageCardRenderer({ message, handlers, state }) {
         onAction={handlers.handleDecisionBundleAction}
       />
     );
+  }
+  if (message.type === 'task_plan_card') {
+    return (
+      <TaskPlanCard
+        decomposition={message.payload}
+        onApprove={message._onApprove}
+        onCancel={() => {}}
+      />
+    );
+  }
+  if (message.type === 'ai_review_card') {
+    return <AIReviewCard review={message.payload} stepName={message.stepName} />;
+  }
+  if (message.type === 'revision_log_card') {
+    return <RevisionLogCard revisionLog={message.payload} stepName={message.stepName} />;
+  }
+  if (message.type === 'tool_registry_card') {
+    return <ToolRegistryCard tool={message.payload} onSave={handlers.handleSaveToToolLibrary} />;
   }
   return null;
 }

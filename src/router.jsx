@@ -18,6 +18,7 @@ const NegotiationWorkbench = lazy(() => import('./pages/NegotiationWorkbench'));
 const EmployeesPage       = lazy(() => import('./pages/EmployeesPage'));
 const EmployeeTasksPage   = lazy(() => import('./pages/EmployeeTasksPage'));
 const EmployeeReviewPage  = lazy(() => import('./pages/EmployeeReviewPage'));
+const ToolRegistryPage    = lazy(() => import('./pages/ToolRegistryPage'));
 
 export const router = createBrowserRouter([
   {
@@ -39,6 +40,7 @@ export const router = createBrowserRouter([
       { path: 'employees',        element: <EmployeesPage /> },
       { path: 'employees/tasks',  element: <EmployeeTasksPage /> },
       { path: 'employees/review', element: <EmployeeReviewPage /> },
+      { path: 'employees/tools',  element: <ToolRegistryPage /> },
       { path: 'ops', element: <OpsDashboard /> },
       { path: 'sandbox', element: <SyntheticERPSandbox /> },
       { path: 'settings', element: <SettingsPage /> },

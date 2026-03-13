@@ -16,10 +16,15 @@
 // Maps workflow_type → required permission key(s) on ai_employees.permissions
 
 export const PERMISSION_REGISTRY = {
-  forecast:   ['can_run_forecast'],
-  plan:       ['can_run_plan'],
-  risk:       ['can_run_risk'],
-  synthesize: [],                     // no special permission needed — it's a passive aggregation
+  forecast:        ['can_run_forecast'],
+  plan:            ['can_run_plan'],
+  risk:            ['can_run_risk'],
+  synthesize:      [],                     // no special permission needed — it's a passive aggregation
+  dynamic_tool:    ['can_run_dynamic_tool'],
+  registered_tool: ['can_run_registered_tool'],
+  report:          ['can_generate_report'],
+  export:          ['can_export'],
+  builtin_tool:    ['can_run_builtin_tool'],
 };
 
 // ── Error ────────────────────────────────────────────────────────────────────

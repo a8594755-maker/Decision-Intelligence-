@@ -51,6 +51,13 @@ const V1_VALIDATORS = {
   negotiation_approval_request: validateNegotiationApprovalRequest,
   // AI Employee — run summary artifact (@product: ai-employee)
   ai_employee_run_summary: validateAiEmployeeRunSummary,
+  // Phase 4: Dynamic Tools + AI Review
+  revision_log: validateRevisionLog,
+  dynamic_tool_code: validateDynamicToolCode,
+  tool_registry_entry: validateToolRegistryEntry,
+  ai_review_result: validateAiReviewResult,
+  report_html: validateReportHtml,
+  powerbi_dataset: validatePowerBIDataset,
 };
 
 const MAX_ISSUES = 50;
@@ -919,6 +926,58 @@ function validateAiEmployeeRunSummary(payload, issues) {
   requireField(issues, payload, 'run_id', path);
   requireField(issues, payload, 'workflow_type', path);
   requireField(issues, payload, 'narrative', path);
+}
+
+// ---------------------------------------------------------------------------
+// Phase 4: Dynamic Tools + AI Review validators
+// ---------------------------------------------------------------------------
+
+function validateRevisionLog(payload, issues) {
+  const root = ensureObjectPayload(issues, payload);
+  if (!root) return;
+  requireStringField(issues, root, 'step_name', 'payload');
+  requireNumberField(issues, root, 'total_rounds', 'payload');
+  requireArrayField(issues, root, 'rounds', 'payload');
+  requireNumberField(issues, root, 'final_score', 'payload');
+}
+
+function validateDynamicToolCode(payload, issues) {
+  const root = ensureObjectPayload(issues, payload);
+  if (!root) return;
+  requireStringField(issues, root, 'code', 'payload');
+  requireStringField(issues, root, 'code_hash', 'payload');
+  requireStringField(issues, root, 'generated_at', 'payload');
+}
+
+function validateToolRegistryEntry(payload, issues) {
+  const root = ensureObjectPayload(issues, payload);
+  if (!root) return;
+  requireStringField(issues, root, 'id', 'payload');
+  requireStringField(issues, root, 'name', 'payload');
+  requireStringField(issues, root, 'category', 'payload');
+  requireStringField(issues, root, 'status', 'payload');
+}
+
+function validateAiReviewResult(payload, issues) {
+  const root = ensureObjectPayload(issues, payload);
+  if (!root) return;
+  requireNumberField(issues, root, 'score', 'payload');
+  requireBooleanField(issues, root, 'passed', 'payload');
+  requireNumberField(issues, root, 'threshold', 'payload');
+  requireStringField(issues, root, 'feedback', 'payload');
+}
+
+function validateReportHtml(payload, issues) {
+  if (typeof payload !== 'string') {
+    addTypeIssue(issues, 'payload', 'string', payload);
+  }
+}
+
+function validatePowerBIDataset(payload, issues) {
+  const root = ensureObjectPayload(issues, payload);
+  if (!root) return;
+  requireStringField(issues, root, 'version', 'payload');
+  requireArrayField(issues, root, 'tables', 'payload');
 }
 
 export function validateArtifactOrThrow({ artifact_type, payload }) {

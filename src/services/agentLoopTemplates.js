@@ -106,7 +106,20 @@ export const TEMPLATE_OPTIONS = [
  * @param {string} idOrWorkflowType
  * @returns {Template|null}
  */
+/**
+ * Resolve a template by its ID or by a legacy workflow_type.
+ * Dynamic templates (prefixed with `dynamic_`) are resolved by the caller
+ * via dynamicTemplateBuilder.getDynamicTemplateFromTask() — this function
+ * only handles static templates.
+ *
+ * @param {string} idOrWorkflowType
+ * @returns {Template|null}
+ */
 export function resolveTemplate(idOrWorkflowType) {
+  // Dynamic templates are stored in task.input_context, not here
+  if (typeof idOrWorkflowType === 'string' && idOrWorkflowType.startsWith('dynamic_')) {
+    return null; // Caller should use getDynamicTemplateFromTask
+  }
   return AGENT_LOOP_TEMPLATES[idOrWorkflowType] || null;
 }
 

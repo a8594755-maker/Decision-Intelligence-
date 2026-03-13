@@ -24,6 +24,10 @@ import { writeMemory, extractOutcomeKpis, extractInputParams } from './aiEmploye
 import { resolveModel, recordModelRun } from './modelRoutingService';
 import { checkBudget, consumeBudget, BudgetExceededError } from './taskBudgetService';
 import { notify, NOTIFICATION_TYPES } from './notificationService';
+import { generateAndExecuteTool, executeRegisteredTool } from './dynamicToolExecutor';
+import { generateReport } from './reportGeneratorService';
+import { toPowerBIDataset } from './externalToolBridgeService';
+import { getBuiltinTool } from './builtinToolCatalog';
 
 // ── Input context shape (documented for task creation forms) ────────────────
 //
@@ -66,6 +70,20 @@ function buildSummary(workflowType, result) {
       const syn = result.synthesis || {};
       return `Synthesis completed. ${syn.total_artifacts || 0} artifact(s) from ${(syn.sources || []).length} step(s).`;
     }
+    case 'dynamic_tool': {
+      const dtool = result?.dynamic_tool;
+      return `Dynamic tool executed. ${dtool?.artifact_refs?.length || 0} artifact(s) generated.`;
+    }
+    case 'registered_tool': {
+      const rtool = result?.registered_tool;
+      return `Registered tool executed. ${rtool?.artifact_refs?.length || 0} artifact(s) generated.`;
+    }
+    case 'report':
+      return `Report generated (${result?.report?.format || 'unknown'} format).`;
+    case 'export':
+      return `Export completed (${result?.export?.format || 'unknown'} format).`;
+    case 'builtin_tool':
+      return `Built-in tool completed. ${result?.artifact_refs?.length || 0} artifact(s) generated.`;
     default:
       return `${workflowType} run completed.`;
   }
@@ -96,7 +114,8 @@ export async function executeTask(task, userId) {
     task.input_context || {};
 
   if (!workflow_type) throw new Error('task.input_context.workflow_type is required');
-  if (!dataset_profile_id && workflow_type !== 'synthesize') {
+  const NO_DATASET_TYPES = ['synthesize', 'dynamic_tool', 'registered_tool', 'report', 'export', 'builtin_tool'];
+  if (!dataset_profile_id && !NO_DATASET_TYPES.includes(workflow_type)) {
     throw new Error('task.input_context.dataset_profile_id is required');
   }
 
@@ -136,9 +155,9 @@ export async function executeTask(task, userId) {
   await aiEmployeeService.updateEmployeeStatus(task.employee_id, 'working');
 
   try {
-    // ── 3. Resolve dataset profile (not needed for synthesize) ──────────────
+    // ── 3. Resolve dataset profile (not needed for synthesize/dynamic/report/export) ──
     let profileRow = null;
-    if (workflow_type !== 'synthesize') {
+    if (!NO_DATASET_TYPES.includes(workflow_type)) {
       profileRow = await datasetProfilesService.getDatasetProfileById(userId, dataset_profile_id);
       if (!profileRow) {
         throw new Error(`Dataset profile not found: ${dataset_profile_id}`);
@@ -208,6 +227,112 @@ export async function executeTask(task, userId) {
           },
           artifact_refs: allRefs,
         };
+        break;
+      }
+
+      case 'dynamic_tool': {
+        const toolResult = await generateAndExecuteTool({
+          toolHint: task.input_context?._tool_hint || null,
+          code: task.input_context?._tool_code || null,
+          inputData: task.input_context?._input_data || null,
+          priorArtifacts: task.input_context?._prior_step_artifacts || {},
+          revisionInstructions: task.input_context?._revision_instructions || null,
+        });
+        result = {
+          dynamic_tool: toolResult,
+          artifact_refs: toolResult.artifact_refs || [],
+        };
+        break;
+      }
+
+      case 'registered_tool': {
+        const toolId = task.input_context?._tool_id;
+        if (!toolId) throw new Error('registered_tool requires _tool_id in input_context');
+        const regResult = await executeRegisteredTool(toolId, task.input_context || {});
+        result = {
+          registered_tool: regResult,
+          artifact_refs: regResult.artifact_refs || [],
+        };
+        break;
+      }
+
+      case 'report': {
+        const priorArtifactsForReport = task.input_context?._prior_step_artifacts || {};
+        const reportResult = await generateReport({
+          format: task.input_context?.report_format || 'html',
+          artifacts: priorArtifactsForReport,
+          taskMeta: { id: task.id, title: task.title },
+          narrative: task.input_context?._narrative || null,
+          revisionLog: task.input_context?._revision_log || null,
+        });
+        result = {
+          report: reportResult,
+          artifact_refs: reportResult.artifact_ref ? [reportResult.artifact_ref] : [],
+        };
+        break;
+      }
+
+      case 'export': {
+        const exportFormat = task.input_context?.export_format || 'powerbi';
+        const priorArtifactsForExport = task.input_context?._prior_step_artifacts || {};
+        if (exportFormat === 'powerbi') {
+          const pbiResult = toPowerBIDataset(priorArtifactsForExport);
+          result = {
+            export: pbiResult,
+            artifact_refs: pbiResult.artifact_ref ? [pbiResult.artifact_ref] : [],
+          };
+        } else {
+          // Default: pass through to report generator with xlsx format
+          const xlsxResult = await generateReport({
+            format: 'xlsx',
+            artifacts: priorArtifactsForExport,
+            taskMeta: { id: task.id, title: task.title },
+          });
+          result = {
+            export: xlsxResult,
+            artifact_refs: xlsxResult.artifact_ref ? [xlsxResult.artifact_ref] : [],
+          };
+        }
+        break;
+      }
+
+      case 'builtin_tool': {
+        // Generic dispatch through the builtin tool catalog.
+        // The catalog entry tells us which module/method to call.
+        const builtinToolId = task.input_context?._builtin_tool_id;
+        if (!builtinToolId) throw new Error('builtin_tool requires _builtin_tool_id in input_context');
+
+        const catalogEntry = getBuiltinTool(builtinToolId);
+        if (!catalogEntry) throw new Error(`Unknown builtin tool: ${builtinToolId}`);
+
+        // Resolve dataset profile if the tool needs one
+        let builtinProfileRow = profileRow;
+        if (catalogEntry.needs_dataset_profile && !builtinProfileRow && dataset_profile_id) {
+          builtinProfileRow = await datasetProfilesService.getDatasetProfileById(userId, dataset_profile_id);
+        }
+
+        // Dynamically import the module and call the method
+        const mod = await import(`./${catalogEntry.module}`);
+        const fn = mod[catalogEntry.method];
+        if (typeof fn !== 'function') {
+          throw new Error(`Builtin tool ${builtinToolId}: method "${catalogEntry.method}" not found in ${catalogEntry.module}`);
+        }
+
+        // Build args based on what the tool expects
+        const builtinArgs = {
+          userId,
+          datasetProfileRow: builtinProfileRow,
+          settings: settings || {},
+          ...(task.input_context?._tool_params || {}),
+          _prior_step_artifacts: task.input_context?._prior_step_artifacts || {},
+        };
+
+        // Add common optional params
+        if (riskMode) builtinArgs.riskMode = riskMode;
+        if (scenario_overrides) builtinArgs.scenarioOverrides = scenario_overrides;
+        if (horizonPeriods) builtinArgs.horizonPeriods = horizonPeriods;
+
+        result = await fn(builtinArgs);
         break;
       }
 

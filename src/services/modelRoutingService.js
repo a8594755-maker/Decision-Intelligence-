@@ -52,12 +52,17 @@ const DEFAULT_MODELS = [
 ];
 
 const DEFAULT_POLICIES = {
-  forecast:           { preferred_tier: 'tier_c', fallback_tier: 'tier_b', escalation_rules: { on_failure: 'tier_a', on_low_confidence: 'tier_b' } },
-  plan:               { preferred_tier: 'tier_c', fallback_tier: 'tier_b', escalation_rules: { on_failure: 'tier_a', on_high_risk: 'tier_a' } },
-  risk:               { preferred_tier: 'tier_c', fallback_tier: 'tier_b', escalation_rules: { on_failure: 'tier_a' } },
-  synthesize:         { preferred_tier: 'tier_c', fallback_tier: null,     escalation_rules: {} },
-  task_decomposition: { preferred_tier: 'tier_a', fallback_tier: null,     escalation_rules: {} },
-  review:             { preferred_tier: 'tier_a', fallback_tier: 'tier_b', escalation_rules: {} },
+  forecast:                { preferred_tier: 'tier_c', fallback_tier: 'tier_b', escalation_rules: { on_failure: 'tier_a', on_low_confidence: 'tier_b' } },
+  plan:                    { preferred_tier: 'tier_c', fallback_tier: 'tier_b', escalation_rules: { on_failure: 'tier_a', on_high_risk: 'tier_a' } },
+  risk:                    { preferred_tier: 'tier_c', fallback_tier: 'tier_b', escalation_rules: { on_failure: 'tier_a' } },
+  synthesize:              { preferred_tier: 'tier_c', fallback_tier: null,     escalation_rules: {} },
+  task_decomposition:      { preferred_tier: 'tier_a', fallback_tier: null,     escalation_rules: {} },
+  review:                  { preferred_tier: 'tier_a', fallback_tier: 'tier_b', escalation_rules: {} },
+  dynamic_tool_generation: { preferred_tier: 'tier_a', fallback_tier: 'tier_b', escalation_rules: { on_failure: 'tier_a' } },
+  registered_tool:         { preferred_tier: 'tier_c', fallback_tier: null,     escalation_rules: {} },
+  report:                  { preferred_tier: 'tier_b', fallback_tier: 'tier_c', escalation_rules: {} },
+  export:                  { preferred_tier: 'tier_c', fallback_tier: null,     escalation_rules: {} },
+  builtin_tool:            { preferred_tier: 'tier_b', fallback_tier: 'tier_c', escalation_rules: {} },
 };
 
 const LOCAL_RUNS_KEY = 'ai_employee_model_runs_v1';

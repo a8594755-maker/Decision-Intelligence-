@@ -3,7 +3,7 @@ import { NavLink as RouterNavLink } from 'react-router-dom';
 import {
   Activity, LayoutDashboard, Calculator, TrendingUp,
   ShieldAlert, Settings, Moon, Sun, LogOut, Cpu,
-  ChevronsLeft, ChevronsRight, GitCompare, BarChart3, Database, Handshake, Bot,
+  ChevronsLeft, ChevronsRight, GitCompare, BarChart3, Database, Handshake, Bot, Wrench,
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useApp } from '../../contexts/AppContext';
@@ -18,7 +18,8 @@ const NAV_ITEMS = [
   { to: '/scenarios',    label: 'Scenarios',      icon: GitCompare },
   { to: '/negotiation',  label: 'Negotiation',    icon: Handshake },
   // @product: ai-employee
-  { to: '/employees',    label: 'AI Employee',    icon: Bot },
+  { to: '/employees',       label: 'AI Employee',  icon: Bot },
+  { to: '/employees/tools', label: 'Tool Library',  icon: Wrench },
 ];
 
 const BOTTOM_ITEMS = [

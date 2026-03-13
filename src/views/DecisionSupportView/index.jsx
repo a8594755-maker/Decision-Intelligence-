@@ -46,6 +46,10 @@ import { getAvailableActions, resolveActionToIntent } from '../../services/chatA
 import { handleParameterChange, handlePlanComparison, buildComparisonSummaryText } from '../../services/chatRefinementService';
 import { createAlertMonitor, buildAlertChatMessage, isAlertMonitorEnabled } from '../../services/alertMonitorService';
 import { batchApprove, batchReject } from '../../services/approvalWorkflowService';
+import { decomposeTask } from '../../services/chatTaskDecomposer';
+import { buildDynamicTemplate } from '../../services/dynamicTemplateBuilder';
+import { getOrCreateAiden, createTask as createAiTask } from '../../services/aiEmployeeService';
+import { executeTaskWithLoop } from '../../services/aiEmployeeExecutor';
 import {
   SIDEBAR_COLLAPSED_KEY_PREFIX,
   CANVAS_SPLIT_RATIO_KEY_PREFIX,
@@ -1560,6 +1564,90 @@ export default function DecisionSupportView({ user, addNotification }) {
             const rankedOptions = negCtx.evaluation?.ranked_options || [];
             const evalResult = rankedOptions.find((r) => r.option_id === matchedOption.option_id) || null;
             await handleApplyNegotiationOption(matchedOption, evalResult, { planRunId: negCtx.active_plan_run_id });
+          },
+          assignTask: async ({ userMessage }) => {
+            try {
+              // 1. Decompose user instruction into structured subtasks
+              const datasetProfileId = Number.isFinite(Number(activeDatasetContext?.dataset_profile_id)) ? Number(activeDatasetContext.dataset_profile_id) : null;
+              const decomposition = await decomposeTask({ userMessage: userMessage || messageText, sessionContext: sessionCtx.context, userId: user?.id });
+
+              if (!decomposition?.subtasks?.length) {
+                appendMessagesToCurrentConversation([{ role: 'ai', content: 'Could not decompose this instruction into actionable tasks. Please try rephrasing.', timestamp: new Date().toISOString() }]);
+                return;
+              }
+
+              // 2. Show TaskPlanCard for user approval
+              appendMessagesToCurrentConversation([{
+                role: 'ai',
+                type: 'task_plan_card',
+                payload: decomposition,
+                content: `Task decomposed into ${decomposition.subtasks.length} step(s). Please review and approve.`,
+                timestamp: new Date().toISOString(),
+                _onApprove: async () => {
+                  try {
+                    // 3. Build dynamic template and create AI employee task
+                    const template = buildDynamicTemplate(decomposition);
+                    const aiden = await getOrCreateAiden(user?.id);
+
+                    const task = await createAiTask(aiden.id, {
+                      title: (userMessage || messageText).slice(0, 120),
+                      description: decomposition.original_instruction,
+                      priority: 'medium',
+                      source_type: 'chat_decomposed',
+                      input_context: {
+                        workflow_type: decomposition.subtasks[0]?.workflow_type || 'builtin_tool',
+                        dataset_profile_id: datasetProfileId,
+                        template_id: template.id,
+                        _dynamic_template: template,
+                        report_format: decomposition.report_format,
+                      },
+                      template_id: template.id,
+                    }, user?.id);
+
+                    appendMessagesToCurrentConversation([{
+                      role: 'ai',
+                      content: `Task created and assigned to Aiden. Executing ${template.steps.length} steps...`,
+                      timestamp: new Date().toISOString(),
+                    }]);
+
+                    // 4. Execute the task with agent loop
+                    const loopResult = await executeTaskWithLoop(task, user?.id, {
+                      onStepComplete: (stepEvent) => {
+                        appendMessagesToCurrentConversation([{
+                          role: 'ai',
+                          content: `Step "${stepEvent.step_name}": ${stepEvent.summary || stepEvent.status}`,
+                          timestamp: new Date().toISOString(),
+                        }]);
+                      },
+                    });
+
+                    // 5. Final status message
+                    const completedCount = loopResult.completed_steps?.length || 0;
+                    const statusMsg = loopResult.halted_at
+                      ? `Completed ${completedCount} step(s). Paused at "${loopResult.halted_at}" — awaiting review.`
+                      : `All ${completedCount} step(s) completed successfully.`;
+
+                    appendMessagesToCurrentConversation([{
+                      role: 'ai',
+                      content: statusMsg,
+                      timestamp: new Date().toISOString(),
+                    }]);
+                  } catch (execErr) {
+                    appendMessagesToCurrentConversation([{
+                      role: 'ai',
+                      content: `Task execution failed: ${execErr?.message || 'Unknown error'}`,
+                      timestamp: new Date().toISOString(),
+                    }]);
+                  }
+                },
+              }]);
+            } catch (decompErr) {
+              appendMessagesToCurrentConversation([{
+                role: 'ai',
+                content: `Task decomposition failed: ${decompErr?.message || 'Unknown error'}`,
+                timestamp: new Date().toISOString(),
+              }]);
+            }
           },
           appendMessage: (msg) => appendMessagesToCurrentConversation([msg]),
           onNoDataset: () => appendMessagesToCurrentConversation([{ role: 'ai', content: 'Please upload a dataset first. You can drag and drop a CSV or XLSX file into the chat.', timestamp: new Date().toISOString() }]),

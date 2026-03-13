@@ -20,7 +20,8 @@ describe('DEFAULT_LIMITS', () => {
     expect(DEFAULT_LIMITS.max_total_cost).toBe(1.00);
     expect(DEFAULT_LIMITS.max_total_tokens).toBe(500000);
     expect(DEFAULT_LIMITS.max_premium_calls).toBe(5);
-    expect(DEFAULT_LIMITS.max_steps).toBe(10);
+    expect(DEFAULT_LIMITS.max_steps).toBe(20);
+    expect(DEFAULT_LIMITS.max_dynamic_tool_calls).toBe(3);
   });
 });
 

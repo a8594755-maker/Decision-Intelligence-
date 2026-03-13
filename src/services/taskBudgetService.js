@@ -24,10 +24,11 @@ const LOCAL_KEY = 'ai_employee_budgets_v1';
 
 /** Default budget limits applied when creating a budget without explicit values. */
 export const DEFAULT_LIMITS = {
-  max_total_cost: 1.00,       // $1.00 per task
-  max_total_tokens: 500000,   // 500K tokens
-  max_premium_calls: 5,       // max 5 tier_a calls
-  max_steps: 10,              // max 10 loop steps
+  max_total_cost: 1.00,           // $1.00 per task
+  max_total_tokens: 500000,       // 500K tokens
+  max_premium_calls: 5,           // max 5 tier_a calls
+  max_steps: 20,                  // max 20 loop steps (raised for dynamic decomposed tasks)
+  max_dynamic_tool_calls: 3,      // max 3 dynamic tool generation calls per task
 };
 
 // ── Errors ───────────────────────────────────────────────────────────────────

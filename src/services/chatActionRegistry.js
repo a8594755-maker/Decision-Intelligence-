@@ -94,6 +94,16 @@ const ACTIONS = [
     }),
   },
 
+  // ── AI Employee Task Assignment ──
+  {
+    id: 'assign_task',
+    label: 'Assign Task to AI',
+    icon: 'Bot',
+    category: 'planning',
+    guard: (ctx) => Boolean(ctx?.dataset?.contract_confirmed),
+    mapToIntent: () => ({ intent: 'ASSIGN_TASK', entities: {} }),
+  },
+
   // ── Analysis / Scenario ──
   {
     id: 'run_what_if',
