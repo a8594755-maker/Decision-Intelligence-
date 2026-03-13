@@ -635,6 +635,7 @@ export default {
   getEmployee,
   updateEmployeeStatus,
   listTasks,
+  listTasksByUser,
   getTask,
   createTask,
   updateTaskStatus,

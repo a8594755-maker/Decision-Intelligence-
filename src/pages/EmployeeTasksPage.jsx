@@ -380,7 +380,7 @@ export default function EmployeeTasksPage() {
     try {
       const emp = await aiEmployeeService.getOrCreateAiden(user.id);
       setEmployee(emp);
-      const ts = await aiEmployeeService.listTasks(emp.id, { status: statusFilter || undefined });
+      const ts = await aiEmployeeService.listTasksByUser(user.id, { status: statusFilter || undefined });
       setTasks(ts);
       if (ts.length > 0 && !selectedTaskId) setSelectedTaskId(ts[0].id);
     } finally {
