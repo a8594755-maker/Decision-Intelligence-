@@ -13,7 +13,7 @@ import { importBatchesService } from '../services/importHistoryService';
 import UPLOAD_SCHEMAS from '../utils/uploadSchemas';
 import ViewDataModal from '../components/ViewDataModal';
 
-const ImportHistoryView = ({ addNotification, user, setView }) => {
+const ImportHistoryView = ({ addNotification, user, setView, compact = false }) => {
   // State
   const [batches, setBatches] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -381,26 +381,43 @@ const ImportHistoryView = ({ addNotification, user, setView }) => {
   // ========== Render ==========
 
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className={compact ? 'space-y-3' : 'space-y-6 animate-fade-in'}>
       {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-        <div>
-          <h2 className="text-xl md:text-2xl font-bold flex items-center gap-2">
-            <History className="w-6 h-6 text-blue-500" />
-            Import History
-          </h2>
-          <p className="text-sm text-slate-500 mt-1">
-            View all data import records, preview or undo batches
-          </p>
+      {!compact && (
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+          <div>
+            <h2 className="text-xl md:text-2xl font-bold flex items-center gap-2">
+              <History className="w-6 h-6 text-blue-500" />
+              Import History
+            </h2>
+            <p className="text-sm text-slate-500 mt-1">
+              View all data import records, preview or undo batches
+            </p>
+          </div>
+          <Button onClick={loadBatches} disabled={loading} icon={RefreshCw}>
+            Refresh
+          </Button>
         </div>
-        <Button onClick={loadBatches} disabled={loading} icon={RefreshCw}>
-          Refresh
-        </Button>
-      </div>
+      )}
 
       {/* Filters and Search */}
+      {compact && (
+        <div className="flex items-center justify-between">
+          <h4 className="text-sm font-semibold flex items-center gap-2">
+            <History className="w-4 h-4 text-blue-500" />
+            Import History
+          </h4>
+          <button
+            onClick={loadBatches}
+            disabled={loading}
+            className="text-xs text-blue-500 hover:text-blue-600 flex items-center gap-1"
+          >
+            <RefreshCw className={`w-3 h-3 ${loading ? 'animate-spin' : ''}`} /> Refresh
+          </button>
+        </div>
+      )}
       <Card>
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div className={`grid grid-cols-1 ${compact ? 'md:grid-cols-3' : 'md:grid-cols-4'} gap-4`}>
           {/* Search */}
           <div className="md:col-span-2">
             <div className="relative">

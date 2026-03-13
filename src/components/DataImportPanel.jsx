@@ -6,8 +6,8 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import * as XLSX from 'xlsx';
 import {
-  Upload, FileSpreadsheet, Loader2, CheckCircle, AlertCircle,
-  X, ArrowRight, ArrowLeft, RefreshCw, Clock, ChevronDown, Eye, Download,
+  Upload, FileSpreadsheet, Loader2, CheckCircle, AlertCircle, AlertTriangle,
+  X, ArrowRight, ArrowLeft, RefreshCw, ChevronDown, ChevronRight, Eye, Download, Database,
 } from 'lucide-react';
 import { quarantineRowsToCsvData } from '../utils/dataValidation';
 import { Card, Button, Badge } from './ui';
@@ -18,11 +18,19 @@ import {
   importWorkbookSheets,
   validateSheetPlans,
 } from '../services/oneShotImportService';
-import { importBatchesService } from '../services/importHistoryService';
 import { loadSampleWorkbook } from '../services/sampleDataService';
 import UPLOAD_SCHEMAS from '../utils/uploadSchemas';
 import MappingReviewPanel from './MappingReviewPanel';
-import { saveMappingProfile, generateHeaderFingerprint } from '../services/mappingProfileService';
+import MappingProfileManager from './MappingProfileManager';
+import ImportHistoryView from '../views/ImportHistoryView';
+import {
+  saveMappingProfile,
+  generateHeaderFingerprint,
+  findMappingProfile,
+  validateProfileAgainstHeaders,
+  listMappingProfiles,
+  deleteMappingProfileById,
+} from '../services/mappingProfileService';
 
 const UPLOAD_TYPE_OPTIONS = Object.keys(UPLOAD_SCHEMAS);
 const MAX_FILE_SIZE_MB = 100;
@@ -453,12 +461,26 @@ function ImportReport({ report, onReset }) {
   return (
     <div className="space-y-4">
       {/* Summary */}
-      <div className="flex items-center gap-3 p-4 rounded-lg bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800">
-        <CheckCircle className="w-6 h-6 text-emerald-600 flex-shrink-0" />
+      <div className={`flex items-center gap-3 p-4 rounded-lg border ${
+        report.succeededSheets > 0 && report.failedSheets === 0 && (report.needsReviewSheets || 0) === 0
+          ? 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-800'
+          : report.succeededSheets === 0
+            ? 'bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800'
+            : 'bg-yellow-50 dark:bg-yellow-900/20 border-yellow-200 dark:border-yellow-800'
+      }`}>
+        {report.succeededSheets > 0 && report.failedSheets === 0 && (report.needsReviewSheets || 0) === 0
+          ? <CheckCircle className="w-6 h-6 text-emerald-600 flex-shrink-0" />
+          : <AlertTriangle className="w-6 h-6 text-amber-600 flex-shrink-0" />
+        }
         <div>
-          <p className="text-sm font-medium">Import Complete</p>
+          <p className="text-sm font-medium">
+            {report.succeededSheets === 0 && (report.needsReviewSheets || 0) > 0
+              ? 'Import Incomplete — Mapping Review Required'
+              : 'Import Complete'}
+          </p>
           <p className="text-xs text-slate-500">
             {report.succeededSheets} succeeded, {report.failedSheets} failed, {report.skippedSheets} skipped
+            {(report.needsReviewSheets || 0) > 0 && `, ${report.needsReviewSheets} needs review`}
           </p>
         </div>
       </div>
@@ -592,53 +614,42 @@ function ImportReport({ report, onReset }) {
   );
 }
 
-/* ───────────── Recent Import History ───────────── */
-function ImportHistory({ userId }) {
-  const [batches, setBatches] = useState([]);
-  const [loading, setLoading] = useState(true);
+/* ───────────── Profile Reuse Banner ───────────── */
+function ProfileReuseBanner({ plans }) {
+  const reusedPlans = plans.filter(p => p.enabled && p.profileReused);
+  const partialPlans = plans.filter(p => p.enabled && p.profilePartialMatch && !p.profileReused);
 
-  useEffect(() => {
-    if (!userId) return;
-    queueMicrotask(() => setLoading(true));
-    importBatchesService.getAllBatches(userId, { limit: 10 })
-      .then(setBatches)
-      .catch(() => setBatches([]))
-      .finally(() => setLoading(false));
-  }, [userId]);
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center py-6">
-        <Loader2 className="w-5 h-5 text-blue-600 animate-spin" />
-      </div>
-    );
-  }
-
-  if (batches.length === 0) {
-    return (
-      <p className="text-sm text-slate-400 text-center py-4">No import history yet.</p>
-    );
-  }
+  if (reusedPlans.length === 0 && partialPlans.length === 0) return null;
 
   return (
-    <div className="divide-y divide-slate-100 dark:divide-slate-800">
-      {batches.map((b) => (
-        <div key={b.id} className="flex items-center justify-between py-2.5 first:pt-0 last:pb-0">
-          <div className="flex items-center gap-2 min-w-0">
-            <FileSpreadsheet className="w-4 h-4 text-slate-400 flex-shrink-0" />
-            <span className="text-sm truncate">{b.file_name || b.upload_type}</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-slate-400">{b.row_count ?? '—'} rows</span>
-            <Badge type={b.status === 'completed' ? 'success' : b.status === 'failed' ? 'error' : 'info'}>
-              {b.status}
-            </Badge>
-            <span className="text-xs text-slate-400 hidden sm:inline">
-              {b.created_at ? new Date(b.created_at).toLocaleDateString() : ''}
-            </span>
+    <div className="space-y-2">
+      {reusedPlans.length > 0 && (
+        <div className="flex items-center gap-2 p-3 rounded-lg bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800">
+          <CheckCircle className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium text-emerald-800 dark:text-emerald-300">
+              {reusedPlans.length} sheet(s) using saved mapping profile
+            </p>
+            <p className="text-xs text-emerald-600 dark:text-emerald-400 truncate">
+              {reusedPlans.map(p => p.sheetName).join(', ')}
+              {reusedPlans[0]?.profileUseCount > 1 && ` — used ${reusedPlans[0].profileUseCount} times`}
+            </p>
           </div>
         </div>
-      ))}
+      )}
+      {partialPlans.length > 0 && (
+        <div className="flex items-center gap-2 p-3 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800">
+          <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium text-amber-800 dark:text-amber-300">
+              {partialPlans.length} sheet(s) partially matched — needs mapping review
+            </p>
+            <p className="text-xs text-amber-600 dark:text-amber-400 truncate">
+              {partialPlans.map(p => p.sheetName).join(', ')}
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -657,8 +668,46 @@ export default function DataImportPanel() {
   const [progress, setProgress] = useState({ current: 0, sheetName: '' });
   const [importReport, setImportReport] = useState(null);
   const [validationResults, setValidationResults] = useState([]);
+  const [showProfileManager, setShowProfileManager] = useState(false);
   const abortRef = useRef(null);
   const importStartRef = useRef(null);
+
+  /* ── Profile reuse: look up saved profiles for each sheet plan ── */
+  const applyProfilesIfAvailable = useCallback(async (plans, userId) => {
+    if (!userId) return plans;
+    const enriched = await Promise.all(plans.map(async (plan) => {
+      // Skip if already confirmed, disabled, or no headers
+      if (plan.mappingFinal || !plan.enabled || !plan.headers?.length || !plan.suggestedType) return plan;
+      try {
+        const profile = await findMappingProfile({ userId, headers: plan.headers, uploadType: plan.suggestedType });
+        if (!profile) return plan;
+        const { valid, partiallyValid, applicableMapping } = validateProfileAgainstHeaders(profile, plan.headers);
+        if (valid) {
+          return {
+            ...plan,
+            mappingDraft: profile.columnMapping,
+            mappingFinal: profile.columnMapping,
+            mappingConfirmed: true,
+            mappingMeta: profile.fieldConfidence || plan.mappingMeta,
+            isComplete: true,
+            profileReused: true,
+            profileUseCount: profile.useCount || 1,
+          };
+        }
+        if (partiallyValid) {
+          return {
+            ...plan,
+            mappingDraft: { ...plan.mappingDraft, ...applicableMapping },
+            profilePartialMatch: true,
+          };
+        }
+      } catch {
+        // Profile lookup failed — proceed with normal flow
+      }
+      return plan;
+    }));
+    return enriched;
+  }, []);
 
   /* ── Step 1 → 2: file loaded, classify sheets ── */
   const handleFileLoaded = useCallback((wbOrParsed, name, size, lastModified) => {
@@ -686,14 +735,20 @@ export default function DataImportPanel() {
         }
         return p;
       });
-      setSheetPlans(confirmedPlans);
+
+      // Async: look up saved profiles and apply if found
+      applyProfilesIfAvailable(confirmedPlans, user?.id).then(enriched => {
+        setSheetPlans(enriched);
+      });
+
+      setSheetPlans(confirmedPlans); // Show immediately, then update async
       setStep('review');
     } catch (err) {
       addNotification?.(`Failed to analyze file: ${err.message}`, 'error');
     } finally {
       setClassifying(false);
     }
-  }, [addNotification]);
+  }, [addNotification, applyProfilesIfAvailable, user]);
 
   /* ── Load sample data ── */
   const handleLoadSample = useCallback(async () => {
@@ -725,8 +780,13 @@ export default function DataImportPanel() {
   const sheetsNeedingReview = useMemo(() => {
     return sheetPlans
       .map((p, idx) => ({ ...p, idx }))
-      .filter(p => p.enabled && p.suggestedType && p.mappingMeta)
+      .filter(p => p.enabled && p.suggestedType)
       .filter(p => {
+        // Profile-reused sheets with exact match skip review
+        if (p.profileReused && !p.profilePartialMatch) return false;
+        // Catch sheets with incomplete required field mappings (isComplete === false)
+        if (!p.mappingFinal && !p.isComplete) return true;
+        // Catch sheets with low-confidence mappings
         const meta = p.mappingMeta || {};
         return Object.values(meta).some(m => m.confidence < 0.85);
       });
@@ -750,6 +810,13 @@ export default function DataImportPanel() {
       setStep('mapping_review');
       return;
     }
+    // Safety net: auto-confirm any enabled sheets that have mappingDraft but no mappingFinal
+    setSheetPlans(prev => prev.map(p => {
+      if (p.enabled && p.suggestedType && !p.mappingFinal && p.mappingDraft && Object.keys(p.mappingDraft).length > 0) {
+        return { ...p, mappingFinal: p.mappingDraft, mappingConfirmed: true };
+      }
+      return p;
+    }));
     const results = preValidateSheets(workbook, sheetPlans);
     setValidationResults(results);
     setStep('preview');
@@ -822,6 +889,7 @@ export default function DataImportPanel() {
             uploadType: plan.suggestedType,
             columnMapping: plan.mappingFinal,
             fieldConfidence: plan.mappingMeta || null,
+            headerList: plan.headers,
           }).catch(() => {}); // Silent failure
         }
       }
@@ -862,16 +930,38 @@ export default function DataImportPanel() {
 
         {/* Step content */}
         {step === 'upload' && (
-          <FileDropZone
-            onFileLoaded={handleFileLoaded}
-            onLoadSample={handleLoadSample}
-            loading={classifying}
-            onError={(msg) => addNotification?.(msg, 'error')}
-          />
+          <div className="space-y-4">
+            <FileDropZone
+              onFileLoaded={handleFileLoaded}
+              onLoadSample={handleLoadSample}
+              loading={classifying}
+              onError={(msg) => addNotification?.(msg, 'error')}
+            />
+            {/* Saved Mapping Profiles — collapsible */}
+            <div className="border-t border-slate-200 dark:border-slate-700 pt-3">
+              <button
+                className="flex items-center gap-2 text-sm text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 transition-colors"
+                onClick={() => setShowProfileManager(!showProfileManager)}
+              >
+                {showProfileManager
+                  ? <ChevronDown className="w-4 h-4" />
+                  : <ChevronRight className="w-4 h-4" />
+                }
+                <Database className="w-4 h-4" />
+                Saved Mapping Profiles
+              </button>
+              {showProfileManager && (
+                <div className="mt-3">
+                  <MappingProfileManager userId={user?.id} />
+                </div>
+              )}
+            </div>
+          </div>
         )}
 
         {step === 'review' && (
           <div className="space-y-4">
+            <ProfileReuseBanner plans={sheetPlans} />
             <SheetReviewList
               plans={sheetPlans}
               onToggle={handleToggle}
@@ -944,14 +1034,12 @@ export default function DataImportPanel() {
         )}
       </Card>
 
-      {/* Import History */}
-      <Card>
-        <div className="flex items-center gap-2 mb-3">
-          <Clock className="w-4 h-4 text-slate-400" />
-          <h3 className="font-semibold text-sm">Recent Imports</h3>
-        </div>
-        <ImportHistory userId={user?.id} />
-      </Card>
+      {/* Import History — full version with search, filter, undo, preview */}
+      <ImportHistoryView
+        user={user}
+        addNotification={addNotification}
+        compact={true}
+      />
     </div>
   );
 }

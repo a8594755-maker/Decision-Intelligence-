@@ -93,6 +93,7 @@ function NewTaskModal({ onClose, onCreated, employeeId, userId }) {
 
   async function handleSubmit(e) {
     e.preventDefault();
+    console.log('[NewTask] submit fired — employeeId:', employeeId, 'form:', form);
     if (!employeeId) { setError('Employee not loaded yet — please wait a moment and try again.'); return; }
     if (!form.title.trim()) { setError('Title is required.'); return; }
     if (!form.dataset_profile_id.trim()) { setError('Dataset profile ID is required.'); return; }
@@ -111,8 +112,10 @@ function NewTaskModal({ onClose, onCreated, employeeId, userId }) {
         due_at: form.due_at ? new Date(form.due_at).toISOString() : null,
         assigned_by_user_id: userId,
       });
+      console.log('[NewTask] createTask result:', task);
       onCreated(task);
     } catch (err) {
+      console.error('[NewTask] createTask error:', err);
       setError(err?.message || 'Failed to create task.');
     } finally {
       setSaving(false);
@@ -123,7 +126,7 @@ function NewTaskModal({ onClose, onCreated, employeeId, userId }) {
   const inputStyle = { borderColor: 'var(--border-default)', backgroundColor: 'var(--surface-bg)', color: 'var(--text-primary)' };
 
   return (
-    <Modal onClose={onClose} title="New Task">
+    <Modal isOpen onClose={onClose} title="New Task">
       <form onSubmit={handleSubmit} className="space-y-4 p-1">
         <div>
           <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>Title *</label>
@@ -399,18 +402,30 @@ export default function EmployeeTasksPage() {
     if (!user?.id || runningId) return;
     setRunningId(task.id);
     setRunError(null);
+    // Optimistically mark in_progress so the task stays visible
+    setTasks((prev) => prev.map((t) => t.id === task.id ? { ...t, status: 'in_progress' } : t));
     try {
       await executeTask(task, user.id);
-      await loadTasks();
     } catch (err) {
       setRunError(err?.message || 'Task execution failed.');
-      await loadTasks();
     } finally {
       setRunningId(null);
+      // Refetch only this task to pick up the updated status
+      try {
+        const updated = await aiEmployeeService.getTask(task.id);
+        if (updated) {
+          setTasks((prev) => prev.map((t) => t.id === task.id ? updated : t));
+        } else {
+          await loadTasks();
+        }
+      } catch {
+        await loadTasks();
+      }
     }
   }
 
   function handleTaskCreated(task) {
+    console.log('[TaskBoard] handleTaskCreated:', task);
     setShowNewTask(false);
     setTasks((prev) => [task, ...prev]);
     setSelectedTaskId(task.id);

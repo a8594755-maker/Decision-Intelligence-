@@ -65,13 +65,15 @@ function setLocalProfiles(profiles) {
  * @param {object} [params.fieldConfidence] – Optional confidence metadata per field
  * @returns {Promise<{ id: string, source: 'supabase'|'local' } | null>}
  */
-export async function saveMappingProfile({ userId, sourceFingerprint, uploadType, columnMapping, fieldConfidence }) {
+export async function saveMappingProfile({ userId, sourceFingerprint, uploadType, columnMapping, fieldConfidence, headerList }) {
   const record = {
     user_id: userId,
     source_fingerprint: sourceFingerprint,
     upload_type: uploadType,
     column_mapping: columnMapping,
     field_confidence: fieldConfidence || null,
+    header_list: headerList || [],
+    display_name: `${uploadType} (${(headerList || []).length} cols)`,
     created_at: new Date().toISOString(),
     last_used_at: new Date().toISOString(),
     use_count: 1,
@@ -89,6 +91,8 @@ export async function saveMappingProfile({ userId, sourceFingerprint, uploadType
             upload_type: uploadType,
             column_mapping: columnMapping,
             field_confidence: fieldConfidence || null,
+            header_list: headerList || [],
+            display_name: `${uploadType} (${(headerList || []).length} cols)`,
             last_used_at: new Date().toISOString(),
           },
           { onConflict: 'user_id,source_fingerprint,upload_type' }
@@ -221,4 +225,105 @@ export async function deleteMappingProfile({ userId, headers, uploadType }) {
     p => !(p.source_fingerprint === fingerprint && p.upload_type === uploadType && p.user_id === userId)
   );
   setLocalProfiles(filtered);
+}
+
+// ── New functions for profile reuse & management ─────────────────────────────
+
+/**
+ * List all mapping profiles for a user, sorted by last_used_at descending.
+ *
+ * @param {object} params
+ * @param {string} params.userId
+ * @returns {Promise<Array<object>>}
+ */
+export async function listMappingProfiles({ userId }) {
+  // Try Supabase
+  try {
+    if (supabase) {
+      const { data, error } = await supabase
+        .from('di_mapping_profiles')
+        .select('*')
+        .eq('user_id', userId)
+        .order('last_used_at', { ascending: false });
+
+      if (!error && data) return data;
+    }
+  } catch {
+    // Supabase unavailable — fall through to local
+  }
+
+  // Local fallback
+  return getLocalProfiles()
+    .filter(p => p.user_id === userId)
+    .sort((a, b) => (b.last_used_at || '').localeCompare(a.last_used_at || ''));
+}
+
+/**
+ * Validate a saved profile's columnMapping against a new set of headers.
+ * Determines whether the profile can be fully or partially reused.
+ *
+ * @param {object} profile           – { columnMapping: { srcCol: targetField } }
+ * @param {string[]} currentHeaders  – Headers from the new file
+ * @returns {{ valid: boolean, partiallyValid: boolean, staleColumns: string[], newColumns: string[], applicableMapping: object }}
+ */
+export function validateProfileAgainstHeaders(profile, currentHeaders) {
+  const normalize = h => String(h).trim().toLowerCase();
+  const currentNormSet = new Set((currentHeaders || []).map(normalize));
+
+  const applicableMapping = {};
+  const staleColumns = [];
+
+  for (const [srcCol, targetField] of Object.entries(profile.columnMapping || {})) {
+    if (currentNormSet.has(normalize(srcCol))) {
+      applicableMapping[srcCol] = targetField;
+    } else {
+      staleColumns.push(srcCol);
+    }
+  }
+
+  // Detect new columns not covered by the profile
+  const profileSrcNormSet = new Set(
+    Object.keys(profile.columnMapping || {}).map(normalize)
+  );
+  const newColumns = (currentHeaders || []).filter(
+    h => !profileSrcNormSet.has(normalize(h))
+  );
+
+  const valid = staleColumns.length === 0 && newColumns.length === 0;
+  const partiallyValid = Object.keys(applicableMapping).length > 0;
+
+  return { valid, partiallyValid, staleColumns, newColumns, applicableMapping };
+}
+
+/**
+ * Delete a mapping profile by its database ID (for management UI).
+ *
+ * @param {object} params
+ * @param {string} params.userId
+ * @param {string} params.id              – Profile UUID
+ * @param {string} [params.fingerprint]   – For local cache cleanup
+ * @param {string} [params.uploadType]    – For local cache cleanup
+ */
+export async function deleteMappingProfileById({ userId, id, fingerprint, uploadType }) {
+  // Supabase
+  try {
+    if (supabase) {
+      await supabase
+        .from('di_mapping_profiles')
+        .delete()
+        .eq('id', id)
+        .eq('user_id', userId);
+    }
+  } catch {
+    // Ignore Supabase errors
+  }
+
+  // Also remove from local cache if fingerprint provided
+  if (fingerprint && uploadType) {
+    const profiles = getLocalProfiles();
+    const filtered = profiles.filter(
+      p => !(p.source_fingerprint === fingerprint && p.upload_type === uploadType && p.user_id === userId)
+    );
+    setLocalProfiles(filtered);
+  }
 }

@@ -414,7 +414,12 @@ export async function importWorkbookSheets({ userId, workbook, fileName, sheetPl
     }
     
     // Hard gate check: validate mapping completeness before ingest
+    // Skip if workbook is null (Worker path — ingest step handles extraction)
     try {
+      if (!workbook?.Sheets?.[sheetName]) {
+        // Worker path: no local workbook; skip pre-check, ingest handles it
+        logger.info('import-pipeline', `Pre-check skipped for ${sheetName} (worker path, no local workbook)`, { _traceId: pipelineSpan.traceId, sheetName });
+      } else {
       const sheet = workbook.Sheets[sheetName];
       const sheetData = XLSX.utils.sheet_to_json(sheet, { defval: '' });
       
@@ -461,6 +466,7 @@ export async function importWorkbookSheets({ userId, workbook, fileName, sheetPl
           }
         }
       }
+      } // end else (workbook available)
     } catch (preCheckError) {
       logger.error('import-pipeline', `Pre-check error for ${sheetName}: ${preCheckError.message}`, { _traceId: pipelineSpan.traceId, sheetName, error: preCheckError.message });
       report.needsReviewSheets++;

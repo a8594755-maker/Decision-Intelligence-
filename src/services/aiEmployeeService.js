@@ -72,13 +72,17 @@ async function trySupabase(fn) {
  */
 export async function getOrCreateAiden(userId) {
   const sbResult = await trySupabase(async () => {
-    // Try to find existing Aiden
-    const { data: existing } = await supabase
+    // Try to find existing Aiden belonging to this manager
+    // Use limit(1) instead of maybeSingle() to handle duplicate rows gracefully
+    const { data: rows } = await supabase
       .from('ai_employees')
       .select('*')
       .eq('name', 'Aiden')
-      .maybeSingle();
+      .eq('manager_user_id', userId)
+      .order('created_at', { ascending: true })
+      .limit(1);
 
+    const existing = rows?.[0] ?? null;
     if (existing) return existing;
 
     // Create Aiden with the calling user as manager
@@ -168,7 +172,50 @@ export async function updateEmployeeStatus(employeeId, status) {
 // TASKS
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * List all tasks across ALL employees belonging to a user.
+ * Handles the case where multiple Aiden rows exist (from legacy bugs).
+ */
+export async function listTasksByUser(userId, { status } = {}) {
+  const store = getLocalStore();
+  let localTasks = store.tasks;
+  if (status) localTasks = localTasks.filter((t) => t.status === status);
+
+  const sbResult = await trySupabase(async () => {
+    // Get all employee IDs for this user
+    const { data: emps } = await supabase
+      .from('ai_employees')
+      .select('id')
+      .eq('manager_user_id', userId);
+    const empIds = (emps || []).map((e) => e.id);
+    if (empIds.length === 0) return [];
+
+    let q = supabase
+      .from('ai_employee_tasks')
+      .select('*')
+      .in('employee_id', empIds)
+      .order('created_at', { ascending: false });
+    if (status) q = q.eq('status', status);
+    const { data, error } = await q;
+    if (error) throw error;
+    return data;
+  });
+
+  if (sbResult !== null) {
+    const sbIds = new Set(sbResult.map((t) => t.id));
+    const localOnly = localTasks.filter((t) => !sbIds.has(t.id));
+    return [...sbResult, ...localOnly].sort((a, b) => b.created_at.localeCompare(a.created_at));
+  }
+
+  return localTasks.sort((a, b) => b.created_at.localeCompare(a.created_at));
+}
+
 export async function listTasks(employeeId, { status } = {}) {
+  // Always load local tasks first — acts as fallback and catches tasks saved locally
+  const store = getLocalStore();
+  let localTasks = store.tasks.filter((t) => t.employee_id === employeeId);
+  if (status) localTasks = localTasks.filter((t) => t.status === status);
+
   const sbResult = await trySupabase(async () => {
     let q = supabase
       .from('ai_employee_tasks')
@@ -180,12 +227,14 @@ export async function listTasks(employeeId, { status } = {}) {
     if (error) throw error;
     return data;
   });
-  if (sbResult) return sbResult;
 
-  const store = getLocalStore();
-  let tasks = store.tasks.filter((t) => t.employee_id === employeeId);
-  if (status) tasks = tasks.filter((t) => t.status === status);
-  return tasks.sort((a, b) => b.created_at.localeCompare(a.created_at));
+  if (sbResult !== null) {
+    const sbIds = new Set(sbResult.map((t) => t.id));
+    const localOnly = localTasks.filter((t) => !sbIds.has(t.id));
+    return [...sbResult, ...localOnly].sort((a, b) => b.created_at.localeCompare(a.created_at));
+  }
+
+  return localTasks.sort((a, b) => b.created_at.localeCompare(a.created_at));
 }
 
 export async function getTask(taskId) {
