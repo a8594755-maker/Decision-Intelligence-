@@ -1,10 +1,12 @@
 // @product: ai-employee
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Bot, CheckCircle2, Clock, AlertTriangle, BarChart3, ChevronRight, Plus } from 'lucide-react';
+import { Bot, CheckCircle2, Clock, AlertTriangle, BarChart3, ChevronRight, Plus, FileText, DollarSign } from 'lucide-react';
 import { Card } from '../components/ui';
 import { useAuth } from '../contexts/AuthContext';
 import * as aiEmployeeService from '../services/aiEmployeeService';
+import { getLatestSummary } from '../services/dailySummaryService';
+import { getEmployeeCostSummary } from '../services/modelRoutingService';
 
 // ── Status badge ──────────────────────────────────────────────────────────
 
@@ -56,7 +58,7 @@ function EmployeeCard({ employee, kpis, onViewTasks }) {
               {employee.name}
             </p>
             <p className="text-xs capitalize" style={{ color: 'var(--text-muted)' }}>
-              {employee.role.replace(/_/g, ' ')}
+              {(employee.role || 'employee').replace(/_/g, ' ')}
             </p>
           </div>
         </div>
@@ -120,6 +122,8 @@ export default function EmployeesPage() {
 
   const [employee, setEmployee] = useState(null);
   const [kpis, setKpis] = useState(null);
+  const [dailySummary, setDailySummary] = useState(null);
+  const [costData, setCostData] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -135,6 +139,16 @@ export default function EmployeesPage() {
 
         const k = await aiEmployeeService.getKpis(emp.id);
         if (!cancelled) setKpis(k);
+
+        // Phase 3: daily summary + cost (best-effort)
+        try {
+          const summary = await getLatestSummary(emp.id);
+          if (!cancelled) setDailySummary(summary);
+        } catch { /* */ }
+        try {
+          const cost = await getEmployeeCostSummary(emp.id, { days: 7 });
+          if (!cancelled) setCostData(cost);
+        } catch { /* */ }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -179,6 +193,56 @@ export default function EmployeesPage() {
               kpis={kpis}
               onViewTasks={() => navigate('/employees/tasks')}
             />
+
+            {/* Daily Summary + Cost cards */}
+            <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {/* Daily Summary */}
+              <Card variant="elevated" className="p-4">
+                <div className="flex items-center gap-2 mb-3">
+                  <FileText className="w-4 h-4 text-blue-500" />
+                  <span className="text-xs font-medium" style={{ color: 'var(--text-primary)' }}>Daily Summary</span>
+                </div>
+                {dailySummary ? (
+                  <div className="space-y-1.5 text-xs" style={{ color: 'var(--text-secondary)' }}>
+                    <p>{dailySummary.tasks_completed ?? 0} completed, {dailySummary.tasks_failed ?? 0} failed, {dailySummary.tasks_in_progress ?? 0} in progress</p>
+                    {dailySummary.highlights?.map((h, i) => (
+                      <p key={i} className="text-emerald-600">{h}</p>
+                    ))}
+                    {dailySummary.issues?.map((issue, i) => (
+                      <p key={i} className="text-red-600">{issue}</p>
+                    ))}
+                    <p className="pt-1" style={{ color: 'var(--text-muted)' }}>
+                      {dailySummary.date}
+                    </p>
+                  </div>
+                ) : (
+                  <p className="text-xs" style={{ color: 'var(--text-muted)' }}>No summary available yet.</p>
+                )}
+              </Card>
+
+              {/* 7-Day Cost */}
+              <Card variant="elevated" className="p-4">
+                <div className="flex items-center gap-2 mb-3">
+                  <DollarSign className="w-4 h-4 text-emerald-500" />
+                  <span className="text-xs font-medium" style={{ color: 'var(--text-primary)' }}>7-Day Cost</span>
+                </div>
+                {costData ? (
+                  <div className="space-y-1.5 text-xs" style={{ color: 'var(--text-secondary)' }}>
+                    <p className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>
+                      ${costData.total_cost?.toFixed(4) ?? '0.0000'}
+                    </p>
+                    <p>{costData.total_calls ?? 0} model calls</p>
+                    {costData.by_tier && Object.entries(costData.by_tier).map(([tier, data]) => (
+                      <p key={tier}>
+                        {tier}: ${data.cost?.toFixed(4)} ({data.calls} calls)
+                      </p>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs" style={{ color: 'var(--text-muted)' }}>No cost data yet.</p>
+                )}
+              </Card>
+            </div>
 
             {/* Quick links */}
             <div className="mt-4 grid grid-cols-2 gap-3">

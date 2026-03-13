@@ -21,7 +21,14 @@
     "test:phase4-guardrails": "python3 -m pytest -q tests/test_action_guardrails.py tests/test_registry_router_guardrails.py tests/test_retrain_triggers.py tests/test_model_lifecycle_registry.py tests/test_promotion_gates.py",
     "lint:fix": "eslint . --fix",
     "ci": "npm run lint && npm run test:run && npm run build",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:auto-debug": "node e2e/auto-crawler.js",
+    "test:flows": "npx playwright test --project=flows",
+    "test:flows:upload": "npx playwright test --project=flows e2e/flows/upload-workflow.spec.js",
+    "test:flows:chat": "npx playwright test --project=flows e2e/flows/chat-workflow.spec.js",
+    "test:flows:full": "npx playwright test --project=flows e2e/flows/full-workflow.spec.js",
+    "test:flows:upload-chat": "npx playwright test --project=flows e2e/flows/chat-full-upload.spec.js",
+    "test:e2e:all": "npx playwright test"
   },
   "dependencies": {
     "@sentry/react": "^10.42.0",

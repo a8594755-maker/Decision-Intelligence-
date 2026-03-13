@@ -19,16 +19,22 @@ import { runPlanFromDatasetProfile } from './chatPlanningService';
 import { computeRiskArtifactsFromDatasetProfile } from './chatRiskService';
 import { datasetProfilesService } from './datasetProfilesService';
 import * as aiEmployeeService from './aiEmployeeService';
+import { checkPermission } from './toolPermissionGuard';
+import { writeMemory, extractOutcomeKpis, extractInputParams } from './aiEmployeeMemoryService';
+import { resolveModel, recordModelRun } from './modelRoutingService';
+import { checkBudget, consumeBudget, BudgetExceededError } from './taskBudgetService';
+import { notify, NOTIFICATION_TYPES } from './notificationService';
 
 // ── Input context shape (documented for task creation forms) ────────────────
 //
 // task.input_context = {
-//   workflow_type: 'forecast' | 'plan' | 'risk',
-//   dataset_profile_id: string,       // required
+//   workflow_type: 'forecast' | 'plan' | 'risk' | 'synthesize',
+//   dataset_profile_id: string,       // required (except synthesize)
 //   riskMode: 'on' | 'off',           // plan only, default 'off'
 //   scenario_overrides: object|null,  // plan only, default null
 //   horizonPeriods: number|null,      // forecast only, default null
 //   settings: object,                 // passed through to DI engines
+//   _prior_step_artifacts: object,    // injected by agent loop: { step_name: artifact_refs[] }
 // }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -55,6 +61,10 @@ function buildSummary(workflowType, result) {
       const scores = result.risk_scores || [];
       const high = scores.filter((s) => s.risk_score >= 0.7).length;
       return `Risk analysis completed. ${scores.length} items assessed, ${high} high-risk.`;
+    }
+    case 'synthesize': {
+      const syn = result.synthesis || {};
+      return `Synthesis completed. ${syn.total_artifacts || 0} artifact(s) from ${(syn.sources || []).length} step(s).`;
     }
     default:
       return `${workflowType} run completed.`;
@@ -86,20 +96,53 @@ export async function executeTask(task, userId) {
     task.input_context || {};
 
   if (!workflow_type) throw new Error('task.input_context.workflow_type is required');
-  if (!dataset_profile_id) throw new Error('task.input_context.dataset_profile_id is required');
+  if (!dataset_profile_id && workflow_type !== 'synthesize') {
+    throw new Error('task.input_context.dataset_profile_id is required');
+  }
+
+  // ── 0. Permission check ─────────────────────────────────────────────────
+  const employee = await aiEmployeeService.getEmployee(task.employee_id);
+  checkPermission(employee, workflow_type);
+
+  const _execStartMs = Date.now();
+
+  // ── 0.5. Resolve model routing (best-effort, informational) ────────────────
+  let _routingDecision = null;
+  try {
+    const memCtx = task.input_context?._memory_context || null;
+    _routingDecision = await resolveModel(workflow_type, {
+      retryCount: task._retry_count || 0,
+      highRisk: riskMode === 'on',
+      memoryContext: memCtx,
+    });
+  } catch { /* routing is advisory, not blocking */ }
+
+  // ── 0.7. Budget check ──────────────────────────────────────────────────────
+  const _budgetCheck = await checkBudget(task.id, {
+    isPremium: _routingDecision?.tier === 'tier_a',
+  });
+  if (!_budgetCheck.allowed) {
+    throw new BudgetExceededError(task.id, _budgetCheck.reason, _budgetCheck.budget);
+  }
 
   // ── 1. Create run ──────────────────────────────────────────────────────────
-  const run = await aiEmployeeService.createRun(task.id, task.employee_id);
+  const run = await aiEmployeeService.createRun(task.id, task.employee_id, {
+    step_index: task._step_index,
+    step_name: task._step_name,
+  });
 
   // ── 2. Transition: todo/blocked → in_progress ─────────────────────────────
   await aiEmployeeService.updateTaskStatus(task.id, 'in_progress', run.id);
   await aiEmployeeService.updateEmployeeStatus(task.employee_id, 'working');
 
   try {
-    // ── 3. Resolve dataset profile ───────────────────────────────────────────
-    const profileRow = await datasetProfilesService.getDatasetProfileById(userId, dataset_profile_id);
-    if (!profileRow) {
-      throw new Error(`Dataset profile not found: ${dataset_profile_id}`);
+    // ── 3. Resolve dataset profile (not needed for synthesize) ──────────────
+    let profileRow = null;
+    if (workflow_type !== 'synthesize') {
+      profileRow = await datasetProfilesService.getDatasetProfileById(userId, dataset_profile_id);
+      if (!profileRow) {
+        throw new Error(`Dataset profile not found: ${dataset_profile_id}`);
+      }
     }
 
     // ── 4. Dispatch to DI engine ─────────────────────────────────────────────
@@ -115,13 +158,35 @@ export async function executeTask(task, userId) {
         break;
 
       case 'plan':
-        result = await runPlanFromDatasetProfile({
-          userId,
-          datasetProfileRow: profileRow,
-          riskMode: riskMode || 'off',
-          scenarioOverrides: scenario_overrides ?? null,
-          settings: settings || {},
-        });
+        // Auto-run forecast first if plan requires it
+        try {
+          result = await runPlanFromDatasetProfile({
+            userId,
+            datasetProfileRow: profileRow,
+            riskMode: riskMode || 'off',
+            scenarioOverrides: scenario_overrides ?? null,
+            settings: settings || {},
+          });
+        } catch (planErr) {
+          if (planErr?.message?.includes('No forecast artifacts')) {
+            // Run forecast silently, then retry plan
+            await runForecastFromDatasetProfile({
+              userId,
+              datasetProfileRow: profileRow,
+              horizonPeriods: null,
+              settings: settings || {},
+            });
+            result = await runPlanFromDatasetProfile({
+              userId,
+              datasetProfileRow: profileRow,
+              riskMode: riskMode || 'off',
+              scenarioOverrides: scenario_overrides ?? null,
+              settings: settings || {},
+            });
+          } else {
+            throw planErr;
+          }
+        }
         break;
 
       case 'risk':
@@ -130,6 +195,21 @@ export async function executeTask(task, userId) {
           datasetProfileRow: profileRow,
         });
         break;
+
+      case 'synthesize': {
+        // Aggregate artifact refs from prior agent loop steps (no LLM, deterministic)
+        const priorArtifacts = task.input_context?._prior_step_artifacts || {};
+        const allRefs = Object.values(priorArtifacts).flat();
+        result = {
+          synthesis: {
+            sources: Object.keys(priorArtifacts),
+            total_artifacts: allRefs.length,
+            generated_at: new Date().toISOString(),
+          },
+          artifact_refs: allRefs,
+        };
+        break;
+      }
 
       default:
         throw new Error(`Unknown workflow_type: ${workflow_type}`);
@@ -153,6 +233,36 @@ export async function executeTask(task, userId) {
       di_run_id: diRunId,
     });
 
+    // ── 8.5. Record model routing (best-effort) ───────────────────────────────
+    if (_routingDecision) {
+      try {
+        await recordModelRun({
+          taskId: task.id,
+          runId: run.id,
+          employeeId: task.employee_id,
+          agentRole: 'executor',
+          provider: _routingDecision.provider,
+          modelName: _routingDecision.model,
+          tier: _routingDecision.tier,
+          inputTokens: result?.usage?.input_tokens || 0,
+          outputTokens: result?.usage?.output_tokens || 0,
+          latencyMs: Date.now() - _execStartMs,
+          stepName: task._step_name || null,
+          escalatedFrom: _routingDecision.escalatedFrom,
+        });
+      } catch { /* model run tracking is best-effort */ }
+    }
+
+    // ── 8.7. Consume budget (best-effort) ────────────────────────────────────
+    try {
+      await consumeBudget(task.id, {
+        cost: result?.usage?.estimated_cost || 0,
+        tokens: (result?.usage?.input_tokens || 0) + (result?.usage?.output_tokens || 0),
+        isPremium: _routingDecision?.tier === 'tier_a',
+        isStep: true,
+      });
+    } catch { /* budget tracking is best-effort */ }
+
     // ── 9. Transition: in_progress → waiting_review ──────────────────────────
     await aiEmployeeService.updateTaskStatus(task.id, 'waiting_review', run.id);
     await aiEmployeeService.updateEmployeeStatus(task.employee_id, 'waiting_review');
@@ -172,38 +282,146 @@ export async function executeTask(task, userId) {
       }
     );
 
+    // ── 11. Write task memory (best-effort) ──────────────────────────────────
+    try {
+      await writeMemory({
+        employeeId: task.employee_id,
+        taskId: task.id,
+        runId: run.id,
+        workflowType: workflow_type,
+        success: true,
+        outcomeSummary: summary,
+        outcomeKpis: extractOutcomeKpis(workflow_type, result),
+        inputParams: extractInputParams(task.input_context),
+        artifactsGenerated: artifactRefs.length,
+        executionTimeMs: Date.now() - _execStartMs,
+        retryCount: 0,
+        datasetFingerprint: profileRow?.fingerprint || null,
+        datasetProfileId: dataset_profile_id,
+        templateId: task.input_context?.template_id || null,
+      });
+    } catch (memErr) { console.warn('[aiEmployeeExecutor] writeMemory failed:', memErr?.message); }
+
+    // ── 12. Notify: task completed (best-effort) ──────────────────────────
+    try {
+      const emp = await aiEmployeeService.getEmployee(task.employee_id);
+      if (emp?.manager_user_id) {
+        await notify({
+          userId: emp.manager_user_id,
+          employeeId: task.employee_id,
+          type: NOTIFICATION_TYPES.TASK_COMPLETED,
+          title: `Task completed: ${task.title || workflow_type}`,
+          body: { summary, artifact_count: artifactRefs.length },
+          taskId: task.id,
+        });
+      }
+    } catch { /* notification is best-effort */ }
+
     return { run: updatedRun || { ...run, status: 'succeeded', summary, artifact_refs: artifactRefs }, result };
 
   } catch (err) {
     const errorMessage = err?.message || String(err);
+    console.error('[aiEmployeeExecutor] Task failed:', errorMessage);
 
-    // Mark run failed
-    await aiEmployeeService.updateRun(run.id, {
-      status: 'failed',
-      error_message: errorMessage,
-      ended_at: new Date().toISOString(),
-    });
+    // Mark run failed — each step is wrapped individually so one failure doesn't block the rest
+    try {
+      await aiEmployeeService.updateRun(run.id, {
+        status: 'failed',
+        error_message: errorMessage,
+        ended_at: new Date().toISOString(),
+      });
+    } catch (e) { console.error('[aiEmployeeExecutor] updateRun failed:', e?.message); }
 
     // Transition: in_progress → blocked
-    await aiEmployeeService.updateTaskStatus(task.id, 'blocked', run.id);
-    await aiEmployeeService.updateEmployeeStatus(task.employee_id, 'blocked');
+    try {
+      const updatedTask = await aiEmployeeService.updateTaskStatus(task.id, 'blocked', run.id);
+      console.log('[aiEmployeeExecutor] Task status set to blocked:', updatedTask?.status);
+    } catch (e) { console.error('[aiEmployeeExecutor] updateTaskStatus failed:', e?.message); }
+
+    try {
+      await aiEmployeeService.updateEmployeeStatus(task.employee_id, 'blocked');
+    } catch (e) { console.error('[aiEmployeeExecutor] updateEmployeeStatus failed:', e?.message); }
 
     // Write escalation log
-    await aiEmployeeService.appendWorklog(
-      task.employee_id,
-      task.id,
-      run.id,
-      'escalation',
-      {
-        issue: errorMessage,
-        severity: 'high',
-        workflow_type,
-        dataset_profile_id,
+    try {
+      await aiEmployeeService.appendWorklog(
+        task.employee_id,
+        task.id,
+        run.id,
+        'escalation',
+        {
+          issue: errorMessage,
+          severity: 'high',
+          workflow_type,
+          dataset_profile_id,
+        }
+      );
+    } catch (e) { console.error('[aiEmployeeExecutor] appendWorklog failed:', e?.message); }
+
+    // Write failure memory (best-effort)
+    try {
+      await writeMemory({
+        employeeId: task.employee_id,
+        taskId: task.id,
+        runId: run.id,
+        workflowType: workflow_type,
+        success: false,
+        errorMessage: errorMessage,
+        inputParams: extractInputParams(task.input_context),
+        executionTimeMs: Date.now() - _execStartMs,
+        datasetProfileId: dataset_profile_id,
+        templateId: task.input_context?.template_id || null,
+      });
+    } catch (memErr) { console.warn('[aiEmployeeExecutor] writeMemory (failure) failed:', memErr?.message); }
+
+    // Notify: task failed (best-effort)
+    try {
+      const emp = await aiEmployeeService.getEmployee(task.employee_id);
+      if (emp?.manager_user_id) {
+        await notify({
+          userId: emp.manager_user_id,
+          employeeId: task.employee_id,
+          type: NOTIFICATION_TYPES.TASK_FAILED,
+          title: `Task failed: ${task.title || workflow_type}`,
+          body: { error: errorMessage },
+          taskId: task.id,
+        });
       }
-    );
+    } catch { /* notification is best-effort */ }
 
     throw err;
   }
 }
 
-export default { executeTask };
+// ─────────────────────────────────────────────────────────────────────────────
+// Agent Loop wrapper
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Execute a task using the agent loop if it has a template,
+ * or fall back to single-step execution.
+ *
+ * @param {object} task - Row from ai_employee_tasks
+ * @param {string} userId
+ * @param {object} [opts] - { onStepComplete, signal }
+ * @returns {Promise<object>}
+ */
+export async function executeTaskWithLoop(task, userId, opts = {}) {
+  const templateId = task.template_id || task.input_context?.template_id;
+
+  if (!templateId) {
+    // Legacy single-step path — no change
+    return executeTask(task, userId);
+  }
+
+  // Agent loop path
+  const { initAgentLoop, runAgentLoop } = await import('./agentLoopService');
+
+  if (!task.loop_state) {
+    await initAgentLoop(task.id, userId);
+  }
+
+  return runAgentLoop(task.id, userId, opts);
+}
+
+export default { executeTask, executeTaskWithLoop };

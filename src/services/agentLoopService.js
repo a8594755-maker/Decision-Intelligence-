@@ -1,0 +1,462 @@
+// @product: ai-employee
+//
+// agentLoopService.js
+// ─────────────────────────────────────────────────────────────────────────────
+// Core agent loop engine for multi-step task execution.
+//
+// Pull-based tick model: each call to `tickAgentLoop` advances exactly one
+// step, persists progress to loop_state, and returns. This avoids long-running
+// promises that break on navigation/refresh.
+//
+// Flow:
+//   initAgentLoop  → sets template + loop_state on the task
+//   tickAgentLoop  → advances one step (or pauses at review checkpoint)
+//   runAgentLoop   → ticks in a loop until done or paused
+//   approveStepAndContinue  → unblocks a review_hold step
+//   reviseStepAndRetry      → resets a step for re-execution
+// ─────────────────────────────────────────────────────────────────────────────
+
+import * as aiEmployeeService from './aiEmployeeService';
+import { executeTask } from './aiEmployeeExecutor';
+import { resolveTemplate, initLoopState } from './agentLoopTemplates';
+import { recall, summarizeMemories } from './aiEmployeeMemoryService';
+import { checkBudget, BudgetExceededError } from './taskBudgetService';
+
+// ── Constants ────────────────────────────────────────────────────────────────
+
+export const MAX_RETRIES = 3;
+const BACKOFF_BASE_MS = 1000;
+
+export const STEP_STATUS = {
+  PENDING: 'pending',
+  RUNNING: 'running',
+  SUCCEEDED: 'succeeded',
+  FAILED: 'failed',
+  BLOCKED: 'blocked',
+  REVIEW_HOLD: 'review_hold',
+  SKIPPED: 'skipped',
+};
+
+const TERMINAL = new Set([STEP_STATUS.SUCCEEDED, STEP_STATUS.BLOCKED, STEP_STATUS.SKIPPED]);
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+function backoffMs(retryCount) {
+  return BACKOFF_BASE_MS * Math.pow(3, retryCount); // 1s, 3s, 9s
+}
+
+/**
+ * Find the next step that should execute.
+ * Priority: first step that is 'pending', or first 'failed' with retries remaining.
+ * If a 'review_hold' step is encountered before any actionable step, returns it.
+ */
+function findNextStep(steps) {
+  for (const step of steps) {
+    if (step.status === STEP_STATUS.REVIEW_HOLD) return step;
+    if (step.status === STEP_STATUS.PENDING) return step;
+    if (step.status === STEP_STATUS.FAILED && step.retry_count < MAX_RETRIES) return step;
+    if (step.status === STEP_STATUS.RUNNING) return step; // stale running (browser closed)
+    if (TERMINAL.has(step.status)) continue;
+    // Unknown status — treat as blocked
+    break;
+  }
+  return null;
+}
+
+/**
+ * Build input_context for a specific step, chaining artifacts from prior steps.
+ */
+function buildStepInputContext(taskInputContext, stepDef, loopState) {
+  const base = { ...taskInputContext };
+  base.workflow_type = stepDef.workflow_type;
+
+  // Chain artifacts from completed prior steps
+  const priorArtifacts = {};
+  for (const prev of loopState.steps) {
+    if (prev.index >= stepDef.index) break;
+    if (prev.status === STEP_STATUS.SUCCEEDED && prev.artifact_refs?.length > 0) {
+      priorArtifacts[prev.name] = prev.artifact_refs;
+    }
+  }
+  base._prior_step_artifacts = priorArtifacts;
+
+  // If risk_aware_plan template and we have risk step completed, enable risk mode for plan
+  if (stepDef.workflow_type === 'plan' && priorArtifacts.risk) {
+    base.riskMode = 'on';
+  }
+
+  return base;
+}
+
+/**
+ * Check if the entire loop is done (all steps in terminal state or review_hold).
+ */
+function isLoopDone(steps) {
+  return steps.every((s) =>
+    TERMINAL.has(s.status) || s.status === STEP_STATUS.REVIEW_HOLD
+  );
+}
+
+function isLoopFullyComplete(steps) {
+  return steps.every((s) => s.status === STEP_STATUS.SUCCEEDED || s.status === STEP_STATUS.SKIPPED);
+}
+
+// ── Public API ───────────────────────────────────────────────────────────────
+
+/**
+ * Initialize an agent loop for a task.
+ * Resolves template from task.template_id or task.input_context.workflow_type,
+ * sets loop_state on the task.
+ *
+ * @param {string} taskId
+ * @param {string} userId
+ * @returns {Promise<object>} Updated task with loop_state
+ */
+export async function initAgentLoop(taskId, userId) {
+  const task = await aiEmployeeService.getTask(taskId);
+  if (!task) throw new Error(`Task not found: ${taskId}`);
+
+  // Already initialized
+  if (task.loop_state?.steps?.length > 0) return task;
+
+  const templateId = task.template_id || task.input_context?.template_id || task.input_context?.workflow_type;
+  const template = resolveTemplate(templateId);
+  if (!template) throw new Error(`Unknown template: ${templateId}`);
+
+  const loopState = initLoopState(template);
+  loopState.started_at = new Date().toISOString();
+
+  await aiEmployeeService.updateTaskLoopState(taskId, loopState);
+
+  // Return refreshed task
+  return aiEmployeeService.getTask(taskId);
+}
+
+/**
+ * Advance the agent loop by one step.
+ *
+ * @param {string} taskId
+ * @param {string} userId
+ * @returns {Promise<{ done: boolean, step_event: object|null, task: object }>}
+ */
+export async function tickAgentLoop(taskId, userId) {
+  const task = await aiEmployeeService.getTask(taskId);
+  if (!task) throw new Error(`Task not found: ${taskId}`);
+
+  const loopState = task.loop_state;
+  if (!loopState?.steps?.length) {
+    throw new Error('Task has no loop_state — call initAgentLoop first');
+  }
+
+  const steps = loopState.steps;
+
+  // ── Find next actionable step ───────────────────────────────────────────
+  const nextStep = findNextStep(steps);
+
+  // All done?
+  if (!nextStep) {
+    const allComplete = isLoopFullyComplete(steps);
+    if (allComplete) {
+      loopState.finished_at = new Date().toISOString();
+      await aiEmployeeService.updateTaskLoopState(taskId, loopState);
+      await aiEmployeeService.updateTaskStatus(taskId, 'waiting_review');
+      await aiEmployeeService.updateEmployeeStatus(task.employee_id, 'waiting_review');
+    } else {
+      // Some steps blocked — mark task blocked
+      await aiEmployeeService.updateTaskStatus(taskId, 'blocked');
+      await aiEmployeeService.updateEmployeeStatus(task.employee_id, 'blocked');
+    }
+    return { done: true, step_event: null, task: await aiEmployeeService.getTask(taskId) };
+  }
+
+  // ── Review hold — loop pauses ───────────────────────────────────────────
+  if (nextStep.status === STEP_STATUS.REVIEW_HOLD) {
+    return {
+      done: false,
+      step_event: { step_name: nextStep.name, status: 'review_hold', summary: `Step "${nextStep.name}" awaiting review.` },
+      task,
+    };
+  }
+
+  // ── Already running (stale) — treat as failed and retry ─────────────────
+  if (nextStep.status === STEP_STATUS.RUNNING) {
+    nextStep.status = STEP_STATUS.FAILED;
+    nextStep.error = 'Step was running but interrupted (browser closed or timeout).';
+    nextStep.retry_count += 1;
+    nextStep.finished_at = new Date().toISOString();
+    await aiEmployeeService.updateTaskLoopState(taskId, loopState);
+    // If retries exceeded, mark blocked
+    if (nextStep.retry_count >= MAX_RETRIES) {
+      nextStep.status = STEP_STATUS.BLOCKED;
+      await aiEmployeeService.updateTaskLoopState(taskId, loopState);
+      return {
+        done: isLoopDone(steps),
+        step_event: { step_name: nextStep.name, status: 'blocked', error: nextStep.error },
+        task: await aiEmployeeService.getTask(taskId),
+      };
+    }
+    // Fall through to retry
+  }
+
+  // ── Execute the step ────────────────────────────────────────────────────
+
+  // Budget gate: block step if task budget is exhausted
+  try {
+    const budgetResult = await checkBudget(taskId);
+    if (!budgetResult.allowed) {
+      nextStep.status = STEP_STATUS.BLOCKED;
+      nextStep.error = `Budget exceeded: ${budgetResult.reason}`;
+      nextStep.finished_at = new Date().toISOString();
+      await aiEmployeeService.updateTaskLoopState(taskId, loopState);
+      return {
+        done: isLoopDone(steps),
+        step_event: { step_name: nextStep.name, status: 'blocked', error: nextStep.error },
+        task: await aiEmployeeService.getTask(taskId),
+      };
+    }
+  } catch { /* budget check is best-effort — proceed if service unavailable */ }
+
+  // Backoff if retrying
+  if (nextStep.retry_count > 0) {
+    await sleep(backoffMs(nextStep.retry_count - 1));
+  }
+
+  // Mark running
+  nextStep.status = STEP_STATUS.RUNNING;
+  nextStep.started_at = new Date().toISOString();
+  nextStep.error = null;
+  await aiEmployeeService.updateTaskLoopState(taskId, loopState);
+
+  // Ensure task + employee are in_progress
+  await aiEmployeeService.updateTaskStatus(taskId, 'in_progress');
+  await aiEmployeeService.updateEmployeeStatus(task.employee_id, 'working');
+
+  // Build synthetic task for the single-step executor
+  const stepInputContext = buildStepInputContext(task.input_context || {}, nextStep, loopState);
+
+  // Inject memory context from prior runs (best-effort)
+  try {
+    const memories = await recall(task.employee_id, {
+      workflowType: nextStep.workflow_type,
+      datasetFingerprint: task.input_context?.dataset_fingerprint || null,
+      limit: 5,
+    });
+    if (memories?.length > 0) {
+      stepInputContext._memory_context = summarizeMemories(memories);
+    }
+  } catch { /* memory recall is best-effort */ }
+
+  const syntheticTask = {
+    ...task,
+    input_context: stepInputContext,
+    // Override so createRun gets step metadata
+    _step_index: nextStep.index,
+    _step_name: nextStep.name,
+  };
+
+  try {
+    const result = await executeTask(syntheticTask, userId);
+
+    // Step succeeded
+    nextStep.status = nextStep.requires_review ? STEP_STATUS.REVIEW_HOLD : STEP_STATUS.SUCCEEDED;
+    nextStep.run_id = result.run?.id || null;
+    nextStep.artifact_refs = result.run?.artifact_refs || [];
+    nextStep.finished_at = new Date().toISOString();
+    nextStep.error = null;
+
+    await aiEmployeeService.updateTaskLoopState(taskId, loopState);
+
+    // Write step_progress worklog
+    try {
+      await aiEmployeeService.appendWorklog(
+        task.employee_id, taskId, nextStep.run_id, 'step_progress',
+        {
+          step_name: nextStep.name,
+          step_index: nextStep.index,
+          status: nextStep.status,
+          summary: result.run?.summary || `Step "${nextStep.name}" completed.`,
+          artifacts_generated: nextStep.artifact_refs.length,
+        }
+      );
+    } catch { /* worklog is best-effort */ }
+
+    // If review_hold, set task to waiting_review
+    if (nextStep.status === STEP_STATUS.REVIEW_HOLD) {
+      await aiEmployeeService.updateTaskStatus(taskId, 'waiting_review');
+      await aiEmployeeService.updateEmployeeStatus(task.employee_id, 'waiting_review');
+    }
+
+    const updatedTask = await aiEmployeeService.getTask(taskId);
+    return {
+      done: isLoopFullyComplete(loopState.steps) && nextStep.status !== STEP_STATUS.REVIEW_HOLD,
+      step_event: {
+        step_name: nextStep.name,
+        status: nextStep.status,
+        summary: result.run?.summary || `Step "${nextStep.name}" completed.`,
+      },
+      task: updatedTask,
+    };
+
+  } catch (err) {
+    // Step failed
+    nextStep.status = STEP_STATUS.FAILED;
+    nextStep.error = err?.message || String(err);
+    nextStep.retry_count += 1;
+    nextStep.finished_at = new Date().toISOString();
+
+    if (nextStep.retry_count >= MAX_RETRIES) {
+      nextStep.status = STEP_STATUS.BLOCKED;
+    }
+
+    await aiEmployeeService.updateTaskLoopState(taskId, loopState);
+
+    // Write escalation worklog
+    try {
+      await aiEmployeeService.appendWorklog(
+        task.employee_id, taskId, null, 'step_progress',
+        {
+          step_name: nextStep.name,
+          step_index: nextStep.index,
+          status: nextStep.status,
+          error: nextStep.error,
+          retry_count: nextStep.retry_count,
+        }
+      );
+    } catch { /* best-effort */ }
+
+    return {
+      done: isLoopDone(loopState.steps),
+      step_event: {
+        step_name: nextStep.name,
+        status: nextStep.status,
+        error: nextStep.error,
+        retry_count: nextStep.retry_count,
+      },
+      task: await aiEmployeeService.getTask(taskId),
+    };
+  }
+}
+
+/**
+ * Resume after a review checkpoint is approved.
+ * Marks the step as succeeded and allows tick to continue.
+ *
+ * @param {string} taskId
+ * @param {string} stepName
+ * @returns {Promise<object>} Updated loop_state
+ */
+export async function approveStepAndContinue(taskId, stepName) {
+  const task = await aiEmployeeService.getTask(taskId);
+  if (!task?.loop_state) throw new Error('No loop_state on task');
+
+  const step = task.loop_state.steps.find((s) => s.name === stepName);
+  if (!step) throw new Error(`Step not found: ${stepName}`);
+  if (step.status !== STEP_STATUS.REVIEW_HOLD) {
+    throw new Error(`Step "${stepName}" is not in review_hold (current: ${step.status})`);
+  }
+
+  step.status = STEP_STATUS.SUCCEEDED;
+  step.finished_at = new Date().toISOString();
+
+  await aiEmployeeService.updateTaskLoopState(taskId, task.loop_state);
+  // Move task back to in_progress so next tick can continue
+  await aiEmployeeService.updateTaskStatus(taskId, 'in_progress');
+
+  return task.loop_state;
+}
+
+/**
+ * Resume after a review requests revision.
+ * Resets the step to pending so it will re-execute on next tick.
+ *
+ * @param {string} taskId
+ * @param {string} stepName
+ * @returns {Promise<object>} Updated loop_state
+ */
+export async function reviseStepAndRetry(taskId, stepName) {
+  const task = await aiEmployeeService.getTask(taskId);
+  if (!task?.loop_state) throw new Error('No loop_state on task');
+
+  const step = task.loop_state.steps.find((s) => s.name === stepName);
+  if (!step) throw new Error(`Step not found: ${stepName}`);
+
+  step.status = STEP_STATUS.PENDING;
+  step.error = null;
+  step.run_id = null;
+  step.artifact_refs = [];
+  step.started_at = null;
+  step.finished_at = null;
+  // Keep retry_count as-is to track total attempts
+
+  await aiEmployeeService.updateTaskLoopState(taskId, task.loop_state);
+  await aiEmployeeService.updateTaskStatus(taskId, 'in_progress');
+
+  return task.loop_state;
+}
+
+/**
+ * Run the full agent loop to completion (or first pause point).
+ * Calls tickAgentLoop in a loop. Suitable for background execution.
+ *
+ * @param {string} taskId
+ * @param {string} userId
+ * @param {object} [opts]
+ * @param {function} [opts.onStepComplete] - Callback after each step: (step_event) => void
+ * @param {AbortSignal} [opts.signal] - For cancellation
+ * @returns {Promise<{ task: object, completed_steps: string[], halted_at: string|null }>}
+ */
+export async function runAgentLoop(taskId, userId, opts = {}) {
+  const { onStepComplete, signal } = opts;
+  const completedSteps = [];
+  let haltedAt = null;
+
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    if (signal?.aborted) {
+      haltedAt = 'aborted';
+      break;
+    }
+
+    const { done, step_event, task } = await tickAgentLoop(taskId, userId);
+
+    if (step_event) {
+      if (step_event.status === STEP_STATUS.SUCCEEDED || step_event.status === STEP_STATUS.REVIEW_HOLD) {
+        completedSteps.push(step_event.step_name);
+      }
+      if (onStepComplete) {
+        try { onStepComplete(step_event); } catch { /* ignore callback errors */ }
+      }
+    }
+
+    if (done) break;
+
+    // Pause on review hold
+    if (step_event?.status === STEP_STATUS.REVIEW_HOLD) {
+      haltedAt = step_event.step_name;
+      break;
+    }
+
+    // Pause on blocked (will retry on next tick if retries remain)
+    if (step_event?.status === STEP_STATUS.BLOCKED) {
+      haltedAt = step_event.step_name;
+      break;
+    }
+  }
+
+  const finalTask = await aiEmployeeService.getTask(taskId);
+  return { task: finalTask, completed_steps: completedSteps, halted_at: haltedAt };
+}
+
+export default {
+  initAgentLoop,
+  tickAgentLoop,
+  runAgentLoop,
+  approveStepAndContinue,
+  reviseStepAndRetry,
+  STEP_STATUS,
+  MAX_RETRIES,
+};

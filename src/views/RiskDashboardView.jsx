@@ -492,8 +492,12 @@ const RiskDashboardView = ({ addNotification, user, setView, globalDataSource, _
 
       addNotification(`Loaded ${calculatedRows.length} risk entries (REAL DATA)`, 'success');
     } catch (error) {
-      console.error('Failed to load risk data:', error);
-      
+      if (error.message === 'EMPTY_PO_DATA') {
+        console.warn('No PO data available — prompting user to upload');
+      } else {
+        console.error('Failed to load risk data:', error);
+      }
+
       if (error.message === 'EMPTY_PO_DATA') {
         setError({
           type: 'empty',

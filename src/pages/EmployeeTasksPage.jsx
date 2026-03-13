@@ -2,12 +2,17 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
   Plus, RefreshCw, Play, ChevronRight, Clock, CheckCircle2,
-  AlertTriangle, Loader2, FileText, CalendarDays, Tag,
+  AlertTriangle, Loader2, FileText, CalendarDays, Tag, Bell,
+  Calendar, Pause, PlayCircle, Trash2, Zap,
 } from 'lucide-react';
 import { Card, Modal, Select } from '../components/ui';
 import { useAuth } from '../contexts/AuthContext';
 import * as aiEmployeeService from '../services/aiEmployeeService';
-import { executeTask } from '../services/aiEmployeeExecutor';
+import { executeTaskWithLoop } from '../services/aiEmployeeExecutor';
+import { TEMPLATE_OPTIONS } from '../services/agentLoopTemplates';
+import { STEP_STATUS } from '../services/agentLoopService';
+import { getNotifications, getUnreadCount, markAllRead } from '../services/notificationService';
+import { getSchedules, createSchedule, pauseSchedule, resumeSchedule, deleteSchedule, SCHEDULE_TYPES } from '../services/scheduledTaskService';
 
 // ── Constants ─────────────────────────────────────────────────────────────
 
@@ -27,11 +32,7 @@ const PRIORITY_OPTIONS = [
   { value: 'urgent', label: 'Urgent' },
 ];
 
-const WORKFLOW_OPTIONS = [
-  { value: 'forecast', label: 'Demand Forecast' },
-  { value: 'plan',     label: 'Replenishment Plan' },
-  { value: 'risk',     label: 'Risk Analysis' },
-];
+const WORKFLOW_OPTIONS = TEMPLATE_OPTIONS;
 
 const STATUS_STYLE = {
   todo:           'text-slate-500  bg-slate-100  dark:bg-slate-800',
@@ -80,7 +81,7 @@ function NewTaskModal({ onClose, onCreated, employeeId, userId }) {
     title: '',
     description: '',
     priority: 'medium',
-    workflow_type: 'plan',
+    template_id: 'plan',
     dataset_profile_id: '',
     due_at: '',
   });
@@ -101,12 +102,15 @@ function NewTaskModal({ onClose, onCreated, employeeId, userId }) {
     setSaving(true);
     setError(null);
     try {
+      // Determine if this is a composite template or single-step
+      const isComposite = WORKFLOW_OPTIONS.find((o) => o.value === form.template_id)?.composite;
       const task = await aiEmployeeService.createTask(employeeId, {
         title: form.title.trim(),
         description: form.description.trim() || null,
         priority: form.priority,
         input_context: {
-          workflow_type: form.workflow_type,
+          workflow_type: isComposite ? form.template_id : form.template_id,
+          template_id: form.template_id,
           dataset_profile_id: form.dataset_profile_id.trim(),
         },
         due_at: form.due_at ? new Date(form.due_at).toISOString() : null,
@@ -165,14 +169,19 @@ function NewTaskModal({ onClose, onCreated, employeeId, userId }) {
             </select>
           </div>
           <div>
-            <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>Analysis Type</label>
+            <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>Task Type</label>
             <select
               className={inputCls}
               style={inputStyle}
-              value={form.workflow_type}
-              onChange={(e) => set('workflow_type', e.target.value)}
+              value={form.template_id}
+              onChange={(e) => set('template_id', e.target.value)}
             >
-              {WORKFLOW_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              <optgroup label="Multi-Step">
+                {WORKFLOW_OPTIONS.filter((o) => o.composite).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </optgroup>
+              <optgroup label="Single Analysis">
+                {WORKFLOW_OPTIONS.filter((o) => !o.composite).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </optgroup>
             </select>
           </div>
         </div>
@@ -246,6 +255,9 @@ function TaskListItem({ task, isSelected, onClick }) {
         <div className="flex items-center gap-1.5 mt-1">
           <Badge label={STATUS_LABEL[task.status] || task.status} className={STATUS_STYLE[task.status] || ''} />
           <Badge label={task.priority} className={PRIORITY_STYLE[task.priority] || ''} />
+          {task.source_type === 'scheduled' && (
+            <Badge label="auto" className="text-purple-600 bg-purple-50 dark:bg-purple-900/20" />
+          )}
         </div>
       </div>
       {isSelected && <ChevronRight className="w-4 h-4 text-indigo-400 flex-shrink-0 mt-0.5" />}
@@ -274,6 +286,56 @@ function WorklogEntry({ entry }) {
   );
 }
 
+// ── Step progress bar (agent loop) ────────────────────────────────────────
+
+const STEP_STATUS_STYLE = {
+  pending:     'text-slate-500  bg-slate-100  dark:bg-slate-800',
+  running:     'text-blue-600   bg-blue-50    dark:bg-blue-900/20',
+  succeeded:   'text-emerald-600 bg-emerald-50 dark:bg-emerald-900/20',
+  failed:      'text-red-600    bg-red-50     dark:bg-red-900/20',
+  blocked:     'text-red-600    bg-red-50     dark:bg-red-900/20',
+  review_hold: 'text-amber-600  bg-amber-50   dark:bg-amber-900/20',
+  skipped:     'text-slate-400  bg-slate-50   dark:bg-slate-800',
+};
+
+const STEP_STATUS_ICON = {
+  pending:     <Clock className="w-3 h-3" />,
+  running:     <Loader2 className="w-3 h-3 animate-spin" />,
+  succeeded:   <CheckCircle2 className="w-3 h-3" />,
+  failed:      <AlertTriangle className="w-3 h-3" />,
+  blocked:     <AlertTriangle className="w-3 h-3" />,
+  review_hold: <Clock className="w-3 h-3" />,
+  skipped:     null,
+};
+
+function StepProgressBar({ loopState }) {
+  if (!loopState?.steps?.length) return null;
+  return (
+    <div>
+      <p className="text-xs font-medium mb-2" style={{ color: 'var(--text-muted)' }}>
+        STEPS
+      </p>
+      <div className="flex items-center gap-1 flex-wrap">
+        {loopState.steps.map((step, i) => (
+          <div key={step.name} className="flex items-center">
+            {i > 0 && <div className="w-3 h-px mx-0.5" style={{ backgroundColor: 'var(--border-default)' }} />}
+            <div
+              className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium ${STEP_STATUS_STYLE[step.status] || STEP_STATUS_STYLE.pending}`}
+              title={step.error ? `Error: ${step.error}` : step.status}
+            >
+              {STEP_STATUS_ICON[step.status]}
+              <span>{step.name}</span>
+              {step.retry_count > 0 && (
+                <span className="text-[10px] opacity-60">({step.retry_count})</span>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ── Task detail panel ─────────────────────────────────────────────────────
 
 function TaskDetail({ task, logs, onRun, running }) {
@@ -290,11 +352,14 @@ function TaskDetail({ task, logs, onRun, running }) {
         </div>
         <div className="flex flex-wrap gap-1.5">
           <Badge label={task.priority} className={PRIORITY_STYLE[task.priority] || ''} />
-          {ctx.workflow_type && (
-            <Badge label={ctx.workflow_type} className="text-indigo-600 bg-indigo-50 dark:bg-indigo-900/20" />
+          {(ctx.template_id || ctx.workflow_type) && (
+            <Badge label={ctx.template_id || ctx.workflow_type} className="text-indigo-600 bg-indigo-50 dark:bg-indigo-900/20" />
           )}
         </div>
       </div>
+
+      {/* Step progress bar (agent loop) */}
+      {task.loop_state && <StepProgressBar loopState={task.loop_state} />}
 
       {/* Description */}
       {task.description && (
@@ -370,6 +435,11 @@ export default function EmployeeTasksPage() {
   const [runningId, setRunningId] = useState(null);
   const [showNewTask, setShowNewTask] = useState(false);
   const [runError, setRunError] = useState(null);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [notifications, setNotifications] = useState([]);
+  const [showNotifs, setShowNotifs] = useState(false);
+  const [schedules, setSchedules] = useState([]);
+  const [showSchedules, setShowSchedules] = useState(false);
 
   const selectedTask = tasks.find((t) => t.id === selectedTaskId) || null;
 
@@ -383,6 +453,11 @@ export default function EmployeeTasksPage() {
       const ts = await aiEmployeeService.listTasksByUser(user.id, { status: statusFilter || undefined });
       setTasks(ts);
       if (ts.length > 0 && !selectedTaskId) setSelectedTaskId(ts[0].id);
+      // Load notifications + schedules (best-effort)
+      try { setUnreadCount(await getUnreadCount(user.id)); } catch { /* */ }
+      if (emp?.id) {
+        try { setSchedules(await getSchedules(emp.id)); } catch { /* */ }
+      }
     } finally {
       setLoading(false);
     }
@@ -390,13 +465,13 @@ export default function EmployeeTasksPage() {
 
   useEffect(() => { loadTasks(); }, [loadTasks]);
 
-  // Load logs for selected task
+  // Load logs for selected task — use userId to query across all Aiden instances
   useEffect(() => {
-    if (!selectedTask || !employee) { setLogs([]); return; }
-    aiEmployeeService.listWorklogs(employee.id, { taskId: selectedTask.id, limit: 10 })
+    if (!selectedTask || !user?.id) { setLogs([]); return; }
+    aiEmployeeService.listWorklogs(employee?.id, { taskId: selectedTask.id, limit: 10, userId: user.id })
       .then(setLogs)
       .catch(() => setLogs([]));
-  }, [selectedTask?.id, employee?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [selectedTask?.id, user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function handleRun(task) {
     if (!user?.id || runningId) return;
@@ -404,23 +479,25 @@ export default function EmployeeTasksPage() {
     setRunError(null);
     // Optimistically mark in_progress so the task stays visible
     setTasks((prev) => prev.map((t) => t.id === task.id ? { ...t, status: 'in_progress' } : t));
+
+    // Poll for step progress during execution
+    const pollInterval = setInterval(async () => {
+      try {
+        const fresh = await aiEmployeeService.getTask(task.id);
+        if (fresh) {
+          setTasks((prev) => prev.map((t) => t.id === fresh.id ? fresh : t));
+        }
+      } catch { /* ignore polling errors */ }
+    }, 2000);
+
     try {
-      await executeTask(task, user.id);
+      await executeTaskWithLoop(task, user.id);
     } catch (err) {
       setRunError(err?.message || 'Task execution failed.');
     } finally {
+      clearInterval(pollInterval);
       setRunningId(null);
-      // Refetch only this task to pick up the updated status
-      try {
-        const updated = await aiEmployeeService.getTask(task.id);
-        if (updated) {
-          setTasks((prev) => prev.map((t) => t.id === task.id ? updated : t));
-        } else {
-          await loadTasks();
-        }
-      } catch {
-        await loadTasks();
-      }
+      await loadTasks();
     }
   }
 
@@ -440,6 +517,34 @@ export default function EmployeeTasksPage() {
       >
         <span className="font-semibold text-sm" style={{ color: 'var(--text-primary)' }}>Task Board</span>
         <div className="flex items-center gap-2">
+          {/* Schedules toggle */}
+          <button
+            onClick={() => setShowSchedules((v) => !v)}
+            className={`p-1.5 rounded-lg transition-colors hover:bg-[var(--surface-subtle)] ${showSchedules ? 'bg-indigo-50 dark:bg-indigo-900/20' : ''}`}
+            title="Scheduled Tasks"
+          >
+            <Calendar className="w-4 h-4" style={{ color: showSchedules ? 'var(--accent-primary, #6366f1)' : 'var(--text-muted)' }} />
+          </button>
+          {/* Notification bell */}
+          <button
+            onClick={async () => {
+              setShowNotifs((v) => !v);
+              if (!showNotifs) {
+                try {
+                  setNotifications(await getNotifications(user.id, { limit: 20 }));
+                } catch { /* */ }
+              }
+            }}
+            className="p-1.5 rounded-lg transition-colors hover:bg-[var(--surface-subtle)] relative"
+            title="Notifications"
+          >
+            <Bell className="w-4 h-4" style={{ color: 'var(--text-muted)' }} />
+            {unreadCount > 0 && (
+              <span className="absolute -top-0.5 -right-0.5 w-4 h-4 flex items-center justify-center text-[10px] font-bold bg-red-500 text-white rounded-full">
+                {unreadCount > 9 ? '9+' : unreadCount}
+              </span>
+            )}
+          </button>
           <button
             onClick={loadTasks}
             className="p-1.5 rounded-lg transition-colors hover:bg-[var(--surface-subtle)]"
@@ -529,6 +634,107 @@ export default function EmployeeTasksPage() {
           )}
         </main>
       </div>
+
+      {/* ── Notification dropdown ── */}
+      {showNotifs && (
+        <div
+          className="absolute top-14 right-4 w-80 max-h-96 overflow-y-auto rounded-xl shadow-lg border z-50"
+          style={{ backgroundColor: 'var(--surface-card)', borderColor: 'var(--border-default)' }}
+        >
+          <div className="flex items-center justify-between px-3 py-2 border-b" style={{ borderColor: 'var(--border-default)' }}>
+            <span className="text-xs font-medium" style={{ color: 'var(--text-primary)' }}>Notifications</span>
+            {unreadCount > 0 && (
+              <button
+                onClick={async () => {
+                  try {
+                    await markAllRead(user.id);
+                    setUnreadCount(0);
+                    setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
+                  } catch { /* */ }
+                }}
+                className="text-xs text-indigo-600 hover:underline"
+              >
+                Mark all read
+              </button>
+            )}
+          </div>
+          {notifications.length === 0 ? (
+            <p className="px-3 py-6 text-center text-xs" style={{ color: 'var(--text-muted)' }}>No notifications yet.</p>
+          ) : (
+            notifications.map((n) => (
+              <div
+                key={n.id}
+                className={`px-3 py-2.5 border-b text-xs ${!n.read ? 'bg-indigo-50/50 dark:bg-indigo-900/10' : ''}`}
+                style={{ borderColor: 'var(--border-default)' }}
+              >
+                <p className="font-medium" style={{ color: 'var(--text-primary)' }}>{n.title}</p>
+                <p className="mt-0.5" style={{ color: 'var(--text-muted)' }}>{fmtTime(n.created_at)}</p>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+
+      {/* ── Schedules panel ── */}
+      {showSchedules && (
+        <div
+          className="absolute top-14 right-24 w-96 max-h-96 overflow-y-auto rounded-xl shadow-lg border z-50"
+          style={{ backgroundColor: 'var(--surface-card)', borderColor: 'var(--border-default)' }}
+        >
+          <div className="flex items-center justify-between px-3 py-2 border-b" style={{ borderColor: 'var(--border-default)' }}>
+            <span className="text-xs font-medium" style={{ color: 'var(--text-primary)' }}>Scheduled Tasks</span>
+          </div>
+          {schedules.length === 0 ? (
+            <p className="px-3 py-6 text-center text-xs" style={{ color: 'var(--text-muted)' }}>No schedules configured.</p>
+          ) : (
+            schedules.map((s) => (
+              <div
+                key={s.id}
+                className="px-3 py-2.5 border-b flex items-center gap-2"
+                style={{ borderColor: 'var(--border-default)' }}
+              >
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+                    {s.task_template?.title || s.schedule_type}
+                  </p>
+                  <p className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                    {s.schedule_type} at {s.hour || 8}:00 UTC
+                    {s.status === 'paused' && ' (paused)'}
+                  </p>
+                </div>
+                <button
+                  onClick={async () => {
+                    try {
+                      if (s.status === 'active') await pauseSchedule(s.id);
+                      else await resumeSchedule(s.id);
+                      setSchedules(await getSchedules(employee.id));
+                    } catch { /* */ }
+                  }}
+                  className="p-1 rounded hover:bg-[var(--surface-subtle)]"
+                  title={s.status === 'active' ? 'Pause' : 'Resume'}
+                >
+                  {s.status === 'active'
+                    ? <Pause className="w-3.5 h-3.5 text-amber-500" />
+                    : <PlayCircle className="w-3.5 h-3.5 text-emerald-500" />
+                  }
+                </button>
+                <button
+                  onClick={async () => {
+                    try {
+                      await deleteSchedule(s.id);
+                      setSchedules((prev) => prev.filter((x) => x.id !== s.id));
+                    } catch { /* */ }
+                  }}
+                  className="p-1 rounded hover:bg-[var(--surface-subtle)]"
+                  title="Delete"
+                >
+                  <Trash2 className="w-3.5 h-3.5 text-red-400" />
+                </button>
+              </div>
+            ))
+          )}
+        </div>
+      )}
 
       {/* ── New task modal ── */}
       {showNewTask && (

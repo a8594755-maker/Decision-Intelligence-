@@ -70,3 +70,9 @@ PHASE*_CONSOLE_TEST.js
 # Auto-generated output directories
 test-results/
 reports/
+
+# E2E auto-crawler output
+e2e/screenshots/
+e2e/crawler-report.json
+e2e/crawler-report.html
+e2e/.auth/

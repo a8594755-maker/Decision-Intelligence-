@@ -57,7 +57,8 @@ async function trySupabase(fn) {
   try {
     if (!supabase) return null;
     return await fn();
-  } catch {
+  } catch (err) {
+    console.warn('[aiEmployeeService] Supabase call failed, falling back to localStorage:', err?.message || err);
     return null;
   }
 }
@@ -74,7 +75,7 @@ export async function getOrCreateAiden(userId) {
   const sbResult = await trySupabase(async () => {
     // Try to find existing Aiden belonging to this manager
     // Use limit(1) instead of maybeSingle() to handle duplicate rows gracefully
-    const { data: rows } = await supabase
+    const { data: rows, error: selErr } = await supabase
       .from('ai_employees')
       .select('*')
       .eq('name', 'Aiden')
@@ -82,9 +83,18 @@ export async function getOrCreateAiden(userId) {
       .order('created_at', { ascending: true })
       .limit(1);
 
-    const existing = rows?.[0] ?? null;
-    if (existing) return existing;
+    if (selErr) {
+      console.warn('[getOrCreateAiden] SELECT failed:', selErr.message);
+      throw selErr;
+    }
 
+    const existing = rows?.[0] ?? null;
+    if (existing) {
+      console.log('[getOrCreateAiden] Found existing Aiden:', existing.id);
+      return existing;
+    }
+
+    console.log('[getOrCreateAiden] No Aiden found, creating new one for user:', userId);
     // Create Aiden with the calling user as manager
     const { data: created, error } = await supabase
       .from('ai_employees')
@@ -106,6 +116,7 @@ export async function getOrCreateAiden(userId) {
       .single();
 
     if (error) throw error;
+    console.log('[getOrCreateAiden] Created new Aiden:', created.id);
     return created;
   });
 
@@ -308,6 +319,32 @@ export async function createTask(employeeId, {
 }
 
 /**
+ * Update task loop_state (JSONB).
+ * Used by the agent loop to persist step progress after each tick.
+ */
+export async function updateTaskLoopState(taskId, loopState) {
+  const patch = { loop_state: loopState, updated_at: now() };
+
+  const sbResult = await trySupabase(async () => {
+    const { data, error } = await supabase
+      .from('ai_employee_tasks')
+      .update(patch)
+      .eq('id', taskId)
+      .select()
+      .single();
+    if (error) throw error;
+    return data;
+  });
+  if (sbResult) return sbResult;
+
+  const store = getLocalStore();
+  const task = store.tasks.find((t) => t.id === taskId);
+  if (task) { Object.assign(task, patch); }
+  setLocalStore(store);
+  return task || null;
+}
+
+/**
  * Update task status. Optionally sets latest_run_id in the same call.
  * Handles the deferred FK by updating both fields together.
  */
@@ -338,17 +375,21 @@ export async function updateTaskStatus(taskId, status, latestRunId = undefined) 
 // RUNS
 // ─────────────────────────────────────────────────────────────────────────────
 
-export async function createRun(taskId, employeeId) {
+export async function createRun(taskId, employeeId, { step_index, step_name } = {}) {
+  const row = {
+    task_id: taskId,
+    employee_id: employeeId,
+    status: 'running',
+    artifact_refs: [],
+    started_at: now(),
+  };
+  if (step_index != null) row.step_index = step_index;
+  if (step_name != null) row.step_name = step_name;
+
   const sbResult = await trySupabase(async () => {
     const { data, error } = await supabase
       .from('ai_employee_runs')
-      .insert({
-        task_id: taskId,
-        employee_id: employeeId,
-        status: 'running',
-        artifact_refs: [],
-        started_at: now(),
-      })
+      .insert(row)
       .select()
       .single();
     if (error) throw error;
@@ -358,14 +399,10 @@ export async function createRun(taskId, employeeId) {
 
   const run = {
     id: localId('run'),
-    task_id: taskId,
-    employee_id: employeeId,
-    status: 'running',
+    ...row,
     di_run_id: null,
-    artifact_refs: [],
     summary: null,
     error_message: null,
-    started_at: now(),
     ended_at: null,
   };
   const store = getLocalStore();
@@ -496,24 +533,37 @@ export async function listReviewsForTask(taskId) {
 
 /**
  * Returns tasks in 'waiting_review' status for any employee managed by userId.
+ * Handles multiple Aiden rows gracefully.
  * Used by the Manager Review page.
  */
 export async function listPendingReviews(userId) {
   const sbResult = await trySupabase(async () => {
+    // Step 1: get all employee IDs for this user
+    const { data: emps, error: empErr } = await supabase
+      .from('ai_employees')
+      .select('id')
+      .eq('manager_user_id', userId);
+    if (empErr) throw empErr;
+    const empIds = (emps || []).map((e) => e.id);
+    if (empIds.length === 0) return [];
+
+    // Step 2: get waiting_review tasks for those employees, with runs
+    // Use !ai_employee_runs_task_id_fkey hint to disambiguate the two FKs
+    // (runs.task_id→tasks.id vs tasks.latest_run_id→runs.id)
     const { data, error } = await supabase
       .from('ai_employee_tasks')
       .select(`
         *,
-        ai_employees!inner(id, name, manager_user_id),
-        ai_employee_runs(id, status, summary, artifact_refs, ended_at, started_at)
+        ai_employee_runs!ai_employee_runs_task_id_fkey(id, status, summary, artifact_refs, ended_at, started_at)
       `)
       .eq('status', 'waiting_review')
-      .eq('ai_employees.manager_user_id', userId)
+      .in('employee_id', empIds)
       .order('updated_at', { ascending: false });
     if (error) throw error;
+    console.log('[aiEmployeeService] listPendingReviews found:', data?.length, 'tasks');
     return data;
   });
-  if (sbResult) return sbResult;
+  if (sbResult !== null) return sbResult;
 
   // Local fallback: join manually
   const store = getLocalStore();
@@ -566,20 +616,41 @@ export async function appendWorklog(employeeId, taskId, runId, logType, content)
   return entry;
 }
 
-export async function listWorklogs(employeeId, { limit = 50, taskId } = {}) {
+/**
+ * List worklogs. If userId is provided, queries across ALL employees for that user.
+ * Falls back to single employeeId filter if userId is not given.
+ */
+export async function listWorklogs(employeeId, { limit = 50, taskId, userId } = {}) {
   const sbResult = await trySupabase(async () => {
-    let q = supabase
-      .from('ai_employee_worklogs')
-      .select('*')
-      .eq('employee_id', employeeId)
-      .order('created_at', { ascending: false })
-      .limit(limit);
+    let q;
+    if (userId) {
+      // Get all employee IDs for this user
+      const { data: emps } = await supabase
+        .from('ai_employees')
+        .select('id')
+        .eq('manager_user_id', userId);
+      const empIds = (emps || []).map((e) => e.id);
+      if (empIds.length === 0) return [];
+      q = supabase
+        .from('ai_employee_worklogs')
+        .select('*')
+        .in('employee_id', empIds)
+        .order('created_at', { ascending: false })
+        .limit(limit);
+    } else {
+      q = supabase
+        .from('ai_employee_worklogs')
+        .select('*')
+        .eq('employee_id', employeeId)
+        .order('created_at', { ascending: false })
+        .limit(limit);
+    }
     if (taskId) q = q.eq('task_id', taskId);
     const { data, error } = await q;
     if (error) throw error;
     return data;
   });
-  if (sbResult) return sbResult;
+  if (sbResult !== null) return sbResult;
 
   const store = getLocalStore();
   let logs = store.worklogs.filter((l) => l.employee_id === employeeId);
@@ -638,6 +709,7 @@ export default {
   listTasksByUser,
   getTask,
   createTask,
+  updateTaskLoopState,
   updateTaskStatus,
   createRun,
   updateRun,

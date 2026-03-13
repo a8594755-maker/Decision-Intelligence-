@@ -4,6 +4,8 @@ import { RefreshCw, CheckCircle2, XCircle, RotateCcw, AlertTriangle, Clock, Load
 import { Card } from '../components/ui';
 import { useAuth } from '../contexts/AuthContext';
 import * as aiEmployeeService from '../services/aiEmployeeService';
+import { approveStepAndContinue, reviseStepAndRetry } from '../services/agentLoopService';
+import { attachFeedback } from '../services/aiEmployeeMemoryService';
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -214,6 +216,10 @@ export default function EmployeeReviewPage() {
         created_by: user.id,
       });
 
+      // 1.5. Attach feedback to task memory (best-effort)
+      try { await attachFeedback(item.id, decision, comment || null); }
+      catch { /* memory update is best-effort */ }
+
       // 2. Update task status based on decision
       const nextStatus = decision === 'approved'
         ? 'done'
@@ -232,6 +238,22 @@ export default function EmployeeReviewPage() {
       const empId = item.employee_id || item.ai_employees?.id;
       if (empId) {
         await aiEmployeeService.updateEmployeeStatus(empId, empStatus);
+      }
+
+      // 3.5. Handle agent loop step continuation
+      if (item.loop_state?.steps?.length > 0) {
+        const holdStep = item.loop_state.steps.find((s) => s.status === 'review_hold');
+        if (holdStep) {
+          try {
+            if (decision === 'approved') {
+              await approveStepAndContinue(item.id, holdStep.name);
+            } else if (decision === 'needs_revision') {
+              await reviseStepAndRetry(item.id, holdStep.name);
+            }
+          } catch (loopErr) {
+            console.warn('[EmployeeReview] Agent loop step update failed:', loopErr?.message);
+          }
+        }
       }
 
       // 4. Write worklog for the review decision

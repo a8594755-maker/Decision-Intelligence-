@@ -19,6 +19,18 @@ export default defineConfig({
       use: { ...devices['Desktop Chrome'] },
       dependencies: ['setup'],
     },
+    {
+      name: 'flows',
+      testDir: './e2e/flows',
+      use: {
+        ...devices['Desktop Chrome'],
+        screenshot: 'on',
+        video: 'retain-on-failure',
+        actionTimeout: 15000,
+      },
+      timeout: 120_000, // 2min per test for workflow tests
+      dependencies: ['setup'],
+    },
   ],
   webServer: process.env.CI
     ? undefined
