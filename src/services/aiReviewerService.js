@@ -15,6 +15,19 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { supabase } from './supabaseClient';
+import { callLLMJson } from './aiEmployeeLLMService';
+
+const SUPABASE_URL = String(import.meta?.env?.VITE_SUPABASE_URL || '').replace(/\/+$/, '');
+
+function _hasAuth() {
+  try {
+    if (!SUPABASE_URL || typeof localStorage === 'undefined') return false;
+    const match = SUPABASE_URL.match(/\/\/([^.]+)\./);
+    if (!match) return false;
+    const raw = localStorage.getItem(`sb-${match[1]}-auth-token`);
+    return Boolean(raw && JSON.parse(raw)?.access_token);
+  } catch { return false; }
+}
 
 // ── Thresholds ───────────────────────────────────────────────────────────────
 
@@ -43,14 +56,88 @@ async function trySupabase(fn) {
   }
 }
 
+// ── LLM Review ───────────────────────────────────────────────────────────────
+
+const REVIEW_SYSTEM_PROMPT = `You are a quality reviewer for an AI supply chain assistant. Score the output of a task step on four categories (0-100 each): correctness, completeness, formatting, relevance.
+
+Rules:
+1. Be strict but fair. Score based on actual output quality.
+2. If output is missing or errored, correctness should be very low.
+3. Provide actionable suggestions for improvement.
+4. If there were prior review rounds, check if the suggestions were addressed.
+
+Respond with ONLY a JSON object:
+{
+  "score": 0-100,
+  "categories": {
+    "correctness": 0-100,
+    "completeness": 0-100,
+    "formatting": 0-100,
+    "relevance": 0-100
+  },
+  "feedback": "brief overall assessment",
+  "suggestions": ["actionable suggestion 1", "suggestion 2"]
+}`;
+
+async function _tryLLMReview({ taskId, stepName, workflowType, output, expectedOutput, priorReviews }) {
+  if (!_hasAuth()) return null;
+  try {
+    const outputSummary = _summarizeOutput(output);
+    const priorContext = priorReviews.length > 0
+      ? `\nPrior review rounds: ${priorReviews.map(r => `Round ${r.revision_round}: score=${r.score}, feedback="${r.feedback}"`).join('; ')}`
+      : '';
+
+    const prompt = `Review this step output:
+- Step: "${stepName}" (type: ${workflowType})
+- Expected: ${expectedOutput ? JSON.stringify(expectedOutput).slice(0, 500) : 'Not specified'}
+- Output summary: ${outputSummary}${priorContext}`;
+
+    const { data, model } = await callLLMJson({
+      taskType: 'review',
+      prompt,
+      systemPrompt: REVIEW_SYSTEM_PROMPT,
+      maxTokens: 2048,
+      trackingMeta: { taskId, employeeId: null, agentRole: 'reviewer', stepName },
+    });
+
+    if (!data || typeof data.score !== 'number') return null;
+
+    console.info(`[aiReviewerService] LLM review via ${model}: score=${data.score}`);
+    return {
+      score: Math.max(0, Math.min(100, Math.round(data.score))),
+      categories: {
+        correctness:  Math.max(0, Math.min(100, data.categories?.correctness ?? 50)),
+        completeness: Math.max(0, Math.min(100, data.categories?.completeness ?? 50)),
+        formatting:   Math.max(0, Math.min(100, data.categories?.formatting ?? 50)),
+        relevance:    Math.max(0, Math.min(100, data.categories?.relevance ?? 50)),
+      },
+      feedback: data.feedback || '',
+      suggestions: Array.isArray(data.suggestions) ? data.suggestions : [],
+      reviewer_model: model,
+    };
+  } catch (err) {
+    console.warn('[aiReviewerService] LLM review failed, falling back to heuristic:', err?.message);
+    return null;
+  }
+}
+
+function _summarizeOutput(output) {
+  if (!output) return 'No output produced.';
+  if (output.error) return `Error: ${output.error}`;
+  const parts = [];
+  if (output.summary) parts.push(`Summary: ${String(output.summary).slice(0, 300)}`);
+  if (output.result) parts.push(`Result: ${String(output.result).slice(0, 300)}`);
+  const artifactCount = output.artifact_refs?.length || output.artifacts?.length || 0;
+  if (artifactCount > 0) parts.push(`Artifacts: ${artifactCount} generated`);
+  return parts.length > 0 ? parts.join('. ') : JSON.stringify(output).slice(0, 500);
+}
+
 // ── Review logic ─────────────────────────────────────────────────────────────
 
 /**
  * Score a step output for quality.
  *
- * In a production environment this would call a Tier A LLM via
- * resolveModel('review'). For now we implement a deterministic
- * heuristic reviewer that examines output structure and completeness.
+ * Strategy: LLM-first, heuristic-fallback.
  *
  * @param {object} opts
  * @param {string} opts.taskId
@@ -72,7 +159,37 @@ export async function reviewStepOutput({
   const threshold = DEFAULT_THRESHOLDS[workflowType] ?? 60;
   const revisionRound = priorReviews.length + 1;
 
-  // ── Deterministic quality checks ─────────────────────────────────────────
+  // ── Try LLM review first ────────────────────────────────────────────────
+  const llmReview = await _tryLLMReview({ taskId, stepName, workflowType, output, expectedOutput, priorReviews });
+  if (llmReview) {
+    const passed = llmReview.score >= threshold;
+    const result = {
+      score: llmReview.score,
+      passed,
+      threshold,
+      feedback: llmReview.feedback || (passed
+        ? `Quality check passed (${llmReview.score}/${threshold}).`
+        : `Quality below threshold (${llmReview.score}/${threshold}).`),
+      categories: llmReview.categories,
+      suggestions: llmReview.suggestions,
+      revision_round: revisionRound,
+      reviewer_model: llmReview.reviewer_model,
+    };
+
+    // Persist
+    await trySupabase(async () => {
+      await supabase.from('ai_review_results').insert({
+        task_id: taskId, step_name: stepName, revision_round: revisionRound,
+        score: result.score, passed, threshold, feedback: result.feedback,
+        categories: result.categories, suggestions: result.suggestions,
+        reviewer_model: result.reviewer_model, reviewer_tier: 'tier_a',
+      });
+    });
+
+    return result;
+  }
+
+  // ── Fallback: Deterministic quality checks ──────────────────────────────
   const categories = {
     correctness:  100,
     completeness: 100,
@@ -81,7 +198,6 @@ export async function reviewStepOutput({
   };
   const suggestions = [];
 
-  // 1. Correctness: output must exist and not be an error
   if (!output) {
     categories.correctness = 0;
     suggestions.push('Step produced no output. Ensure the run function returns a result.');
@@ -90,7 +206,6 @@ export async function reviewStepOutput({
     suggestions.push(`Step errored: ${output.error || 'unknown'}. Fix the underlying issue.`);
   }
 
-  // 2. Completeness: check for expected fields
   if (output) {
     const hasArtifacts = output.artifact_refs?.length > 0 || output.artifacts?.length > 0;
     const hasSummary = Boolean(output.summary || output.result);
@@ -105,9 +220,7 @@ export async function reviewStepOutput({
     }
   }
 
-  // 3. Formatting: check output structure
   if (output && typeof output === 'object') {
-    // Well-structured
     categories.formatting = 90;
     if (output.result && typeof output.result === 'string' && output.result.length > 5000) {
       categories.formatting -= 20;
@@ -115,14 +228,12 @@ export async function reviewStepOutput({
     }
   }
 
-  // 4. Relevance: if expected output provided, rough check
   if (expectedOutput && output) {
     const outputStr = JSON.stringify(output).toLowerCase();
     const expectedStr = typeof expectedOutput === 'string'
       ? expectedOutput.toLowerCase()
       : JSON.stringify(expectedOutput).toLowerCase();
 
-    // Check keyword overlap (simple heuristic)
     const keywords = expectedStr.split(/\s+/).filter(w => w.length > 3);
     const matched = keywords.filter(kw => outputStr.includes(kw));
     const ratio = keywords.length > 0 ? matched.length / keywords.length : 1;
@@ -133,12 +244,10 @@ export async function reviewStepOutput({
     }
   }
 
-  // Clamp all categories to 0-100
   for (const key of Object.keys(categories)) {
     categories[key] = Math.max(0, Math.min(100, categories[key]));
   }
 
-  // ── Composite score ─────────────────────────────────────────────────────
   const weights = { correctness: 0.4, completeness: 0.3, formatting: 0.1, relevance: 0.2 };
   let score = 0;
   for (const [key, weight] of Object.entries(weights)) {
@@ -159,7 +268,7 @@ export async function reviewStepOutput({
     categories,
     suggestions,
     revision_round: revisionRound,
-    reviewer_model: 'deterministic-v1', // Will be replaced by LLM in production
+    reviewer_model: 'deterministic-v1',
   };
 
   // ── Persist review result ───────────────────────────────────────────────
