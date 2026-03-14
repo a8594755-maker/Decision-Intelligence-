@@ -31,6 +31,9 @@ const KNOWN_WORKFLOWS = new Set([
 const LEGACY_KEYWORD_WORKFLOWS = [
   { keywords: ['report', 'summary', 'dashboard', '報告', '摘要', '報表'], workflow: 'report', name: 'report' },
   { keywords: ['excel', 'xlsx', 'export', 'powerbi', 'power bi', '匯出', '導出'], workflow: 'export', name: 'export' },
+  // OpenCloud EU integration — cloud import/publish detected here, dispatched as builtin_tool
+  { keywords: ['opencloud', 'cloud import', 'cloud file', '雲端匯入', '雲端檔案', '開放雲'], workflow: 'builtin_tool', name: 'opencloud_import_dataset' },
+  { keywords: ['publish to cloud', 'cloud publish', 'upload to cloud', '雲端發布', '發布到雲端', '上傳雲端'], workflow: 'builtin_tool', name: 'opencloud_publish_report' },
 ];
 
 // ── General analysis detection ──────────────────────────────────────────────
