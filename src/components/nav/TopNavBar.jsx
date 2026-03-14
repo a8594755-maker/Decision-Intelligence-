@@ -1,39 +1,88 @@
 import { useState } from 'react';
-import { NavLink as RouterNavLink } from 'react-router-dom';
+import { NavLink as RouterNavLink, useNavigate } from 'react-router-dom';
 import {
-  Activity, LayoutDashboard, Calculator, TrendingUp,
-  ShieldAlert, Settings, Moon, Sun, LogOut, Cpu,
-  ChevronsLeft, ChevronsRight, GitCompare, BarChart3, Database, Handshake, Bot, Wrench,
+  Activity, MessageSquare, ClipboardList, CheckSquare, LayoutDashboard,
+  Settings, Moon, Sun, LogOut,
+  ChevronsLeft, ChevronsRight, BarChart3, Database, Bot, Wrench,
+  ChevronDown, Calculator, TrendingUp, ShieldAlert, Cpu, GitCompare, Handshake,
+  ArrowLeftRight,
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useApp } from '../../contexts/AppContext';
 import { APP_NAME } from '../../config/branding';
 
-const NAV_ITEMS = [
-  { to: '/',           label: 'Command Center',  icon: LayoutDashboard, end: true },
-  { to: '/plan',       label: 'Plan Studio',     icon: Calculator },
-  { to: '/forecast',   label: 'Forecast Studio', icon: TrendingUp },
-  { to: '/risk',       label: 'Risk Center',     icon: ShieldAlert },
-  { to: '/digital-twin', label: 'Digital Twin',  icon: Cpu },
-  { to: '/scenarios',    label: 'Scenarios',      icon: GitCompare },
-  { to: '/negotiation',  label: 'Negotiation',    icon: Handshake },
-  // @product: ai-employee
-  { to: '/employees',       label: 'AI Employee',  icon: Bot },
-  { to: '/employees/tools', label: 'Tool Library',  icon: Wrench },
+// ────────────────────────────────────────────────────────────
+// DI Workspace nav
+// ────────────────────────────────────────────────────────────
+const DI_NAV_ITEMS = [
+  { to: '/',              label: 'Command Center',  icon: LayoutDashboard, end: true },
+  { to: '/plan',          label: 'Plan Studio',     icon: Calculator },
+  { to: '/forecast',      label: 'Forecast Studio', icon: TrendingUp },
+  { to: '/risk',          label: 'Risk Center',     icon: ShieldAlert },
+  { to: '/digital-twin',  label: 'Digital Twin',    icon: Cpu },
+  { to: '/scenarios',     label: 'Scenarios',       icon: GitCompare },
+  { to: '/negotiation',   label: 'Negotiation',     icon: Handshake },
 ];
 
+const DI_ADVANCED_ITEMS = [
+  { to: '/employees',        label: 'AI Employee',  icon: Bot },
+  { to: '/employees/tasks',  label: 'Tasks',        icon: ClipboardList },
+  { to: '/employees/review', label: 'Review',       icon: CheckSquare },
+  { to: '/employees/tools',  label: 'Tool Library', icon: Wrench },
+];
+
+// ────────────────────────────────────────────────────────────
+// AI Employee Workspace nav
+// ────────────────────────────────────────────────────────────
+const AI_NAV_ITEMS = [
+  { to: '/',                 label: 'Chat',          icon: MessageSquare, end: true },
+  { to: '/employees/tasks',  label: 'Tasks',         icon: ClipboardList },
+  { to: '/employees/review', label: 'Review',        icon: CheckSquare },
+  { to: '/employees',        label: 'AI Employee',   icon: Bot },
+  { to: '/employees/tools',  label: 'Tool Library',  icon: Wrench },
+];
+
+const AI_ADVANCED_ITEMS = [
+  { to: '/plan',        label: 'Plan Studio',     icon: Calculator },
+  { to: '/forecast',    label: 'Forecast Studio', icon: TrendingUp },
+  { to: '/risk',        label: 'Risk Center',     icon: ShieldAlert },
+  { to: '/digital-twin',label: 'Digital Twin',    icon: Cpu },
+  { to: '/scenarios',   label: 'Scenarios',       icon: GitCompare },
+  { to: '/negotiation', label: 'Negotiation',     icon: Handshake },
+];
+
+// ────────────────────────────────────────────────────────────
 const BOTTOM_ITEMS = [
   { to: '/sandbox', label: 'ERP Sandbox', icon: Database },
   { to: '/ops', label: 'Ops Dashboard', icon: BarChart3 },
   { to: '/settings', label: 'Settings', icon: Settings },
 ];
 
+const WS_META = {
+  di:          { label: 'Decision Intelligence', short: 'DI', icon: LayoutDashboard, color: 'text-blue-600' },
+  ai_employee: { label: 'AI Employee',          short: 'AI', icon: Bot,              color: 'text-indigo-600' },
+};
+
 export default function Sidebar() {
   const { user, handleLogout } = useAuth();
-  const { darkMode, setDarkMode } = useApp();
+  const { darkMode, setDarkMode, activeWorkspace, setActiveWorkspace } = useApp();
+  const navigate = useNavigate();
   const [expanded, setExpanded] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   const width = expanded ? 'w-52' : 'w-14';
+  const isAI = activeWorkspace === 'ai_employee';
+  const navItems = isAI ? AI_NAV_ITEMS : DI_NAV_ITEMS;
+  const advancedItems = isAI ? AI_ADVANCED_ITEMS : DI_ADVANCED_ITEMS;
+  const currentWs = WS_META[activeWorkspace] || WS_META.ai_employee;
+  const otherWs = isAI ? WS_META.di : WS_META.ai_employee;
+
+  function switchWorkspace() {
+    const next = isAI ? 'di' : 'ai_employee';
+    setActiveWorkspace(next);
+    navigate('/');
+    setAdvancedOpen(false);
+  }
 
   return (
     <aside
@@ -43,7 +92,7 @@ export default function Sidebar() {
         borderColor: 'var(--border-default)',
       }}
       onMouseEnter={() => setExpanded(true)}
-      onMouseLeave={() => setExpanded(false)}
+      onMouseLeave={() => { setExpanded(false); setAdvancedOpen(false); }}
     >
       {/* ── Brand ── */}
       <div className="h-14 flex items-center px-3.5 gap-2.5 flex-shrink-0">
@@ -60,23 +109,57 @@ export default function Sidebar() {
         </span>
       </div>
 
-      {/* ── Main nav ── */}
+      {/* ── Primary nav ── */}
       <nav className="flex-1 flex flex-col gap-0.5 px-2 pt-2 overflow-y-auto overflow-x-hidden">
-        {NAV_ITEMS.map(({ to, label, icon: Icon, end }) => (
-          <SidebarLink
-            key={to}
-            to={to}
-            label={label}
-            icon={Icon}
-            end={end}
-            expanded={expanded}
-          />
+        {navItems.map(({ to, label, icon: Icon, end }) => (
+          <SidebarLink key={to} to={to} label={label} icon={Icon} end={end} expanded={expanded} />
         ))}
+
+        {/* ── Advanced tools (collapsible) ── */}
+        {expanded && (
+          <div className="mt-3 pt-3 border-t" style={{ borderColor: 'var(--border-default)' }}>
+            <button
+              onClick={() => setAdvancedOpen(!advancedOpen)}
+              className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors hover:bg-[var(--surface-subtle)]"
+              style={{ color: 'var(--text-muted)' }}
+            >
+              <ChevronDown className={`w-3.5 h-3.5 transition-transform ${advancedOpen ? '' : '-rotate-90'}`} />
+              {isAI ? 'Advanced Tools' : 'AI Employee'}
+            </button>
+            {advancedOpen && (
+              <div className="flex flex-col gap-0.5 mt-0.5">
+                {advancedItems.map(({ to, label, icon: Icon }) => (
+                  <SidebarLink key={to} to={to} label={label} icon={Icon} expanded={expanded} />
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </nav>
 
       {/* ── Bottom section ── */}
       <div className="flex flex-col gap-0.5 px-2 pb-2 border-t" style={{ borderColor: 'var(--border-default)' }}>
-        {/* Settings */}
+
+        {/* Workspace switcher */}
+        <button
+          onClick={switchWorkspace}
+          className="flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-sm transition-colors hover:bg-[var(--surface-subtle)]"
+          style={{ color: 'var(--text-secondary)' }}
+          title={`Switch to ${otherWs.label}`}
+        >
+          <span className="w-5 h-5 flex items-center justify-center flex-shrink-0">
+            <ArrowLeftRight className="w-[18px] h-[18px]" />
+          </span>
+          <span
+            className={`whitespace-nowrap overflow-hidden transition-all duration-200 ${
+              expanded ? 'opacity-100 w-auto' : 'opacity-0 w-0'
+            }`}
+          >
+            {otherWs.short} Mode
+          </span>
+        </button>
+
+        {/* Settings & other bottom items */}
         {BOTTOM_ITEMS.map(({ to, label, icon: Icon }) => (
           <SidebarLink key={to} to={to} label={label} icon={Icon} expanded={expanded} />
         ))}

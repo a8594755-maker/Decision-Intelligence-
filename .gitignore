@@ -70,6 +70,7 @@ PHASE*_CONSOLE_TEST.js
 # Auto-generated output directories
 test-results/
 reports/
+playwright-report/
 
 # E2E auto-crawler output
 e2e/screenshots/

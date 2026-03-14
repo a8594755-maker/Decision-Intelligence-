@@ -24,7 +24,7 @@ import { writeMemory, extractOutcomeKpis, extractInputParams } from './aiEmploye
 import { resolveModel, recordModelRun } from './modelRoutingService';
 import { checkBudget, consumeBudget, BudgetExceededError } from './taskBudgetService';
 import { notify, NOTIFICATION_TYPES } from './notificationService';
-import { generateAndExecuteTool, executeRegisteredTool } from './dynamicToolExecutor';
+import { generateAndExecuteTool, generateCodeAndExecute, executeRegisteredTool } from './dynamicToolExecutor';
 import { generateReport } from './reportGeneratorService';
 import { toPowerBIDataset } from './externalToolBridgeService';
 import { getBuiltinTool } from './builtinToolCatalog';
@@ -114,7 +114,7 @@ export async function executeTask(task, userId) {
     task.input_context || {};
 
   if (!workflow_type) throw new Error('task.input_context.workflow_type is required');
-  const NO_DATASET_TYPES = ['synthesize', 'dynamic_tool', 'registered_tool', 'report', 'export', 'builtin_tool'];
+  const NO_DATASET_TYPES = ['synthesize', 'dynamic_tool', 'registered_tool', 'report', 'export'];
   if (!dataset_profile_id && !NO_DATASET_TYPES.includes(workflow_type)) {
     throw new Error('task.input_context.dataset_profile_id is required');
   }
@@ -231,13 +231,21 @@ export async function executeTask(task, userId) {
       }
 
       case 'dynamic_tool': {
-        const toolResult = await generateAndExecuteTool({
+        const existingCode = task.input_context?._tool_code || null;
+        const toolArgs = {
           toolHint: task.input_context?._tool_hint || null,
-          code: task.input_context?._tool_code || null,
           inputData: task.input_context?._input_data || null,
           priorArtifacts: task.input_context?._prior_step_artifacts || {},
           revisionInstructions: task.input_context?._revision_instructions || null,
-        });
+          datasetProfile: task.input_context?._dataset_profile || null,
+          // Self-healing context
+          modelOverride: task.input_context?._model_override || null,
+          simplifiedHint: task.input_context?._simplified_hint || null,
+        };
+        // If code is pre-generated, execute directly; otherwise generate via LLM first
+        const toolResult = existingCode
+          ? await generateAndExecuteTool({ ...toolArgs, code: existingCode })
+          : await generateCodeAndExecute({ ...toolArgs, trackingMeta: { taskId: task.id, employeeId: task.employee_id, agentRole: 'dynamic_tool' } });
         result = {
           dynamic_tool: toolResult,
           artifact_refs: toolResult.artifact_refs || [],
@@ -264,6 +272,7 @@ export async function executeTask(task, userId) {
           taskMeta: { id: task.id, title: task.title },
           narrative: task.input_context?._narrative || null,
           revisionLog: task.input_context?._revision_log || null,
+          runId: task.id,
         });
         result = {
           report: reportResult,
@@ -287,6 +296,7 @@ export async function executeTask(task, userId) {
             format: 'xlsx',
             artifacts: priorArtifactsForExport,
             taskMeta: { id: task.id, title: task.title },
+            runId: task.id,
           });
           result = {
             export: xlsxResult,

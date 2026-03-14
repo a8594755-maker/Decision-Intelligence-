@@ -8,6 +8,11 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { saveJsonArtifact } from '../utils/artifactStore';
+import { invokeAiProxy } from './aiProxyService';
+
+// ── Constants ────────────────────────────────────────────────────────────────
+
+const SUPABASE_URL = String(import.meta?.env?.VITE_SUPABASE_URL || '').replace(/\/+$/, '');
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -18,6 +23,68 @@ function flattenArtifacts(artifacts) {
 
 function now() {
   return new Date().toISOString();
+}
+
+function _getAccessToken() {
+  try {
+    if (!SUPABASE_URL || typeof localStorage === 'undefined') return null;
+    const match = SUPABASE_URL.match(/\/\/([^.]+)\./);
+    if (!match) return null;
+    const raw = localStorage.getItem(`sb-${match[1]}-auth-token`);
+    if (!raw) return null;
+    return JSON.parse(raw)?.access_token || null;
+  } catch { return null; }
+}
+
+// ── Report-API client ────────────────────────────────────────────────────────
+
+/**
+ * Fetch structured report data from the report-api Edge Function.
+ * Used by Excel Add-in, Power BI, and the xlsx/powerbi report paths.
+ *
+ * @param {string} action - API action (list_reports, get_report, get_monthly, get_kpis, etc.)
+ * @param {object} [params] - Action-specific parameters
+ * @returns {Promise<object|null>} Parsed JSON response, or null if unavailable
+ */
+export async function fetchReportData(action, params = {}) {
+  const token = _getAccessToken();
+  if (!token || !SUPABASE_URL) return null;
+
+  try {
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/report-api`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+      },
+      body: JSON.stringify({ action, ...params }),
+    });
+
+    if (!res.ok) return null;
+    return await res.json();
+  } catch (err) {
+    console.warn('[reportGeneratorService] fetchReportData failed:', err?.message);
+    return null;
+  }
+}
+
+/**
+ * Fetch a full report with all artifacts, steps, and reviews from report-api.
+ * @param {string} taskId
+ * @returns {Promise<object|null>}
+ */
+export async function fetchFullReport(taskId) {
+  return fetchReportData('get_report', { task_id: taskId });
+}
+
+/**
+ * Fetch monthly aggregate report from report-api.
+ * @param {number} year
+ * @param {number} month
+ * @returns {Promise<object|null>}
+ */
+export async function fetchMonthlyReport(year, month) {
+  return fetchReportData('get_monthly', { year, month });
 }
 
 // ── HTML Report ──────────────────────────────────────────────────────────────
@@ -87,10 +154,13 @@ function generateHtmlReport({ artifacts, taskMeta, narrative, revisionLog }) {
  * @param {object} [opts.taskMeta] - { id, title }
  * @param {string} [opts.narrative] - Optional narrative text
  * @param {object} [opts.revisionLog] - Optional revision log
+ * @param {string|number} [opts.runId] - Optional run ID for artifact storage
  * @returns {Promise<{ blob: string|object, filename: string, format: string, artifact_ref: object|null }>}
  */
-export async function generateReport({ format = 'html', artifacts, taskMeta, narrative, revisionLog }) {
+export async function generateReport({ format = 'html', artifacts, taskMeta, narrative, revisionLog, runId }) {
   const fmt = (format || 'html').toLowerCase();
+  // Use provided runId, fall back to task id, or generate synthetic one
+  const effectiveRunId = runId || taskMeta?.id || `report-${Date.now()}`;
 
   switch (fmt) {
     case 'html': {
@@ -99,30 +169,38 @@ export async function generateReport({ format = 'html', artifacts, taskMeta, nar
 
       let artifact_ref = null;
       try {
-        artifact_ref = saveJsonArtifact?.('report_html', html, {
+        artifact_ref = await saveJsonArtifact(effectiveRunId, 'report_html', html, 500_000, {
           label: `Report: ${taskMeta?.title || 'AI Report'}`,
-        }) || null;
+        });
       } catch { /* artifact storage is best-effort */ }
 
       return { blob: html, filename, format: 'html', artifact_ref };
     }
 
     case 'xlsx': {
-      // Collect tabular data from artifacts
+      // Try to enrich with report-api data if task ID is available
+      let enrichedData = null;
+      if (taskMeta?.id) {
+        enrichedData = await fetchFullReport(taskMeta.id);
+      }
+
       const allRefs = flattenArtifacts(artifacts);
       const data = {
         format: 'xlsx',
-        task: taskMeta,
+        task: enrichedData?.task || taskMeta,
         artifacts: allRefs,
+        steps: enrichedData?.steps || [],
+        reviews: enrichedData?.reviews || [],
+        categorized_artifacts: enrichedData?.artifacts || {},
         revision_log: revisionLog || null,
         generated_at: now(),
       };
 
       let artifact_ref = null;
       try {
-        artifact_ref = saveJsonArtifact?.('report_json', data, {
+        artifact_ref = await saveJsonArtifact(effectiveRunId, 'report_json', data, 500_000, {
           label: `Excel Report Data: ${taskMeta?.title || 'AI Report'}`,
-        }) || null;
+        });
       } catch { /* best-effort */ }
 
       return { blob: data, filename: `report_${taskMeta?.id || Date.now()}.xlsx`, format: 'xlsx', artifact_ref };
@@ -139,4 +217,4 @@ export async function generateReport({ format = 'html', artifacts, taskMeta, nar
   }
 }
 
-export default { generateReport };
+export default { generateReport, fetchReportData, fetchFullReport, fetchMonthlyReport };

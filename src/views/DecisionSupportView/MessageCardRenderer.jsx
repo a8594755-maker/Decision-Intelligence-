@@ -47,6 +47,7 @@ import CausalGraphCard from '../../components/chat/CausalGraphCard';
 import WarRoomCard from '../../components/chat/WarRoomCard';
 import MacroOracleAlertCard from '../../components/chat/MacroOracleAlertCard';
 import TaskPlanCard from '../../components/chat/TaskPlanCard';
+import ClarificationCard from '../../components/chat/ClarificationCard';
 import AIReviewCard from '../../components/chat/AIReviewCard';
 import RevisionLogCard from '../../components/chat/RevisionLogCard';
 import ToolRegistryCard from '../../components/chat/ToolRegistryCard';
@@ -446,6 +447,15 @@ export default function MessageCardRenderer({ message, handlers, state }) {
       <MacroOracleAlertCard
         payload={message.payload}
         onAction={handlers.handleDecisionBundleAction}
+      />
+    );
+  }
+  if (message.type === 'clarification_card') {
+    return (
+      <ClarificationCard
+        payload={message.payload}
+        onSubmit={message._onSubmit}
+        onSkip={message._onSkip}
       />
     );
   }

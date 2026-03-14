@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SmartOps AI Employee</title>
+  <script src="https://appsforoffice.microsoft.com/lib/1.1/hosted/office.js"></script>
+  <style>
+    :root {
+      --primary: #2563eb;
+      --primary-hover: #1d4ed8;
+      --success: #16a34a;
+      --warning: #d97706;
+      --danger: #dc2626;
+      --bg: #f8fafc;
+      --surface: #ffffff;
+      --text: #1e293b;
+      --text-muted: #64748b;
+      --border: #e2e8f0;
+      --radius: 8px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
+      font-size: 13px;
+      color: var(--text);
+      background: var(--bg);
+      padding: 12px;
+      line-height: 1.5;
+    }
+
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 16px;
+      padding-bottom: 12px;
+      border-bottom: 2px solid var(--primary);
+    }
+    .header h1 { font-size: 16px; font-weight: 600; }
+    .header .logo { width: 24px; height: 24px; background: var(--primary); border-radius: 4px; display: flex; align-items: center; justify-content: center; color: white; font-weight: 700; font-size: 14px; }
+
+    /* Auth section */
+    #auth-section { margin-bottom: 16px; }
+    .auth-form { display: flex; flex-direction: column; gap: 8px; }
+    .auth-form input {
+      padding: 8px 10px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      font-size: 13px;
+    }
+    .auth-status {
+      display: flex; align-items: center; gap: 6px;
+      padding: 8px 10px; background: #f0fdf4; border: 1px solid #bbf7d0;
+      border-radius: var(--radius); font-size: 12px; color: var(--success);
+    }
+
+    /* Buttons */
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+      padding: 8px 14px;
+      border: none; border-radius: var(--radius);
+      font-size: 13px; font-weight: 500;
+      cursor: pointer; transition: all 0.15s;
+      width: 100%;
+    }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-primary { background: var(--primary); color: white; }
+    .btn-primary:hover:not(:disabled) { background: var(--primary-hover); }
+    .btn-outline {
+      background: var(--surface); color: var(--text);
+      border: 1px solid var(--border);
+    }
+    .btn-outline:hover:not(:disabled) { background: #f1f5f9; }
+    .btn-sm { padding: 6px 10px; font-size: 12px; }
+
+    /* Cards */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 12px;
+      margin-bottom: 10px;
+    }
+    .card-title { font-size: 13px; font-weight: 600; margin-bottom: 8px; }
+
+    /* Report list */
+    .report-item {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 8px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .report-item:last-child { border-bottom: none; }
+    .report-name { font-weight: 500; font-size: 13px; }
+    .report-meta { font-size: 11px; color: var(--text-muted); }
+    .report-score {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 36px; height: 22px;
+      border-radius: 11px; font-size: 11px; font-weight: 600;
+    }
+    .score-high { background: #dcfce7; color: var(--success); }
+    .score-mid { background: #fef3c7; color: var(--warning); }
+    .score-low { background: #fecaca; color: var(--danger); }
+
+    /* Action buttons grid */
+    .action-grid {
+      display: grid; grid-template-columns: 1fr 1fr;
+      gap: 8px; margin-bottom: 12px;
+    }
+
+    /* Status bar */
+    .status-bar {
+      position: fixed; bottom: 0; left: 0; right: 0;
+      padding: 6px 12px;
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      font-size: 11px; color: var(--text-muted);
+    }
+
+    /* Loading */
+    .spinner {
+      display: inline-block; width: 14px; height: 14px;
+      border: 2px solid var(--border);
+      border-top-color: var(--primary);
+      border-radius: 50%;
+      animation: spin 0.6s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .hidden { display: none; }
+
+    /* Tabs */
+    .tabs {
+      display: flex; gap: 0; margin-bottom: 12px;
+      border-bottom: 2px solid var(--border);
+    }
+    .tab {
+      padding: 8px 14px;
+      font-size: 12px; font-weight: 500;
+      color: var(--text-muted);
+      background: none; border: none;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      margin-bottom: -2px;
+      transition: all 0.15s;
+    }
+    .tab.active { color: var(--primary); border-bottom-color: var(--primary); }
+    .tab:hover:not(.active) { color: var(--text); }
+
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+
+    /* Settings */
+    .setting-row {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 8px 0;
+    }
+    .setting-label { font-size: 12px; }
+    .setting-value { font-size: 12px; color: var(--text-muted); }
+
+    /* Chat messages */
+    .chat-msg {
+      padding: 8px 10px;
+      border-radius: var(--radius);
+      margin-bottom: 6px;
+      font-size: 12px;
+      line-height: 1.5;
+      max-width: 90%;
+    }
+    .chat-user {
+      background: var(--primary);
+      color: white;
+      margin-left: auto;
+      text-align: right;
+    }
+    .chat-ai {
+      background: #f1f5f9;
+      color: var(--text);
+    }
+    .chat-system {
+      background: #fef3c7;
+      color: #92400e;
+      font-size: 11px;
+      text-align: center;
+      max-width: 100%;
+    }
+  </style>
+</head>
+<body>
+
+<div class="header">
+  <div class="logo">DI</div>
+  <h1>SmartOps AI Employee</h1>
+</div>
+
+<!-- Auth Section -->
+<div id="auth-section">
+  <div id="auth-login" class="card">
+    <div class="card-title">Connect to SmartOps</div>
+    <div class="auth-form">
+      <input type="email" id="input-email" placeholder="Email" />
+      <input type="password" id="input-password" placeholder="Password" />
+      <button class="btn btn-primary" onclick="doLogin()">Sign In</button>
+      <div id="auth-error" class="hidden" style="color:var(--danger);font-size:12px;"></div>
+    </div>
+  </div>
+  <div id="auth-connected" class="auth-status hidden">
+    <span>&#9679;</span> Connected
+    <span id="auth-user" style="margin-left:auto;"></span>
+    <button class="btn btn-outline btn-sm" style="width:auto;margin-left:8px;" onclick="doLogout()">Sign Out</button>
+  </div>
+</div>
+
+<!-- Main Content (hidden until authenticated) -->
+<div id="main-content" class="hidden">
+
+  <!-- Live status banner -->
+  <div id="live-banner" class="hidden" style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:var(--radius);padding:8px 10px;margin-bottom:12px;font-size:12px;display:flex;align-items:center;gap:6px;">
+    <span class="spinner"></span>
+    <span id="live-banner-text">AI Employee is working...</span>
+  </div>
+
+  <div class="tabs">
+    <button class="tab active" data-tab="reports" onclick="switchTab('reports')">Reports</button>
+    <button class="tab" data-tab="chat" onclick="switchTab('chat')">Chat</button>
+    <button class="tab" data-tab="kpis" onclick="switchTab('kpis')">KPIs</button>
+    <button class="tab" data-tab="settings" onclick="switchTab('settings')">Settings</button>
+  </div>
+
+  <!-- Reports Tab -->
+  <div id="tab-reports" class="tab-content active">
+    <div class="action-grid">
+      <button class="btn btn-outline btn-sm" onclick="loadReports()">
+        <span class="spinner hidden" id="spin-reports"></span> Refresh
+      </button>
+      <button class="btn btn-primary btn-sm" onclick="pullSelectedReport()">
+        Pull to Sheet
+      </button>
+    </div>
+    <div id="report-list" class="card">
+      <div class="card-title">Available Reports</div>
+      <div id="report-items" style="color:var(--text-muted);font-size:12px;">
+        Click Refresh to load reports.
+      </div>
+    </div>
+  </div>
+
+  <!-- Chat Tab -->
+  <div id="tab-chat" class="tab-content">
+    <div id="chat-messages" style="height:320px;overflow-y:auto;margin-bottom:8px;padding:4px;">
+      <div style="color:var(--text-muted);font-size:12px;padding:8px;">Ask anything about the current report data. I can analyze, explain, or suggest changes.</div>
+    </div>
+    <div style="display:flex;gap:6px;">
+      <input type="text" id="chat-input" placeholder="Ask about this report..."
+        style="flex:1;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:13px;"
+        onkeydown="if(event.key==='Enter')sendChat()" />
+      <button class="btn btn-primary" style="width:auto;padding:8px 12px;" onclick="sendChat()">Send</button>
+    </div>
+    <div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:4px;">
+      <button class="btn btn-outline btn-sm" style="width:auto;font-size:11px;" onclick="quickChat('Summarize this report')">Summarize</button>
+      <button class="btn btn-outline btn-sm" style="width:auto;font-size:11px;" onclick="quickChat('What are the key risks?')">Risks</button>
+      <button class="btn btn-outline btn-sm" style="width:auto;font-size:11px;" onclick="quickChat('Compare to last month')">Compare</button>
+      <button class="btn btn-outline btn-sm" style="width:auto;font-size:11px;" onclick="quickChat('Write to Sheet A1')">To Sheet</button>
+    </div>
+  </div>
+
+  <!-- KPIs Tab -->
+  <div id="tab-kpis" class="tab-content">
+    <div class="card">
+      <div class="card-title">AI Employee KPIs</div>
+      <div class="action-grid">
+        <button class="btn btn-outline btn-sm" onclick="loadKPIs()">
+          <span class="spinner hidden" id="spin-kpis"></span> Refresh
+        </button>
+        <button class="btn btn-primary btn-sm" onclick="pullKPIsToSheet()">
+          Pull to Sheet
+        </button>
+      </div>
+      <div id="kpi-items" style="color:var(--text-muted);font-size:12px;">
+        Click Refresh to load KPIs.
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">Period Filter</div>
+      <div style="display:flex;gap:8px;margin-bottom:10px;">
+        <select id="month-select" style="flex:1;padding:6px;border:1px solid var(--border);border-radius:var(--radius);font-size:12px;">
+          <option value="1">January</option>
+          <option value="2">February</option>
+          <option value="3" selected>March</option>
+          <option value="4">April</option>
+          <option value="5">May</option>
+          <option value="6">June</option>
+          <option value="7">July</option>
+          <option value="8">August</option>
+          <option value="9">September</option>
+          <option value="10">October</option>
+          <option value="11">November</option>
+          <option value="12">December</option>
+        </select>
+        <input type="number" id="year-input" value="2026" min="2020" max="2030"
+          style="width:70px;padding:6px;border:1px solid var(--border);border-radius:var(--radius);font-size:12px;" />
+      </div>
+      <div class="action-grid">
+        <button class="btn btn-outline btn-sm" onclick="loadMonthly()">
+          <span class="spinner hidden" id="spin-monthly"></span> Fetch Period
+        </button>
+        <button class="btn btn-primary btn-sm" onclick="pullMonthlyToSheet()">
+          Pull to Sheet
+        </button>
+      </div>
+      <div id="monthly-summary" class="hidden" style="margin-top:8px;">
+        <div id="monthly-content"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Settings Tab -->
+  <div id="tab-settings" class="tab-content">
+    <div class="card">
+      <div class="card-title">Connection</div>
+      <div class="setting-row">
+        <span class="setting-label">API Endpoint</span>
+        <span class="setting-value" id="settings-url">—</span>
+      </div>
+      <div class="setting-row">
+        <span class="setting-label">User</span>
+        <span class="setting-value" id="settings-user">—</span>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">Preferences</div>
+      <div class="setting-row">
+        <span class="setting-label">Auto-format tables</span>
+        <label style="position:relative;display:inline-block;width:36px;height:20px;">
+          <input type="checkbox" id="pref-autoformat" checked style="opacity:0;width:0;height:0;">
+          <span style="position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;background:#cbd5e1;border-radius:10px;transition:0.2s;" class="toggle-slider"></span>
+        </label>
+      </div>
+      <div class="setting-row">
+        <span class="setting-label">Sheet prefix</span>
+        <input type="text" id="pref-prefix" value="DI_" style="width:60px;padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:12px;text-align:right;" />
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="status-bar" id="status-bar">Ready</div>
+
+<script src="src/taskpane.js"></script>
+</body>
+</html>

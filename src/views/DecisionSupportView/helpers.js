@@ -65,6 +65,13 @@ export const QUICK_PROMPTS = [
   { label: 'Replenishment plan', prompt: 'Plan replenishment for Warehouse A next month and show constraints/exceptions.' }
 ];
 
+export const AI_EMPLOYEE_QUICK_PROMPTS = [
+  { label: 'Monthly report', prompt: 'Generate the monthly meeting report with forecast, plan, and risk analysis.' },
+  { label: 'Analyze my data', prompt: 'Analyze the uploaded data and give me a summary with key insights.' },
+  { label: 'Risk assessment', prompt: 'Run a full risk assessment and flag the top issues I should address.' },
+  { label: 'Forecast + Plan', prompt: 'Run demand forecast then generate a replenishment plan based on the results.' },
+];
+
 export const REQUIRED_UPLOAD_TYPES_BY_EXECUTION = {
   forecast: ['demand_fg'],
   [WORKFLOW_NAMES.A]: ['demand_fg', 'inventory_snapshots', 'po_open_lines', 'bom_edge'],

@@ -52,10 +52,24 @@ export function buildGenerationPrompt({ toolHint, priorArtifacts, datasetProfile
 
   if (datasetProfile) {
     parts.push('## Available Data');
-    parts.push(`Dataset columns: ${JSON.stringify(datasetProfile.columns || datasetProfile.column_names || [])}`);
-    if (datasetProfile.sample_rows) {
-      parts.push(`Sample rows: ${JSON.stringify(datasetProfile.sample_rows.slice(0, 3))}`);
+    if (datasetProfile.file_name) {
+      parts.push(`File: ${datasetProfile.file_name}`);
     }
+    // Support both flat columns and nested sheets structure
+    if (datasetProfile.sheets?.length) {
+      for (const sheet of datasetProfile.sheets) {
+        parts.push(`Sheet "${sheet.sheet_name}" (${sheet.row_count || '?'} rows, role: ${sheet.likely_role || 'unknown'}):`);
+        parts.push(`  Columns: ${JSON.stringify(sheet.columns || [])}`);
+      }
+    } else {
+      parts.push(`Columns: ${JSON.stringify(datasetProfile.columns || datasetProfile.column_names || [])}`);
+    }
+    if (datasetProfile.sample_rows?.length) {
+      parts.push(`Sample rows (first ${datasetProfile.sample_rows.length}): ${JSON.stringify(datasetProfile.sample_rows.slice(0, 3))}`);
+    }
+    parts.push('');
+    parts.push('The input object will contain `_prior_artifacts` from previous steps.');
+    parts.push('If sample_rows data is provided, use it to understand the data shape and types.');
     parts.push('');
   }
 
@@ -87,7 +101,7 @@ export function buildGenerationPrompt({ toolHint, priorArtifacts, datasetProfile
 /**
  * Call LLM to generate tool code. Returns null if LLM is unavailable.
  */
-async function _generateCodeViaLLM({ toolHint, priorArtifacts, datasetProfile, revisionInstructions, trackingMeta }) {
+async function _generateCodeViaLLM({ toolHint, priorArtifacts, datasetProfile, revisionInstructions, trackingMeta, modelOverride }) {
   if (!_hasAuth()) return null;
 
   try {
@@ -99,6 +113,7 @@ async function _generateCodeViaLLM({ toolHint, priorArtifacts, datasetProfile, r
       systemPrompt: 'You are a code generator. Respond with ONLY valid JavaScript code. Do not include markdown fences or explanation. The code must define an exported function: export function run(input) { ... }',
       maxTokens: 8192,
       trackingMeta: trackingMeta || {},
+      modelOverride: modelOverride || null,
     });
 
     if (!text) return null;
@@ -141,21 +156,21 @@ export async function generateCodeAndExecute({
   datasetProfile = null,
   revisionInstructions = [],
   trackingMeta = {},
+  modelOverride = null,
+  simplifiedHint = null,
 }) {
+  // Apply self-healing modifications
+  const effectiveHint = simplifiedHint || toolHint;
+  const effectiveRevisions = [...revisionInstructions];
+
   // Step 1: Generate code via LLM
   const generated = await _generateCodeViaLLM({
-    toolHint, priorArtifacts, datasetProfile, revisionInstructions, trackingMeta,
+    toolHint: effectiveHint, priorArtifacts, datasetProfile,
+    revisionInstructions: effectiveRevisions, trackingMeta, modelOverride,
   });
 
   if (!generated) {
-    return {
-      code: null,
-      output: null,
-      artifact_refs: [],
-      execution_log: { status: 'error', error: 'LLM code generation unavailable or failed' },
-      error: 'LLM code generation unavailable',
-      duration_ms: 0,
-    };
+    throw new Error('Dynamic tool: LLM code generation unavailable or failed. Check ai-proxy Edge Function and API keys.');
   }
 
   // Step 2: Execute the generated code

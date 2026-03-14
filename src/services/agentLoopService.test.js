@@ -53,6 +53,16 @@ vi.mock('./taskBudgetService', () => ({
   },
 }));
 
+vi.mock('./selfHealingService', () => ({
+  analyzeStepFailure: vi.fn((err, step, retryCount) => ({
+    errorCategory: 'unknown',
+    healingStrategy: 'revise_prompt',
+    modifications: { promptSuffix: 'Try a different approach.' },
+    reasoning: 'test healing',
+  })),
+  getAlternativeModel: vi.fn(async () => null),
+}));
+
 const aiEmployeeService = await import('./aiEmployeeService');
 const { executeTask } = await import('./aiEmployeeExecutor');
 
@@ -150,16 +160,18 @@ describe('tickAgentLoop', () => {
     expect(step_event.status).toBe(STEP_STATUS.REVIEW_HOLD);
   });
 
-  it('increments retry_count on failure', async () => {
+  it('increments retry_count on failure and applies self-healing', async () => {
     executeTask.mockRejectedValueOnce(new Error('Engine failed'));
     const task = makeTask('forecast_then_plan');
 
     const { step_event } = await tickAgentLoop(task.id, 'user-1');
 
     expect(step_event.step_name).toBe('forecast');
-    expect(step_event.status).toBe('failed');
+    // With self-healing, failed steps are set back to PENDING for retry (not 'failed')
+    expect(step_event.status).toBe('pending');
     expect(step_event.retry_count).toBe(1);
     expect(step_event.error).toBe('Engine failed');
+    expect(step_event.healing_strategy).toBe('revise_prompt');
   });
 
   it('blocks step after MAX_RETRIES failures', async () => {

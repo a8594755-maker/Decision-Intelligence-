@@ -56,6 +56,7 @@ import {
   MAX_UPLOAD_MESSAGE,
   DEFAULT_CANVAS_STATE,
   QUICK_PROMPTS,
+  AI_EMPLOYEE_QUICK_PROMPTS,
   clampSplitRatio,
   isApiKeyConfigError,
   getErrorMessage,
@@ -90,7 +91,8 @@ const conversationsDb = tableAvailable ? supabase : null;
 // Module-level cache for inline raw rows — survives HMR state resets
 const _rawRowsCache = new Map();
 
-export default function DecisionSupportView({ user, addNotification }) {
+export default function DecisionSupportView({ user, addNotification, mode = 'di' }) {
+  const isAIEmployeeMode = mode === 'ai_employee';
   const userStorageSuffix = user?.id || 'anon';
   const [input, setInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
@@ -155,6 +157,7 @@ export default function DecisionSupportView({ user, addNotification }) {
     user,
     addNotification,
     updateCanvasState,
+    mode,
   });
 
   // Wire the ref so updateCanvasState can access the setter
@@ -1113,11 +1116,11 @@ export default function DecisionSupportView({ user, addNotification }) {
 
     setIsUploadingDataset(true);
     setIsDragOverUpload(false);
-    setUploadStatusText('Uploaded. Profiling...');
+    setUploadStatusText(isAIEmployeeMode ? 'Processing...' : 'Uploaded. Profiling...');
 
     appendMessagesToCurrentConversation([
       { role: 'user', content: `📎 Uploaded file: ${file.name}`, timestamp: new Date().toISOString() },
-      { role: 'ai', content: 'Uploaded. Profiling...', timestamp: new Date().toISOString() }
+      { role: 'ai', content: isAIEmployeeMode ? 'Processing your file...' : 'Uploaded. Profiling...', timestamp: new Date().toISOString() }
     ]);
 
     try {
@@ -1262,22 +1265,34 @@ export default function DecisionSupportView({ user, addNotification }) {
         }
       }));
 
-      const messages = [];
-      if (autoReused) {
-        messages.push({ role: 'ai', content: `Reused mapping from previous dataset (confidence ${(Number(reusePlan.confidence || 0) * 100).toFixed(0)}%).`, timestamp: new Date().toISOString() });
-      } else if (hasReusePrompt) {
-        messages.push({ role: 'ai', content: `I found a previous mapping for similar data (confidence ${(Number(reusePlan.confidence || 0) * 100).toFixed(0)}%). Apply it?`, timestamp: new Date().toISOString() });
-        messages.push({ role: 'ai', type: 'reuse_decision_card', payload: { ...reusePlan, dataset_profile_id: profileRecord?.id, dataset_fingerprint: datasetFingerprint }, timestamp: new Date().toISOString() });
+      if (isAIEmployeeMode) {
+        // AI Employee mode: simple summary, no DI profiling cards
+        const sheetCount = (profileRecord?.profile_json?.sheets || []).length;
+        const totalRows = (uploadPreparation.sheetsRaw || []).reduce((sum, s) => sum + (s.rows?.length || 0), 0);
+        appendMessagesToCurrentConversation([{
+          role: 'ai',
+          content: `Got it — **${file.name}** loaded (${sheetCount} sheet${sheetCount !== 1 ? 's' : ''}, ${totalRows.toLocaleString()} rows).\n\nWhat should I do with it? You can say things like:\n- "Generate monthly report"\n- "Run forecast and plan"\n- "Analyze risks"\n\nOr just describe what you need in plain language.`,
+          timestamp: new Date().toISOString(),
+        }]);
       } else {
-        messages.push({ role: 'ai', content: 'Saved profile.', timestamp: new Date().toISOString() });
+        // DI mode: full profiling cards
+        const messages = [];
+        if (autoReused) {
+          messages.push({ role: 'ai', content: `Reused mapping from previous dataset (confidence ${(Number(reusePlan.confidence || 0) * 100).toFixed(0)}%).`, timestamp: new Date().toISOString() });
+        } else if (hasReusePrompt) {
+          messages.push({ role: 'ai', content: `I found a previous mapping for similar data (confidence ${(Number(reusePlan.confidence || 0) * 100).toFixed(0)}%). Apply it?`, timestamp: new Date().toISOString() });
+          messages.push({ role: 'ai', type: 'reuse_decision_card', payload: { ...reusePlan, dataset_profile_id: profileRecord?.id, dataset_fingerprint: datasetFingerprint }, timestamp: new Date().toISOString() });
+        } else {
+          messages.push({ role: 'ai', content: 'Saved profile.', timestamp: new Date().toISOString() });
+        }
+        messages.push(
+          { role: 'ai', type: 'dataset_summary_card', payload: cardPayload, timestamp: new Date().toISOString() },
+          { role: 'ai', type: 'validation_card', payload: validationPayload, timestamp: new Date().toISOString() },
+          { role: 'ai', type: 'downloads_card', payload: downloadsPayload, timestamp: new Date().toISOString() }
+        );
+        if (confirmationPayload) { messages.push({ role: 'ai', type: 'contract_confirmation_card', payload: confirmationPayload, timestamp: new Date().toISOString() }); }
+        appendMessagesToCurrentConversation(messages);
       }
-      messages.push(
-        { role: 'ai', type: 'dataset_summary_card', payload: cardPayload, timestamp: new Date().toISOString() },
-        { role: 'ai', type: 'validation_card', payload: validationPayload, timestamp: new Date().toISOString() },
-        { role: 'ai', type: 'downloads_card', payload: downloadsPayload, timestamp: new Date().toISOString() }
-      );
-      if (confirmationPayload) { messages.push({ role: 'ai', type: 'contract_confirmation_card', payload: confirmationPayload, timestamp: new Date().toISOString() }); }
-      appendMessagesToCurrentConversation(messages);
 
       const finalSignature = buildSignature(profileRecord?.profile_json || {}, profileRecord?.contract_json || {});
       reuseMemoryService.upsertDatasetSimilarityIndex({ user_id: user.id, dataset_profile_id: profileRecord?.id, fingerprint: datasetFingerprint, signature_json: finalSignature }).catch((error) => { console.warn('[DecisionSupportView] Failed to persist similarity index:', error.message); });
@@ -1377,13 +1392,16 @@ export default function DecisionSupportView({ user, addNotification }) {
   }, [currentConversationId, activeDatasetContext, user?.id, updateCanvasState, appendMessagesToCurrentConversation, addNotification, currentConversation, currentMessages, setConversations]);
 
   // ── Send handler ────────────────────────────────────────────────────────
-  const handleSend = useCallback(async (e) => {
-    if (e) e.preventDefault();
-    if (!input.trim() || !currentConversationId) return;
+  const handleSend = useCallback(async (eOrMessage) => {
+    // Accept either an event (from form submit) or a string (from clarification callbacks)
+    if (eOrMessage && typeof eOrMessage !== 'string' && eOrMessage.preventDefault) eOrMessage.preventDefault();
+    const overrideMessage = typeof eOrMessage === 'string' ? eOrMessage : null;
+    const effectiveInput = overrideMessage || input;
+    if (!effectiveInput.trim() || !currentConversationId) return;
 
-    const userMessage = { role: 'user', content: input, timestamp: new Date().toISOString() };
-    const messageText = input;
-    setInput('');
+    const userMessage = { role: 'user', content: effectiveInput, timestamp: new Date().toISOString() };
+    const messageText = effectiveInput;
+    if (!overrideMessage) setInput('');
     setIsTyping(true);
     setStreamingContent('');
 
@@ -1524,7 +1542,116 @@ export default function DecisionSupportView({ user, addNotification }) {
       }
     }
 
-    // SmartOps 2.0: LLM-powered intent parsing + action routing
+    // ── AI Employee mode: task decomposition is the PRIMARY path ──────────
+    // Every non-command, non-greeting message goes through the 5-phase workflow:
+    //   Phase 1: Decompose → TaskPlanCard (human approval)
+    //   Phase 2: Agent Loop executes steps (Worker AI + Headless DI)
+    //   Phase 3: AI Review (Reviewer AI quality check + self-correction)
+    //   Phase 4: Deliver artifacts + revision log → Human review
+    //   Phase 5: Tool registration for reuse
+    if (isAIEmployeeMode && !lower.startsWith('/')) {
+      const GREETING_RE = /^(hi|hello|hey|thanks|thank you|ok|okay|你好|謝謝|好的|嗨|哈囉|了解|明白|沒問題|good|great|nice|got it|sure|yes|no|是|不是|對|沒有)\s*[!.。！]*$/i;
+
+      if (!GREETING_RE.test(trimmed)) {
+        try {
+          const datasetProfileId = Number.isFinite(Number(activeDatasetContext?.dataset_profile_id)) ? Number(activeDatasetContext.dataset_profile_id) : null;
+          const decomposition = await decomposeTask({ userMessage: messageText, sessionContext: sessionCtx.context, userId: user?.id });
+
+          if (decomposition?.subtasks?.length) {
+            // ── Pre-execution clarification (vague requests) ────────────
+            if (decomposition.needs_clarification && decomposition.clarification_questions?.length > 0) {
+              appendMessagesToCurrentConversation([{
+                role: 'ai', type: 'clarification_card',
+                payload: { questions: decomposition.clarification_questions, original_instruction: messageText },
+                content: 'Before I start, let me ask a few questions to make sure I deliver exactly what you need.',
+                timestamp: new Date().toISOString(),
+                _onSubmit: async (answers) => {
+                  const enrichedMessage = `${messageText}\n\nUser preferences:\n${
+                    answers.map((a, i) => `- ${decomposition.clarification_questions[i]}: ${a || '(no preference)'}`).join('\n')
+                  }`;
+                  setIsTyping(true);
+                  try {
+                    handleSend(enrichedMessage);
+                  } finally {
+                    setIsTyping(false);
+                  }
+                },
+                _onSkip: () => {
+                  handleSend(messageText + ' [proceed with defaults, no clarification needed]');
+                },
+              }]);
+              setIsTyping(false); setStreamingContent(''); return;
+            }
+
+            appendMessagesToCurrentConversation([{
+              role: 'ai', type: 'task_plan_card', payload: decomposition,
+              content: `I've broken this into ${decomposition.subtasks.length} step(s). Review and approve to let me start working.`,
+              timestamp: new Date().toISOString(),
+              _onApprove: async () => {
+                try {
+                  const template = buildDynamicTemplate(decomposition);
+                  const aiden = await getOrCreateAiden(user?.id);
+                  const task = await createAiTask(aiden.id, {
+                    title: messageText.slice(0, 120),
+                    description: decomposition.original_instruction,
+                    priority: 'medium',
+                    source_type: 'chat_decomposed',
+                    input_context: {
+                      workflow_type: decomposition.subtasks[0]?.workflow_type || 'builtin_tool',
+                      dataset_profile_id: datasetProfileId,
+                      template_id: template.id,
+                      _dynamic_template: template,
+                      report_format: decomposition.report_format,
+                      _dataset_profile: (() => {
+                        const pj = activeDatasetContext?.profileJson;
+                        if (!pj?.sheets) return null;
+                        const sheets = pj.sheets.map(s => ({
+                          sheet_name: s.sheet_name,
+                          columns: s.original_headers || s.normalized_headers || [],
+                          row_count: s.row_count || 0,
+                          likely_role: s.likely_role,
+                        }));
+                        const rawRows = _rawRowsCache.get(String(datasetProfileId)) || activeDatasetContext?.rawRowsForStorage;
+                        const sampleRows = Array.isArray(rawRows) ? rawRows.slice(0, 5).map(r => {
+                          const row = {};
+                          Object.entries(r).forEach(([k, v]) => { if (k !== '__rowNum' && v != null) row[k] = v; });
+                          return row;
+                        }) : [];
+                        return { sheets, sample_rows: sampleRows, file_name: pj.file_name || activeDatasetContext?.fileName };
+                      })(),
+                    },
+                    template_id: template.id,
+                  }, user?.id);
+
+                  appendMessagesToCurrentConversation([{ role: 'ai', content: `On it! Executing ${template.steps.length} steps...`, timestamp: new Date().toISOString() }]);
+
+                  const loopResult = await executeTaskWithLoop(task, user?.id, {
+                    onStepComplete: (stepEvent) => {
+                      const healingNote = stepEvent.healing_strategy ? ` [self-healing: ${stepEvent.healing_strategy}]` : '';
+                      appendMessagesToCurrentConversation([{ role: 'ai', content: `Step "${stepEvent.step_name}": ${stepEvent.summary || stepEvent.status}${stepEvent.error ? ` — ${stepEvent.error}` : ''}${healingNote}`, timestamp: new Date().toISOString() }]);
+                    },
+                  });
+
+                  const completedCount = loopResult.completed_steps?.length || 0;
+                  const statusMsg = loopResult.halted_at
+                    ? `Done with ${completedCount} step(s). Paused at "${loopResult.halted_at}" — waiting for your review.`
+                    : `All ${completedCount} step(s) completed. Head to Review to check the results.`;
+                  appendMessagesToCurrentConversation([{ role: 'ai', content: statusMsg, timestamp: new Date().toISOString() }]);
+                } catch (execErr) {
+                  appendMessagesToCurrentConversation([{ role: 'ai', content: `Task execution failed: ${execErr?.message || 'Unknown error'}`, timestamp: new Date().toISOString() }]);
+                }
+              },
+            }]);
+            setIsTyping(false); setStreamingContent(''); return;
+          }
+        } catch (decompErr) {
+          console.warn('[DSV] AI Employee decomposition failed, falling through to chat:', decompErr?.message);
+        }
+      }
+      // Greetings and failed decompositions fall through to general chat below
+    }
+
+    // SmartOps 2.0: LLM-powered intent parsing + action routing (DI mode primary path)
     try {
       const parsedIntent = await parseIntent({ userMessage: messageText, sessionContext: sessionCtx.context, domainContext: { ...domainContext, chatContext: buildContextSummaryForPrompt(chatContext) } });
 
@@ -1795,7 +1922,7 @@ export default function DecisionSupportView({ user, addNotification }) {
       <SplitShell
         sidebar={(
           <ConversationSidebar
-            title={`${APP_NAME} Chat`}
+            title={isAIEmployeeMode ? 'Aiden Chat' : `${APP_NAME} Chat`}
             conversations={conversations}
             currentConversationId={currentConversationId}
             onSelectConversation={setCurrentConversationId}
@@ -1815,10 +1942,18 @@ export default function DecisionSupportView({ user, addNotification }) {
               <>
                 <div className="px-4 md:px-6 py-3 border-b border-[var(--chat-border)] dark:border-slate-700/60 bg-white/85 dark:bg-slate-900/75 backdrop-blur-sm flex items-center justify-between">
                   <div className="min-w-0">
-                    <h3 className="text-base font-medium text-slate-800 dark:text-slate-100 truncate">{currentConversation.title}</h3>
+                    <h3 className="text-base font-medium text-slate-800 dark:text-slate-100 truncate">
+                      {isAIEmployeeMode && currentMessages.length <= 1 ? 'Chat with Aiden' : currentConversation.title}
+                    </h3>
                     <div className="flex items-center gap-2 mt-1">
-                      <span className="text-xs text-slate-500">{currentMessages.length} messages</span>
-                      <span className={`text-xs px-2 py-0.5 rounded-full ${contextBadge.color}`}>{contextBadge.text}</span>
+                      {isAIEmployeeMode ? (
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-600 dark:bg-indigo-900/20 dark:text-indigo-400">AI Employee</span>
+                      ) : (
+                        <>
+                          <span className="text-xs text-slate-500">{currentMessages.length} messages</span>
+                          <span className={`text-xs px-2 py-0.5 rounded-full ${contextBadge.color}`}>{contextBadge.text}</span>
+                        </>
+                      )}
                     </div>
                   </div>
                   <button type="button" onClick={() => setShowNewChatConfirm(true)} className="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors" title="New conversation">
@@ -1828,7 +1963,7 @@ export default function DecisionSupportView({ user, addNotification }) {
 
                 <ChatThread
                   messages={currentMessages} isTyping={isTyping} streamingContent={streamingContent}
-                  formatTime={formatTime} renderSpecialMessage={renderSpecialMessage} quickPrompts={QUICK_PROMPTS}
+                  formatTime={formatTime} renderSpecialMessage={renderSpecialMessage} quickPrompts={isAIEmployeeMode ? AI_EMPLOYEE_QUICK_PROMPTS : QUICK_PROMPTS}
                   onSelectPrompt={(promptText) => { setInput(promptText); textareaRef.current?.focus(); }}
                   showInitialEmptyState={currentMessages.length <= 1 && !isTyping} isLoading={false}
                 />
@@ -1872,8 +2007,9 @@ export default function DecisionSupportView({ user, addNotification }) {
           />
         )}
         sidebarCollapsed={isSidebarCollapsed} onSidebarToggle={handleSidebarToggle}
-        canvasOpen={Boolean(activeCanvasState.isOpen)} onCanvasToggle={handleCanvasToggle}
+        canvasOpen={isAIEmployeeMode ? false : Boolean(activeCanvasState.isOpen)} onCanvasToggle={handleCanvasToggle}
         initialSplitRatio={splitRatio} onSplitRatioCommit={handleSplitRatioCommit} canvasDetached={isCanvasDetached}
+        hideCanvasButton={isAIEmployeeMode}
       />
 
       {showNewChatConfirm && (

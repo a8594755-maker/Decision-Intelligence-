@@ -133,13 +133,13 @@ export async function listModels(filter = {}) {
     return data;
   });
 
-  if (sbResult) {
+  if (sbResult && sbResult.length > 0) {
     _cachedModels = sbResult;
     _cacheTime = Date.now();
     return applyModelFilter(sbResult, { tier, provider, activeOnly });
   }
 
-  // Fallback
+  // Fallback — use defaults when Supabase is unavailable or model_registry is empty
   return applyModelFilter(DEFAULT_MODELS, { tier, provider, activeOnly });
 }
 
@@ -148,6 +148,8 @@ function applyModelFilter(models, { tier, provider, activeOnly }) {
   if (activeOnly) result = result.filter((m) => m.active !== false);
   if (tier) result = result.filter((m) => m.capability_tier === tier);
   if (provider) result = result.filter((m) => m.provider === provider);
+  // Sort by cost (cheapest first) so selectModel picks the most cost-effective option
+  result = [...result].sort((a, b) => (a.cost_per_1k_input || 0) - (b.cost_per_1k_input || 0));
   return result;
 }
 

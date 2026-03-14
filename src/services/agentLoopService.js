@@ -23,6 +23,7 @@ import { recall, summarizeMemories } from './aiEmployeeMemoryService';
 import { checkBudget, BudgetExceededError } from './taskBudgetService';
 import { reviewStepOutput, shouldReview, MAX_REVISION_ROUNDS } from './aiReviewerService';
 import { isDynamicTemplate, getDynamicTemplateFromTask, initDynamicLoopState } from './dynamicTemplateBuilder';
+import { analyzeStepFailure, getAlternativeModel } from './selfHealingService';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -100,6 +101,11 @@ function buildStepInputContext(taskInputContext, stepDef, loopState) {
   if (stepDef.tool_hint) base._tool_hint = stepDef.tool_hint;
   if (stepDef.tool_id) base._tool_id = stepDef.tool_id;
   if (stepDef.builtin_tool_id) base._builtin_tool_id = stepDef.builtin_tool_id;
+
+  // Self-healing context (from previous failure analysis)
+  if (stepDef._healing_strategy) base._healing_strategy = stepDef._healing_strategy;
+  if (stepDef._model_override) base._model_override = stepDef._model_override;
+  if (stepDef._simplified_hint) base._simplified_hint = stepDef._simplified_hint;
 
   return base;
 }
@@ -367,14 +373,51 @@ export async function tickAgentLoop(taskId, userId) {
     };
 
   } catch (err) {
-    // Step failed
-    nextStep.status = STEP_STATUS.FAILED;
-    nextStep.error = err?.message || String(err);
+    // Step failed — apply intelligent self-healing
+    const errorMsg = err?.message || String(err);
+    nextStep.error = errorMsg;
     nextStep.retry_count += 1;
     nextStep.finished_at = new Date().toISOString();
 
-    if (nextStep.retry_count >= MAX_RETRIES) {
+    // Analyze failure and choose healing strategy
+    const healing = analyzeStepFailure(err, nextStep, nextStep.retry_count);
+
+    if (nextStep.retry_count >= MAX_RETRIES || healing.healingStrategy === 'block_immediately') {
       nextStep.status = STEP_STATUS.BLOCKED;
+      nextStep._healing_strategy = healing;
+    } else {
+      nextStep.status = STEP_STATUS.PENDING; // allow retry with modified approach
+      nextStep._healing_strategy = healing;
+
+      // Strategy: revise_prompt — append error context to revision instructions
+      if (healing.healingStrategy === 'revise_prompt') {
+        nextStep._revision_instructions = [
+          ...(nextStep._revision_instructions || []),
+          `Previous error: ${errorMsg}`,
+          ...(healing.modifications.promptSuffix ? [healing.modifications.promptSuffix] : []),
+        ];
+      }
+
+      // Strategy: escalate_model — find an alternative provider/model
+      if (healing.healingStrategy === 'escalate_model') {
+        try {
+          const alt = await getAlternativeModel(
+            nextStep._last_provider || 'unknown',
+            nextStep._last_model || 'unknown',
+            nextStep.workflow_type
+          );
+          if (alt) {
+            nextStep._model_override = alt;
+          }
+        } catch { /* best-effort */ }
+      }
+
+      // Strategy: simplify_task — reduce scope
+      if (healing.healingStrategy === 'simplify_task' && healing.modifications.simplifiedHint) {
+        nextStep._simplified_hint = healing.modifications.simplifiedHint;
+      }
+
+      console.info(`[agentLoopService] Self-healing: ${healing.healingStrategy} (${healing.reasoning})`);
     }
 
     await aiEmployeeService.updateTaskLoopState(taskId, loopState);
@@ -389,6 +432,7 @@ export async function tickAgentLoop(taskId, userId) {
           status: nextStep.status,
           error: nextStep.error,
           retry_count: nextStep.retry_count,
+          healing_strategy: nextStep._healing_strategy?.healingStrategy || null,
         }
       );
     } catch { /* best-effort */ }
@@ -400,6 +444,8 @@ export async function tickAgentLoop(taskId, userId) {
         status: nextStep.status,
         error: nextStep.error,
         retry_count: nextStep.retry_count,
+        healing_strategy: nextStep._healing_strategy?.healingStrategy || null,
+        healing_reasoning: nextStep._healing_strategy?.reasoning || null,
       },
       task: await aiEmployeeService.getTask(taskId),
     };

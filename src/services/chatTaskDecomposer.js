@@ -50,23 +50,27 @@ function hasStoredSupabaseAccessToken() {
 
 // ── LLM Decomposition ────────────────────────────────────────────────────────
 
-const DECOMPOSE_SYSTEM_PROMPT = `You are a supply chain AI task planner. Given a user instruction, decompose it into an ordered list of subtasks.
+const DECOMPOSE_SYSTEM_PROMPT = `You are an AI task planner for business data analysis. Given a user instruction, decompose it into an ordered list of subtasks.
 
 ${buildCatalogPromptSummary()}
 
 Additional workflow types (not in built-in catalog):
 - report: Generate a summary report
 - export: Export data to Excel/PowerBI
-- dynamic_tool: AI generates custom code to handle novel tasks
+- dynamic_tool: AI generates custom code to handle novel tasks (data cleaning, KPI calculation, custom analysis, dashboards, etc.)
 - registered_tool: Use a previously registered custom tool
 
-Rules:
-1. Prefer builtin tools when the instruction matches a known capability.
-2. Set builtin_tool_id for builtin_tool steps (must match a tool id from the list above).
-3. Set depends_on to declare execution order (use step names).
-4. For unknown/novel tasks, use workflow_type "dynamic_tool" with a descriptive tool_hint.
+CRITICAL RULES for choosing workflow_type:
+1. Built-in tools are ONLY for specific supply chain operations (demand forecasting with time-series models, replenishment planning with MIP solvers, supplier risk scoring). Do NOT use them for general data analysis, cleaning, KPI calculation, or reporting.
+2. For general tasks like: data cleaning, KPI/metrics calculation, pivot tables, trend analysis, data quality checks, dashboard creation, business review — ALWAYS use "dynamic_tool" with a detailed tool_hint.
+3. Set builtin_tool_id for builtin_tool steps (must match a tool id from the list above).
+4. Set depends_on to declare execution order (use step names).
 5. If the user asks for Excel/XLSX output, add an "export" step and set report_format to "xlsx".
-6. If the user asks for a report/summary, add a "report" step.
+6. If the user asks for a report/summary, add a "report" step at the end.
+7. Break complex analysis into logical steps: e.g. clean_data → calculate_kpis → analyze_trends → generate_report. Each step should have a specific, detailed tool_hint describing exactly what to compute.
+
+8. If the user's request is vague or ambiguous (e.g. "分析資料", "analyze data", "generate report" without specifics), set needs_clarification=true and provide 2-4 short clarification questions. Criteria for vague: no specific metrics/KPIs mentioned, no output format specified, multiple possible approaches exist, less than 10 meaningful words.
+9. Even when needs_clarification=true, STILL provide your best-guess subtasks so the user can skip clarification if they want.
 
 Respond with ONLY a JSON object (no markdown, no explanation):
 {
@@ -82,7 +86,9 @@ Respond with ONLY a JSON object (no markdown, no explanation):
     }
   ],
   "report_format": "xlsx|html|powerbi|null",
-  "confidence": 0.0-1.0
+  "confidence": 0.0-1.0,
+  "needs_clarification": false,
+  "clarification_questions": []
 }`;
 
 /**
@@ -143,6 +149,8 @@ async function _tryLLMDecompose(userMessage, { employeeId, userId } = {}) {
       subtasks,
       report_format: data.report_format || null,
       confidence: typeof data.confidence === 'number' ? data.confidence : 0.8,
+      needs_clarification: data.needs_clarification === true,
+      clarification_questions: Array.isArray(data.clarification_questions) ? data.clarification_questions : [],
       _llm_model: model,
     };
   } catch (err) {
@@ -173,7 +181,10 @@ export async function decomposeTask({ userMessage, sessionContext = null, employ
   // ── Try LLM-based decomposition first ──────────────────────────────────
   const llmResult = await _tryLLMDecompose(userMessage, { employeeId, userId });
   if (llmResult) {
-    return _finalize(llmResult.subtasks, userMessage, llmResult.report_format, llmResult.confidence);
+    return _finalize(llmResult.subtasks, userMessage, llmResult.report_format, llmResult.confidence, {
+      needs_clarification: llmResult.needs_clarification,
+      clarification_questions: llmResult.clarification_questions,
+    });
   }
 
   // ── Fallback: keyword-based decomposition ──────────────────────────────
@@ -203,6 +214,26 @@ export async function decomposeTask({ userMessage, sessionContext = null, employ
   }
 
   // ── Phase 1b: Check for report/export (not in builtin catalog) ──────────
+  const isReportRequest = LEGACY_KEYWORD_WORKFLOWS[0].keywords.some(kw => msgLower.includes(kw));
+  const isExportRequest = LEGACY_KEYWORD_WORKFLOWS[1].keywords.some(kw => msgLower.includes(kw));
+
+  // If "report" is requested but no analysis steps exist yet, auto-inject
+  // a data analysis step so the report has real content.
+  if (isReportRequest && subtasks.length === 0) {
+    subtasks.push({
+      name: 'analyze_data',
+      workflow_type: 'dynamic_tool',
+      description: 'Analyze uploaded dataset: compute KPIs, trends, and key insights for the report',
+      requires_review: false,
+      tool_hint: 'Analyze the uploaded data. Compute summary statistics, key metrics, trends over time, and notable insights. Return a structured JSON with sections: executive_summary, kpi_table, trends, risks, and recommendations.',
+      tool_id: null,
+      builtin_tool_id: null,
+      depends_on: [],
+      estimated_tier: 'tier_a',
+      needs_dataset_profile: true,
+    });
+  }
+
   for (const mapping of LEGACY_KEYWORD_WORKFLOWS) {
     if (mapping.keywords.some(kw => msgLower.includes(kw))) {
       const alreadyAdded = subtasks.some(s => s.workflow_type === mapping.workflow);
@@ -257,7 +288,7 @@ export async function decomposeTask({ userMessage, sessionContext = null, employ
         builtin_tool_id: null,
         depends_on: [],
         estimated_tier: 'tier_a',
-        needs_dataset_profile: false,
+        needs_dataset_profile: true,
       });
     }
   }
@@ -291,7 +322,7 @@ export async function decomposeTask({ userMessage, sessionContext = null, employ
 
 // ── Finalize decomposition (shared by LLM + keyword paths) ──────────────────
 
-function _finalize(subtasks, userMessage, reportFormat, confidence) {
+function _finalize(subtasks, userMessage, reportFormat, confidence, clarification = {}) {
   // Resolve dependency chain from catalog
   const builtinSteps = subtasks.filter(s => s.builtin_tool_id);
   if (builtinSteps.length > 0) {
@@ -378,6 +409,8 @@ function _finalize(subtasks, userMessage, reportFormat, confidence) {
     needs_dynamic_tool: subtasks.some(s => s.workflow_type === 'dynamic_tool'),
     estimated_cost: Math.round(estimatedCost * 10000) / 10000,
     report_format: reportFormat,
+    needs_clarification: clarification.needs_clarification || false,
+    clarification_questions: clarification.clarification_questions || [],
   };
 }
 

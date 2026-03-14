@@ -27,11 +27,13 @@ const conversationsDb = tableAvailable ? supabase : null;
  * @param {Object}   params.user                - current authenticated user
  * @param {Function} params.addNotification     - notification helper
  * @param {Function} params.updateCanvasState   - canvas-state updater (from parent)
+ * @param {string}   params.mode                - 'di' | 'ai_employee'
  */
 export default function useConversationManager({
   user,
   addNotification,
   updateCanvasState,
+  mode = 'di',
 }) {
   const [conversations, setConversations] = useState([]);
   const [isConversationsLoading, setIsConversationsLoading] = useState(false);
@@ -47,11 +49,15 @@ export default function useConversationManager({
     let active = true;
     setIsConversationsLoading(true);
 
+    // Filter conversations by workspace — untagged ones belong to 'di'
+    const filterByWorkspace = (list) =>
+      list.filter((c) => (c.workspace || 'di') === mode);
+
     const load = async () => {
       if (isTableUnavailable()) {
         const local = loadLocalConversations(user.id);
         if (active) {
-          setConversations(local);
+          setConversations(filterByWorkspace(local));
           setIsConversationsLoading(false);
         }
         return;
@@ -65,8 +71,9 @@ export default function useConversationManager({
 
       if (!active) return;
       if (!error && data) {
-        setConversations(data);
+        // Save all conversations to localStorage, but only show current workspace
         saveLocalConversations(user.id, data);
+        setConversations(filterByWorkspace(data));
         setIsConversationsLoading(false);
         return;
       }
@@ -74,7 +81,7 @@ export default function useConversationManager({
       console.warn('[DSV] conversations table unavailable, falling back to localStorage:', error?.message);
       markTableUnavailable();
       const local = loadLocalConversations(user.id);
-      setConversations(local);
+      setConversations(filterByWorkspace(local));
       setIsConversationsLoading(false);
     };
 
@@ -82,7 +89,7 @@ export default function useConversationManager({
     return () => {
       active = false;
     };
-  }, [user?.id]);
+  }, [user?.id, mode]);
 
   // ── Auto-select first conversation when list changes ─────────────────────
   useEffect(() => {
@@ -172,13 +179,18 @@ export default function useConversationManager({
 
     setShowNewChatConfirm(false);
 
+    const welcomeMessage = mode === 'ai_employee'
+      ? 'Hi! I\'m your AI Employee. Tell me what you need — upload data, generate reports, run forecasts, or just describe a task and I\'ll handle it.'
+      : `Hello! I'm your **${ASSISTANT_NAME}**. Upload a CSV/XLSX (max 50MB) and ask for a plan or forecast.\n\nI will show deterministic execution artifacts in Canvas.`;
+
     const newConversation = {
       id: Date.now().toString(),
       user_id: user.id,
+      workspace: mode,
       title: 'New Conversation',
       messages: [{
         role: 'ai',
-        content: `Hello! I'm your **${ASSISTANT_NAME}**. Upload a CSV/XLSX (max 50MB) and ask for a plan or forecast.\n\nI will show deterministic execution artifacts in Canvas.`,
+        content: welcomeMessage,
       }],
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
@@ -195,7 +207,7 @@ export default function useConversationManager({
     }
 
     addNotification?.('New conversation ready.', 'success');
-  }, [user?.id, addNotification, updateCanvasState]);
+  }, [user?.id, addNotification, updateCanvasState, mode]);
 
   // ── Delete conversation ──────────────────────────────────────────────────
   // eslint-disable-next-line react-hooks/preserve-manual-memoization

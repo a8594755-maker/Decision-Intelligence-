@@ -537,7 +537,14 @@ export function findToolsByQuery(query, opts = {}) {
         }
       }
     }
-    if (score >= 2) {
+    // Require stronger signal for longer messages to avoid false positives.
+    // Short messages (< 15 tokens): score >= 2 is fine.
+    // Medium messages (15-50 tokens): score >= 5 (multiple exact keyword matches).
+    // Long messages (50+ tokens): score >= 10 (very strong match required — long
+    //   messages are usually general analysis requests that incidentally contain
+    //   supply chain keywords like "forecast" or "plan").
+    const minScore = tokens.length > 50 ? 10 : tokens.length > 15 ? 5 : 2;
+    if (score >= minScore) {
       scored.push({ tool, score });
     }
   }

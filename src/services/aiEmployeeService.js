@@ -91,6 +91,23 @@ export async function getOrCreateAiden(userId) {
     const existing = rows?.[0] ?? null;
     if (existing) {
       console.log('[getOrCreateAiden] Found existing Aiden:', existing.id);
+      // Ensure all required permissions are present (migrate older Aidens)
+      const requiredPerms = {
+        can_run_forecast: true, can_run_plan: true, can_run_risk: true,
+        can_run_builtin_tool: true, can_run_dynamic_tool: true,
+        can_run_registered_tool: true, can_generate_report: true,
+        can_export: true, can_write_worklog: true, can_submit_review: true,
+      };
+      const currentPerms = existing.permissions || {};
+      const missingKeys = Object.keys(requiredPerms).filter(k => !currentPerms[k]);
+      if (missingKeys.length > 0) {
+        const updatedPerms = { ...currentPerms, ...requiredPerms };
+        try {
+          await supabase.from('ai_employees').update({ permissions: updatedPerms }).eq('id', existing.id);
+          console.log('[getOrCreateAiden] Migrated permissions, added:', missingKeys.join(', '));
+          existing.permissions = updatedPerms;
+        } catch (e) { console.warn('[getOrCreateAiden] Permission migration failed:', e?.message); }
+      }
       return existing;
     }
 
@@ -129,6 +146,7 @@ export async function getOrCreateAiden(userId) {
 
   // Local fallback
   const store = getLocalStore();
+  const allPerms = { can_run_forecast: true, can_run_plan: true, can_run_risk: true, can_run_builtin_tool: true, can_run_dynamic_tool: true, can_run_registered_tool: true, can_generate_report: true, can_export: true, can_write_worklog: true, can_submit_review: true };
   let aiden = store.employees.find((e) => e.name === 'Aiden');
   if (!aiden) {
     aiden = {
@@ -138,12 +156,19 @@ export async function getOrCreateAiden(userId) {
       status: 'idle',
       manager_user_id: userId,
       description: 'AI supply chain analyst.',
-      permissions: { can_run_forecast: true, can_run_plan: true, can_run_risk: true, can_run_builtin_tool: true, can_run_dynamic_tool: true, can_run_registered_tool: true, can_generate_report: true, can_export: true },
+      permissions: allPerms,
       created_at: now(),
       updated_at: now(),
     };
     store.employees.push(aiden);
     setLocalStore(store);
+  } else {
+    // Migrate permissions if any are missing
+    const missing = Object.keys(allPerms).filter(k => !aiden.permissions?.[k]);
+    if (missing.length > 0) {
+      aiden.permissions = { ...(aiden.permissions || {}), ...allPerms };
+      setLocalStore(store);
+    }
   }
   return aiden;
 }

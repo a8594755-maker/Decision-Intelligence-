@@ -1,0 +1,17 @@
+{
+  "name": "smartops-di-excel-addin",
+  "version": "1.0.0",
+  "private": true,
+  "description": "SmartOps Decision Intelligence Excel Add-in",
+  "scripts": {
+    "dev": "npx office-addin-dev-certs install && npx http-server -S -C ~/.office-addin-dev-certs/localhost.crt -K ~/.office-addin-dev-certs/localhost.key -p 3100 --cors",
+    "dev:quick": "npx http-server -S -p 3100 --cors --ssl",
+    "sideload": "npx office-addin-dev-certs install && npx office-addin-debugging start manifest.xml",
+    "certs": "npx office-addin-dev-certs install"
+  },
+  "devDependencies": {
+    "http-server": "^14.1.1",
+    "office-addin-dev-certs": "^1.13.0",
+    "office-addin-debugging": "^5.1.0"
+  }
+}

@@ -60,10 +60,20 @@ export async function callLLM({
   jsonMode = false,
   routingContext = {},
   trackingMeta = {},
+  modelOverride = null,
 }) {
-  // 1. Resolve model via routing policy
-  const routing = await resolveModel(taskType, routingContext);
-  const { provider, model, tier, escalated, escalatedFrom } = routing;
+  // 1. Resolve model via routing policy (or use override from self-healing)
+  let provider, model, tier, escalated, escalatedFrom;
+  if (modelOverride?.provider && modelOverride?.model_name) {
+    provider = modelOverride.provider;
+    model = modelOverride.model_name;
+    tier = 'override';
+    escalated = true;
+    escalatedFrom = 'self_healing';
+  } else {
+    const routing = await resolveModel(taskType, routingContext);
+    ({ provider, model, tier, escalated, escalatedFrom } = routing);
+  }
 
   // 2. Determine default temperature by task type
   const effectiveTemp = temperature ?? _defaultTemperature(taskType);

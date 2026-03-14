@@ -53,6 +53,7 @@ ${clampText(domainSummary, 4000)}
 | REJECT | User wants to reject pending plans/POs | "Reject", "Cancel", "Don't approve" |
 | RUN_DIGITAL_TWIN | User wants to run a digital twin / supply chain simulation | "Run digital twin", "Simulate supply chain", "Run simulation with disaster scenario", "Digital twin analysis" |
 | ACCEPT_NEGOTIATION_OPTION | User wants to apply a negotiation option from the active negotiation panel | "Apply option 2", "Try budget increase", "Use opt_001", "Go with the recommended option", "Try option 3", "Accept the first option" |
+| ASSIGN_TASK | User wants the AI Employee to execute a complex multi-step task (report generation, data analysis, custom workflow) | "Generate monthly report", "Analyze risks and prepare summary", "Run analysis on uploaded data", "Prepare MBR deck", "做月報", "分析這份資料" |
 | GENERAL_CHAT | General question, greeting, or anything that doesn't fit above | "Hello", "What can you do?", "Explain supply chain optimization" |
 
 ## Entity Extraction Rules
@@ -80,7 +81,7 @@ ${clampText(domainSummary, 4000)}
 
 ## Output JSON Schema (must match exactly)
 {
-  "intent": "RUN_PLAN | RUN_FORECAST | RUN_WORKFLOW_A | RUN_WORKFLOW_B | QUERY_DATA | COMPARE_PLANS | CHANGE_PARAM | WHAT_IF | APPROVE | REJECT | GENERAL_CHAT | RUN_DIGITAL_TWIN | ACCEPT_NEGOTIATION_OPTION",
+  "intent": "RUN_PLAN | RUN_FORECAST | RUN_WORKFLOW_A | RUN_WORKFLOW_B | QUERY_DATA | COMPARE_PLANS | CHANGE_PARAM | WHAT_IF | APPROVE | REJECT | GENERAL_CHAT | RUN_DIGITAL_TWIN | ACCEPT_NEGOTIATION_OPTION | ASSIGN_TASK",
   "confidence": 0.0,
   "entities": {
     "budget_cap": null,
@@ -165,7 +166,7 @@ export function validateIntentContract(parsed) {
     'RUN_PLAN', 'RUN_FORECAST', 'RUN_WORKFLOW_A', 'RUN_WORKFLOW_B',
     'QUERY_DATA', 'COMPARE_PLANS', 'CHANGE_PARAM', 'WHAT_IF',
     'APPROVE', 'REJECT', 'GENERAL_CHAT', 'RUN_DIGITAL_TWIN',
-    'ACCEPT_NEGOTIATION_OPTION',
+    'ACCEPT_NEGOTIATION_OPTION', 'ASSIGN_TASK',
   ];
   if (!validIntents.includes(parsed.intent)) return false;
 

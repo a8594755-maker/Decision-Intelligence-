@@ -4,7 +4,7 @@ import AppShell from './layouts/AppShell';
 
 // Route-level code splitting — each page becomes a separate chunk
 const LoginPage = lazy(() => import('./pages/LoginPage'));
-const CommandCenter = lazy(() => import('./pages/CommandCenter'));
+const HomePage = lazy(() => import('./pages/HomePage'));
 const PlanStudio = lazy(() => import('./pages/PlanStudio'));
 const ForecastStudio = lazy(() => import('./pages/ForecastStudio'));
 const RiskCenter = lazy(() => import('./pages/RiskCenter'));
@@ -29,7 +29,7 @@ export const router = createBrowserRouter([
     path: '/',
     element: <AppShell />,
     children: [
-      { index: true, element: <CommandCenter /> },
+      { index: true, element: <HomePage /> },
       { path: 'plan', element: <PlanStudio /> },
       { path: 'forecast', element: <ForecastStudio /> },
       { path: 'risk', element: <RiskCenter /> },

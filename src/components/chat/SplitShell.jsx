@@ -14,7 +14,8 @@ export default function SplitShell({
   onCanvasToggle,
   initialSplitRatio = 0.5,
   onSplitRatioCommit,
-  canvasDetached = false
+  canvasDetached = false,
+  hideCanvasButton = false
 }) {
   const workRef = useRef(null);
   const frameRef = useRef(null);
@@ -178,8 +179,8 @@ export default function SplitShell({
           </div>
         )}
 
-        {/* Open Canvas button - shown when canvas is closed */}
-        {!canvasOpen ? (
+        {/* Open Canvas button - shown when canvas is closed (hidden in AI Employee mode) */}
+        {!canvasOpen && !hideCanvasButton ? (
           <button
             type="button"
             onClick={onCanvasToggle}
