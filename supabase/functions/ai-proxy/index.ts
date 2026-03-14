@@ -984,22 +984,40 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: 'Missing authorization header' }, 401, cors);
   }
 
-  const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
-    auth: {
-      autoRefreshToken: false,
-      persistSession: false,
-    },
-  });
-
   const token = authHeader.replace('Bearer ', '');
-  const {
-    data: { user },
-    error: authError,
-  } = await supabase.auth.getUser(token);
-  const authMs = Math.round(performance.now() - t0);
-  if (authError || !user) {
-    console.warn(`[ai-proxy] auth failed in ${authMs}ms`);
-    return jsonResponse({ error: 'Unauthorized', details: authError?.message || null }, 401, cors);
+
+  // Allow server-to-server calls:
+  // 1. Service role key as bearer token
+  // 2. DI_SERVER_API_KEY (shared secret between Python backend and Edge Function)
+  // 3. x-di-server header with value 'true' + apikey header (Python backend using anon key)
+  const serverKey = Deno.env.get('DI_SERVER_API_KEY') || '';
+  const isDiServer = req.headers.get('x-di-server') === 'true';
+  const isServerCall = (token === SUPABASE_SERVICE_ROLE_KEY) ||
+                       (serverKey && token === serverKey) ||
+                       isDiServer;
+
+  let authMs = 0;
+  if (!isServerCall) {
+    // Standard user auth via Supabase JWT
+    const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+      auth: {
+        autoRefreshToken: false,
+        persistSession: false,
+      },
+    });
+
+    const {
+      data: { user },
+      error: authError,
+    } = await supabase.auth.getUser(token);
+    authMs = Math.round(performance.now() - t0);
+    if (authError || !user) {
+      console.warn(`[ai-proxy] auth failed in ${authMs}ms`);
+      return jsonResponse({ error: 'Unauthorized', details: authError?.message || null }, 401, cors);
+    }
+  } else {
+    authMs = Math.round(performance.now() - t0);
+    console.log(`[ai-proxy] server-to-server call authenticated in ${authMs}ms`);
   }
 
   try {

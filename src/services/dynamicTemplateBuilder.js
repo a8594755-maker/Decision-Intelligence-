@@ -16,7 +16,7 @@ import { topologicalSort } from './chatTaskDecomposer';
 const DYNAMIC_PREFIX = 'dynamic_';
 
 // Steps that should be reviewed by the AI reviewer
-const AI_REVIEW_TYPES = new Set(['dynamic_tool', 'forecast', 'plan', 'risk', 'report', 'builtin_tool']);
+const AI_REVIEW_TYPES = new Set(['dynamic_tool', 'forecast', 'plan', 'risk', 'report', 'builtin_tool', 'python_tool', 'python_report']);
 
 // ── Builder ──────────────────────────────────────────────────────────────────
 

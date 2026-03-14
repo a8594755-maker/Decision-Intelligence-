@@ -163,4 +163,25 @@ function inferDataType(value) {
   return 'string';
 }
 
-export default { toPowerBIDataset, toExcelWithRefresh };
+// ── OpenCloud Upload ──────────────────────────────────────────────────────
+
+/**
+ * Upload DI artifacts to an OpenCloud drive.
+ * Delegates to opencloudArtifactSync for the actual upload.
+ *
+ * @param {object} artifacts - Prior step artifacts { step_name: artifact_refs[] }
+ * @param {string} driveId - OpenCloud drive ID
+ * @param {string} [folderPath] - Target folder path
+ * @returns {Promise<{ fileRefs: object[], artifact_ref: object|null }>}
+ */
+export async function toOpenCloudUpload(artifacts, driveId, folderPath) {
+  const { syncTaskOutputsToOpenCloud } = await import('./opencloudArtifactSync');
+  const allRefs = flattenArtifacts(artifacts);
+  return syncTaskOutputsToOpenCloud(
+    `export_${Date.now()}`,
+    driveId,
+    { artifactRefs: allRefs, employeeName: folderPath || 'exports' }
+  );
+}
+
+export default { toPowerBIDataset, toExcelWithRefresh, toOpenCloudUpload };

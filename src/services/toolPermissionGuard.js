@@ -25,6 +25,11 @@ export const PERMISSION_REGISTRY = {
   report:          ['can_generate_report'],
   export:          ['can_export'],
   builtin_tool:    ['can_run_builtin_tool'],
+  python_tool:     ['can_run_python_tool'],
+  python_report:   ['can_generate_report'],
+  // OpenCloud EU integration
+  opencloud_sync:   ['can_sync_opencloud'],
+  opencloud_import: ['can_import_opencloud'],
 };
 
 // ── Error ────────────────────────────────────────────────────────────────────

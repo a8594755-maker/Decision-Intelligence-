@@ -76,6 +76,9 @@ from ml.api.async_runs import (
 )
 from ml.api.excel_export import excel_export_router
 from ml.api.registry_router import router as registry_router
+from ml.api.tool_executor import tool_executor_router
+from ml.api.report_generator_pdf import report_generator_router
+from ml.api.claude_proxy import claude_proxy_router
 from ml.governance import (
     ActorContext,
     ApprovalError,
@@ -171,7 +174,11 @@ def _parse_allowed_origins(raw_value: str) -> List[str]:
 
 
 ALLOWED_ORIGINS = _parse_allowed_origins(
-    os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174")
+    os.getenv("ALLOWED_ORIGINS", ",".join([
+        f"http://{host}:{port}"
+        for host in ("localhost", "127.0.0.1")
+        for port in range(5173, 5180)
+    ]))
 )
 
 
@@ -193,6 +200,17 @@ app.add_middleware(
 
 app.include_router(excel_export_router)
 app.include_router(registry_router)
+app.include_router(tool_executor_router)
+app.include_router(report_generator_router)
+app.include_router(claude_proxy_router)
+
+# Agent SSE — real-time step progress streaming
+from ml.api.agent_sse_router import agent_sse_router
+app.include_router(agent_sse_router)
+
+# Server-side agent loop — runs full pipeline with shared workspace
+from ml.api.agent_loop_runner import agent_loop_router
+app.include_router(agent_loop_router)
 
 # Synthetic ERP Sandbox endpoints
 from ml.synthetic_erp.synthetic_router import router as synthetic_router

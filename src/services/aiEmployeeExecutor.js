@@ -78,6 +78,18 @@ function buildSummary(workflowType, result) {
       const rtool = result?.registered_tool;
       return `Registered tool executed. ${rtool?.artifact_refs?.length || 0} artifact(s) generated.`;
     }
+    case 'python_tool': {
+      const pt = result?.python_tool;
+      const artCount = pt?.artifacts?.length || result?.artifact_refs?.length || 0;
+      const totalRows = pt?.metadata?.total_rows || 0;
+      return `Python tool executed. ${artCount} artifact(s), ${totalRows} total rows. ${pt?.metadata?.description || ''}`.trim();
+    }
+    case 'python_report': {
+      const pr = result?.python_report;
+      const hasPdf = !!pr?.pdf_base64;
+      const hasHtml = !!pr?.html_preview;
+      return `Report generated (${[hasPdf && 'PDF', hasHtml && 'HTML'].filter(Boolean).join('+') || 'unknown'} format).`;
+    }
     case 'report':
       return `Report generated (${result?.report?.format || 'unknown'} format).`;
     case 'export':
@@ -114,7 +126,7 @@ export async function executeTask(task, userId) {
     task.input_context || {};
 
   if (!workflow_type) throw new Error('task.input_context.workflow_type is required');
-  const NO_DATASET_TYPES = ['synthesize', 'dynamic_tool', 'registered_tool', 'report', 'export'];
+  const NO_DATASET_TYPES = ['synthesize', 'dynamic_tool', 'registered_tool', 'report', 'export', 'builtin_tool', 'python_tool', 'python_report'];
   if (!dataset_profile_id && !NO_DATASET_TYPES.includes(workflow_type)) {
     throw new Error('task.input_context.dataset_profile_id is required');
   }
@@ -234,9 +246,9 @@ export async function executeTask(task, userId) {
         const existingCode = task.input_context?._tool_code || null;
         const toolArgs = {
           toolHint: task.input_context?._tool_hint || null,
-          inputData: task.input_context?._input_data || null,
+          inputData: task.input_context?._input_data || {},
           priorArtifacts: task.input_context?._prior_step_artifacts || {},
-          revisionInstructions: task.input_context?._revision_instructions || null,
+          revisionInstructions: task.input_context?._revision_instructions || [],
           datasetProfile: task.input_context?._dataset_profile || null,
           // Self-healing context
           modelOverride: task.input_context?._model_override || null,
@@ -306,6 +318,80 @@ export async function executeTask(task, userId) {
         break;
       }
 
+      case 'python_tool': {
+        const ML_API_URL = import.meta.env.VITE_ML_API_URL || 'http://localhost:8000';
+        // Build llm_config from routing decision
+        const ptLlmConfig = _routingDecision ? {
+          provider: _routingDecision.provider || 'gemini',
+          model: _routingDecision.model_name || null,
+          ...((_routingDecision.provider === 'openai' && /^(gpt-5|o[34])/.test(_routingDecision.model_name || ''))
+            ? { reasoning_effort: 'medium' }
+            : {}),
+        } : undefined;
+        const ptResponse = await fetch(`${ML_API_URL}/execute-tool`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            tool_hint: task.input_context?._tool_hint || task.title || '',
+            input_data: task.input_context?._input_data || {},
+            prior_artifacts: task.input_context?._prior_step_artifacts || {},
+            dataset_profile: task.input_context?._dataset_profile || null,
+            revision_instructions: task.input_context?._revision_instructions || null,
+            llm_config: ptLlmConfig,
+          }),
+        });
+        if (!ptResponse.ok) {
+          const errText = await ptResponse.text().catch(() => 'Unknown error');
+          throw new Error(`Python execute-tool failed (${ptResponse.status}): ${errText}`);
+        }
+        const ptData = await ptResponse.json();
+        if (!ptData.ok) {
+          throw new Error(`Python tool execution failed: ${ptData.error || 'Unknown error'}`);
+        }
+        result = {
+          python_tool: ptData,
+          artifact_refs: (ptData.artifacts || []).map((a) => ({
+            type: a.type,
+            label: a.label,
+            data: a.data,
+          })),
+        };
+        break;
+      }
+
+      case 'python_report': {
+        const ML_API_URL_R = import.meta.env.VITE_ML_API_URL || 'http://localhost:8000';
+        const prResponse = await fetch(`${ML_API_URL_R}/generate-report`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            artifacts: task.input_context?._prior_step_artifacts || {},
+            report_format: task.input_context?.report_format || 'pdf',
+            task_title: task.title || 'Business Report',
+            insights: task.input_context?._insights || null,
+            kpis: task.input_context?._kpis || null,
+            narrative: task.input_context?._narrative || null,
+          }),
+        });
+        if (!prResponse.ok) {
+          const errText = await prResponse.text().catch(() => 'Unknown error');
+          throw new Error(`Python generate-report failed (${prResponse.status}): ${errText}`);
+        }
+        const prData = await prResponse.json();
+        if (!prData.ok) {
+          throw new Error(`Report generation failed: ${prData.error || 'Unknown error'}`);
+        }
+        result = {
+          python_report: prData,
+          artifact_refs: (prData.artifacts || []).map((a) => ({
+            type: a.type,
+            label: a.label,
+            data: a.data,
+          })),
+        };
+        break;
+      }
+
       case 'builtin_tool': {
         // Generic dispatch through the builtin tool catalog.
         // The catalog entry tells us which module/method to call.
@@ -317,8 +403,14 @@ export async function executeTask(task, userId) {
 
         // Resolve dataset profile if the tool needs one
         let builtinProfileRow = profileRow;
-        if (catalogEntry.needs_dataset_profile && !builtinProfileRow && dataset_profile_id) {
+        if (catalogEntry.needs_dataset_profile && !builtinProfileRow) {
+          if (!dataset_profile_id) {
+            throw new Error(`Builtin tool "${builtinToolId}" requires a dataset profile, but no dataset has been uploaded or selected.`);
+          }
           builtinProfileRow = await datasetProfilesService.getDatasetProfileById(userId, dataset_profile_id);
+          if (!builtinProfileRow) {
+            throw new Error(`Dataset profile not found: ${dataset_profile_id}`);
+          }
         }
 
         // Dynamically import the module and call the method
@@ -437,6 +529,18 @@ export async function executeTask(task, userId) {
       });
     } catch (memErr) { console.warn('[aiEmployeeExecutor] writeMemory failed:', memErr?.message); }
 
+    // ── 11.5. OpenCloud auto-sync (best-effort) ──────────────────────────
+    try {
+      const { AUTO_SYNC_ENABLED, isOpenCloudConfigured } = await import('../config/opencloudConfig');
+      if (AUTO_SYNC_ENABLED && isOpenCloudConfigured()) {
+        const { syncTaskOutputsToOpenCloud, getDefaultDriveId } = await import('./opencloudArtifactSync');
+        const driveId = await getDefaultDriveId();
+        if (driveId) {
+          await syncTaskOutputsToOpenCloud(task.id, driveId, { artifactRefs });
+        }
+      }
+    } catch (ocErr) { console.warn('[aiEmployeeExecutor] OpenCloud sync failed:', ocErr?.message); }
+
     // ── 12. Notify: task completed (best-effort) ──────────────────────────
     try {
       const emp = await aiEmployeeService.getEmployee(task.employee_id);
@@ -543,9 +647,10 @@ export async function executeTask(task, userId) {
  */
 export async function executeTaskWithLoop(task, userId, opts = {}) {
   const templateId = task.template_id || task.input_context?.template_id;
+  console.log('[executeTaskWithLoop] taskId:', task?.id, 'templateId:', templateId, 'has_loop_state:', !!task?.loop_state);
 
   if (!templateId) {
-    // Legacy single-step path — no change
+    console.log('[executeTaskWithLoop] No templateId — falling back to single-step');
     return executeTask(task, userId);
   }
 
@@ -553,9 +658,12 @@ export async function executeTaskWithLoop(task, userId, opts = {}) {
   const { initAgentLoop, runAgentLoop } = await import('./agentLoopService');
 
   if (!task.loop_state) {
+    console.log('[executeTaskWithLoop] Initializing agent loop...');
     await initAgentLoop(task.id, userId);
+    console.log('[executeTaskWithLoop] Agent loop initialized');
   }
 
+  console.log('[executeTaskWithLoop] Running agent loop...');
   return runAgentLoop(task.id, userId, opts);
 }
 

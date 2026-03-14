@@ -32,6 +32,8 @@ import { buildReusePlan, applyContractTemplateToProfile } from '../../utils/reus
 import { APP_NAME } from '../../config/branding';
 import { executeChatCanvasRun } from '../../services/chatCanvasWorkflowService';
 import CanvasPanel from '../../components/chat/CanvasPanel';
+import AgentExecutionPanel from '../../components/chat/AgentExecutionPanel';
+import { useAgentSSE } from '../../hooks/useAgentSSE';
 import { checkNegotiationTrigger, runNegotiation } from '../../services/negotiation/negotiationOrchestrator';
 import SplitShell from '../../components/chat/SplitShell';
 import ConversationSidebar from '../../components/chat/ConversationSidebar';
@@ -119,6 +121,55 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
 
   const [isCanvasDetached, setIsCanvasDetached] = useState(false);
   const [isNegotiationGenerating, setIsNegotiationGenerating] = useState(false);
+
+  // ── Agent Execution Dashboard state ──────────────────────────────────────
+  const [agentExecEvents, setAgentExecEvents] = useState([]);
+  const [agentExecLoopState, setAgentExecLoopState] = useState(null);
+  const [agentExecTaskTitle, setAgentExecTaskTitle] = useState('');
+  const [agentExecPanelOpen, setAgentExecPanelOpen] = useState(false);
+  const [agentExecSSETaskId, setAgentExecSSETaskId] = useState(null);
+
+  // SSE connection for real-time agent step events (supplements onStepComplete callbacks)
+  const agentSSE = useAgentSSE(agentExecSSETaskId, {
+    enabled: agentExecPanelOpen && !!agentExecSSETaskId,
+    onStepEvent: (stepEvent) => {
+      // Pipe SSE step events into the panel's event list
+      setAgentExecEvents(prev => {
+        const idx = prev.findIndex(e => e.step_name === stepEvent.step_name);
+        if (idx >= 0) {
+          const updated = [...prev];
+          updated[idx] = { ...updated[idx], ...stepEvent };
+          return updated;
+        }
+        return [...prev, stepEvent];
+      });
+      // Update loop state: mark step as running/succeeded/failed
+      setAgentExecLoopState(prevLoop => {
+        if (!prevLoop?.steps) return prevLoop;
+        const updatedSteps = prevLoop.steps.map(s => {
+          if (s.name === stepEvent.step_name) {
+            return {
+              ...s,
+              status: stepEvent.status || s.status,
+              error: stepEvent.error || s.error,
+              started_at: s.started_at || new Date().toISOString(),
+              finished_at: ['succeeded', 'blocked', 'failed'].includes(stepEvent.status) ? new Date().toISOString() : s.finished_at,
+              artifact_refs: stepEvent.artifacts || s.artifact_refs,
+            };
+          }
+          return s;
+        });
+        return { ...prevLoop, steps: updatedSteps };
+      });
+    },
+    onLoopDone: (data) => {
+      appendMessagesToCurrentConversation([{
+        role: 'ai',
+        content: `All ${data.steps_completed || '?'}/${data.steps_total || '?'} step(s) completed on server. Data processed in-memory — no JSON round-trips.`,
+        timestamp: new Date().toISOString(),
+      }]);
+    },
+  });
 
   const alertMonitorRef = useRef(null);
   const textareaRef = useRef(null);
@@ -1619,24 +1670,110 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
                         }) : [];
                         return { sheets, sample_rows: sampleRows, file_name: pj.file_name || activeDatasetContext?.fileName };
                       })(),
+                      // Pass actual uploaded data to sandbox for processing
+                      _input_data: (() => {
+                        const rawRows = _rawRowsCache.get(String(datasetProfileId)) || activeDatasetContext?.rawRowsForStorage;
+                        if (!Array.isArray(rawRows) || rawRows.length === 0) return {};
+                        // Group rows by sheet name for multi-sheet workbooks
+                        const sheetMap = {};
+                        rawRows.forEach(row => {
+                          const sheetName = row.__sheet_name || 'Sheet1';
+                          if (!sheetMap[sheetName]) sheetMap[sheetName] = [];
+                          const clean = {};
+                          Object.entries(row).forEach(([k, v]) => {
+                            if (k !== '__rowNum' && k !== '__sheet_name') clean[k] = v;
+                          });
+                          sheetMap[sheetName].push(clean);
+                        });
+                        return { sheets: sheetMap, total_rows: rawRows.length };
+                      })(),
                     },
                     template_id: template.id,
                   }, user?.id);
 
-                  appendMessagesToCurrentConversation([{ role: 'ai', content: `On it! Executing ${template.steps.length} steps...`, timestamp: new Date().toISOString() }]);
+                  console.log('[DSV] Task created:', { id: task?.id, template_id: task?.template_id, ic_template_id: task?.input_context?.template_id, has_dynamic: !!task?.input_context?._dynamic_template });
 
-                  const loopResult = await executeTaskWithLoop(task, user?.id, {
-                    onStepComplete: (stepEvent) => {
-                      const healingNote = stepEvent.healing_strategy ? ` [self-healing: ${stepEvent.healing_strategy}]` : '';
-                      appendMessagesToCurrentConversation([{ role: 'ai', content: `Step "${stepEvent.step_name}": ${stepEvent.summary || stepEvent.status}${stepEvent.error ? ` — ${stepEvent.error}` : ''}${healingNote}`, timestamp: new Date().toISOString() }]);
-                    },
-                  });
+                  // Open execution dashboard + enable SSE
+                  setAgentExecEvents([]);
+                  setAgentExecTaskTitle(messageText.slice(0, 80));
+                  setAgentExecPanelOpen(true);
+                  setAgentExecSSETaskId(task?.id || null);
 
-                  const completedCount = loopResult.completed_steps?.length || 0;
-                  const statusMsg = loopResult.halted_at
-                    ? `Done with ${completedCount} step(s). Paused at "${loopResult.halted_at}" — waiting for your review.`
-                    : `All ${completedCount} step(s) completed. Head to Review to check the results.`;
-                  appendMessagesToCurrentConversation([{ role: 'ai', content: statusMsg, timestamp: new Date().toISOString() }]);
+                  // ── Server-side vs. client-side dispatch ─────────────────────
+                  // If all steps are python_tool/python_report, use server-side loop
+                  // (data stays in memory as DataFrames, no JSON round-trips)
+                  const allPythonSteps = template.steps.every(s =>
+                    ['python_tool', 'python_report'].includes(s.workflow_type)
+                  );
+                  const ML_API = import.meta.env.VITE_ML_API_URL || 'http://localhost:8000';
+
+                  if (allPythonSteps && task?.input_context?._input_data?.sheets) {
+                    appendMessagesToCurrentConversation([{ role: 'ai', content: `Server-side execution: ${template.steps.length} steps with shared workspace (data stays in memory). Watch real-time progress →`, timestamp: new Date().toISOString() }]);
+
+                    const sseTaskId = task.id || `task-${Date.now()}`;
+
+                    // Build initial loop_state for the dashboard
+                    const initLoopSteps = template.steps.map((s, i) => ({
+                      name: s.name || s.step_name, index: i,
+                      status: 'pending', workflow_type: s.workflow_type,
+                      retry_count: 0, started_at: null, finished_at: null,
+                    }));
+                    setAgentExecLoopState({ steps: initLoopSteps, started_at: new Date().toISOString() });
+
+                    // Set SSE task ID FIRST so useAgentSSE connects before the async call
+                    setAgentExecSSETaskId(sseTaskId);
+
+                    // Fire-and-forget: start server-side agent loop ASYNC
+                    // SSE events will drive the real-time dashboard
+                    fetch(`${ML_API}/agent/run-async`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        task_id: sseTaskId,
+                        steps: template.steps.map(s => ({
+                          name: s.name || s.step_name,
+                          workflow_type: s.workflow_type,
+                          tool_hint: s.tool_hint || s.description || '',
+                        })),
+                        input_data: task.input_context._input_data,
+                        dataset_profile: task.input_context._dataset_profile || null,
+                        llm_config: { provider: 'anthropic', model: 'claude-sonnet-4-6', temperature: 0.15, max_tokens: 4096 },
+                      }),
+                    }).then(res => res.json()).then(data => {
+                      if (!data.ok) {
+                        appendMessagesToCurrentConversation([{ role: 'ai', content: `Server-side loop failed to start: ${data.error || 'unknown error'}`, timestamp: new Date().toISOString() }]);
+                      }
+                    }).catch(err => {
+                      appendMessagesToCurrentConversation([{ role: 'ai', content: `Server connection error: ${err.message}`, timestamp: new Date().toISOString() }]);
+                    });
+
+                    // Progress is now driven by SSE events via useAgentSSE hook
+                    // The AgentExecutionPanel will update in real-time as events arrive
+                  } else {
+                    // ── Fallback: client-side loop (for mixed workflow types) ──
+                    appendMessagesToCurrentConversation([{ role: 'ai', content: `Executing ${template.steps.length} steps...`, timestamp: new Date().toISOString() }]);
+
+                    const loopResult = await executeTaskWithLoop(task, user?.id, {
+                      onStepComplete: (stepEvent) => {
+                        setAgentExecEvents(prev => [...prev, stepEvent]);
+                        if (stepEvent.task?.loop_state) {
+                          setAgentExecLoopState(stepEvent.task.loop_state);
+                        }
+                        const healingNote = stepEvent.healing_strategy ? ` [self-healing: ${stepEvent.healing_strategy}]` : '';
+                        appendMessagesToCurrentConversation([{ role: 'ai', content: `Step "${stepEvent.step_name}": ${stepEvent.summary || stepEvent.status}${stepEvent.error ? ` — ${stepEvent.error}` : ''}${healingNote}`, timestamp: new Date().toISOString() }]);
+                      },
+                    });
+
+                    if (loopResult.task?.loop_state) {
+                      setAgentExecLoopState(loopResult.task.loop_state);
+                    }
+
+                    const completedCount = loopResult.completed_steps?.length || 0;
+                    const statusMsg = loopResult.halted_at
+                      ? `Done with ${completedCount} step(s). Paused at "${loopResult.halted_at}" — waiting for your review.`
+                      : `All ${completedCount} step(s) completed. Head to Review to check the results.`;
+                    appendMessagesToCurrentConversation([{ role: 'ai', content: statusMsg, timestamp: new Date().toISOString() }]);
+                  }
                 } catch (execErr) {
                   appendMessagesToCurrentConversation([{ role: 'ai', content: `Task execution failed: ${execErr?.message || 'Unknown error'}`, timestamp: new Date().toISOString() }]);
                 }
@@ -1727,6 +1864,38 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
                         template_id: template.id,
                         _dynamic_template: template,
                         report_format: decomposition.report_format,
+                        _dataset_profile: (() => {
+                          const pj = activeDatasetContext?.profileJson;
+                          if (!pj?.sheets) return null;
+                          const sheets = pj.sheets.map(s => ({
+                            sheet_name: s.sheet_name,
+                            columns: s.original_headers || s.normalized_headers || [],
+                            row_count: s.row_count || 0,
+                            likely_role: s.likely_role,
+                          }));
+                          const rawRows = _rawRowsCache.get(String(datasetProfileId)) || activeDatasetContext?.rawRowsForStorage;
+                          const sampleRows = Array.isArray(rawRows) ? rawRows.slice(0, 5).map(r => {
+                            const clean = {};
+                            Object.entries(r).forEach(([k, v]) => { if (k !== '__rowNum' && k !== '__sheet_name' && v != null) clean[k] = v; });
+                            return clean;
+                          }) : [];
+                          return { sheets, sample_rows: sampleRows, file_name: pj.file_name || activeDatasetContext?.fileName };
+                        })(),
+                        _input_data: (() => {
+                          const rawRows = _rawRowsCache.get(String(datasetProfileId)) || activeDatasetContext?.rawRowsForStorage;
+                          if (!Array.isArray(rawRows) || rawRows.length === 0) return {};
+                          const sheetMap = {};
+                          rawRows.forEach(row => {
+                            const sheetName = row.__sheet_name || 'Sheet1';
+                            if (!sheetMap[sheetName]) sheetMap[sheetName] = [];
+                            const clean = {};
+                            Object.entries(row).forEach(([k, v]) => {
+                              if (k !== '__rowNum' && k !== '__sheet_name') clean[k] = v;
+                            });
+                            sheetMap[sheetName].push(clean);
+                          });
+                          return { sheets: sheetMap, total_rows: rawRows.length };
+                        })(),
                       },
                       template_id: template.id,
                     }, user?.id);
@@ -1737,9 +1906,19 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
                       timestamp: new Date().toISOString(),
                     }]);
 
+                    // Open execution dashboard + enable SSE
+                    setAgentExecEvents([]);
+                    setAgentExecTaskTitle((userMessage || messageText).slice(0, 80));
+                    setAgentExecPanelOpen(true);
+                    setAgentExecSSETaskId(task?.id || null);
+
                     // 4. Execute the task with agent loop
                     const loopResult = await executeTaskWithLoop(task, user?.id, {
                       onStepComplete: (stepEvent) => {
+                        setAgentExecEvents(prev => [...prev, stepEvent]);
+                        if (stepEvent.task?.loop_state) {
+                          setAgentExecLoopState(stepEvent.task.loop_state);
+                        }
                         appendMessagesToCurrentConversation([{
                           role: 'ai',
                           content: `Step "${stepEvent.step_name}": ${stepEvent.summary || stepEvent.status}`,
@@ -1747,6 +1926,11 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
                         }]);
                       },
                     });
+
+                    // Update final loop state for dashboard
+                    if (loopResult.task?.loop_state) {
+                      setAgentExecLoopState(loopResult.task.loop_state);
+                    }
 
                     // 5. Final status message
                     const completedCount = loopResult.completed_steps?.length || 0;
@@ -1986,30 +2170,40 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
             )}
           </div>
         )}
-        canvas={(
-          <CanvasPanel
-            onToggleOpen={isCanvasDetached ? () => { setIsCanvasDetached(false); handleCanvasToggle(); } : handleCanvasToggle}
-            onPopout={isCanvasDetached ? () => setIsCanvasDetached(false) : () => setIsCanvasDetached(true)}
-            isDetached={isCanvasDetached}
-            activeTab={activeCanvasState.activeTab}
-            onTabChange={(tabId) => { if (!currentConversationId) return; updateCanvasState(currentConversationId, (prev) => ({ ...prev, activeTab: tabId })); }}
-            run={activeCanvasState.run} logs={activeCanvasState.logs} stepStatuses={activeCanvasState.stepStatuses}
-            codeText={activeCanvasState.codeText} chartPayload={effectiveCanvasChartPayload}
-            forecastSeriesGroups={forecastSeriesGroups} downloads={activeCanvasState.downloads}
-            topologyGraph={effectiveCanvasChartPayload.topology_graph || null} topologyRunId={topologyRunId}
-            onRunTopology={handleRunTopology} topologyRunning={Boolean(activeCanvasState.topologyRunning)}
-            userId={user?.id || null} latestPlanRunId={latestPlanRunId}
-            datasetProfileId={activeDatasetContext?.dataset_profile_id || null}
-            datasetProfileRow={activeDatasetContext?.dataset_profile_id ? {
-              id: activeDatasetContext.dataset_profile_id, user_file_id: activeDatasetContext.user_file_id || null,
-              profile_json: activeDatasetContext.profileJson || {}, contract_json: activeDatasetContext.contractJson || {}
-            } : null}
-          />
-        )}
+        canvas={
+          isAIEmployeeMode && agentExecPanelOpen ? (
+            <AgentExecutionPanel
+              loopState={agentExecLoopState}
+              stepEvents={agentExecEvents}
+              taskTitle={agentExecTaskTitle}
+              onClose={() => { setAgentExecPanelOpen(false); setAgentExecSSETaskId(null); }}
+              sseConnected={agentSSE.connected}
+            />
+          ) : (
+            <CanvasPanel
+              onToggleOpen={isCanvasDetached ? () => { setIsCanvasDetached(false); handleCanvasToggle(); } : handleCanvasToggle}
+              onPopout={isCanvasDetached ? () => setIsCanvasDetached(false) : () => setIsCanvasDetached(true)}
+              isDetached={isCanvasDetached}
+              activeTab={activeCanvasState.activeTab}
+              onTabChange={(tabId) => { if (!currentConversationId) return; updateCanvasState(currentConversationId, (prev) => ({ ...prev, activeTab: tabId })); }}
+              run={activeCanvasState.run} logs={activeCanvasState.logs} stepStatuses={activeCanvasState.stepStatuses}
+              codeText={activeCanvasState.codeText} chartPayload={effectiveCanvasChartPayload}
+              forecastSeriesGroups={forecastSeriesGroups} downloads={activeCanvasState.downloads}
+              topologyGraph={effectiveCanvasChartPayload.topology_graph || null} topologyRunId={topologyRunId}
+              onRunTopology={handleRunTopology} topologyRunning={Boolean(activeCanvasState.topologyRunning)}
+              userId={user?.id || null} latestPlanRunId={latestPlanRunId}
+              datasetProfileId={activeDatasetContext?.dataset_profile_id || null}
+              datasetProfileRow={activeDatasetContext?.dataset_profile_id ? {
+                id: activeDatasetContext.dataset_profile_id, user_file_id: activeDatasetContext.user_file_id || null,
+                profile_json: activeDatasetContext.profileJson || {}, contract_json: activeDatasetContext.contractJson || {}
+              } : null}
+            />
+          )
+        }
         sidebarCollapsed={isSidebarCollapsed} onSidebarToggle={handleSidebarToggle}
-        canvasOpen={isAIEmployeeMode ? false : Boolean(activeCanvasState.isOpen)} onCanvasToggle={handleCanvasToggle}
+        canvasOpen={isAIEmployeeMode ? agentExecPanelOpen : Boolean(activeCanvasState.isOpen)} onCanvasToggle={isAIEmployeeMode ? () => setAgentExecPanelOpen(p => !p) : handleCanvasToggle}
         initialSplitRatio={splitRatio} onSplitRatioCommit={handleSplitRatioCommit} canvasDetached={isCanvasDetached}
-        hideCanvasButton={isAIEmployeeMode}
+        hideCanvasButton={isAIEmployeeMode && !agentExecPanelOpen}
       />
 
       {showNewChatConfirm && (

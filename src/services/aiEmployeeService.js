@@ -15,6 +15,9 @@ import { supabase } from './supabaseClient';
 const LOCAL_KEY = 'ai_employee_local_v1';
 const MAX_LOCAL_ENTRIES = 500;
 
+// In-memory cache for large data that doesn't fit in localStorage (e.g. uploaded Excel rows)
+const _taskDataCache = new Map();
+
 // ── Local store helpers ────────────────────────────────────────────────────
 
 function getLocalStore() {
@@ -97,6 +100,8 @@ export async function getOrCreateAiden(userId) {
         can_run_builtin_tool: true, can_run_dynamic_tool: true,
         can_run_registered_tool: true, can_generate_report: true,
         can_export: true, can_write_worklog: true, can_submit_review: true,
+        can_run_python_tool: true,
+        can_sync_opencloud: true, can_import_opencloud: true,
       };
       const currentPerms = existing.permissions || {};
       const missingKeys = Object.keys(requiredPerms).filter(k => !currentPerms[k]);
@@ -132,6 +137,9 @@ export async function getOrCreateAiden(userId) {
           can_export: true,
           can_write_worklog: true,
           can_submit_review: true,
+          can_run_python_tool: true,
+          can_sync_opencloud: true,
+          can_import_opencloud: true,
         },
       })
       .select()
@@ -142,11 +150,11 @@ export async function getOrCreateAiden(userId) {
     return created;
   });
 
-  if (sbResult) return sbResult;
+  if (sbResult?.id) return sbResult;
 
   // Local fallback
   const store = getLocalStore();
-  const allPerms = { can_run_forecast: true, can_run_plan: true, can_run_risk: true, can_run_builtin_tool: true, can_run_dynamic_tool: true, can_run_registered_tool: true, can_generate_report: true, can_export: true, can_write_worklog: true, can_submit_review: true };
+  const allPerms = { can_run_forecast: true, can_run_plan: true, can_run_risk: true, can_run_builtin_tool: true, can_run_dynamic_tool: true, can_run_registered_tool: true, can_generate_report: true, can_export: true, can_write_worklog: true, can_submit_review: true, can_run_python_tool: true, can_sync_opencloud: true, can_import_opencloud: true };
   let aiden = store.employees.find((e) => e.name === 'Aiden');
   if (!aiden) {
     aiden = {
@@ -183,7 +191,7 @@ export async function getEmployee(employeeId) {
     if (error) throw error;
     return data;
   });
-  if (sbResult) return sbResult;
+  if (sbResult?.id) return sbResult;
 
   const store = getLocalStore();
   return store.employees.find((e) => e.id === employeeId) || null;
@@ -200,7 +208,7 @@ export async function updateEmployeeStatus(employeeId, status) {
     if (error) throw error;
     return data;
   });
-  if (sbResult) return sbResult;
+  if (sbResult?.id) return sbResult;
 
   const store = getLocalStore();
   const emp = store.employees.find((e) => e.id === employeeId);
@@ -288,10 +296,18 @@ export async function getTask(taskId) {
     if (error) throw error;
     return data;
   });
-  if (sbResult) return sbResult;
+  if (sbResult?.id) return sbResult;
 
   const store = getLocalStore();
-  return store.tasks.find((t) => t.id === taskId) || null;
+  const local = store.tasks.find((t) => t.id === taskId) || null;
+  if (!local && sbResult) {
+    console.warn('[getTask] Supabase returned incomplete result (no id), local not found. sbResult keys:', Object.keys(sbResult));
+  }
+  // Re-inject cached large data if available
+  if (local && _taskDataCache.has(taskId) && !local.input_context?._input_data) {
+    local.input_context = { ...(local.input_context || {}), _input_data: _taskDataCache.get(taskId) };
+  }
+  return local;
 }
 
 export async function createTask(employeeId, {
@@ -303,28 +319,39 @@ export async function createTask(employeeId, {
   due_at = null,
   assigned_by_user_id = null,
   source_type = 'manual',
+  template_id = null,
 }) {
   const sbResult = await trySupabase(async () => {
+    const insertPayload = {
+      employee_id: employeeId,
+      title,
+      description,
+      priority,
+      status: 'todo',
+      source_type,
+      assigned_by_user_id,
+      due_at,
+      input_context,
+      expected_output,
+    };
+    if (template_id) insertPayload.template_id = template_id;
     const { data, error } = await supabase
       .from('ai_employee_tasks')
-      .insert({
-        employee_id: employeeId,
-        title,
-        description,
-        priority,
-        status: 'todo',
-        source_type,
-        assigned_by_user_id,
-        due_at,
-        input_context,
-        expected_output,
-      })
+      .insert(insertPayload)
       .select()
       .single();
     if (error) throw error;
     return data;
   });
-  if (sbResult) return sbResult;
+  // Only use Supabase result if it has a valid id (mock/offline may return incomplete objects)
+  if (sbResult?.id) return sbResult;
+
+  // Separate large data from input_context to avoid localStorage quota issues
+  const inputDataPayload = input_context?._input_data || null;
+  const storableInputContext = { ...input_context };
+  if (inputDataPayload && JSON.stringify(inputDataPayload).length > 50_000) {
+    delete storableInputContext._input_data;
+  }
 
   const task = {
     id: localId('task'),
@@ -334,9 +361,10 @@ export async function createTask(employeeId, {
     priority,
     status: 'todo',
     source_type,
+    template_id: template_id || input_context?.template_id || null,
     assigned_by_user_id,
     due_at,
-    input_context,
+    input_context: storableInputContext,
     expected_output,
     latest_run_id: null,
     created_at: now(),
@@ -345,6 +373,12 @@ export async function createTask(employeeId, {
   const store = getLocalStore();
   store.tasks.push(task);
   setLocalStore(store);
+
+  // Cache large data in memory and restore on the returned task object
+  if (inputDataPayload) {
+    _taskDataCache.set(task.id, inputDataPayload);
+    task.input_context._input_data = inputDataPayload;
+  }
   return task;
 }
 
@@ -365,7 +399,8 @@ export async function updateTaskLoopState(taskId, loopState) {
     if (error) throw error;
     return data;
   });
-  if (sbResult) return sbResult;
+  // Only trust Supabase result if it has a valid id (mock may return incomplete)
+  if (sbResult?.id) return sbResult;
 
   const store = getLocalStore();
   const task = store.tasks.find((t) => t.id === taskId);
@@ -392,7 +427,7 @@ export async function updateTaskStatus(taskId, status, latestRunId = undefined) 
     if (error) throw error;
     return data;
   });
-  if (sbResult) return sbResult;
+  if (sbResult?.id) return sbResult;
 
   const store = getLocalStore();
   const task = store.tasks.find((t) => t.id === taskId);
@@ -425,7 +460,7 @@ export async function createRun(taskId, employeeId, { step_index, step_name } = 
     if (error) throw error;
     return data;
   });
-  if (sbResult) return sbResult;
+  if (sbResult?.id) return sbResult;
 
   const run = {
     id: localId('run'),
@@ -460,7 +495,7 @@ export async function updateRun(runId, { status, summary, error_message, artifac
     if (error) throw error;
     return data;
   });
-  if (sbResult) return sbResult;
+  if (sbResult?.id) return sbResult;
 
   const store = getLocalStore();
   const run = store.runs.find((r) => r.id === runId);
@@ -479,7 +514,7 @@ export async function getRun(runId) {
     if (error) throw error;
     return data;
   });
-  if (sbResult) return sbResult;
+  if (sbResult?.id) return sbResult;
 
   const store = getLocalStore();
   return store.runs.find((r) => r.id === runId) || null;
@@ -495,7 +530,7 @@ export async function listRunsForTask(taskId) {
     if (error) throw error;
     return data;
   });
-  if (sbResult) return sbResult;
+  if (sbResult?.id) return sbResult;
 
   const store = getLocalStore();
   return store.runs
@@ -525,7 +560,7 @@ export async function createReview(taskId, runId, { decision, comments = null, c
     if (error) throw error;
     return data;
   });
-  if (sbResult) return sbResult;
+  if (sbResult?.id) return sbResult;
 
   const review = {
     id: localId('rev'),
@@ -553,7 +588,7 @@ export async function listReviewsForTask(taskId) {
     if (error) throw error;
     return data;
   });
-  if (sbResult) return sbResult;
+  if (sbResult?.id) return sbResult;
 
   const store = getLocalStore();
   return store.reviews
@@ -629,7 +664,7 @@ export async function appendWorklog(employeeId, taskId, runId, logType, content)
     if (error) throw error;
     return data;
   });
-  if (sbResult) return sbResult;
+  if (sbResult?.id) return sbResult;
 
   const entry = {
     id: localId('log'),
@@ -704,7 +739,7 @@ export async function getKpis(employeeId) {
     if (error) throw error;
     return data;
   });
-  if (sbResult) return sbResult;
+  if (sbResult?.id) return sbResult;
 
   // Compute from local store
   const store = getLocalStore();

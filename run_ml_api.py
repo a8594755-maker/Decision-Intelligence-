@@ -21,6 +21,11 @@ try:
         os.environ["DEEPSEEK_API_KEY"] = os.getenv("VITE_DEEPSEEK_API_KEY")
     if not os.getenv("DEEPSEEK_BASE_URL") and os.getenv("VITE_DI_DEEPSEEK_BASE_URL"):
         os.environ["DEEPSEEK_BASE_URL"] = os.getenv("VITE_DI_DEEPSEEK_BASE_URL")
+    # Supabase — needed for ai-proxy (routes Claude/OpenAI/Gemini through Edge Function)
+    if not os.getenv("SUPABASE_URL") and os.getenv("VITE_SUPABASE_URL"):
+        os.environ["SUPABASE_URL"] = os.getenv("VITE_SUPABASE_URL")
+    if not os.getenv("SUPABASE_ANON_KEY") and os.getenv("VITE_SUPABASE_ANON_KEY"):
+        os.environ["SUPABASE_ANON_KEY"] = os.getenv("VITE_SUPABASE_ANON_KEY")
 except ImportError:
     print("⚠️ python-dotenv not installed, reading env vars from system only")
 

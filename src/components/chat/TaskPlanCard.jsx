@@ -271,7 +271,7 @@ export default function TaskPlanCard({ decomposition, onApprove, onCancel, onEdi
           </button>
         )}
         <button
-          onClick={() => onApprove(decomposition)}
+          onClick={() => typeof onApprove === 'function' ? onApprove(decomposition) : console.warn('[TaskPlanCard] onApprove is not a function — message may have been restored from cache')}
           disabled={disabled}
           style={{
             padding: '8px 20px', borderRadius: 8,

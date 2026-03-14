@@ -33,6 +33,10 @@ httpx==0.24.1
 # Excel Export
 openpyxl==3.1.2
 
+# PDF & Charts (for /generate-report)
+matplotlib>=3.8.0
+fpdf2>=2.7.0
+
 # Authentication
 PyJWT==2.8.0
 

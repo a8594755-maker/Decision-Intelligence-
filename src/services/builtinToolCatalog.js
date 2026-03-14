@@ -468,6 +468,93 @@ export const BUILTIN_TOOLS = [
       chaos_intensity: 'number|null',
     },
   },
+  // ── OpenCloud EU Integration ───────────────────────────────────────────
+
+  {
+    id: 'opencloud_import_dataset',
+    name: 'Import Dataset from OpenCloud',
+    description: 'Download a file from OpenCloud drive and create a dataset profile for DI analysis.',
+    category: TOOL_CATEGORY.UTILITY,
+    keywords_en: ['opencloud', 'import', 'cloud file', 'drive', 'download dataset', 'cloud import'],
+    keywords_zh: ['雲端匯入', '雲端檔案', '下載資料', '雲端導入', '開放雲'],
+    module: './opencloudArtifactSync',
+    method: 'importDatasetFromOpenCloud',
+    tier: 'tier_c',
+    required_datasets: [],
+    output_artifacts: ['data_quality_report'],
+    depends_on: [],
+    needs_dataset_profile: false,
+    input_schema: {
+      driveId: 'string',
+      itemId: 'string',
+      userId: 'string',
+      itemMeta: 'object|null (optional: name, size, mimeType)',
+    },
+  },
+
+  {
+    id: 'opencloud_publish_report',
+    name: 'Publish Report to OpenCloud',
+    description: 'Upload all task artifacts and reports to an OpenCloud drive space for team access.',
+    category: TOOL_CATEGORY.UTILITY,
+    keywords_en: ['publish', 'upload', 'share report', 'opencloud', 'distribute', 'cloud publish'],
+    keywords_zh: ['發布', '上傳', '分享報告', '雲端發布', '雲端上傳'],
+    module: './opencloudArtifactSync',
+    method: 'syncTaskOutputsToOpenCloud',
+    tier: 'tier_c',
+    required_datasets: [],
+    output_artifacts: ['opencloud_file_ref'],
+    depends_on: [],
+    needs_dataset_profile: false,
+    input_schema: {
+      taskId: 'string',
+      driveId: 'string',
+      opts: 'object|null (optional: employeeName, loopState, artifactRefs)',
+    },
+  },
+
+  {
+    id: 'opencloud_share',
+    name: 'Share via OpenCloud',
+    description: 'Send a share invitation for a file or folder to a team member via OpenCloud.',
+    category: TOOL_CATEGORY.UTILITY,
+    keywords_en: ['share', 'send', 'invite', 'collaborate', 'permission', 'opencloud share'],
+    keywords_zh: ['分享', '邀請', '協作', '權限', '共享'],
+    module: './opencloudClientService',
+    method: 'sendShareInvitation',
+    tier: 'tier_c',
+    required_datasets: [],
+    output_artifacts: ['opencloud_file_ref'],
+    depends_on: [],
+    needs_dataset_profile: false,
+    input_schema: {
+      driveId: 'string',
+      itemId: 'string',
+      recipientEmail: 'string',
+      role: 'string (viewer|editor)',
+    },
+  },
+
+  {
+    id: 'opencloud_list_files',
+    name: 'Browse OpenCloud Files',
+    description: 'List files and folders in an OpenCloud drive for browsing or selection.',
+    category: TOOL_CATEGORY.UTILITY,
+    keywords_en: ['list files', 'browse', 'opencloud files', 'drive contents', 'cloud browse'],
+    keywords_zh: ['瀏覽檔案', '列出檔案', '雲端檔案', '檔案清單'],
+    module: './opencloudArtifactSync',
+    method: 'browseFiles',
+    tier: 'tier_c',
+    required_datasets: [],
+    output_artifacts: [],
+    depends_on: [],
+    needs_dataset_profile: false,
+    input_schema: {
+      driveId: 'string',
+      folderId: 'string|null',
+      opts: 'object|null (optional: filter)',
+    },
+  },
 ];
 
 // ── Lookup indexes ──────────────────────────────────────────────────────────
@@ -540,10 +627,11 @@ export function findToolsByQuery(query, opts = {}) {
     // Require stronger signal for longer messages to avoid false positives.
     // Short messages (< 15 tokens): score >= 2 is fine.
     // Medium messages (15-50 tokens): score >= 5 (multiple exact keyword matches).
-    // Long messages (50+ tokens): score >= 10 (very strong match required — long
+    // Long messages (50-100 tokens): score >= 10 (strong match required).
+    // Very long messages (100+ tokens): score >= 20 (very strong match — long
     //   messages are usually general analysis requests that incidentally contain
-    //   supply chain keywords like "forecast" or "plan").
-    const minScore = tokens.length > 50 ? 10 : tokens.length > 15 ? 5 : 2;
+    //   supply chain keywords like "forecast", "revenue", "risk", "plan").
+    const minScore = tokens.length > 100 ? 20 : tokens.length > 50 ? 10 : tokens.length > 15 ? 5 : 2;
     if (score >= minScore) {
       scored.push({ tool, score });
     }

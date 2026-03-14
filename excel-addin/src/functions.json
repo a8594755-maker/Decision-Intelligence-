@@ -1,0 +1,136 @@
+{
+  "allowCustomDataForDataTypeAny": true,
+  "functions": [
+    {
+      "id": "CLAUDE",
+      "name": "CLAUDE",
+      "description": "Ask Claude a question. Optionally provide cell data as context.",
+      "parameters": [
+        {
+          "name": "prompt",
+          "description": "The question or instruction for Claude",
+          "type": "string",
+          "dimensionality": "scalar"
+        },
+        {
+          "name": "context",
+          "description": "Optional cell data to include as context",
+          "type": "string",
+          "dimensionality": "scalar",
+          "optional": true
+        }
+      ],
+      "result": {
+        "type": "string",
+        "dimensionality": "scalar"
+      },
+      "options": {
+        "requiresAddress": false,
+        "volatile": false
+      }
+    },
+    {
+      "id": "DI_KPI",
+      "name": "DI_KPI",
+      "description": "Calculate a specific KPI using Claude's analysis.",
+      "parameters": [
+        {
+          "name": "metric",
+          "description": "The KPI to calculate (e.g. revenue growth rate)",
+          "type": "string",
+          "dimensionality": "scalar"
+        },
+        {
+          "name": "data",
+          "description": "Optional data context from cells",
+          "type": "string",
+          "dimensionality": "scalar",
+          "optional": true
+        }
+      ],
+      "result": {
+        "type": "string",
+        "dimensionality": "scalar"
+      },
+      "options": {
+        "requiresAddress": false,
+        "volatile": false
+      }
+    },
+    {
+      "id": "DI_ANALYZE",
+      "name": "DI_ANALYZE",
+      "description": "Analyze data with Claude and return structured insights.",
+      "parameters": [
+        {
+          "name": "instruction",
+          "description": "What analysis to perform",
+          "type": "string",
+          "dimensionality": "scalar"
+        },
+        {
+          "name": "data",
+          "description": "The data to analyze",
+          "type": "string",
+          "dimensionality": "scalar"
+        }
+      ],
+      "result": {
+        "type": "string",
+        "dimensionality": "scalar"
+      },
+      "options": {
+        "requiresAddress": false,
+        "volatile": false
+      }
+    },
+    {
+      "id": "DI_TRANSLATE",
+      "name": "DI_TRANSLATE",
+      "description": "Translate text to another language using Claude.",
+      "parameters": [
+        {
+          "name": "text",
+          "description": "The text to translate",
+          "type": "string",
+          "dimensionality": "scalar"
+        },
+        {
+          "name": "language",
+          "description": "Target language (e.g. English, Chinese, Japanese)",
+          "type": "string",
+          "dimensionality": "scalar"
+        }
+      ],
+      "result": {
+        "type": "string",
+        "dimensionality": "scalar"
+      },
+      "options": {
+        "requiresAddress": false,
+        "volatile": false
+      }
+    },
+    {
+      "id": "DI_FORMULA",
+      "name": "DI_FORMULA",
+      "description": "Generate an Excel formula from a natural language description.",
+      "parameters": [
+        {
+          "name": "description",
+          "description": "What the formula should do",
+          "type": "string",
+          "dimensionality": "scalar"
+        }
+      ],
+      "result": {
+        "type": "string",
+        "dimensionality": "scalar"
+      },
+      "options": {
+        "requiresAddress": false,
+        "volatile": false
+      }
+    }
+  ]
+}

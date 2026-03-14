@@ -7,11 +7,11 @@
   xsi:type="TaskPaneApp">
 
   <Id>a1b2c3d4-e5f6-7890-abcd-ef1234567890</Id>
-  <Version>1.0.0</Version>
+  <Version>1.1.0</Version>
   <ProviderName>Decision Intelligence</ProviderName>
   <DefaultLocale>en-US</DefaultLocale>
   <DisplayName DefaultValue="SmartOps DI Reports" />
-  <Description DefaultValue="Pull AI-generated supply chain reports, forecasts, and KPIs directly into Excel." />
+  <Description DefaultValue="AI-powered supply chain analysis with Claude. Use =CLAUDE() formulas and the taskpane for reports, KPIs, and dashboards." />
 
   <IconUrl DefaultValue="https://127.0.0.1:3100/assets/icon-32.png" />
   <HighResolutionIconUrl DefaultValue="https://127.0.0.1:3100/assets/icon-64.png" />
@@ -30,6 +30,21 @@
   <VersionOverrides xmlns="http://schemas.microsoft.com/office/taskpaneappversionoverrides" xsi:type="VersionOverridesV1_0">
     <Hosts>
       <Host xsi:type="Workbook">
+        <AllFormFactors>
+          <ExtensionPoint xsi:type="CustomFunctions">
+            <Script>
+              <SourceLocation resid="Functions.Script.Url" />
+            </Script>
+            <Page>
+              <SourceLocation resid="Functions.Page.Url" />
+            </Page>
+            <Metadata>
+              <SourceLocation resid="Functions.Metadata.Url" />
+            </Metadata>
+            <Namespace resid="Functions.Namespace" />
+          </ExtensionPoint>
+        </AllFormFactors>
+
         <DesktopFormFactor>
           <GetStarted>
             <Title resid="GetStarted.Title" />
@@ -78,14 +93,18 @@
       <bt:Urls>
         <bt:Url id="GetStarted.LearnMoreUrl" DefaultValue="https://127.0.0.1:3100" />
         <bt:Url id="Taskpane.Url" DefaultValue="https://127.0.0.1:3100/taskpane.html" />
+        <bt:Url id="Functions.Script.Url" DefaultValue="https://127.0.0.1:3100/src/functions.js" />
+        <bt:Url id="Functions.Page.Url" DefaultValue="https://127.0.0.1:3100/functions.html" />
+        <bt:Url id="Functions.Metadata.Url" DefaultValue="https://127.0.0.1:3100/src/functions.json" />
       </bt:Urls>
       <bt:ShortStrings>
         <bt:String id="GetStarted.Title" DefaultValue="SmartOps DI Reports" />
         <bt:String id="CommandsGroup.Label" DefaultValue="SmartOps DI" />
         <bt:String id="TaskpaneButton.Label" DefaultValue="DI Reports" />
+        <bt:String id="Functions.Namespace" DefaultValue="SMARTOPS" />
       </bt:ShortStrings>
       <bt:LongStrings>
-        <bt:String id="GetStarted.Description" DefaultValue="Pull AI-generated supply chain reports into Excel." />
+        <bt:String id="GetStarted.Description" DefaultValue="AI-powered supply chain reports. Use =SMARTOPS.CLAUDE() in any cell." />
         <bt:String id="TaskpaneButton.Tooltip" DefaultValue="Open the SmartOps Decision Intelligence report panel" />
       </bt:LongStrings>
     </Resources>

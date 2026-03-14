@@ -245,7 +245,7 @@ async function writeReportToExcel(report) {
     writeData(summarySheet, summaryRows);
     if (autoFormat) formatAsTable(summarySheet, summaryRows, context);
 
-    // 2. Artifacts sheets by category
+    // 2. Artifacts sheets by category — use native Excel Tables + formatting
     const artifacts = report.artifacts || {};
     for (const [category, items] of Object.entries(artifacts)) {
       if (!items?.length) continue;
@@ -256,8 +256,18 @@ async function writeReportToExcel(report) {
 
       const rows = artifactsToRows(items);
       if (rows.length > 0) {
-        writeData(sheet, rows);
-        if (autoFormat) formatAsTable(sheet, rows, context);
+        if (autoFormat && rows.length >= 2) {
+          // Use native Excel Table
+          const tableName = `T_${category}`.replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 40);
+          writeAsExcelTable(sheet, rows, tableName);
+          freezeHeaderRow(sheet);
+
+          // Smart formatting
+          const headers = rows[0] || [];
+          applySmartNumberFormatting(sheet, headers, 2, rows.length);
+        } else {
+          writeData(sheet, rows);
+        }
       }
     }
 
@@ -499,6 +509,281 @@ function formatAsTable(sheet, rows, context) {
   } catch { /* best-effort formatting */ }
 }
 
+// ── Native Excel Operations (Office.js) ─────────────────────────────────────
+// Rich formatting using native Excel capabilities: Tables, Charts, Conditional
+// Formatting, Sorting, Filtering, Number Formatting, Data Validation.
+// Modelled after Claude for Excel's native operation approach.
+
+/**
+ * Write data as an Excel Table with auto-filter, banded rows, and auto-fit.
+ * Uses the native Table API — not just cell formatting.
+ */
+function writeAsExcelTable(sheet, rows, tableName) {
+  if (rows.length < 2) return null;
+
+  const maxCols = Math.max(...rows.map(r => r.length));
+  const padded = rows.map(r => {
+    const row = [...r];
+    while (row.length < maxCols) row.push('');
+    return row;
+  });
+
+  // Write raw data first
+  const rangeAddr = `A1:${colLetter(maxCols - 1)}${padded.length}`;
+  const range = sheet.getRange(rangeAddr);
+  range.values = padded;
+
+  // Convert to Excel Table (native)
+  try {
+    const safeName = (tableName || 'Table1').replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 40);
+    const table = sheet.tables.add(rangeAddr, true /* hasHeaders */);
+    table.name = safeName;
+    table.style = 'TableStyleMedium2'; // Blue banded rows
+    table.showFilterButton = true;
+
+    // Auto-fit
+    range.format.autofitColumns();
+    range.format.autofitRows();
+
+    return table;
+  } catch (e) {
+    // Fallback: just format the header
+    console.warn('[taskpane] Table creation failed, using basic formatting:', e.message);
+    const headerRange = sheet.getRange(`A1:${colLetter(maxCols - 1)}1`);
+    headerRange.format.font.bold = true;
+    headerRange.format.fill.color = '#1F4E79';
+    headerRange.format.font.color = '#FFFFFF';
+    range.format.autofitColumns();
+    return null;
+  }
+}
+
+/**
+ * Apply conditional formatting to a numeric column.
+ * Highlights top values green, bottom values red (color scale).
+ */
+function applyConditionalFormatting(sheet, colIndex, startRow, endRow, type) {
+  try {
+    const rangeAddr = `${colLetter(colIndex)}${startRow}:${colLetter(colIndex)}${endRow}`;
+    const range = sheet.getRange(rangeAddr);
+
+    if (type === 'color_scale') {
+      // 3-color scale: red → yellow → green
+      const cf = range.conditionalFormats.add(Excel.ConditionalFormatType.colorScale);
+      cf.colorScale.criteria = JSON.stringify({
+        minimum: { type: 'lowestValue', color: '#F8696B' },
+        midpoint: { type: 'percentile', value: 50, color: '#FFEB84' },
+        maximum: { type: 'highestValue', color: '#63BE7B' },
+      });
+    } else if (type === 'data_bar') {
+      // Data bars
+      const cf = range.conditionalFormats.add(Excel.ConditionalFormatType.dataBar);
+      cf.dataBar.barDirection = Excel.ConditionalDataBarDirection.context;
+    } else if (type === 'icon_set') {
+      // Traffic light icons
+      const cf = range.conditionalFormats.add(Excel.ConditionalFormatType.iconSet);
+      cf.iconSet.style = Excel.IconSet.threeTrafficLights1;
+    }
+  } catch (e) {
+    console.warn('[taskpane] Conditional formatting failed:', e.message);
+  }
+}
+
+/**
+ * Apply number formatting to detected numeric/currency/percentage columns.
+ */
+function applySmartNumberFormatting(sheet, headers, startRow, endRow) {
+  try {
+    for (let c = 0; c < headers.length; c++) {
+      const h = (headers[c] || '').toLowerCase();
+      const rangeAddr = `${colLetter(c)}${startRow}:${colLetter(c)}${endRow}`;
+      const range = sheet.getRange(rangeAddr);
+
+      if (h.includes('revenue') || h.includes('cost') || h.includes('price') ||
+          h.includes('amount') || h.includes('profit') || h.includes('budget') ||
+          h.includes('sales') || h.includes('asp') || h.includes('margin_value') ||
+          h.includes('營收') || h.includes('金額') || h.includes('成本')) {
+        range.numberFormat = [['#,##0.00']];
+      } else if (h.includes('rate') || h.includes('ratio') || h.includes('margin') ||
+                 h.includes('percent') || h.includes('%') || h.includes('比率') ||
+                 h.includes('佔比')) {
+        range.numberFormat = [['0.0%']];
+      } else if (h.includes('count') || h.includes('qty') || h.includes('units') ||
+                 h.includes('quantity') || h.includes('數量')) {
+        range.numberFormat = [['#,##0']];
+      } else if (h.includes('date') || h.includes('日期') || h.includes('month') ||
+                 h.includes('year')) {
+        range.numberFormat = [['yyyy-mm-dd']];
+      }
+    }
+  } catch (e) {
+    console.warn('[taskpane] Number formatting failed:', e.message);
+  }
+}
+
+/**
+ * Create an Excel chart from table data.
+ * Auto-detects best chart type based on data shape.
+ */
+function createChart(sheet, headers, dataRows, chartTitle, options) {
+  try {
+    const opts = options || {};
+    const maxCols = headers.length;
+    const totalRows = dataRows.length + 1; // +1 for header
+    const rangeAddr = `A1:${colLetter(maxCols - 1)}${totalRows}`;
+
+    // Determine chart type
+    let chartType = opts.chartType || Excel.ChartType.columnClustered;
+
+    // Auto-detect: if we have a time-like first column + numeric columns → line chart
+    const firstHeader = (headers[0] || '').toLowerCase();
+    if (firstHeader.includes('month') || firstHeader.includes('date') ||
+        firstHeader.includes('period') || firstHeader.includes('quarter') ||
+        firstHeader.includes('year') || firstHeader.includes('月')) {
+      chartType = Excel.ChartType.line;
+    }
+
+    // If only 2 columns and many rows → line chart
+    if (maxCols === 2 && dataRows.length > 5) {
+      chartType = Excel.ChartType.line;
+    }
+
+    // If few categories + 1 numeric → bar chart
+    if (dataRows.length <= 10 && maxCols === 2) {
+      chartType = Excel.ChartType.barClustered;
+    }
+
+    const chart = sheet.charts.add(
+      chartType,
+      sheet.getRange(rangeAddr),
+      opts.seriesBy || Excel.ChartSeriesBy.columns
+    );
+
+    chart.title.text = chartTitle || 'Chart';
+    chart.title.format.font.size = 14;
+    chart.title.format.font.bold = true;
+
+    // Position: below the data table
+    chart.top = (totalRows + 2) * 20;
+    chart.left = 10;
+    chart.width = Math.min(700, maxCols * 120);
+    chart.height = 350;
+
+    // Style
+    chart.legend.position = Excel.ChartLegendPosition.bottom;
+
+    return chart;
+  } catch (e) {
+    console.warn('[taskpane] Chart creation failed:', e.message);
+    return null;
+  }
+}
+
+/**
+ * Create a KPI dashboard sheet with formatted cards and sparklines.
+ */
+function writeKPIDashboard(sheet, kpis) {
+  if (!kpis || Object.keys(kpis).length === 0) return;
+
+  const entries = Object.entries(kpis).filter(([k]) =>
+    k !== 'pdf_base64' && k !== 'html'
+  );
+
+  // Title
+  const titleRange = sheet.getRange('A1:F1');
+  titleRange.merge(true);
+  titleRange.values = [['Key Performance Indicators']];
+  titleRange.format.font.size = 18;
+  titleRange.format.font.bold = true;
+  titleRange.format.font.color = '#1F4E79';
+  titleRange.format.horizontalAlignment = 'Center';
+
+  // Timestamp
+  const timeRange = sheet.getRange('A2:F2');
+  timeRange.merge(true);
+  timeRange.values = [[`Generated: ${new Date().toLocaleString()}`]];
+  timeRange.format.font.size = 10;
+  timeRange.format.font.color = '#888888';
+  timeRange.format.horizontalAlignment = 'Center';
+
+  // KPI cards in a 3-column grid
+  const cols = 3;
+  let row = 4;
+  for (let i = 0; i < entries.length; i++) {
+    const [key, value] = entries[i];
+    const col = (i % cols) * 2;
+    const cellAddr = `${colLetter(col)}${row}`;
+    const valueCellAddr = `${colLetter(col)}${row + 1}`;
+
+    // KPI label
+    const labelRange = sheet.getRange(cellAddr);
+    labelRange.values = [[key.replace(/_/g, ' ').toUpperCase()]];
+    labelRange.format.font.size = 9;
+    labelRange.format.font.color = '#666666';
+    labelRange.format.font.bold = true;
+
+    // KPI value
+    const valueRange = sheet.getRange(valueCellAddr);
+    const displayVal = typeof value === 'number' ?
+      (Math.abs(value) >= 1000 ? value.toLocaleString() : value) : value;
+    valueRange.values = [[displayVal]];
+    valueRange.format.font.size = 20;
+    valueRange.format.font.bold = true;
+    valueRange.format.font.color = '#1F4E79';
+
+    // Card background
+    const cardRange = sheet.getRange(`${colLetter(col)}${row}:${colLetter(col + 1)}${row + 1}`);
+    cardRange.format.fill.color = '#F2F7FB';
+    cardRange.format.borders.getItem('EdgeBottom').style = 'Thin';
+    cardRange.format.borders.getItem('EdgeBottom').color = '#2E75B6';
+
+    if ((i + 1) % cols === 0) row += 3;
+  }
+
+  sheet.getRange('A:F').format.autofitColumns();
+}
+
+/**
+ * Sort a range by a specific column (descending by default for numeric).
+ */
+function sortByColumn(sheet, rangeAddr, colIndex, ascending) {
+  try {
+    const range = sheet.getRange(rangeAddr);
+    range.sort.apply([{
+      key: colIndex,
+      ascending: ascending !== undefined ? ascending : false,
+    }]);
+  } catch (e) {
+    console.warn('[taskpane] Sort failed:', e.message);
+  }
+}
+
+/**
+ * Freeze the header row (panes) for better scrolling.
+ */
+function freezeHeaderRow(sheet) {
+  try {
+    sheet.freezePanes.freezeRows(1);
+  } catch (e) {
+    console.warn('[taskpane] Freeze panes failed:', e.message);
+  }
+}
+
+/**
+ * Add data validation dropdown to a column.
+ */
+function addDropdownValidation(sheet, colIndex, startRow, endRow, allowedValues) {
+  try {
+    const rangeAddr = `${colLetter(colIndex)}${startRow}:${colLetter(colIndex)}${endRow}`;
+    const range = sheet.getRange(rangeAddr);
+    range.dataValidation.rule = {
+      list: { inCellDropDown: true, source: allowedValues.join(',') },
+    };
+  } catch (e) {
+    console.warn('[taskpane] Data validation failed:', e.message);
+  }
+}
+
 function tryGetSheet(workbook, name) {
   try {
     const sheet = workbook.worksheets.getItemOrNullObject(name);
@@ -635,12 +920,14 @@ async function _pollForUpdates() {
     }
 
     // Track in-progress tasks
-    const inProgress = reports.find(r => r.status === 'running' || r.status === 'pending');
+    const inProgress = reports.find(r => r.status === 'running' || r.status === 'pending' || r.status === 'in_progress');
     const banner = document.getElementById('live-banner');
     if (inProgress) {
       banner.classList.remove('hidden');
       document.getElementById('live-banner-text').textContent =
         `AI Employee working: ${inProgress.title || inProgress.instruction?.slice(0, 40) || '...'}`;
+      // Start step progress polling if not already running
+      startStepProgressPolling();
     } else {
       banner.classList.add('hidden');
     }
@@ -650,6 +937,207 @@ async function _pollForUpdates() {
       if (r.status === 'completed') _lastKnownTaskIds.add(r.id);
     }
   } catch { /* silent polling failure */ }
+}
+
+// ── Agent Loop Step Progress ─────────────────────────────────────────────────
+// Shows real-time step-by-step progress when an AI Employee task is running.
+// When a step completes with artifacts, auto-writes artifact data to new sheets.
+
+let _activeTaskSteps = null;
+let _stepPollingInterval = null;
+let _autoPopulatedSheets = new Set();
+
+function startStepProgressPolling() {
+  if (_stepPollingInterval) return;
+  _pollStepProgress();
+  _stepPollingInterval = setInterval(_pollStepProgress, 5000); // Poll every 5s
+}
+
+function stopStepProgressPolling() {
+  if (_stepPollingInterval) {
+    clearInterval(_stepPollingInterval);
+    _stepPollingInterval = null;
+  }
+  _activeTaskSteps = null;
+  _autoPopulatedSheets.clear();
+}
+
+async function _pollStepProgress() {
+  try {
+    // Fetch active task with step details from report-api
+    const data = await callReportApi('list_reports', { limit: 1 });
+    const task = (data?.reports || [])[0];
+    if (!task || (task.status !== 'running' && task.status !== 'in_progress')) {
+      _hideStepProgress();
+      return;
+    }
+
+    // Fetch full report to get step details
+    const fullReport = await callReportApi('get_report', { task_id: task.id });
+    const steps = fullReport?.steps || [];
+    if (steps.length === 0) return;
+
+    _activeTaskSteps = steps;
+    _renderStepProgress(task, steps);
+
+    // Auto-populate completed step artifacts
+    for (const step of steps) {
+      if (step.status === 'completed' && !_autoPopulatedSheets.has(step.step_name)) {
+        _autoPopulatedSheets.add(step.step_name);
+        await _autoPopulateStepArtifacts(step, fullReport.artifacts);
+      }
+    }
+
+    // Stop polling when all steps are done
+    const allDone = steps.every(s => s.status === 'completed' || s.status === 'failed' || s.status === 'skipped');
+    if (allDone) {
+      addChatMessage('system', `All ${steps.length} steps completed. Data sheets populated in Excel.`);
+      stopStepProgressPolling();
+    }
+  } catch { /* silent polling failure */ }
+}
+
+function _renderStepProgress(task, steps) {
+  let container = document.getElementById('step-progress-container');
+  if (!container) {
+    // Create the container dynamically
+    const mainContent = document.getElementById('main-content');
+    if (!mainContent) return;
+    container = document.createElement('div');
+    container.id = 'step-progress-container';
+    container.style.cssText = 'border:1px solid #ddd;border-radius:8px;padding:12px;margin:8px 0;background:#fafbfc;';
+    mainContent.insertBefore(container, mainContent.firstChild);
+  }
+
+  const completedCount = steps.filter(s => s.status === 'completed').length;
+  const pct = Math.round((completedCount / steps.length) * 100);
+
+  let html = `<div style="font-weight:bold;margin-bottom:8px;">Agent Task: ${task.title || 'Working...'}</div>`;
+  html += `<div style="background:#e0e0e0;border-radius:4px;height:8px;margin-bottom:8px;"><div style="background:#2E75B6;height:100%;border-radius:4px;width:${pct}%;transition:width 0.3s;"></div></div>`;
+  html += `<div style="font-size:11px;color:#666;margin-bottom:6px;">${completedCount}/${steps.length} steps (${pct}%)</div>`;
+
+  for (const step of steps) {
+    const icon = step.status === 'completed' ? '✅'
+      : step.status === 'running' || step.status === 'in_progress' ? '🔄'
+      : step.status === 'failed' ? '❌'
+      : '⏳';
+    const name = (step.step_name || '').replace(/_/g, ' ');
+    const duration = step.duration_ms ? ` (${(step.duration_ms / 1000).toFixed(1)}s)` : '';
+    html += `<div style="font-size:12px;padding:2px 0;"><span>${icon}</span> ${name}${duration}</div>`;
+  }
+
+  container.innerHTML = html;
+  container.classList.remove('hidden');
+}
+
+function _hideStepProgress() {
+  const container = document.getElementById('step-progress-container');
+  if (container) container.classList.add('hidden');
+}
+
+async function _autoPopulateStepArtifacts(step, allArtifacts) {
+  // Find artifacts for this step
+  const stepArtifacts = allArtifacts?.[step.step_name] || [];
+  if (!stepArtifacts.length) return;
+
+  try {
+    await Excel.run(async (context) => {
+      const wb = context.workbook;
+      const prefix = document.getElementById('pref-prefix')?.value || 'DI_';
+
+      for (const artifact of stepArtifacts) {
+        const data = artifact.data;
+        if (!data) continue;
+
+        const artType = (artifact.type || '').toLowerCase();
+        const artLabel = artifact.label || artifact.type || step.step_name;
+
+        // Determine sheet name
+        const sheetName = `${prefix}${artLabel.replace(/[\\\/\*\?\[\]:]/g, '_').slice(0, 28)}`;
+
+        // Create or get sheet
+        let sheet = tryGetSheet(wb, sheetName);
+        if (!sheet) sheet = wb.worksheets.add(sheetName);
+
+        // ── KPI / Summary artifacts → Dashboard layout ──────────────────
+        if (artType.includes('kpi') || artType.includes('summary') || artType === 'metrics') {
+          if (typeof data === 'object' && !Array.isArray(data)) {
+            writeKPIDashboard(sheet, data);
+          } else if (Array.isArray(data) && data.length > 0 && typeof data[0] === 'object') {
+            // KPI rows (e.g. [{metric: "Revenue", value: 1234}, ...])
+            const kpiObj = {};
+            for (const row of data) {
+              const key = row.metric || row.name || row.kpi || Object.values(row)[0];
+              const val = row.value ?? row.amount ?? Object.values(row)[1];
+              if (key) kpiObj[key] = val;
+            }
+            writeKPIDashboard(sheet, kpiObj);
+          }
+          await context.sync();
+          continue;
+        }
+
+        // ── Tabular data → Excel Table with native features ─────────────
+        if (Array.isArray(data) && data.length > 0 && typeof data[0] === 'object') {
+          const headers = Object.keys(data[0]);
+          const rows = [headers];
+          for (const row of data) {
+            rows.push(headers.map(h => {
+              const v = row[h];
+              return v === null || v === undefined ? '' : (typeof v === 'object' ? JSON.stringify(v) : v);
+            }));
+          }
+
+          // Use native Excel Table
+          const tableName = `T_${step.step_name}_${artLabel}`.replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 40);
+          writeAsExcelTable(sheet, rows, tableName);
+
+          // Freeze header row for scrolling
+          freezeHeaderRow(sheet);
+
+          // Smart number formatting based on column names
+          applySmartNumberFormatting(sheet, headers, 2, rows.length);
+
+          // Conditional formatting on key numeric columns
+          for (let c = 0; c < headers.length; c++) {
+            const h = headers[c].toLowerCase();
+            if (h.includes('score') || h.includes('risk') || h.includes('rate') ||
+                h.includes('ratio') || h.includes('margin') || h.includes('percent')) {
+              applyConditionalFormatting(sheet, c, 2, rows.length, 'color_scale');
+            } else if (h.includes('revenue') || h.includes('sales') || h.includes('profit') ||
+                       h.includes('amount') || h.includes('cost')) {
+              applyConditionalFormatting(sheet, c, 2, rows.length, 'data_bar');
+            }
+          }
+
+          // Auto-create chart if data has a good shape for visualization
+          if (data.length >= 3 && data.length <= 50 && headers.length >= 2 && headers.length <= 8) {
+            createChart(sheet, headers, data, artLabel);
+          }
+
+          await context.sync();
+          continue;
+        }
+
+        // ── Key-value / nested object → formatted table ─────────────────
+        if (typeof data === 'object' && !Array.isArray(data)) {
+          const rows = [['Metric', 'Value']];
+          for (const [k, v] of Object.entries(data)) {
+            if (k === 'pdf_base64' || k === 'html' || k === 'image_base64') continue;
+            rows.push([k, typeof v === 'object' ? JSON.stringify(v) : v]);
+          }
+          writeAsExcelTable(sheet, rows, `T_${step.step_name}_kv`.replace(/[^a-zA-Z0-9_]/g, '_'));
+          await context.sync();
+        }
+      }
+
+      await context.sync();
+    });
+
+    addChatMessage('system', `Step "${step.step_name}" → data written to Excel with charts & formatting.`);
+  } catch (err) {
+    console.warn('[taskpane] Auto-populate failed for', step.step_name, err.message);
+  }
 }
 
 // ── Chat with AI ────────────────────────────────────────────────────────────

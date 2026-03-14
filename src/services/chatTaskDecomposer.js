@@ -23,7 +23,7 @@ const SUPABASE_URL = String(import.meta.env.VITE_SUPABASE_URL || '').replace(/\/
 const KNOWN_WORKFLOWS = new Set([
   'forecast', 'plan', 'risk', 'synthesize',
   'dynamic_tool', 'registered_tool', 'report', 'export',
-  'builtin_tool',
+  'builtin_tool', 'python_tool', 'python_report',
 ]);
 
 // ── Legacy keyword → workflow mappings (kept as fallback) ───────────────────
@@ -32,6 +32,161 @@ const LEGACY_KEYWORD_WORKFLOWS = [
   { keywords: ['report', 'summary', 'dashboard', '報告', '摘要', '報表'], workflow: 'report', name: 'report' },
   { keywords: ['excel', 'xlsx', 'export', 'powerbi', 'power bi', '匯出', '導出'], workflow: 'export', name: 'export' },
 ];
+
+// ── General analysis detection ──────────────────────────────────────────────
+// Signals that the user wants general data analysis (not DI engine operations).
+// When detected, we skip the builtin tool catalog and generate python_tool steps.
+
+const GENERAL_ANALYSIS_SIGNALS_EN = [
+  'data cleaning', 'data quality', 'kpi', 'pivot', 'dashboard',
+  'monthly review', 'business review', 'data issues', 'data log',
+  'cleaned data', 'raw data', 'anomaly', 'duplicate', 'standardize',
+  'gross margin', 'gross profit', 'return rate', 'discount rate',
+  'average selling price', 'ticket volume', 'resolution time',
+  'complaint rate', 'roas', 'campaign', 'support ticket',
+  'data validation', 'conditional formatting',
+];
+
+const GENERAL_ANALYSIS_SIGNALS_ZH = [
+  '資料整理', '資料清理', '資料品質', '月會', '月報',
+  '數據清洗', '數據質量', '重複資料', '異常值', '缺值',
+  '格式一致', '命名統一', '標準化', '數據問題',
+  '毛利率', '退貨率', '折扣率', '客訴', '工單',
+  '投放效率', '庫存積壓', '達標', '通路',
+  '整理後', '可分析', '管理層',
+];
+
+/**
+ * Detect whether a user message is a general data analysis request
+ * (as opposed to a specific supply chain DI engine operation).
+ *
+ * Heuristics:
+ * 1. Message is long (>100 tokens) — detailed analysis briefs
+ * 2. Contains multiple general analysis signals (data cleaning, KPI, dashboard, etc.)
+ * 3. Mentions multiple business domains (sales + returns + inventory + marketing + support)
+ */
+function _isGeneralAnalysisRequest(msgLower) {
+  const tokens = msgLower.split(/[\s,;:!?。，；：！？\n]+/).filter(Boolean);
+
+  // Short messages are unlikely to be general analysis briefs
+  if (tokens.length < 20) return false;
+
+  // Count general analysis signal matches
+  let signalCount = 0;
+  for (const signal of GENERAL_ANALYSIS_SIGNALS_EN) {
+    if (msgLower.includes(signal)) signalCount++;
+  }
+  for (const signal of GENERAL_ANALYSIS_SIGNALS_ZH) {
+    if (msgLower.includes(signal)) signalCount++;
+  }
+
+  // Count distinct business domain mentions
+  const domains = [
+    { keywords: ['sales', 'revenue', 'sell', '銷售', '營收', '銷量'], found: false },
+    { keywords: ['return', 'refund', '退貨', '退款'], found: false },
+    { keywords: ['inventory', 'stock', '庫存', '存貨'], found: false },
+    { keywords: ['marketing', 'campaign', 'roas', '行銷', '投放', '廣告'], found: false },
+    { keywords: ['support', 'ticket', 'complaint', '客服', '工單', '客訴'], found: false },
+    { keywords: ['target', 'budget', '目標', '預算'], found: false },
+  ];
+  let domainCount = 0;
+  for (const domain of domains) {
+    if (domain.keywords.some(kw => msgLower.includes(kw))) {
+      domainCount++;
+    }
+  }
+
+  // Trigger: 3+ signals, or 2+ signals with 3+ domains, or 4+ domains with long message
+  if (signalCount >= 3) return true;
+  if (signalCount >= 2 && domainCount >= 3) return true;
+  if (domainCount >= 4 && tokens.length >= 50) return true;
+
+  return false;
+}
+
+/**
+ * Build python_tool steps for a general data analysis request.
+ * Creates a multi-step pipeline: clean → KPI → analysis → dashboard/report.
+ */
+function _buildGeneralAnalysisSteps(userMessage) {
+  return [
+    {
+      name: 'clean_data',
+      workflow_type: 'python_tool',
+      description: 'Clean and standardize raw data: fix date formats, unify naming, handle duplicates/nulls/anomalies, produce Data_Issues_Log',
+      requires_review: false,
+      tool_hint: `Data Cleaning & Standardization Task:
+The user uploaded a multi-sheet business data file. Your job:
+1. Load ALL sheets from input_data["sheets"]
+2. For each sheet: standardize column names, fix date formats (→ YYYY-MM-DD), unify categorical values (regions, products, channels, SKUs), handle nulls/blanks/negatives/errors
+3. Remove obvious duplicates (explain your logic)
+4. Separate returns from sales if mixed
+5. Produce these artifacts:
+   - "cleaned_data" (type: "data"): The cleaned master dataset (all sheets merged or kept separate as appropriate)
+   - "data_issues_log" (type: "data"): Log of every issue found — columns: issue_type, affected_field, row_count, treatment, risk_remaining
+6. In the result dict, include counts: total_rows_processed, issues_found, duplicates_removed`,
+      tool_id: null,
+      builtin_tool_id: null,
+      depends_on: [],
+      estimated_tier: 'tier_a',
+      needs_dataset_profile: true,
+    },
+    {
+      name: 'calculate_kpis',
+      workflow_type: 'python_tool',
+      description: 'Calculate all KPI metrics from cleaned data: revenue, margin, return rate, inventory, marketing ROAS, support metrics',
+      requires_review: false,
+      tool_hint: `KPI Calculation Task:
+Using cleaned data from the prior step (prior_artifacts["clean_data"]), calculate comprehensive business KPIs.
+
+Required KPIs (at minimum):
+- Sales: Total Revenue, Units Sold, Gross Profit, Gross Margin %, Avg Selling Price, Return Rate, Discount Rate, Sales vs Target
+- Breakdowns: Revenue by Month, by Region, by Product Family, by Channel
+- Inventory: Ending Inventory, Weeks of Supply, Low Stock / Overstock item counts, Top inventory risk SKUs
+- Marketing: Marketing Spend, ROAS or efficiency by campaign/channel, best/worst campaigns
+- Support: Ticket Volume, Avg Resolution Time, Complaint Rate, problem concentration by product/region/channel
+
+Produce these artifacts:
+- "kpi_summary" (type: "data"): Table of all KPIs with columns: category, metric_name, value, unit, vs_target
+- "revenue_by_month" (type: "data"): Monthly revenue breakdown
+- "revenue_by_region" (type: "data"): Regional breakdown
+- "revenue_by_product" (type: "data"): Product family breakdown
+- "revenue_by_channel" (type: "data"): Channel breakdown
+- "inventory_risk" (type: "data"): SKUs with inventory risk (overstock/low stock)
+- "marketing_performance" (type: "data"): Campaign/channel performance comparison
+- "support_analysis" (type: "data"): Support ticket analysis by product/region`,
+      tool_id: null,
+      builtin_tool_id: null,
+      depends_on: ['clean_data'],
+      estimated_tier: 'tier_a',
+      needs_dataset_profile: false,
+    },
+    {
+      name: 'analyze_insights',
+      workflow_type: 'python_tool',
+      description: 'Deep analysis: performance vs targets, problem areas, risk identification, top 3-5 management insights',
+      requires_review: false,
+      tool_hint: `Business Analysis & Insights Task:
+Using KPI data from prior steps (prior_artifacts["calculate_kpis"]), produce management-ready analysis.
+
+Answer these questions:
+1. Performance: Did we hit targets? Which regions drove growth? Which products dragged? Which channels are anomalous?
+2. Problems: High return rate products/regions/channels? High discount but low margin categories? Inventory pressure SKUs? Are support issues linked to returns/quality/logistics?
+3. Management Insights: Provide 3-5 key observations with business context, not just numbers.
+   Example: "Revenue grew but margin eroded by heavy discounting", "Region X has high sales but also high returns — investigate quality"
+
+Produce these artifacts:
+- "performance_analysis" (type: "data"): Target vs actual by dimension
+- "problem_areas" (type: "data"): Identified problems with severity, affected dimension, evidence
+- "management_insights" (type: "data"): Top 3-5 insights with columns: priority, insight, evidence, recommendation`,
+      tool_id: null,
+      builtin_tool_id: null,
+      depends_on: ['calculate_kpis'],
+      estimated_tier: 'tier_a',
+      needs_dataset_profile: false,
+    },
+  ];
+}
 
 function hasStoredSupabaseAccessToken() {
   try {
@@ -55,29 +210,33 @@ const DECOMPOSE_SYSTEM_PROMPT = `You are an AI task planner for business data an
 ${buildCatalogPromptSummary()}
 
 Additional workflow types (not in built-in catalog):
-- report: Generate a summary report
+- python_tool: Data processing with Python (pandas/numpy). Use for data cleaning, KPI calculation, pivot analysis, trend analysis — anything data-intensive. Runs server-side with full pandas capability.
+- python_report: PDF/HTML dashboard generation with charts (matplotlib). Use for the final visualization/report step when charts or PDF output are needed.
+- report: Generate a summary report (HTML/XLSX, no charts)
 - export: Export data to Excel/PowerBI
-- dynamic_tool: AI generates custom code to handle novel tasks (data cleaning, KPI calculation, custom analysis, dashboards, etc.)
+- dynamic_tool: AI generates custom JS code for simple calculations (fallback — use python_tool for data-intensive work)
 - registered_tool: Use a previously registered custom tool
 
 CRITICAL RULES for choosing workflow_type:
 1. Built-in tools are ONLY for specific supply chain operations (demand forecasting with time-series models, replenishment planning with MIP solvers, supplier risk scoring). Do NOT use them for general data analysis, cleaning, KPI calculation, or reporting.
-2. For general tasks like: data cleaning, KPI/metrics calculation, pivot tables, trend analysis, data quality checks, dashboard creation, business review — ALWAYS use "dynamic_tool" with a detailed tool_hint.
-3. Set builtin_tool_id for builtin_tool steps (must match a tool id from the list above).
-4. Set depends_on to declare execution order (use step names).
-5. If the user asks for Excel/XLSX output, add an "export" step and set report_format to "xlsx".
-6. If the user asks for a report/summary, add a "report" step at the end.
-7. Break complex analysis into logical steps: e.g. clean_data → calculate_kpis → analyze_trends → generate_report. Each step should have a specific, detailed tool_hint describing exactly what to compute.
+2. For data-intensive tasks like: data cleaning, KPI/metrics calculation, pivot tables, trend analysis, data quality checks — ALWAYS use "python_tool" with a detailed tool_hint. Python has pandas, numpy, and full data processing capability.
+3. For dashboard/chart generation or PDF reports — use "python_report". It has matplotlib for charts and fpdf2 for PDF generation.
+4. Only use "dynamic_tool" for very simple calculations that don't need pandas. Prefer "python_tool" for anything data-related.
+5. Set builtin_tool_id for builtin_tool steps (must match a tool id from the list above).
+6. Set depends_on to declare execution order (use step names).
+7. If the user asks for Excel/XLSX output, add an "export" step and set report_format to "xlsx".
+8. If the user asks for a report/summary with charts, add a "python_report" step at the end. For text-only summary, use "report".
+9. Break complex analysis into logical steps: e.g. clean_data (python_tool) → calculate_kpis (python_tool) → analyze_trends (python_tool) → generate_dashboard (python_report). Each step should have a specific, detailed tool_hint describing exactly what to compute.
 
-8. If the user's request is vague or ambiguous (e.g. "分析資料", "analyze data", "generate report" without specifics), set needs_clarification=true and provide 2-4 short clarification questions. Criteria for vague: no specific metrics/KPIs mentioned, no output format specified, multiple possible approaches exist, less than 10 meaningful words.
-9. Even when needs_clarification=true, STILL provide your best-guess subtasks so the user can skip clarification if they want.
+10. If the user's request is vague or ambiguous (e.g. "分析資料", "analyze data", "generate report" without specifics), set needs_clarification=true and provide 2-4 short clarification questions. Criteria for vague: no specific metrics/KPIs mentioned, no output format specified, multiple possible approaches exist, less than 10 meaningful words.
+11. Even when needs_clarification=true, STILL provide your best-guess subtasks so the user can skip clarification if they want.
 
 Respond with ONLY a JSON object (no markdown, no explanation):
 {
   "subtasks": [
     {
       "name": "step_name",
-      "workflow_type": "builtin_tool|report|export|dynamic_tool|registered_tool",
+      "workflow_type": "python_tool|python_report|builtin_tool|report|export|dynamic_tool|registered_tool",
       "description": "what this step does",
       "builtin_tool_id": "tool_id_or_null",
       "depends_on": ["prior_step_name"],
@@ -192,6 +351,52 @@ export async function decomposeTask({ userMessage, sessionContext = null, employ
   const subtasks = [];
   const usedToolIds = new Set();
 
+  // ── Phase 0: Detect general analysis requests ───────────────────────────
+  // Long, multi-domain analysis briefs should NOT be matched against the
+  // builtin supply chain tool catalog. Route to python_tool instead.
+  const isGeneralAnalysis = _isGeneralAnalysisRequest(msgLower);
+
+  if (isGeneralAnalysis) {
+    console.info('[chatTaskDecomposer] Detected general analysis request — using python_tool pipeline');
+    const analysisSteps = _buildGeneralAnalysisSteps(userMessage);
+    subtasks.push(...analysisSteps);
+
+    // Check if report/export is also needed
+    const isReportRequest = LEGACY_KEYWORD_WORKFLOWS[0].keywords.some(kw => msgLower.includes(kw));
+    const isExportRequest = LEGACY_KEYWORD_WORKFLOWS[1].keywords.some(kw => msgLower.includes(kw));
+
+    // Add python_report step for dashboard generation
+    if (isReportRequest || msgLower.includes('dashboard') || msgLower.includes('圖表') || msgLower.includes('視覺化')) {
+      subtasks.push({
+        name: 'generate_dashboard',
+        workflow_type: 'python_report',
+        description: 'Generate management dashboard with KPI cards, trend charts, and key insights',
+        requires_review: false,
+        tool_hint: null,
+        tool_id: null,
+        builtin_tool_id: null,
+        depends_on: ['analyze_insights'],
+        estimated_tier: 'tier_b',
+        needs_dataset_profile: false,
+      });
+    }
+
+    // Add export step if Excel output is needed
+    if (isExportRequest || msgLower.includes('excel') || msgLower.includes('xlsx') || msgLower.includes('同一份')) {
+      subtasks.push({
+        name: 'export',
+        workflow_type: 'export',
+        description: 'Export all analysis results to Excel with multiple worksheets',
+        requires_review: false,
+        tool_hint: null,
+        tool_id: null,
+        builtin_tool_id: null,
+        depends_on: subtasks.map(s => s.name),
+        estimated_tier: 'tier_c',
+        needs_dataset_profile: false,
+      });
+    }
+  } else {
   // ── Phase 1: Match against builtin tool catalog ─────────────────────────
   const catalogMatches = findToolsByQuery(userMessage, { maxResults: 5 });
 
@@ -222,7 +427,7 @@ export async function decomposeTask({ userMessage, sessionContext = null, employ
   if (isReportRequest && subtasks.length === 0) {
     subtasks.push({
       name: 'analyze_data',
-      workflow_type: 'dynamic_tool',
+      workflow_type: 'python_tool',
       description: 'Analyze uploaded dataset: compute KPIs, trends, and key insights for the report',
       requires_review: false,
       tool_hint: 'Analyze the uploaded data. Compute summary statistics, key metrics, trends over time, and notable insights. Return a structured JSON with sections: executive_summary, kpi_table, trends, risks, and recommendations.',
@@ -253,6 +458,7 @@ export async function decomposeTask({ userMessage, sessionContext = null, employ
       }
     }
   }
+  } // end else (not general analysis)
 
   // ── Phase 2: If nothing detected, try registered tools → dynamic_tool ──
   if (subtasks.length === 0) {

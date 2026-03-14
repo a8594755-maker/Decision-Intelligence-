@@ -58,6 +58,8 @@ const V1_VALIDATORS = {
   ai_review_result: validateAiReviewResult,
   report_html: validateReportHtml,
   powerbi_dataset: validatePowerBIDataset,
+  // OpenCloud EU integration — file reference artifact
+  opencloud_file_ref: validateOpenCloudFileRef,
 };
 
 const MAX_ISSUES = 50;
@@ -978,6 +980,19 @@ function validatePowerBIDataset(payload, issues) {
   if (!root) return;
   requireStringField(issues, root, 'version', 'payload');
   requireArrayField(issues, root, 'tables', 'payload');
+}
+
+// ---------------------------------------------------------------------------
+// OpenCloud EU integration — file reference
+// ---------------------------------------------------------------------------
+
+function validateOpenCloudFileRef(payload, issues) {
+  const root = ensureObjectPayload(issues, payload);
+  if (!root) return;
+  requireStringField(issues, root, 'driveId', 'payload');
+  requireStringField(issues, root, 'synced_at', 'payload');
+  requireNumberField(issues, root, 'total_files', 'payload');
+  requireArrayField(issues, root, 'files', 'payload');
 }
 
 export function validateArtifactOrThrow({ artifact_type, payload }) {

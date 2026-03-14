@@ -24,11 +24,30 @@ import { checkBudget, BudgetExceededError } from './taskBudgetService';
 import { reviewStepOutput, shouldReview, MAX_REVISION_ROUNDS } from './aiReviewerService';
 import { isDynamicTemplate, getDynamicTemplateFromTask, initDynamicLoopState } from './dynamicTemplateBuilder';
 import { analyzeStepFailure, getAlternativeModel } from './selfHealingService';
+import { eventBus, EVENT_NAMES } from './eventBus';
+import { computeBackoff } from './stepStateMachine';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
 export const MAX_RETRIES = 3;
 const BACKOFF_BASE_MS = 1000;
+
+// ML API base for SSE publishing
+const ML_API_URL = import.meta.env?.VITE_ML_API_URL || 'http://localhost:8000';
+
+/**
+ * Publish a step event to the SSE channel (best-effort, non-blocking).
+ * This allows the SSE endpoint to relay events to other subscribers.
+ */
+async function _publishSSE(taskId, eventPayload) {
+  try {
+    await fetch(`${ML_API_URL}/sse/agent/${taskId}/publish`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(eventPayload),
+    });
+  } catch { /* SSE publish is best-effort */ }
+}
 
 export const STEP_STATUS = {
   PENDING: 'pending',
@@ -49,7 +68,7 @@ function sleep(ms) {
 }
 
 function backoffMs(retryCount) {
-  return BACKOFF_BASE_MS * Math.pow(3, retryCount); // 1s, 3s, 9s
+  return computeBackoff(retryCount, { baseMs: BACKOFF_BASE_MS, maxMs: 30000, jitterFactor: 0.3 });
 }
 
 /**
@@ -135,13 +154,16 @@ function isLoopFullyComplete(steps) {
  * @returns {Promise<object>} Updated task with loop_state
  */
 export async function initAgentLoop(taskId, userId) {
+  console.log('[initAgentLoop] Getting task:', taskId);
   const task = await aiEmployeeService.getTask(taskId);
+  console.log('[initAgentLoop] Got task:', !!task, 'template_id:', task?.template_id, 'ic_template_id:', task?.input_context?.template_id);
   if (!task) throw new Error(`Task not found: ${taskId}`);
 
   // Already initialized
   if (task.loop_state?.steps?.length > 0) return task;
 
   const templateId = task.template_id || task.input_context?.template_id || task.input_context?.workflow_type;
+  console.log('[initAgentLoop] templateId:', templateId, 'isDynamic:', isDynamicTemplate(templateId));
 
   // Dynamic templates are stored in input_context, not the static registry
   let template;
@@ -156,11 +178,15 @@ export async function initAgentLoop(taskId, userId) {
     loopState = initLoopState(template);
   }
   loopState.started_at = new Date().toISOString();
+  console.log('[initAgentLoop] loopState steps:', loopState.steps?.length, 'Saving...');
 
   await aiEmployeeService.updateTaskLoopState(taskId, loopState);
+  console.log('[initAgentLoop] Saved. Refreshing task...');
 
   // Return refreshed task
-  return aiEmployeeService.getTask(taskId);
+  const refreshed = await aiEmployeeService.getTask(taskId);
+  console.log('[initAgentLoop] Done. Has loop_state:', !!refreshed?.loop_state);
+  return refreshed;
 }
 
 /**
@@ -258,6 +284,11 @@ export async function tickAgentLoop(taskId, userId) {
   nextStep.error = null;
   await aiEmployeeService.updateTaskLoopState(taskId, loopState);
 
+  // Emit step_started event
+  const startPayload = { step_name: nextStep.name, step_index: nextStep.index, status: 'running', timestamp: Date.now() / 1000 };
+  eventBus.emit(EVENT_NAMES.AGENT_STEP_STARTED, startPayload);
+  _publishSSE(taskId, { event_type: 'step_started', ...startPayload });
+
   // Ensure task + employee are in_progress
   await aiEmployeeService.updateTaskStatus(taskId, 'in_progress');
   await aiEmployeeService.updateEmployeeStatus(task.employee_id, 'working');
@@ -315,15 +346,29 @@ export async function tickAgentLoop(taskId, userId) {
           nextStep.finished_at = new Date().toISOString();
           await aiEmployeeService.updateTaskLoopState(taskId, loopState);
 
+          // Build enriched revision event with code details
+          const revisionEvent = {
+            step_name: nextStep.name,
+            status: 'revision_needed',
+            review_score: review.score,
+            review_threshold: review.threshold,
+            review_passed: false,
+            suggestions: review.suggestions,
+          };
+          // Include code from result if available
+          const revPt = result?.python_tool;
+          if (revPt?.code) {
+            revisionEvent.code = revPt.code;
+            revisionEvent.code_language = 'python';
+            if (revPt.artifacts) revisionEvent.artifacts = revPt.artifacts;
+          }
+          // Emit revision event via EventBus + SSE
+          eventBus.emit(EVENT_NAMES.AGENT_STEP_REVISION, revisionEvent);
+          _publishSSE(taskId, { event_type: 'step_revision', ...revisionEvent });
+
           return {
             done: false,
-            step_event: {
-              step_name: nextStep.name,
-              status: 'revision_needed',
-              review_score: review.score,
-              review_threshold: review.threshold,
-              suggestions: review.suggestions,
-            },
+            step_event: revisionEvent,
             task: await aiEmployeeService.getTask(taskId),
           };
         }
@@ -362,13 +407,69 @@ export async function tickAgentLoop(taskId, userId) {
     }
 
     const updatedTask = await aiEmployeeService.getTask(taskId);
+
+    // ── Build enriched step_event with execution details for dashboard ────
+    const stepEvent = {
+      step_name: nextStep.name,
+      status: nextStep.status,
+      summary: result.run?.summary || `Step "${nextStep.name}" completed.`,
+      artifacts: nextStep.artifact_refs || [],
+    };
+
+    // Enrich with python_tool details (generated code, stdout, stderr, API call info)
+    const pt = result?.python_tool;
+    if (pt) {
+      if (pt.code) stepEvent.code = pt.code;
+      stepEvent.code_language = 'python';
+      if (pt.stdout) stepEvent.stdout = pt.stdout;
+      if (pt.stderr) stepEvent.stderr = pt.stderr;
+      if (pt.artifacts) stepEvent.artifacts = pt.artifacts;
+      stepEvent.api_call = {
+        method: 'POST',
+        url: '/execute-tool',
+        provider: pt.llm_provider || pt.metadata?.provider || '—',
+        model: pt.llm_model || pt.metadata?.model || '—',
+        duration_ms: pt.execution_ms || null,
+        status: 200,
+      };
+    }
+
+    // Enrich with python_report details
+    const pr = result?.python_report;
+    if (pr) {
+      if (pr.code) stepEvent.code = pr.code;
+      stepEvent.code_language = 'python';
+      if (pr.artifacts) stepEvent.artifacts = pr.artifacts;
+      stepEvent.api_call = {
+        method: 'POST',
+        url: '/generate-report',
+        duration_ms: pr.execution_ms || null,
+        status: 200,
+      };
+    }
+
+    // Enrich with dynamic_tool details
+    const dt = result?.dynamic_tool;
+    if (dt) {
+      if (dt.code) stepEvent.code = dt.code;
+      stepEvent.code_language = dt.language || 'javascript';
+      if (dt.stdout) stepEvent.stdout = dt.stdout;
+      if (dt.stderr) stepEvent.stderr = dt.stderr;
+    }
+
+    // Emit step_completed event via EventBus + SSE
+    eventBus.emit(EVENT_NAMES.AGENT_STEP_COMPLETED, stepEvent);
+    _publishSSE(taskId, { event_type: 'step_completed', ...stepEvent, loop_state: loopState });
+
+    const isDone = isLoopFullyComplete(loopState.steps) && nextStep.status !== STEP_STATUS.REVIEW_HOLD;
+    if (isDone) {
+      eventBus.emit(EVENT_NAMES.AGENT_LOOP_DONE, { taskId });
+      _publishSSE(taskId, { event_type: 'loop_done', timestamp: Date.now() / 1000 });
+    }
+
     return {
-      done: isLoopFullyComplete(loopState.steps) && nextStep.status !== STEP_STATUS.REVIEW_HOLD,
-      step_event: {
-        step_name: nextStep.name,
-        status: nextStep.status,
-        summary: result.run?.summary || `Step "${nextStep.name}" completed.`,
-      },
+      done: isDone,
+      step_event: stepEvent,
       task: updatedTask,
     };
 
@@ -437,16 +538,22 @@ export async function tickAgentLoop(taskId, userId) {
       );
     } catch { /* best-effort */ }
 
+    const failEvent = {
+      step_name: nextStep.name,
+      status: nextStep.status,
+      error: nextStep.error,
+      retry_count: nextStep.retry_count,
+      healing_strategy: nextStep._healing_strategy?.healingStrategy || null,
+      healing_reasoning: nextStep._healing_strategy?.reasoning || null,
+    };
+
+    // Emit step_failed event via EventBus + SSE
+    eventBus.emit(EVENT_NAMES.AGENT_STEP_FAILED, failEvent);
+    _publishSSE(taskId, { event_type: 'step_failed', ...failEvent, loop_state: loopState });
+
     return {
       done: isLoopDone(loopState.steps),
-      step_event: {
-        step_name: nextStep.name,
-        status: nextStep.status,
-        error: nextStep.error,
-        retry_count: nextStep.retry_count,
-        healing_strategy: nextStep._healing_strategy?.healingStrategy || null,
-        healing_reasoning: nextStep._healing_strategy?.reasoning || null,
-      },
+      step_event: failEvent,
       task: await aiEmployeeService.getTask(taskId),
     };
   }
@@ -539,7 +646,8 @@ export async function runAgentLoop(taskId, userId, opts = {}) {
         completedSteps.push(step_event.step_name);
       }
       if (onStepComplete) {
-        try { onStepComplete(step_event); } catch { /* ignore callback errors */ }
+        // Attach task reference so dashboard can read updated loop_state
+        try { onStepComplete({ ...step_event, task }); } catch { /* ignore callback errors */ }
       }
     }
 

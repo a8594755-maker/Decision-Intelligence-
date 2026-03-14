@@ -21,12 +21,25 @@ import { callLLM } from './aiEmployeeLLMService';
 // ── Constants ────────────────────────────────────────────────────────────────
 
 const SANDBOX_TIMEOUT_MS = 30_000;
-const SUPABASE_URL = String(import.meta?.env?.VITE_SUPABASE_URL || '').replace(/\/+$/, '');
+const SUPABASE_URL = String(import.meta.env.VITE_SUPABASE_URL || '').replace(/\/+$/, '');
 
 function _hasAuth() {
   try {
-    if (!SUPABASE_URL || typeof localStorage === 'undefined') return false;
-    const match = SUPABASE_URL.match(/\/\/([^.]+)\./);
+    if (typeof localStorage === 'undefined') return false;
+    // Find the Supabase auth token key dynamically
+    const url = String(import.meta.env.VITE_SUPABASE_URL || SUPABASE_URL || '');
+    if (!url) {
+      // No Supabase URL — still allow if there's any sb-*-auth-token in localStorage
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k?.startsWith('sb-') && k?.endsWith('-auth-token')) {
+          const raw = localStorage.getItem(k);
+          if (raw && JSON.parse(raw)?.access_token) return true;
+        }
+      }
+      return false;
+    }
+    const match = url.match(/\/\/([^.]+)\./);
     if (!match) return false;
     const raw = localStorage.getItem(`sb-${match[1]}-auth-token`);
     return Boolean(raw && JSON.parse(raw)?.access_token);
@@ -68,8 +81,13 @@ export function buildGenerationPrompt({ toolHint, priorArtifacts, datasetProfile
       parts.push(`Sample rows (first ${datasetProfile.sample_rows.length}): ${JSON.stringify(datasetProfile.sample_rows.slice(0, 3))}`);
     }
     parts.push('');
-    parts.push('The input object will contain `_prior_artifacts` from previous steps.');
-    parts.push('If sample_rows data is provided, use it to understand the data shape and types.');
+    parts.push('## Input Data Structure');
+    parts.push('The `input` object contains:');
+    parts.push('- `input.sheets` — Object where keys are sheet names, values are arrays of row objects. e.g. `input.sheets["Sales_Data"]` is an array of `{col1: val1, col2: val2, ...}`');
+    parts.push('- `input.total_rows` — Total row count across all sheets');
+    parts.push('- `input._prior_artifacts` — Outputs from previous steps (keyed by step name)');
+    parts.push('');
+    parts.push('Access the data like: `const salesRows = input.sheets["Sales_Data"] || []; const allSheets = Object.entries(input.sheets);`');
     parts.push('');
   }
 
@@ -161,7 +179,7 @@ export async function generateCodeAndExecute({
 }) {
   // Apply self-healing modifications
   const effectiveHint = simplifiedHint || toolHint;
-  const effectiveRevisions = [...revisionInstructions];
+  const effectiveRevisions = [...(revisionInstructions || [])];
 
   // Step 1: Generate code via LLM
   const generated = await _generateCodeViaLLM({
