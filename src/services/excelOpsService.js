@@ -9,7 +9,7 @@
 // The Excel Add-in polls for pending ops and executes them via Excel.run().
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { supabase } from '../lib/supabaseClient';
+import { supabase } from './supabaseClient';
 
 // ── Operation types ──────────────────────────────────────────────────────────
 
@@ -324,7 +324,9 @@ export async function generateExcelOpsForStep(taskId, userId, step, result) {
 
     const artType = (ref.type || '').toLowerCase();
     const label = ref.label || ref.type || step.name;
-    const sheetName = label.replace(/[\\\/\*\?\[\]:]/g, '_').slice(0, 31);
+    const sheetName = Array.from(label, (char) => (
+      ['\\', '/', '*', '?', ':', '[', ']'].includes(char) ? '_' : char
+    )).join('').slice(0, 31);
 
     // KPI / metrics → dashboard layout
     if (artType.includes('kpi') || artType === 'metrics' || artType.includes('summary')) {

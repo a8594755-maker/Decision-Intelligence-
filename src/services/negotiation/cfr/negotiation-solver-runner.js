@@ -18,6 +18,10 @@ import {
   computeSupplierTypePriors,
 } from './negotiation-types.js';
 
+function importServerModule(specifier) {
+  return new Function('modulePath', 'return import(modulePath);')(specifier);
+}
+
 // ---------------------------------------------------------------------------
 // Default Scenarios
 // ---------------------------------------------------------------------------
@@ -155,7 +159,7 @@ export class NegotiationSolverRunner {
   exportAsJsonl(results) {
     const lines = [];
 
-    for (const [compositeKey, result] of results) {
+    for (const [, result] of results) {
       const { scenarioId, buyerBucket, store, stats } = result;
 
       // Metadata line for this scenario+bucket
@@ -251,7 +255,7 @@ export async function batchSolve(config = {}) {
   } = config;
 
   // Use parallel solver
-  const { solveParallel } = await import('./parallel-solver.js');
+  const { solveParallel } = await importServerModule('./parallel-solver.js');
 
   const parallelResult = await solveParallel({
     scenarios,
@@ -280,8 +284,8 @@ export async function batchSolve(config = {}) {
       }
 
       if (manifest.length > 0) {
-        const { writeFileSync: wfs } = await import('node:fs');
-        const { join: pjoin } = await import('node:path');
+        const { writeFileSync: wfs } = await importServerModule('node:fs');
+        const { join: pjoin } = await importServerModule('node:path');
         const manifestPath = pjoin(outputDir, '_registration_manifest.json');
         wfs(manifestPath, JSON.stringify(manifest, null, 2));
       }

@@ -53,8 +53,7 @@ import { createAlertMonitor, buildAlertChatMessage, isAlertMonitorEnabled } from
 import { batchApprove, batchReject } from '../../services/approvalWorkflowService';
 import { decomposeTask } from '../../services/chatTaskDecomposer';
 import { buildDynamicTemplate } from '../../services/dynamicTemplateBuilder';
-import { getOrCreateAiden, createTask as createAiTask } from '../../services/aiEmployeeService';
-import { executeTaskWithLoop } from '../../services/aiEmployeeExecutor';
+import { getOrCreateAiden } from '../../services/aiEmployeeService';
 // v2 orchestrator — single entry point for task lifecycle
 import { createPlan, submitPlan, approvePlan as orchestratorApprovePlan } from '../../services/aiEmployee/index.js';
 import { eventBus, EVENT_NAMES } from '../../services/eventBus.js';

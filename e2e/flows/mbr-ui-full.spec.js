@@ -107,7 +107,7 @@ test.describe('MBR UI Full Pipeline', () => {
     console.log('[3/6] Sending MBR analysis prompt...');
     await page.waitForTimeout(2000);
 
-    const prompt = '準備 MBR 月會分析，包含 Cleaned Data, KPI Summary, Pivot Analysis, 管理洞察，最後輸出 Excel';
+    const prompt = '你是 Apple 業務分析團隊的 entry level analyst，主管要你準備本月月會（Monthly Business Review）使用的分析資料。';
     await chatInput.fill(prompt);
 
     const sendBtn = page.locator('button[type="submit"]').first();
