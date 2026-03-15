@@ -1,14 +1,67 @@
 import { supabase } from './supabaseClient';
 
 const DATASET_PROFILES_MIGRATION_HINT = "Dataset profile table is unavailable in PostgREST. Run sql/migrations/di_dataset_profiles.sql in Supabase SQL Editor, then run: NOTIFY pgrst, 'reload schema';";
+const LOCAL_DATASET_PROFILES_KEY = 'di_dataset_profiles_local_v1';
 
 // ── Local profile cache (survives Supabase failures) ─────────────────────────
 const _localProfileCache = new Map(); // profileId → profile object
+let _localProfilesHydrated = false;
+
+function getLocalStorage() {
+  try {
+    return globalThis.localStorage || null;
+  } catch {
+    return null;
+  }
+}
+
+function hydrateLocalProfiles() {
+  if (_localProfilesHydrated) return;
+  _localProfilesHydrated = true;
+
+  const storage = getLocalStorage();
+  if (!storage) return;
+
+  try {
+    const raw = storage.getItem(LOCAL_DATASET_PROFILES_KEY);
+    const profiles = raw ? JSON.parse(raw) : [];
+    if (!Array.isArray(profiles)) return;
+    profiles.forEach((profile) => {
+      if (profile?.id) {
+        _localProfileCache.set(String(profile.id), profile);
+      }
+    });
+  } catch {
+    // Ignore malformed local cache.
+  }
+}
+
+function persistLocalProfiles() {
+  const storage = getLocalStorage();
+  if (!storage) return;
+
+  try {
+    storage.setItem(
+      LOCAL_DATASET_PROFILES_KEY,
+      JSON.stringify(Array.from(_localProfileCache.values()))
+    );
+  } catch {
+    // Ignore quota or storage access issues.
+  }
+}
+
+function cacheProfile(profile, { persist = false } = {}) {
+  if (!profile?.id) return;
+  hydrateLocalProfiles();
+  _localProfileCache.set(String(profile.id), profile);
+  if (persist) {
+    persistLocalProfiles();
+  }
+}
 
 /** Register a locally-created profile so getDatasetProfileById can find it. */
 export function registerLocalProfile(profile) {
-  if (!profile?.id) return;
-  _localProfileCache.set(String(profile.id), profile);
+  cacheProfile(profile, { persist: true });
 }
 
 function normalizeUnknownError(error, fallbackMessage) {
@@ -90,6 +143,7 @@ function normalizeCreatePayload(payload = {}) {
 
 export const datasetProfilesService = {
   async createDatasetProfile(payload = {}) {
+    hydrateLocalProfiles();
     const insertPayload = normalizeCreatePayload(payload);
     console.log('[datasetProfilesService] INSERT attempt — user_id:', insertPayload.user_id, 'fingerprint:', insertPayload.fingerprint?.slice(0, 40));
     const { data, error } = await supabase
@@ -112,15 +166,16 @@ export const datasetProfilesService = {
         created_at: new Date().toISOString(),
         _local: true
       };
-      _localProfileCache.set(String(localProfile.id), localProfile);
+      registerLocalProfile(localProfile);
       return localProfile;
     }
     console.log('[datasetProfilesService] INSERT success — profile id:', data.id);
-    _localProfileCache.set(String(data.id), data);
+    cacheProfile(data);
     return data;
   },
 
   async getLatestDatasetProfile(userId) {
+    hydrateLocalProfiles();
     const { data, error } = await supabase
       .from('di_dataset_profiles')
       .select('*')
@@ -134,6 +189,7 @@ export const datasetProfilesService = {
   },
 
   async getDatasetProfileById(userId, profileId) {
+    hydrateLocalProfiles();
     // Local profiles live in memory only — skip Supabase query
     const profileIdStr = String(profileId || '');
     if (profileIdStr.startsWith('local-')) {
@@ -153,6 +209,7 @@ export const datasetProfilesService = {
   },
 
   async updateDatasetProfile(userId, profileId, updates = {}) {
+    hydrateLocalProfiles();
     const payload = {};
     if (Object.prototype.hasOwnProperty.call(updates, 'profile_json')) {
       payload.profile_json = updates.profile_json;
@@ -176,10 +233,12 @@ export const datasetProfilesService = {
       .single();
 
     if (error) throwDatasetProfilesError(error);
+    cacheProfile(data);
     return data;
   },
 
   async findByFingerprint(userId, fingerprint) {
+    hydrateLocalProfiles();
     const { data, error } = await supabase
       .from('di_dataset_profiles')
       .select('*')
@@ -194,6 +253,7 @@ export const datasetProfilesService = {
   },
 
   async listByFingerprint(userId, fingerprint, limit = 25) {
+    hydrateLocalProfiles();
     const { data, error } = await supabase
       .from('di_dataset_profiles')
       .select('*')

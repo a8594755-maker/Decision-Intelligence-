@@ -24,6 +24,8 @@ import * as employeeRepo from './persistence/employeeRepo.js';
 import { getExecutor } from './executors/executorRegistry.js';
 import { classifyError, chooseHealingStrategy } from '../selfHealingService.js';
 import { eventBus, EVENT_NAMES } from '../eventBus.js';
+import { composeOutputProfileContext } from './styleLearning/outputProfileService.js';
+import { extractFromSingleRevision } from './styleLearning/feedbackStyleExtractor.js';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -41,25 +43,34 @@ const TICK_DELAY_MS = 500; // Delay between steps to avoid overloading
  * @param {Array<{name, tool_hint, tool_type, builtin_tool_id?}>} plan.steps
  * @param {object} plan.inputData - { sheets, datasetProfileRow, userId }
  * @param {object} plan.llmConfig - { provider, model, temperature, max_tokens }
+ * @param {string} [plan.priority]
+ * @param {object} [plan.taskMeta]
  * @param {string} employeeId
  * @param {string} userId
  * @returns {Promise<{taskId: string, task: object}>}
  */
 export async function submitPlan(plan, employeeId, userId) {
+  const taskMeta = plan.taskMeta || {};
+
   // 1. Create task in draft_plan
   const task = await taskRepo.createTask({
     employeeId,
     title: plan.title,
     description: plan.description,
+    priority: plan.priority || 'medium',
+    sourceType: taskMeta.source_type || 'question_to_task',
     assignedByUserId: userId,
+    dueAt: taskMeta.due_at || null,
     inputContext: {
       inputData: plan.inputData,
       llmConfig: plan.llmConfig,
+      ...taskMeta,
     },
     planSnapshot: {
       steps: plan.steps,
       llmConfig: plan.llmConfig,
       submittedAt: new Date().toISOString(),
+      ...taskMeta,
     },
   });
 
@@ -134,18 +145,52 @@ export async function retryTask(taskId, userId) {
 
   // Re-start execution
   const activeStatus = taskTransition(nextStatus, TASK_EVENTS.START);
-  await taskRepo.updateTaskStatus(taskId, activeStatus, queued.version);
+  const active = await taskRepo.updateTaskStatus(taskId, activeStatus, queued.version);
+
+  try {
+    const employee = await employeeRepo.getEmployee(active.employee_id);
+    const empState = employeeTransition(employee._logicalState, EMPLOYEE_EVENTS.TASK_STARTED);
+    await employeeRepo.updateEmployeeStatus(active.employee_id, empState);
+  } catch {
+    // Best-effort only — task execution should still resume.
+  }
 
   _runTickLoop(taskId);
 }
 
 /**
  * Approve a review hold and continue execution.
+ * @param {string} taskId
+ * @param {string} userId
+ * @param {object} [opts]
+ * @param {string} [opts.feedback] - manager feedback text
+ * @param {object} [opts.revision] - { original, revised } for style learning
+ * @param {Function} [opts.llmFn] - for feedback extraction
  */
-export async function approveReview(taskId, userId) {
+export async function approveReview(taskId, userId, opts = {}) {
   const task = await taskRepo.getTask(taskId);
   const nextStatus = taskTransition(task.status, TASK_EVENTS.REVIEW_APPROVED);
-  await taskRepo.updateTaskStatus(taskId, nextStatus, task.version);
+  const active = await taskRepo.updateTaskStatus(taskId, nextStatus, task.version);
+
+  try {
+    const employee = await employeeRepo.getEmployee(active.employee_id);
+    const empState = employeeTransition(employee._logicalState, EMPLOYEE_EVENTS.REVIEW_RESOLVED);
+    await employeeRepo.updateEmployeeStatus(active.employee_id, empState);
+  } catch {
+    // Best-effort only — task execution should still resume.
+  }
+
+  // Learn from manager feedback (best-effort, non-blocking)
+  if (opts.feedback && opts.llmFn) {
+    extractFromSingleRevision(active.employee_id, taskId, {
+      original: opts.revision?.original,
+      revised: opts.revision?.revised,
+      feedback: opts.feedback,
+      workflowType: task.input_context?.workflow_type,
+    }, opts.llmFn).catch(err =>
+      console.warn('[Orchestrator] Style learning from feedback failed (non-blocking):', err.message)
+    );
+  }
 
   // Continue tick loop
   _runTickLoop(taskId);
@@ -238,9 +283,36 @@ async function _executeStep(task, step) {
     }
   }
 
+  // Resolve learned company output profile (best-effort, non-blocking)
+  let styleContext = null;
+  let outputProfile = null;
+  try {
+    const resolved = await composeOutputProfileContext({
+      employeeId: task.employee_id,
+      inputContext: task.input_context || {},
+      step: {
+        ...stepDef,
+        name: step.step_name,
+      },
+      mode: 'minimal',
+    });
+    if (resolved.styleContext) styleContext = resolved.styleContext;
+    if (resolved.outputProfile) outputProfile = resolved.outputProfile;
+  } catch { /* learned output profile is optional — never block execution */ }
+
   // Build step input
   const inputData = {
     ...(task.input_context?.inputData || {}),
+    taskMeta: {
+      id: task.id,
+      title: task.title,
+      workflowType: task.input_context?.workflow_type || null,
+      deliverableLabel: task.input_context?.deliverable_label || null,
+      deliverableType: task.input_context?.deliverable_type || null,
+      docType: task.input_context?.doc_type || outputProfile?.docType || null,
+      audience: task.input_context?.deliverable_audience || outputProfile?.audience || null,
+      outputProfile,
+    },
     priorArtifacts,
     priorStepResults,
   };
@@ -251,6 +323,7 @@ async function _executeStep(task, step) {
       tool_hint: stepDef.tool_hint || step.step_name,
       builtin_tool_id: stepDef.builtin_tool_id,
       tool_type: stepDef.tool_type || 'python_tool',
+      input_args: stepDef.input_args || {},
       report_format: stepDef.report_format,
       opencloud_action: stepDef.opencloud_action,
       opencloud_config: stepDef.opencloud_config,
@@ -260,6 +333,8 @@ async function _executeStep(task, step) {
     llmConfig: planSnapshot.llmConfig || task.input_context?.llmConfig || {},
     taskId: task.id,
     stepIndex: step.step_index,
+    styleContext,
+    outputProfile,
   };
 
   // Get executor and run

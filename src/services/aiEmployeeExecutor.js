@@ -29,6 +29,10 @@ import { generateReport } from './reportGeneratorService';
 import { toPowerBIDataset } from './externalToolBridgeService';
 import { getBuiltinTool } from './builtinToolCatalog';
 
+function toServiceImportPath(modulePath) {
+  return `${modulePath}${modulePath.endsWith('.js') ? '' : '.js'}`;
+}
+
 // ── Input context shape (documented for task creation forms) ────────────────
 //
 // task.input_context = {
@@ -418,7 +422,7 @@ export async function executeTask(task, userId) {
         }
 
         // Dynamically import the module and call the method
-        const mod = await import(`./${catalogEntry.module}`);
+        const mod = await import(/* @vite-ignore */ toServiceImportPath(catalogEntry.module));
         const fn = mod[catalogEntry.method];
         if (typeof fn !== 'function') {
           throw new Error(`Builtin tool ${builtinToolId}: method "${catalogEntry.method}" not found in ${catalogEntry.module}`);

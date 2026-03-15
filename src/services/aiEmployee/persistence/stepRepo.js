@@ -7,6 +7,49 @@
 
 import { supabase } from '../../supabaseClient.js';
 
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function extractArtifactId(candidate) {
+  if (!candidate) return null;
+
+  if (typeof candidate === 'string') {
+    return UUID_PATTERN.test(candidate) ? candidate : null;
+  }
+
+  if (typeof candidate !== 'object') return null;
+
+  const directId = candidate.artifact_id || candidate.id || null;
+  if (typeof directId === 'string' && UUID_PATTERN.test(directId)) {
+    return directId;
+  }
+
+  const nestedRef = candidate.output_ref || candidate.input_ref || candidate.ref || null;
+  if (nestedRef && typeof nestedRef === 'object') {
+    const nestedId = nestedRef.artifact_id || nestedRef.id || null;
+    if (typeof nestedId === 'string' && UUID_PATTERN.test(nestedId)) {
+      return nestedId;
+    }
+  }
+
+  return null;
+}
+
+export function normalizeArtifactRefsForStorage(artifactRefs) {
+  const input = Array.isArray(artifactRefs)
+    ? artifactRefs
+    : artifactRefs && typeof artifactRefs === 'object'
+    ? Object.values(artifactRefs).flat()
+    : [];
+
+  return Array.from(
+    new Set(
+      input
+        .map(extractArtifactId)
+        .filter(Boolean)
+    )
+  );
+}
+
 /**
  * Create step rows for a task (one ai_employee_runs row per step).
  * @param {string} taskId
@@ -38,9 +81,16 @@ export async function createSteps(taskId, employeeId, steps) {
  * Update a step's status and optionally its result data.
  */
 export async function updateStep(stepId, updates) {
+  const patch = {
+    ...updates,
+    ...(Object.prototype.hasOwnProperty.call(updates || {}, 'artifact_refs')
+      ? { artifact_refs: normalizeArtifactRefsForStorage(updates.artifact_refs) }
+      : {}),
+  };
+
   const { data, error } = await supabase
     .from('ai_employee_runs')
-    .update(updates)
+    .update(patch)
     .eq('id', stepId)
     .select()
     .single();

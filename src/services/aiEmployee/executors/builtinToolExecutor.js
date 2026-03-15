@@ -7,6 +7,11 @@
 
 import { BUILTIN_TOOLS } from '../../builtinToolCatalog.js';
 
+function toImportPath(modulePath) {
+  const normalized = modulePath.replace(/^\.\//, '');
+  return `../../${normalized}${normalized.endsWith('.js') ? '' : '.js'}`;
+}
+
 /**
  * @param {object} stepInput
  * @param {object} stepInput.step - { name, tool_hint, builtin_tool_id, tool_type }
@@ -32,7 +37,7 @@ export async function executeBuiltinTool(stepInput) {
 
   try {
     // Dynamic import of the tool's module
-    const mod = await import(/* @vite-ignore */ `../../${catalogEntry.module.replace('./', '')}`);
+    const mod = await import(/* @vite-ignore */ toImportPath(catalogEntry.module));
     const fn = mod[catalogEntry.method];
 
     if (typeof fn !== 'function') {
@@ -51,6 +56,7 @@ export async function executeBuiltinTool(stepInput) {
       settings: inputData.settings || {},
       ...(inputData.priorArtifacts ? { priorArtifacts: inputData.priorArtifacts } : {}),
       ...(inputData.sheets ? { sheets: inputData.sheets } : {}),
+      ...(step.input_args || {}),
     };
 
     const result = await fn(args);

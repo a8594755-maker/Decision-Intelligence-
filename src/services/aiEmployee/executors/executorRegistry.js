@@ -16,6 +16,7 @@ const REGISTRY = {
   builtin_tool:  executeBuiltinTool,
   python_tool:   executePythonTool,
   python_report: executePythonTool,  // Reports via Python (charts/dashboards) — same sandbox
+  dynamic_tool:  executePythonTool,  // LLM-generated code — same sandbox as python_tool
   llm_call:      executeLlmCall,
   report:        executeReport,
   export:        executeReport,      // Export steps use report executor

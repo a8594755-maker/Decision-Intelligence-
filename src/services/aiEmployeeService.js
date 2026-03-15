@@ -11,6 +11,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { supabase } from './supabaseClient';
+import { diRunsService } from './diRunsService';
+import { loadArtifact } from '../utils/artifactStore';
 
 const LOCAL_KEY = 'ai_employee_local_v1';
 const MAX_LOCAL_ENTRIES = 500;
@@ -52,6 +54,81 @@ function localId(prefix) {
 
 function now() {
   return new Date().toISOString();
+}
+
+function synthesizeLoopStateFromRuns(existingLoopState, runs = []) {
+  if (existingLoopState?.steps?.length) return existingLoopState;
+
+  const stepRuns = (runs || [])
+    .filter((run) => run?.step_index != null)
+    .sort((a, b) => (a.step_index ?? 0) - (b.step_index ?? 0));
+
+  if (stepRuns.length === 0) return existingLoopState || null;
+
+  return {
+    steps: stepRuns.map((run) => ({
+      index: run.step_index,
+      name: run.step_name || `step_${run.step_index}`,
+      workflow_type: run.tool_type || null,
+      status: run.status || 'pending',
+      artifact_refs: run.artifact_refs || [],
+      retry_count: run.retry_count || 0,
+      error: run.error_message || null,
+      summary: run.summary || null,
+      started_at: run.started_at || null,
+      finished_at: run.ended_at || null,
+    })),
+  };
+}
+
+async function enrichRunArtifactRef(ref) {
+  if (!ref) return null;
+
+  if (typeof ref === 'string') {
+    const artifact = await diRunsService.getArtifactById(ref).catch(() => null);
+    const data = artifact
+      ? await loadArtifact({ artifact_id: ref, ...(artifact.artifact_json || {}) }).catch(() => artifact.artifact_json ?? null)
+      : null;
+
+    return {
+      artifact_id: ref,
+      type: artifact?.artifact_type || 'artifact_ref',
+      artifact_type: artifact?.artifact_type || 'artifact_ref',
+      label: artifact?.artifact_type || `Artifact ${ref.slice(0, 8)}`,
+      data,
+    };
+  }
+
+  if (typeof ref !== 'object') return null;
+
+  const artifactId = ref.artifact_id || ref.id || ref.output_ref?.artifact_id || ref.input_ref?.artifact_id || null;
+  if (!artifactId) {
+    return {
+      ...ref,
+      data: ref.data ?? ref.payload ?? null,
+    };
+  }
+
+  const artifact = await diRunsService.getArtifactById(artifactId).catch(() => null);
+  const data = await loadArtifact(ref).catch(() => artifact?.artifact_json ?? ref.data ?? ref.payload ?? null);
+
+  return {
+    ...ref,
+    artifact_id: artifactId,
+    type: ref.type || ref.artifact_type || artifact?.artifact_type || 'artifact_ref',
+    artifact_type: ref.artifact_type || ref.type || artifact?.artifact_type || 'artifact_ref',
+    label: ref.label || ref.artifact_type || ref.type || artifact?.artifact_type || `Artifact ${String(artifactId).slice(0, 8)}`,
+    data,
+  };
+}
+
+async function enrichRunsWithArtifacts(runs = []) {
+  return Promise.all((runs || []).map(async (run) => ({
+    ...run,
+    artifact_refs: (await Promise.all(
+      (Array.isArray(run?.artifact_refs) ? run.artifact_refs : []).map(enrichRunArtifactRef)
+    )).filter(Boolean),
+  })));
 }
 
 // ── Supabase guard ────────────────────────────────────────────────────────
@@ -625,26 +702,38 @@ export async function listPendingReviews(userId) {
       .from('ai_employee_tasks')
       .select(`
         *,
-        ai_employee_runs!ai_employee_runs_task_id_fkey(id, status, summary, artifact_refs, ended_at, started_at)
+        ai_employee_runs!ai_employee_runs_task_id_fkey(id, status, summary, artifact_refs, ended_at, started_at, step_index, step_name, retry_count, error_message)
       `)
-      .eq('status', 'waiting_review')
+      .in('status', ['waiting_review', 'review_hold'])
       .in('employee_id', empIds)
       .order('updated_at', { ascending: false });
     if (error) throw error;
     console.log('[aiEmployeeService] listPendingReviews found:', data?.length, 'tasks');
-    return data;
+    const enriched = await Promise.all((data || []).map(async (item) => {
+      const runs = await enrichRunsWithArtifacts(item.ai_employee_runs || []);
+      return {
+        ...item,
+        ai_employee_runs: runs,
+        loop_state: synthesizeLoopStateFromRuns(item.loop_state, runs),
+      };
+    }));
+    return enriched;
   });
   if (sbResult !== null) return sbResult;
 
   // Local fallback: join manually
   const store = getLocalStore();
   return store.tasks
-    .filter((t) => t.status === 'waiting_review')
+    .filter((t) => t.status === 'waiting_review' || t.status === 'review_hold')
     .map((t) => ({
       ...t,
       ai_employee_runs: store.runs
         .filter((r) => r.task_id === t.id)
         .sort((a, b) => b.started_at.localeCompare(a.started_at)),
+    }))
+    .map((item) => ({
+      ...item,
+      loop_state: synthesizeLoopStateFromRuns(item.loop_state, item.ai_employee_runs),
     }))
     .sort((a, b) => b.updated_at.localeCompare(a.updated_at));
 }

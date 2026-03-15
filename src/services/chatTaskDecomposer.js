@@ -226,15 +226,21 @@ Additional workflow types (not in built-in catalog):
 - registered_tool: Use a previously registered custom tool
 
 CRITICAL RULES for choosing workflow_type:
-1. Built-in tools are ONLY for specific supply chain operations (demand forecasting with time-series models, replenishment planning with MIP solvers, supplier risk scoring). Do NOT use them for general data analysis, cleaning, KPI calculation, or reporting.
+1. Built-in tools are ONLY for specific supply chain operations (demand forecasting with time-series models, replenishment planning with MIP solvers, supplier risk scoring). Do NOT use them for general data analysis, cleaning, KPI calculation, reporting, or Excel generation. For Excel/workbook generation, use "python_tool" or "export".
 2. For data-intensive tasks like: data cleaning, KPI/metrics calculation, pivot tables, trend analysis, data quality checks — ALWAYS use "python_tool" with a detailed tool_hint. Python has pandas, numpy, and full data processing capability.
 3. For dashboard/chart generation or PDF reports — use "python_report". It has matplotlib for charts and fpdf2 for PDF generation.
 4. Only use "dynamic_tool" for very simple calculations that don't need pandas. Prefer "python_tool" for anything data-related.
-5. Set builtin_tool_id for builtin_tool steps (must match a tool id from the list above).
+5. Set builtin_tool_id for builtin_tool steps (must match a tool id from the list above). NEVER set builtin_tool_id for non-builtin workflow types.
 6. Set depends_on to declare execution order (use step names).
-7. If the user asks for Excel/XLSX output, add an "export" step and set report_format to "xlsx".
+7. If the user asks for Excel/XLSX output, add an "export" step (workflow_type: "export") and set report_format to "xlsx". Do NOT use "builtin_tool" for Excel generation.
 8. If the user asks for a report/summary with charts, add a "python_report" step at the end. For text-only summary, use "report".
 9. Break complex analysis into logical steps: e.g. clean_data (python_tool) → calculate_kpis (python_tool) → analyze_trends (python_tool) → generate_dashboard (python_report). Each step should have a specific, detailed tool_hint describing exactly what to compute.
+
+TOOL_HINT RULES (for python_tool steps):
+- Each tool_hint should request AT MOST 3 artifacts. Keep the generated code short (<100 lines).
+- Tell the code to discover column names dynamically using df.columns.tolist() — NEVER hardcode column names.
+- Tell the code to build artifacts incrementally: artifacts = [] then artifacts.append(...).
+- Tell the code to ALWAYS end with: return {"result": {...}, "artifacts": artifacts}.
 
 10. If the user's request is vague or ambiguous (e.g. "分析資料", "analyze data", "generate report" without specifics), set needs_clarification=true and provide 2-4 short clarification questions. Criteria for vague: no specific metrics/KPIs mentioned, no output format specified, multiple possible approaches exist, less than 10 meaningful words.
 11. Even when needs_clarification=true, STILL provide your best-guess subtasks so the user can skip clarification if they want.
@@ -389,21 +395,20 @@ export async function decomposeTask({ userMessage, sessionContext = null, employ
       });
     }
 
-    // Add export step if Excel output is needed
-    if (isExportRequest || msgLower.includes('excel') || msgLower.includes('xlsx') || msgLower.includes('同一份')) {
-      subtasks.push({
-        name: 'export',
-        workflow_type: 'export',
-        description: 'Export all analysis results to Excel with multiple worksheets',
-        requires_review: false,
-        tool_hint: null,
-        tool_id: null,
-        builtin_tool_id: null,
-        depends_on: subtasks.map(s => s.name),
-        estimated_tier: 'tier_c',
-        needs_dataset_profile: false,
-      });
-    }
+    // Add Excel generation step — general analysis always produces Excel output
+    // Uses excelExecutor → /agent/generate-excel (Opus 4.6 generates openpyxl code)
+    subtasks.push({
+      name: 'generate_excel',
+      workflow_type: 'excel',
+      description: 'Generate MBR Excel workbook with formatted sheets, charts, and analysis results',
+      requires_review: false,
+      tool_hint: 'MBR Monthly Business Review Excel Report',
+      tool_id: null,
+      builtin_tool_id: null,
+      depends_on: subtasks.map(s => s.name),
+      estimated_tier: 'tier_c',
+      needs_dataset_profile: false,
+    });
   } else {
   // ── Phase 1: Match against builtin tool catalog ─────────────────────────
   const catalogMatches = findToolsByQuery(userMessage, { maxResults: 5 });

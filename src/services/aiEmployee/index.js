@@ -27,6 +27,7 @@ export { routeModel } from './router.js';
 
 // ── Review ──
 export { reviewStep } from './review.js';
+export { runTask, resolveReviewDecision } from './taskActionService.js';
 
 // ── State machines (for UI display / guards) ──
 export { TASK_STATES, TASK_EVENTS, taskTransition, canTaskTransition, isTaskTerminal } from './taskStateMachine.js';

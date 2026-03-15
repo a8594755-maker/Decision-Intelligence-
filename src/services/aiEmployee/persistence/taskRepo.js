@@ -14,7 +14,7 @@ import { supabase } from '../../supabaseClient.js';
 export async function createTask({
   employeeId, title, description, priority = 'medium',
   sourceType = 'question_to_task', assignedByUserId,
-  inputContext = {}, planSnapshot = null,
+  inputContext = {}, planSnapshot = null, dueAt = null,
 }) {
   const { data, error } = await supabase
     .from('ai_employee_tasks')
@@ -26,6 +26,7 @@ export async function createTask({
       status: 'draft_plan',
       source_type: sourceType,
       assigned_by_user_id: assignedByUserId,
+      due_at: dueAt,
       input_context: inputContext,
       plan_snapshot: planSnapshot,
       version: 1,
