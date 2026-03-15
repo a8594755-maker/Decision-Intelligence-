@@ -4,18 +4,43 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // Mock dependencies
 vi.mock('./supabaseClient', () => ({ supabase: null }));
 
-const mockCreateTask = vi.fn(async (employeeId, params) => ({
-  id: `task-${Math.random().toString(36).slice(2, 6)}`,
-  employee_id: employeeId,
-  status: 'todo',
-  ...params,
+const mockBuildPlan = vi.fn(async ({ title, description, priority, inputContext, executionMode }) => ({
+  title,
+  description,
+  priority,
+  taskMeta: { ...inputContext, execution_mode: executionMode || inputContext?.execution_mode || 'manual_approve' },
+  steps: [{ name: 'forecast', tool_type: 'builtin_tool', builtin_tool_id: 'run_forecast' }],
 }));
+
+const mockSubmitPlan = vi.fn(async (plan, employeeId) => ({
+  id: `task-${Math.random().toString(36).slice(2, 6)}`,
+  taskId: `task-${Math.random().toString(36).slice(2, 6)}`,
+  task: {
+    id: `task-${Math.random().toString(36).slice(2, 6)}`,
+    employee_id: employeeId,
+    status: 'waiting_approval',
+    title: plan.title,
+    description: plan.description,
+    priority: plan.priority,
+    input_context: plan.taskMeta,
+    plan_snapshot: { steps: plan.steps },
+  },
+}));
+const mockApprovePlan = vi.fn(async () => undefined);
 
 const mockListTasks = vi.fn(async () => []);
 
 vi.mock('./aiEmployeeService', () => ({
-  createTask: (...args) => mockCreateTask(...args),
   listTasks: (...args) => mockListTasks(...args),
+}));
+
+vi.mock('./aiEmployee/index.js', () => ({
+  approvePlan: (...args) => mockApprovePlan(...args),
+  submitPlan: (...args) => mockSubmitPlan(...args),
+}));
+
+vi.mock('./aiEmployee/templatePlanAdapter.js', () => ({
+  buildPlanFromTaskTemplate: (...args) => mockBuildPlan(...args),
 }));
 
 import { ALERT_TASK_MAP, alertToTask, evaluateAndCreateTasks } from './proactiveTaskGenerator';
@@ -54,6 +79,7 @@ describe('ALERT_TASK_MAP', () => {
   it('stockout_risk uses risk_aware_plan template', () => {
     expect(ALERT_TASK_MAP.stockout_risk.template_id).toBe('risk_aware_plan');
     expect(ALERT_TASK_MAP.stockout_risk.priority).toBe('urgent');
+    expect(ALERT_TASK_MAP.stockout_risk.execution_mode).toBe('auto_run');
   });
 
   it('expedite_rec uses forecast_then_plan template', () => {
@@ -76,6 +102,7 @@ describe('alertToTask', () => {
     expect(result.title).toContain('Stockout mitigation');
     expect(result.title).toContain('MAT-001');
     expect(result.priority).toBe('urgent');
+    expect(result.execution_mode).toBe('auto_run');
     expect(result.template_id).toBe('risk_aware_plan');
     expect(result.input_context.alert_id).toBe(alert.alert_id);
     expect(result.source_type).toBe('scheduled');
@@ -132,7 +159,9 @@ describe('evaluateAndCreateTasks', () => {
     const result = await evaluateAndCreateTasks('emp-1', 'user-1', alerts);
     expect(result.created.length).toBe(2);
     expect(result.skipped).toBe(0);
-    expect(mockCreateTask).toHaveBeenCalledTimes(2);
+    expect(mockBuildPlan).toHaveBeenCalledTimes(2);
+    expect(mockSubmitPlan).toHaveBeenCalledTimes(2);
+    expect(mockApprovePlan).toHaveBeenCalledTimes(2);
   });
 
   it('skips unknown alert types', async () => {
@@ -140,7 +169,7 @@ describe('evaluateAndCreateTasks', () => {
     const result = await evaluateAndCreateTasks('emp-1', 'user-1', alerts);
     expect(result.created.length).toBe(0);
     expect(result.skipped).toBe(1);
-    expect(mockCreateTask).not.toHaveBeenCalled();
+    expect(mockSubmitPlan).not.toHaveBeenCalled();
   });
 
   it('deduplicates: skips alerts with existing pending tasks', async () => {
@@ -176,28 +205,32 @@ describe('evaluateAndCreateTasks', () => {
     expect(result.created.length).toBe(1);
   });
 
-  it('counts errors when createTask fails', async () => {
-    mockCreateTask.mockRejectedValueOnce(new Error('DB error'));
+  it('counts errors when submitPlan fails', async () => {
+    mockSubmitPlan.mockRejectedValueOnce(new Error('DB error'));
 
     const result = await evaluateAndCreateTasks('emp-1', 'user-1', [makeAlert('stockout_risk')]);
     expect(result.created.length).toBe(0);
     expect(result.errors).toBe(1);
   });
 
-  it('passes correct params to createTask', async () => {
+  it('passes correct params to buildPlan and submitPlan', async () => {
     const alert = makeAlert('supplier_delay');
     await evaluateAndCreateTasks('emp-1', 'user-1', [alert]);
 
-    expect(mockCreateTask).toHaveBeenCalledWith('emp-1', expect.objectContaining({
+    expect(mockBuildPlan).toHaveBeenCalledWith(expect.objectContaining({
       title: expect.stringContaining('Supplier delay'),
       priority: 'high',
-      source_type: 'scheduled',
-      assigned_by_user_id: 'user-1',
-      input_context: expect.objectContaining({
+      executionMode: 'auto_run',
+      sourceType: 'scheduled',
+      userId: 'user-1',
+      inputContext: expect.objectContaining({
         alert_id: alert.alert_id,
         alert_type: 'supplier_delay',
         workflow_type: 'risk',
       }),
     }));
+
+    expect(mockSubmitPlan).toHaveBeenCalledWith(expect.any(Object), 'emp-1', 'user-1');
+    expect(mockApprovePlan).toHaveBeenCalledWith(expect.any(String), 'user-1');
   });
 });

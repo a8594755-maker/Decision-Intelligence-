@@ -5,14 +5,17 @@
 // CRUD + scheduling logic for recurring AI Employee tasks.
 //
 // Schedules live in `ai_employee_schedules` (Supabase) with localStorage
-// fallback. Each schedule carries a `task_template` that gets stamped into
-// a real task via `aiEmployeeService.createTask()` when the schedule fires.
+// fallback. Each schedule carries a `task_template` that gets converted into
+// an orchestrator plan via `submitPlan()` when the schedule fires.
 //
 // `getDueTasks()` returns schedules whose `next_run_at <= now()` — the
 // edge-function scheduler (or a manual trigger) calls this periodically.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { supabase } from './supabaseClient';
+import { submitPlan } from './aiEmployee/index.js';
+import { buildPlanFromTaskTemplate } from './aiEmployee/templatePlanAdapter.js';
+import { EXECUTION_MODES } from './aiEmployee/executionPolicy.js';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -28,6 +31,12 @@ export const SCHEDULE_TYPES = {
   ON_FILE_MODIFIED: 'on_file_modified',
   ON_FILE_DETECTED: 'on_file_detected',
 };
+
+const EVENT_TRIGGER_TYPES = new Set([
+  SCHEDULE_TYPES.ON_FILE_UPLOADED,
+  SCHEDULE_TYPES.ON_FILE_MODIFIED,
+  SCHEDULE_TYPES.ON_FILE_DETECTED,
+]);
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -70,6 +79,11 @@ function setLocal(items) {
  */
 export function computeNextRun(scheduleType, { hour = 8, dayOfWeek, dayOfMonth } = {}) {
   const base = new Date();
+
+  if (EVENT_TRIGGER_TYPES.has(scheduleType)) {
+    return null;
+  }
+
   // Shift to next occurrence
   switch (scheduleType) {
     case 'daily': {
@@ -126,6 +140,12 @@ export function advanceNextRun(schedule) {
  * @returns {Promise<object>}
  */
 export async function createSchedule(employeeId, schedule, taskTemplate, createdBy = null) {
+  const normalizedTaskTemplate = {
+    ...(taskTemplate || {}),
+    execution_mode: taskTemplate?.execution_mode
+      || (EVENT_TRIGGER_TYPES.has(schedule?.schedule_type) ? EXECUTION_MODES.AUTO_RUN : undefined),
+  };
+
   const nextRun = computeNextRun(schedule.schedule_type, {
     hour: schedule.hour,
     dayOfWeek: schedule.day_of_week,
@@ -139,7 +159,7 @@ export async function createSchedule(employeeId, schedule, taskTemplate, created
     hour: schedule.hour ?? 8,
     day_of_week: schedule.day_of_week ?? null,
     day_of_month: schedule.day_of_month ?? null,
-    task_template: taskTemplate,
+    task_template: normalizedTaskTemplate,
     last_run_at: null,
     next_run_at: nextRun,
     status: 'active',
@@ -205,30 +225,93 @@ export async function getSchedule(scheduleId) {
 /**
  * Get all active schedules that are due (next_run_at <= now).
  */
-export async function getDueTasks() {
+export async function getDueTasks({ employeeId = null } = {}) {
   const currentTime = now();
 
   const sbResult = await trySupabase(async () => {
-    const { data, error } = await supabase
+    let query = supabase
       .from('ai_employee_schedules')
       .select('*')
       .eq('status', 'active')
       .lte('next_run_at', currentTime)
       .order('next_run_at');
+
+    if (employeeId) {
+      query = query.eq('employee_id', employeeId);
+    }
+
+    const { data, error } = await query;
     if (error) throw error;
-    return data;
+    return (data || []).filter((schedule) => !EVENT_TRIGGER_TYPES.has(schedule.schedule_type));
   });
   if (sbResult) return sbResult;
 
   return getLocal().filter(
-    (s) => s.status === 'active' && s.next_run_at && s.next_run_at <= currentTime
+    (s) => s.status === 'active'
+      && (!employeeId || s.employee_id === employeeId)
+      && !EVENT_TRIGGER_TYPES.has(s.schedule_type)
+      && s.next_run_at
+      && s.next_run_at <= currentTime
   );
+}
+
+/**
+ * Convert a schedule's task_template into a real orchestrator task.
+ *
+ * This is the canonical entry point for recurring or event-triggered work.
+ * It creates a task in `waiting_approval` and advances the schedule clock.
+ *
+ * @param {object} schedule
+ * @param {string} userId
+ * @param {object} [options]
+ * @param {object|null} [options.triggerPayload]
+ * @returns {Promise<object>} created task row
+ */
+export async function instantiateScheduledTask(schedule, userId, { triggerPayload = null } = {}) {
+  if (!schedule?.employee_id) {
+    throw new Error('Schedule is missing employee_id.');
+  }
+  if (!userId) {
+    throw new Error('userId is required to instantiate a scheduled task.');
+  }
+
+  const taskTemplate = schedule.task_template || {};
+  const inputContext = taskTemplate.input_context || {};
+  const templateId = taskTemplate.template_id || inputContext.template_id || null;
+  const workflowType = taskTemplate.workflow_type || inputContext.workflow_type || null;
+
+  if (!templateId && !workflowType) {
+    throw new Error('Scheduled task template must define template_id or workflow_type.');
+  }
+
+  const plan = await buildPlanFromTaskTemplate({
+    title: taskTemplate.title || `Scheduled ${templateId || workflowType} task`,
+    description: taskTemplate.description || '',
+    priority: taskTemplate.priority || 'medium',
+    dueAt: taskTemplate.due_at || null,
+    sourceType: 'scheduled',
+    executionMode: taskTemplate.execution_mode || inputContext.execution_mode || null,
+    templateId,
+    workflowType,
+    datasetProfileId: taskTemplate.dataset_profile_id || inputContext.dataset_profile_id || null,
+    userId,
+    inputContext: {
+      ...inputContext,
+      schedule_id: schedule.id,
+      schedule_type: schedule.schedule_type,
+      trigger_payload: triggerPayload,
+    },
+  });
+
+  const { task } = await submitPlan(plan, schedule.employee_id, userId);
+  await markExecuted(schedule.id, task.id);
+  return task;
 }
 
 /**
  * Mark a schedule as executed: update last_run_at + advance next_run_at.
  */
-export async function markExecuted(scheduleId, taskId = null) {
+export async function markExecuted(scheduleId, _taskId = null) {
   const schedule = await getSchedule(scheduleId);
   if (!schedule) return null;
 
@@ -353,7 +436,9 @@ export async function createEventTrigger(employeeId, triggerType, triggerConfig,
  */
 export function activateEventTrigger(schedule) {
   const type = schedule.schedule_type;
-  if (!type?.startsWith('on_file_')) return;
+  if (!type?.startsWith('on_file_') || schedule.status !== 'active') return;
+
+  deactivateEventTrigger(schedule.id);
 
   // Lazy import to avoid circular dependencies
   const doActivate = async () => {
@@ -440,6 +525,7 @@ export default {
   getSchedules,
   getSchedule,
   getDueTasks,
+  instantiateScheduledTask,
   markExecuted,
   pauseSchedule,
   resumeSchedule,

@@ -11,6 +11,9 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import * as aiEmployeeService from './aiEmployeeService';
+import { approvePlan, submitPlan } from './aiEmployee/index.js';
+import { buildPlanFromTaskTemplate } from './aiEmployee/templatePlanAdapter.js';
+import { EXECUTION_MODES, shouldAutoRun } from './aiEmployee/executionPolicy.js';
 
 // ── Alert → Task mapping ─────────────────────────────────────────────────────
 
@@ -21,24 +24,28 @@ export const ALERT_TASK_MAP = {
   stockout_risk: {
     template_id: 'risk_aware_plan',
     workflow_type: null,     // template takes precedence
+    execution_mode: EXECUTION_MODES.AUTO_RUN,
     priority: 'urgent',
     titlePrefix: '[Auto] Stockout mitigation',
   },
   supplier_delay: {
     template_id: null,
     workflow_type: 'risk',
+    execution_mode: EXECUTION_MODES.AUTO_RUN,
     priority: 'high',
     titlePrefix: '[Auto] Supplier delay risk analysis',
   },
   dual_source_rec: {
     template_id: null,
     workflow_type: 'plan',
+    execution_mode: EXECUTION_MODES.AUTO_RUN,
     priority: 'medium',
     titlePrefix: '[Auto] Dual-source evaluation',
   },
   expedite_rec: {
     template_id: 'forecast_then_plan',
     workflow_type: null,
+    execution_mode: EXECUTION_MODES.AUTO_RUN,
     priority: 'high',
     titlePrefix: '[Auto] Expedite planning',
   },
@@ -47,11 +54,11 @@ export const ALERT_TASK_MAP = {
 // ── Core ─────────────────────────────────────────────────────────────────────
 
 /**
- * Convert a single alert into a task template object (not persisted yet).
+ * Convert a single alert into a task-source payload (not persisted yet).
  *
  * @param {object} alert - From generateAlerts()
  * @param {string} employeeId
- * @returns {object|null} Task creation params, or null if unmapped alert type
+ * @returns {object|null} Task-source params, or null if unmapped alert type
  */
 export function alertToTask(alert, employeeId) {
   const mapping = ALERT_TASK_MAP[alert.alert_type];
@@ -76,6 +83,7 @@ export function alertToTask(alert, employeeId) {
     title,
     description,
     priority: mapping.priority,
+    execution_mode: mapping.execution_mode || EXECUTION_MODES.MANUAL_APPROVE,
     template_id: mapping.template_id || null,
     input_context,
     source_type: 'scheduled',
@@ -128,15 +136,25 @@ export async function evaluateAndCreateTasks(employeeId, userId, alerts) {
     }
 
     try {
-      const task = await aiEmployeeService.createTask(employeeId, {
+      const plan = await buildPlanFromTaskTemplate({
         title: taskParams.title,
         description: taskParams.description,
         priority: taskParams.priority,
-        input_context: taskParams.input_context,
-        source_type: taskParams.source_type,
-        assigned_by_user_id: userId,
+        sourceType: taskParams.source_type,
+        executionMode: taskParams.execution_mode,
+        templateId: taskParams.template_id,
+        workflowType: taskParams.input_context?.workflow_type || null,
+        datasetProfileId: taskParams.input_context?.dataset_profile_id || null,
+        userId,
+        inputContext: taskParams.input_context,
       });
-      created.push(task);
+      const { task } = await submitPlan(plan, employeeId, userId);
+      if (shouldAutoRun(task.input_context?.execution_mode) && task.status === 'waiting_approval') {
+        await approvePlan(task.id, userId);
+        created.push({ ...task, status: 'queued' });
+      } else {
+        created.push(task);
+      }
     } catch (err) {
       console.warn('[proactiveTaskGenerator] Failed to create task for alert:', alert.alert_id, err?.message);
       errors++;

@@ -4,18 +4,42 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // Mock supabaseClient
 vi.mock('./supabaseClient', () => ({ supabase: null }));
 
+const mockBuildPlan = vi.fn(async ({ title, priority, inputContext }) => ({
+  title,
+  priority,
+  taskMeta: { ...inputContext },
+  steps: [{ name: 'forecast', tool_type: 'builtin_tool', builtin_tool_id: 'run_forecast' }],
+}));
+
+const mockSubmitPlan = vi.fn(async (plan, employeeId) => ({
+  taskId: `task-${Math.random().toString(36).slice(2, 6)}`,
+  task: {
+    id: `task-${Math.random().toString(36).slice(2, 6)}`,
+    employee_id: employeeId,
+    status: 'waiting_approval',
+    title: plan.title,
+    priority: plan.priority,
+    input_context: plan.taskMeta,
+    plan_snapshot: { steps: plan.steps },
+  },
+}));
+
+vi.mock('./aiEmployee/index.js', () => ({
+  submitPlan: (...args) => mockSubmitPlan(...args),
+}));
+
+vi.mock('./aiEmployee/templatePlanAdapter.js', () => ({
+  buildPlanFromTaskTemplate: (...args) => mockBuildPlan(...args),
+}));
+
 import {
   SCHEDULE_TYPES,
   computeNextRun,
   advanceNextRun,
   createSchedule,
   getSchedules,
-  getSchedule,
   getDueTasks,
-  markExecuted,
-  pauseSchedule,
-  resumeSchedule,
-  deleteSchedule,
+  instantiateScheduledTask,
 } from './scheduledTaskService';
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -62,6 +86,11 @@ describe('computeNextRun', () => {
     expect(date.getTime() - Date.now()).toBeGreaterThan(0);
     expect(date.getTime() - Date.now()).toBeLessThan(2 * 86400000);
   });
+
+  it('returns null for event-trigger schedules', () => {
+    const next = computeNextRun(SCHEDULE_TYPES.ON_FILE_UPLOADED, {});
+    expect(next).toBeNull();
+  });
 });
 
 // ── advanceNextRun ───────────────────────────────────────────────────────────
@@ -78,6 +107,10 @@ describe('advanceNextRun', () => {
 // ── CRUD (localStorage fallback) ─────────────────────────────────────────────
 
 describe('createSchedule', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it('returns a schedule with correct fields', async () => {
     const sched = await createSchedule(
       'emp-1',
@@ -103,6 +136,16 @@ describe('createSchedule', () => {
       { title: 'Test' }
     );
     expect(sched.hour).toBe(8);
+  });
+
+  it('defaults event-trigger schedules to auto_run execution mode', async () => {
+    const sched = await createSchedule(
+      'emp-1',
+      { schedule_type: SCHEDULE_TYPES.ON_FILE_DETECTED },
+      { title: 'Import on detect', workflow_type: 'forecast' }
+    );
+    expect(sched.task_template.execution_mode).toBe('auto_run');
+    expect(sched.next_run_at).toBeNull();
   });
 });
 
@@ -169,6 +212,55 @@ describe('schedule lifecycle (unit logic)', () => {
     const next = advanceNextRun(sched);
     const date = new Date(next);
     expect(date.getUTCDay()).toBe(5);
+  });
+});
+
+describe('instantiateScheduledTask', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('converts a schedule task_template into an orchestrator task', async () => {
+    const schedule = await createSchedule(
+      'emp-9',
+      { schedule_type: 'daily', hour: 9 },
+      {
+        title: 'Daily Forecast',
+        template_id: 'forecast',
+        priority: 'medium',
+        input_context: { dataset_profile_id: 'dp-1' },
+      },
+      'user-9'
+    );
+
+    const task = await instantiateScheduledTask(schedule, 'user-9');
+
+    expect(mockBuildPlan).toHaveBeenCalledWith(expect.objectContaining({
+      title: 'Daily Forecast',
+      sourceType: 'scheduled',
+      templateId: 'forecast',
+      datasetProfileId: 'dp-1',
+      userId: 'user-9',
+      inputContext: expect.objectContaining({
+        schedule_id: schedule.id,
+        schedule_type: 'daily',
+      }),
+    }));
+    expect(mockSubmitPlan).toHaveBeenCalledWith(expect.any(Object), 'emp-9', 'user-9');
+    expect(task.status).toBe('waiting_approval');
+  });
+
+  it('throws when the schedule task_template has no template or workflow', async () => {
+    const schedule = await createSchedule(
+      'emp-9',
+      { schedule_type: 'daily', hour: 9 },
+      { title: 'Broken task' },
+      'user-9'
+    );
+
+    await expect(instantiateScheduledTask(schedule, 'user-9'))
+      .rejects
+      .toThrow('Scheduled task template must define template_id or workflow_type.');
   });
 });
 
