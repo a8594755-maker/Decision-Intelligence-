@@ -22,14 +22,19 @@ import {
   SYNC_RETRY_BASE_MS,
   SYNC_RETRY_MAX,
   isOpenCloudConfigured,
+  getTagsForArtifact,
+  AUTO_DISTRIBUTE_ENABLED,
+  AUTO_DISTRIBUTE_RECIPIENTS,
 } from '../config/opencloudConfig';
 import {
   uploadFile,
   ensureFolder,
   createSharingLink,
+  sendShareInvitation,
   downloadFile,
   getDriveItems,
   getMyDrives,
+  addTags,
 } from './opencloudClientService';
 import { saveJsonArtifact } from '../utils/artifactStore';
 import { eventBus, EVENT_NAMES } from './eventBus';
@@ -127,15 +132,32 @@ export async function syncArtifactToOpenCloud(artifactRef, driveId, folderPath) 
     webUrl: item?.webUrl || null,
     sharingLink: null,
     artifact_type: type,
+    tags: [],
     synced_at: new Date().toISOString(),
   };
 
-  // Create sharing link (best-effort)
   if (item?.id) {
+    // Apply DI tags for classification (best-effort)
+    try {
+      const tags = getTagsForArtifact(type, artifactRef.taskId);
+      await addTags(driveId, item.id, tags);
+      fileRef.tags = tags;
+    } catch { /* tagging is optional */ }
+
+    // Create sharing link (best-effort)
     try {
       const link = await createSharingLink(driveId, item.id);
       fileRef.sharingLink = link?.link?.webUrl || null;
     } catch { /* sharing is optional */ }
+
+    // Auto-distribute to configured recipients (best-effort)
+    if (AUTO_DISTRIBUTE_ENABLED && AUTO_DISTRIBUTE_RECIPIENTS.length > 0) {
+      for (const email of AUTO_DISTRIBUTE_RECIPIENTS) {
+        try {
+          await sendShareInvitation(driveId, item.id, email.trim(), 'viewer');
+        } catch { /* distribution is best-effort */ }
+      }
+    }
   }
 
   return fileRef;
@@ -332,10 +354,109 @@ export async function browseFiles(driveId, folderId = null, opts = {}) {
   });
 }
 
+// ── Report auto-distribution ──────────────────────────────────────────────
+
+/**
+ * Upload a report to OpenCloud and send share invitations to recipients.
+ *
+ * @param {object} reportResult - From reportGeneratorService.generateReport()
+ * @param {string} driveId
+ * @param {string} taskId
+ * @param {{ recipients?: string[], employeeName?: string }} [opts]
+ * @returns {Promise<object>} File reference with sharing info
+ */
+export async function distributeReport(reportResult, driveId, taskId, opts = {}) {
+  if (!isOpenCloudConfigured()) return null;
+
+  const folderPath = `${OPENCLOUD_BASE_FOLDER}/${opts.employeeName || 'Aiden'}/reports`;
+  const filename = reportResult.filename || `report_${taskId}.${reportResult.format || 'html'}`;
+  const blob = typeof reportResult.blob === 'string'
+    ? new Blob([reportResult.blob], { type: 'text/html' })
+    : reportResult.blob instanceof Blob
+      ? reportResult.blob
+      : new Blob([JSON.stringify(reportResult.blob, null, 2)], { type: 'application/json' });
+
+  const item = await withRetry(async () => {
+    await ensureFolder(driveId, folderPath);
+    return uploadFile(driveId, folderPath, filename, blob);
+  }, `distribute:${filename}`);
+
+  const fileRef = {
+    driveId,
+    itemId: item?.id || null,
+    filename,
+    webUrl: item?.webUrl || null,
+    sharingLink: null,
+    artifact_type: `report_${reportResult.format || 'html'}`,
+    distributed_to: [],
+    synced_at: new Date().toISOString(),
+  };
+
+  if (item?.id) {
+    // Tag as report
+    try {
+      const tags = getTagsForArtifact(`report_${reportResult.format || 'html'}`, taskId);
+      tags.push('di:distributed');
+      await addTags(driveId, item.id, tags);
+    } catch { /* best-effort */ }
+
+    // Create sharing link
+    try {
+      const link = await createSharingLink(driveId, item.id);
+      fileRef.sharingLink = link?.link?.webUrl || null;
+    } catch { /* best-effort */ }
+
+    // Send invitations to all recipients
+    const recipients = opts.recipients?.length ? opts.recipients : AUTO_DISTRIBUTE_RECIPIENTS;
+    for (const email of recipients) {
+      try {
+        await sendShareInvitation(driveId, item.id, email.trim(), 'viewer');
+        fileRef.distributed_to.push(email.trim());
+      } catch (err) {
+        console.warn(`[opencloudArtifactSync] Failed to share with ${email}:`, err?.message);
+      }
+    }
+  }
+
+  return fileRef;
+}
+
+// ── Tag-based search ─────────────────────────────────────────────────────
+
+/**
+ * Search for DI artifacts in OpenCloud by artifact type tag.
+ *
+ * @param {string} driveId
+ * @param {string} artifactType - DI artifact type (e.g. 'forecast_series', 'plan_table')
+ * @returns {Promise<object[]>} Matching DriveItems
+ */
+export async function findArtifactsByType(driveId, artifactType) {
+  const { searchByTag } = await import('./opencloudClientService');
+  const tags = getTagsForArtifact(artifactType);
+  // Search by the most specific tag
+  const searchTag = tags[tags.length - 1] || 'di:artifact';
+  return searchByTag(driveId, searchTag);
+}
+
+/**
+ * Search for all DI artifacts for a specific task.
+ *
+ * @param {string} driveId
+ * @param {string} taskId
+ * @returns {Promise<object[]>}
+ */
+export async function findArtifactsByTask(driveId, taskId) {
+  const { searchByTag } = await import('./opencloudClientService');
+  return searchByTag(driveId, `di:task:${taskId}`);
+}
+
 export default {
   syncArtifactToOpenCloud,
   syncTaskOutputsToOpenCloud,
   importDatasetFromOpenCloud,
+  distributeReport,
+  findArtifactsByType,
+  findArtifactsByTask,
   getDefaultDriveId,
   browseFiles,
 };

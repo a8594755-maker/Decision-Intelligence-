@@ -28,8 +28,11 @@ export const PERMISSION_REGISTRY = {
   python_tool:     ['can_run_python_tool'],
   python_report:   ['can_generate_report'],
   // OpenCloud EU integration
-  opencloud_sync:   ['can_sync_opencloud'],
-  opencloud_import: ['can_import_opencloud'],
+  opencloud_sync:       ['can_sync_opencloud'],
+  opencloud_import:     ['can_import_opencloud'],
+  opencloud_search:     ['can_search_opencloud'],
+  opencloud_distribute: ['can_distribute_opencloud'],
+  opencloud_watch:      ['can_watch_opencloud'],
 };
 
 // ── Error ────────────────────────────────────────────────────────────────────

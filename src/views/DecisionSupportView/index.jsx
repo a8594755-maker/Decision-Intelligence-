@@ -1910,33 +1910,67 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
                     setAgentExecEvents([]);
                     setAgentExecTaskTitle((userMessage || messageText).slice(0, 80));
                     setAgentExecPanelOpen(true);
-                    setAgentExecSSETaskId(task?.id || null);
 
-                    // 4. Execute the task with agent loop
-                    const loopResult = await executeTaskWithLoop(task, user?.id, {
-                      onStepComplete: (stepEvent) => {
-                        setAgentExecEvents(prev => [...prev, stepEvent]);
-                        if (stepEvent.task?.loop_state) {
-                          setAgentExecLoopState(stepEvent.task.loop_state);
-                        }
-                        appendMessagesToCurrentConversation([{
-                          role: 'ai',
-                          content: `Step "${stepEvent.step_name}": ${stepEvent.summary || stepEvent.status}`,
-                          timestamp: new Date().toISOString(),
-                        }]);
-                      },
-                    });
+                    // 4. Server-side vs client-side dispatch
+                    const allPython2 = template.steps.every(s =>
+                      ['python_tool', 'python_report'].includes(s.workflow_type)
+                    );
+                    const ML_API2 = import.meta.env.VITE_ML_API_URL || 'http://localhost:8000';
 
-                    // Update final loop state for dashboard
-                    if (loopResult.task?.loop_state) {
-                      setAgentExecLoopState(loopResult.task.loop_state);
+                    if (allPython2 && task?.input_context?._input_data?.sheets) {
+                      // ── Server-side: async + SSE real-time progress ──
+                      const sseTaskId2 = task.id || `task-${Date.now()}`;
+                      const initLoopSteps2 = template.steps.map((s, i) => ({
+                        name: s.name || s.step_name, index: i,
+                        status: 'pending', workflow_type: s.workflow_type,
+                        retry_count: 0, started_at: null, finished_at: null,
+                      }));
+                      setAgentExecLoopState({ steps: initLoopSteps2, started_at: new Date().toISOString() });
+                      setAgentExecSSETaskId(sseTaskId2);
+
+                      fetch(`${ML_API2}/agent/run-async`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                          task_id: sseTaskId2,
+                          steps: template.steps.map(s => ({
+                            name: s.name || s.step_name,
+                            workflow_type: s.workflow_type,
+                            tool_hint: s.tool_hint || s.description || '',
+                          })),
+                          input_data: task.input_context._input_data,
+                          dataset_profile: task.input_context._dataset_profile || null,
+                          llm_config: { provider: 'anthropic', model: 'claude-sonnet-4-6', temperature: 0.15, max_tokens: 4096 },
+                        }),
+                      }).catch(err => {
+                        appendMessagesToCurrentConversation([{ role: 'ai', content: `Server error: ${err.message}`, timestamp: new Date().toISOString() }]);
+                      });
+                    } else {
+                      // ── Client-side loop fallback ──
+                      setAgentExecSSETaskId(task?.id || null);
+
+                      const loopResult = await executeTaskWithLoop(task, user?.id, {
+                        onStepComplete: (stepEvent) => {
+                          setAgentExecEvents(prev => [...prev, stepEvent]);
+                          if (stepEvent.task?.loop_state) {
+                            setAgentExecLoopState(stepEvent.task.loop_state);
+                          }
+                          appendMessagesToCurrentConversation([{
+                            role: 'ai',
+                            content: `Step "${stepEvent.step_name}": ${stepEvent.summary || stepEvent.status}`,
+                            timestamp: new Date().toISOString(),
+                          }]);
+                        },
+                      });
+
+                      if (loopResult.task?.loop_state) {
+                        setAgentExecLoopState(loopResult.task.loop_state);
+                      }
                     }
 
-                    // 5. Final status message
-                    const completedCount = loopResult.completed_steps?.length || 0;
-                    const statusMsg = loopResult.halted_at
-                      ? `Completed ${completedCount} step(s). Paused at "${loopResult.halted_at}" — awaiting review.`
-                      : `All ${completedCount} step(s) completed successfully.`;
+                    // 5. Final status (for client-side path; server-side uses SSE onLoopDone)
+                    const completedCount = 0; // Will be updated by SSE or loop result
+                    const statusMsg = '';
 
                     appendMessagesToCurrentConversation([{
                       role: 'ai',

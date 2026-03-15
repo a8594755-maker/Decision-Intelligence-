@@ -63,21 +63,78 @@ export const DEFAULT_SHARING_ROLE = 'viewer'; // viewer | editor
 export const SYNC_RETRY_BASE_MS = 2000;
 export const SYNC_RETRY_MAX = 5;
 
+// ── DI Tag Taxonomy ──────────────────────────────────────────────────────
+// Tags applied to files uploaded to OpenCloud for classification & search.
+// Uses `di:` namespace to avoid conflicts with user tags.
+
+export const DI_TAG_PREFIX = 'di';
+
+export const ARTIFACT_TYPE_TO_TAGS = {
+  forecast_series:      [`${DI_TAG_PREFIX}:forecast`],
+  forecast_csv:         [`${DI_TAG_PREFIX}:forecast`, `${DI_TAG_PREFIX}:csv`],
+  plan_table:           [`${DI_TAG_PREFIX}:plan`],
+  plan_csv:             [`${DI_TAG_PREFIX}:plan`, `${DI_TAG_PREFIX}:csv`],
+  risk_adjustments:     [`${DI_TAG_PREFIX}:risk`],
+  risk_plan_table:      [`${DI_TAG_PREFIX}:plan`, `${DI_TAG_PREFIX}:risk`],
+  risk_plan_csv:        [`${DI_TAG_PREFIX}:plan`, `${DI_TAG_PREFIX}:risk`, `${DI_TAG_PREFIX}:csv`],
+  report_html:          [`${DI_TAG_PREFIX}:report`],
+  report_json:          [`${DI_TAG_PREFIX}:report`],
+  decision_bundle:      [`${DI_TAG_PREFIX}:decision`],
+  solver_meta:          [`${DI_TAG_PREFIX}:solver`],
+  constraint_check:     [`${DI_TAG_PREFIX}:constraint`],
+  replay_metrics:       [`${DI_TAG_PREFIX}:replay`],
+  inventory_projection: [`${DI_TAG_PREFIX}:inventory`],
+  data_quality_report:  [`${DI_TAG_PREFIX}:quality`],
+  evidence_pack:        [`${DI_TAG_PREFIX}:evidence`],
+  scenario_comparison:  [`${DI_TAG_PREFIX}:scenario`],
+  plan_comparison:      [`${DI_TAG_PREFIX}:comparison`],
+  cfr_negotiation_strategy: [`${DI_TAG_PREFIX}:negotiation`, `${DI_TAG_PREFIX}:cfr`],
+  powerbi_dataset:      [`${DI_TAG_PREFIX}:powerbi`],
+};
+
+// ── Auto-distribution defaults ──────────────────────────────────────────
+
+export const AUTO_DISTRIBUTE_ENABLED = import.meta.env.VITE_OPENCLOUD_AUTO_DISTRIBUTE === 'true';
+export const AUTO_DISTRIBUTE_RECIPIENTS = (import.meta.env.VITE_OPENCLOUD_DISTRIBUTE_TO || '').split(',').filter(Boolean);
+
+// ── Desktop sync ─────────────────────────────────────────────────────────
+
+export const DESKTOP_SYNC_FOLDER = import.meta.env.VITE_OPENCLOUD_DESKTOP_SYNC_FOLDER || '';
+
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 export function isOpenCloudConfigured() {
   return !!(OPENCLOUD_URL && OPENCLOUD_TOKEN);
 }
 
+/**
+ * Get DI tags for an artifact type.
+ * Always includes the `di:artifact` base tag.
+ * @param {string} artifactType
+ * @param {string} [taskId]
+ * @returns {string[]}
+ */
+export function getTagsForArtifact(artifactType, taskId) {
+  const tags = [`${DI_TAG_PREFIX}:artifact`, ...(ARTIFACT_TYPE_TO_TAGS[artifactType] || [])];
+  if (taskId) tags.push(`${DI_TAG_PREFIX}:task:${taskId}`);
+  return [...new Set(tags)];
+}
+
 export default {
   OPENCLOUD_URL,
   OPENCLOUD_TOKEN,
   AUTO_SYNC_ENABLED,
+  AUTO_DISTRIBUTE_ENABLED,
+  AUTO_DISTRIBUTE_RECIPIENTS,
+  DESKTOP_SYNC_FOLDER,
   OPENCLOUD_BASE_FOLDER,
   OPENCLOUD_API_PREFIX,
   ARTIFACT_TYPE_TO_EXTENSION,
+  ARTIFACT_TYPE_TO_TAGS,
+  DI_TAG_PREFIX,
   DEFAULT_SHARING_ROLE,
   SYNC_RETRY_BASE_MS,
   SYNC_RETRY_MAX,
   isOpenCloudConfigured,
+  getTagsForArtifact,
 };

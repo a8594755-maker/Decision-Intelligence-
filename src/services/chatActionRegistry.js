@@ -210,6 +210,38 @@ const ACTIONS = [
     guard: (ctx) => Boolean(ctx?.baseline?.run_id),
     mapToIntent: () => null,
   },
+
+  // ── OpenCloud EU Integration ──────────────────────────────────────────
+  {
+    id: 'import_from_opencloud',
+    label: 'Import from OpenCloud',
+    icon: 'Cloud',
+    category: 'planning',
+    guard: (ctx) => Boolean(ctx?.opencloud?.connected),
+    mapToIntent: () => ({ intent: 'OPENCLOUD_IMPORT', entities: {} }),
+  },
+  {
+    id: 'publish_to_opencloud',
+    label: 'Publish to OpenCloud',
+    icon: 'CloudUpload',
+    category: 'governance',
+    guard: (ctx) => Boolean(ctx?.opencloud?.connected && ctx?.baseline?.run_id),
+    mapToIntent: (ctx) => ({
+      intent: 'OPENCLOUD_PUBLISH',
+      entities: { run_id: ctx?.baseline?.run_id },
+    }),
+  },
+  {
+    id: 'share_via_opencloud',
+    label: 'Share via OpenCloud',
+    icon: 'Share2',
+    category: 'governance',
+    guard: (ctx) => Boolean(ctx?.opencloud?.connected && ctx?.baseline?.run_id),
+    mapToIntent: (ctx) => ({
+      intent: 'OPENCLOUD_SHARE',
+      entities: { run_id: ctx?.baseline?.run_id },
+    }),
+  },
 ];
 
 // ── Registry API ─────────────────────────────────────────────────────────────

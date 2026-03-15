@@ -217,4 +217,32 @@ export async function generateReport({ format = 'html', artifacts, taskMeta, nar
   }
 }
 
-export default { generateReport, fetchReportData, fetchFullReport, fetchMonthlyReport };
+// ── Generate + Distribute (convenience wrapper) ─────────────────────────────
+
+/**
+ * Generate a report and distribute it via OpenCloud in one call.
+ *
+ * @param {object} opts - Same as generateReport() opts + { driveId, recipients }
+ * @returns {Promise<{ report: object, distribution: object|null }>}
+ */
+export async function generateAndDistribute(opts) {
+  const report = await generateReport(opts);
+
+  let distribution = null;
+  try {
+    const { isOpenCloudConfigured } = await import('../config/opencloudConfig');
+    if (isOpenCloudConfigured() && opts.driveId) {
+      const { distributeReport } = await import('./opencloudArtifactSync');
+      distribution = await distributeReport(report, opts.driveId, opts.taskMeta?.id, {
+        recipients: opts.recipients,
+        employeeName: opts.employeeName,
+      });
+    }
+  } catch (err) {
+    console.warn('[reportGeneratorService] Auto-distribute failed:', err?.message);
+  }
+
+  return { report, distribution };
+}
+
+export default { generateReport, generateAndDistribute, fetchReportData, fetchFullReport, fetchMonthlyReport };

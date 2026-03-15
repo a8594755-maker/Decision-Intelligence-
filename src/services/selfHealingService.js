@@ -32,6 +32,7 @@ const ERROR_PATTERNS = [
 
   // Code generation / execution errors → revise prompt
   { re: /code generation|syntax|SyntaxError|ReferenceError|TypeError/i,  category: 'code_generation_failed' },
+  { re: /KeyError|IndexError|NameError|AttributeError.*DataFrame/i,     category: 'code_generation_failed' },
   { re: /function run|undefined is not|cannot read prop/i,               category: 'code_generation_failed' },
 
   // Resource limits → simplify
@@ -40,6 +41,9 @@ const ERROR_PATTERNS = [
 
   // Sandbox errors
   { re: /sandbox|worker error|Worker/i,                                  category: 'sandbox_error' },
+
+  // OpenCloud sync/import errors → retry with backoff (inspired by OpenCloud postprocessing pattern)
+  { re: /\[OpenCloud\]|opencloud.*fail|drive.*not found|sync.*fail/i,    category: 'opencloud_sync_failed' },
 ];
 
 // ── Strategy selection ──────────────────────────────────────────────────────
@@ -133,6 +137,19 @@ export function chooseHealingStrategy(errorMessage, step, retryCount) {
     };
   }
 
+  // OpenCloud sync failures → retry with backoff (the sync already has internal retry,
+  // so if it reached here the server may be temporarily down — just retry the step)
+  if (category === 'opencloud_sync_failed') {
+    return {
+      errorCategory: category,
+      healingStrategy: 'revise_prompt',
+      modifications: {
+        promptSuffix: `OpenCloud sync failed: ${errorMessage}. The server may be temporarily unavailable. Retrying.`,
+      },
+      reasoning: `OpenCloud sync failure — retrying (server may be temporarily down)`,
+    };
+  }
+
   // Timeout / output too large → simplify
   if (category === 'timeout' || category === 'output_too_large') {
     const simplifiedHint = step.tool_hint
@@ -148,7 +165,8 @@ export function chooseHealingStrategy(errorMessage, step, retryCount) {
   }
 
   // Unknown errors: first retry → revise prompt, second → escalate
-  if (retryCount === 0) {
+  // Note: retryCount is already incremented before this call, so first failure = 1
+  if (retryCount <= 1) {
     return {
       errorCategory: category,
       healingStrategy: 'revise_prompt',

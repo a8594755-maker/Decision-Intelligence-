@@ -51,6 +51,7 @@ import ClarificationCard from '../../components/chat/ClarificationCard';
 import AIReviewCard from '../../components/chat/AIReviewCard';
 import RevisionLogCard from '../../components/chat/RevisionLogCard';
 import ToolRegistryCard from '../../components/chat/ToolRegistryCard';
+import OpenCloudPublishCard from '../../components/chat/OpenCloudPublishCard';
 import { toPositiveRunId } from './helpers.js';
 
 /**
@@ -476,6 +477,9 @@ export default function MessageCardRenderer({ message, handlers, state }) {
   }
   if (message.type === 'tool_registry_card') {
     return <ToolRegistryCard tool={message.payload} onSave={handlers.handleSaveToToolLibrary} />;
+  }
+  if (message.type === 'opencloud_file_ref' || message.type === 'opencloud_publish_card') {
+    return <OpenCloudPublishCard artifact={message} />;
   }
   return null;
 }

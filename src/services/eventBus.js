@@ -51,6 +51,14 @@ export const EVENT_NAMES = Object.freeze({
   OPENCLOUD_FILE_DETECTED:    'opencloud:file_detected',
   OPENCLOUD_SYNC_COMPLETED:   'opencloud:sync_completed',
   OPENCLOUD_IMPORT_COMPLETED: 'opencloud:import_completed',
+  OPENCLOUD_FILE_UPLOADED:    'opencloud:file_uploaded',
+  OPENCLOUD_FILE_MODIFIED:    'opencloud:file_modified',
+  OPENCLOUD_FILE_TRASHED:     'opencloud:file_trashed',
+  OPENCLOUD_SHARE_CREATED:    'opencloud:share_created',
+  OPENCLOUD_REPORT_DISTRIBUTED: 'opencloud:report_distributed',
+
+  // Event-based triggers
+  TRIGGER_FIRED:              'trigger:fired',
 });
 
 // ---------------------------------------------------------------------------

@@ -74,6 +74,7 @@ playwright-report/
 
 # E2E auto-crawler output
 e2e/screenshots/
+e2e/debug-report.json
 e2e/crawler-report.json
 e2e/crawler-report.html
 e2e/.auth/

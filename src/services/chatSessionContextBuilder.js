@@ -187,6 +187,13 @@ export function buildChatSessionContext({
       last_risk_delta: sessionCtx?.supplier_events?.last_risk_delta || null,
     },
 
+    // ── OpenCloud ──
+    opencloud: sessionCtx?.opencloud ? {
+      connected: Boolean(sessionCtx.opencloud.connected),
+      driveId: sessionCtx.opencloud.driveId || null,
+      serverUrl: sessionCtx.opencloud.serverUrl || null,
+    } : null,
+
     // ── User context ──
     user_role: userRole || 'planner',
 
@@ -257,6 +264,10 @@ export function buildContextSummaryForPrompt(ctx) {
 
   if (ctx.risk.active_alerts > 0 || ctx.risk.supplier_event_count > 0) {
     lines.push(`Risk: ${ctx.risk.active_alerts} active alerts, ${ctx.risk.supplier_event_count} supplier events`);
+  }
+
+  if (ctx.opencloud?.connected) {
+    lines.push(`OpenCloud: connected, drive=${ctx.opencloud.driveId ?? 'default'}`);
   }
 
   lines.push(`Role: ${ctx.user_role}`);

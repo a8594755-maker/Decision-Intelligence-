@@ -192,6 +192,21 @@ Rules:
 - "dataframes" dict adds DataFrames to workspace for next steps
 - Available: pandas, numpy, scipy, json, re, math, datetime, collections, statistics, time
 - Keep code simple and straightforward — prefer pandas built-in methods over scipy when possible
+- NEVER use pd.to_datetime(infer_datetime_format=True) — removed in pandas 2.0. Just use pd.to_datetime(col, errors='coerce')
+- NEVER use df.append() — removed in pandas 2.0. Use pd.concat([df, new_row]) instead
+
+STRING SAFETY — VERY IMPORTANT:
+- NEVER embed long text, Chinese/CJK characters, pipe characters (|), or markdown inside Python string literals.
+- Use short ASCII-only strings for labels, descriptions, and column names in code.
+- Reference non-ASCII column names dynamically: df.columns.tolist(), NOT hardcoded Chinese strings.
+- Keep ALL string literals SHORT (< 80 chars) and on a SINGLE LINE.
+- For artifact labels use simple English: "Cleaned_Data", "KPI_Summary", "Analysis", etc.
+
+CODE LENGTH — VERY IMPORTANT:
+- Keep code under 100 lines. Be concise. Do NOT write separate processing for every sheet.
+- Use loops: `for name, df in ws.dataframes.items():` instead of repeating code per sheet.
+- Focus on the MAIN data sheets. Skip metadata sheets (Data_Dictionary, Evaluator_Guide, Case_Brief).
+- If there are many sheets, identify the primary data sheet(s) first, then process them.
 
 Return ONLY JSON (no markdown): {"code": "import pandas as pd\\ndef run(ws):\\n ...", "description": "..."}"""
 
@@ -452,7 +467,14 @@ async def _run_agent_loop(request: AgentRunRequest):
                     raise ValueError(safety_err)
 
                 # 3. Execute with workspace (in thread pool to not block event loop)
-                exec_result = await asyncio.to_thread(_execute_workspace_code, code, workspace)
+                # Timeout: 120s max per step — prevents infinite loops
+                try:
+                    exec_result = await asyncio.wait_for(
+                        asyncio.to_thread(_execute_workspace_code, code, workspace),
+                        timeout=120
+                    )
+                except asyncio.TimeoutError:
+                    raise RuntimeError("Code execution timed out after 120 seconds")
 
                 if not exec_result["ok"]:
                     raise RuntimeError(exec_result.get("error", "Execution failed"))

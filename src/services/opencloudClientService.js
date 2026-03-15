@@ -319,6 +319,153 @@ export async function getMe() {
   return request('GET', '/me');
 }
 
+// ── SSE (Server-Sent Events) ────────────────────────────────────────────
+
+/**
+ * Connect to OpenCloud's Server-Sent Events stream for real-time file notifications.
+ * Returns an EventSource-like controller.
+ *
+ * Event types emitted: FILE_TOUCHED, FOLDER_CREATED, ITEM_MOVED, ITEM_RENAMED,
+ *                      ITEM_RESTORED, ITEM_TRASHED, SHARE_CREATED, SHARE_REMOVED
+ *
+ * @param {function} onEvent - Callback: (eventType, data) => void
+ * @param {function} [onError] - Error callback
+ * @returns {{ close: function }} Controller with close() method
+ */
+export function connectSSE(onEvent, onError) {
+  if (!isOpenCloudConfigured()) {
+    throw new Error('[OpenCloud] Not configured for SSE');
+  }
+
+  const url = `${OPENCLOUD_URL}/ocs/v2.php/apps/notifications/api/v1/notifications/sse`;
+  const es = new EventSource(url, {
+    // EventSource doesn't natively support headers, so we append token as query param
+    // In production, use a proxy or polyfill that supports headers
+  });
+
+  // Fallback: if EventSource doesn't support auth headers, use fetch-based SSE
+  let controller = null;
+  let aborted = false;
+
+  const startFetchSSE = async () => {
+    try {
+      const res = await fetch(url, {
+        headers: { Authorization: `Bearer ${OPENCLOUD_TOKEN}`, Accept: 'text/event-stream' },
+        signal: (controller = new AbortController()).signal,
+      });
+
+      if (!res.ok) {
+        onError?.(new Error(`SSE connection failed: ${res.status}`));
+        return;
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (!aborted) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        let currentEvent = 'message';
+        let currentData = '';
+
+        for (const line of lines) {
+          if (line.startsWith('event:')) {
+            currentEvent = line.slice(6).trim();
+          } else if (line.startsWith('data:')) {
+            currentData += line.slice(5).trim();
+          } else if (line === '') {
+            if (currentData) {
+              try {
+                const parsed = JSON.parse(currentData);
+                onEvent(currentEvent, parsed);
+              } catch {
+                onEvent(currentEvent, currentData);
+              }
+            }
+            currentEvent = 'message';
+            currentData = '';
+          }
+        }
+      }
+    } catch (err) {
+      if (!aborted) onError?.(err);
+    }
+  };
+
+  // Close the native EventSource (unused path) and use fetch-based instead
+  es.close();
+  startFetchSSE();
+
+  return {
+    close() {
+      aborted = true;
+      controller?.abort();
+    },
+  };
+}
+
+// ── Full-Text Search (Bleve + Tika) ─────────────────────────────────────
+
+/**
+ * Full-text search across all drives using OpenCloud's search API.
+ * Leverages Bleve indexing + Apache Tika content extraction.
+ *
+ * @param {string} query - Search query (supports KQL: `Tags:di_forecast`, `name:report`)
+ * @param {{ driveId?: string, limit?: number }} [opts]
+ * @returns {Promise<object[]>} Matching DriveItems with highlights
+ */
+export async function searchAllDrives(query, opts = {}) {
+  if (opts.driveId) {
+    return searchFiles(opts.driveId, query);
+  }
+
+  // Search across all accessible drives
+  const drives = await getMyDrives();
+  const results = [];
+
+  for (const drive of drives) {
+    try {
+      const items = await searchFiles(drive.id, query);
+      results.push(...items.map((item) => ({ ...item, _driveId: drive.id, _driveName: drive.name })));
+    } catch { /* skip inaccessible drives */ }
+  }
+
+  return opts.limit ? results.slice(0, opts.limit) : results;
+}
+
+// ── Tag Helpers ──────────────────────────────────────────────────────────
+
+/**
+ * Remove tags from a DriveItem.
+ * @param {string} driveId
+ * @param {string} itemId
+ * @param {string[]} tagsToRemove
+ * @returns {Promise<object>}
+ */
+export async function removeTags(driveId, itemId, tagsToRemove) {
+  const item = await getItem(driveId, itemId);
+  const currentTags = item?.tags || [];
+  const newTags = currentTags.filter((t) => !tagsToRemove.includes(t));
+  return addTags(driveId, itemId, newTags);
+}
+
+/**
+ * Search for files by tag across a drive.
+ * Uses KQL tag query syntax.
+ * @param {string} driveId
+ * @param {string} tag
+ * @returns {Promise<object[]>}
+ */
+export async function searchByTag(driveId, tag) {
+  return searchFiles(driveId, `Tags:${tag}`);
+}
+
 export default {
   getMyDrives,
   getDrive,
@@ -333,8 +480,12 @@ export default {
   sendShareInvitation,
   listPermissions,
   searchFiles,
+  searchAllDrives,
   addTags,
+  removeTags,
+  searchByTag,
   getActivities,
   checkHealth,
   getMe,
+  connectSSE,
 };

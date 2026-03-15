@@ -466,6 +466,40 @@ def _coerce_forecast_result(result: Any, *, source: str) -> Dict[str, Any]:
     return normalized
 
 
+# ── Health Check Endpoints (inspired by OpenCloud /healthz + /readyz) ──────
+
+@app.get("/healthz")
+async def health_liveness():
+    """Liveness probe — returns 200 if the process is alive."""
+    return {"status": "ok"}
+
+
+@app.get("/readyz")
+async def health_readiness():
+    """Readiness probe — checks if critical dependencies are reachable."""
+    checks = {"api": True}
+
+    # Check Supabase connectivity
+    try:
+        sb_url = os.getenv("SUPABASE_URL", "")
+        if sb_url:
+            import urllib.request
+            req = urllib.request.Request(f"{sb_url}/rest/v1/", method="HEAD")
+            req.add_header("apikey", os.getenv("SUPABASE_SERVICE_ROLE_KEY", ""))
+            urllib.request.urlopen(req, timeout=3)
+            checks["supabase"] = True
+        else:
+            checks["supabase"] = False
+    except Exception:
+        checks["supabase"] = False
+
+    all_ok = all(checks.values())
+    return JSONResponse(
+        status_code=200 if all_ok else 503,
+        content={"status": "ready" if all_ok else "not_ready", "checks": checks},
+    )
+
+
 @app.post("/jobs", response_model=AsyncRunSubmitResponse)
 async def submit_async_job(request: AsyncRunSubmitRequest, raw_request: Request):
     try:

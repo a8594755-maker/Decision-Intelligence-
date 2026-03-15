@@ -23,6 +23,10 @@ export const SCHEDULE_TYPES = {
   WEEKLY: 'weekly',
   MONTHLY: 'monthly',
   CRON: 'cron',
+  // Event-based triggers (OpenCloud file events)
+  ON_FILE_UPLOADED: 'on_file_uploaded',
+  ON_FILE_MODIFIED: 'on_file_modified',
+  ON_FILE_DETECTED: 'on_file_detected',
 };
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -314,6 +318,118 @@ async function updateScheduleStatus(scheduleId, status) {
   return null;
 }
 
+// ── Event-based triggers (OpenCloud file events) ─────────────────────────────
+// These allow schedules to fire when an OpenCloud file event occurs
+// (e.g. "run forecast when a new .xlsx is uploaded to /Imports").
+
+const _eventUnsubscribers = new Map(); // scheduleId → unsubscribe fn
+
+/**
+ * Register an event-based trigger schedule.
+ * When the specified event fires, the schedule's task_template is executed.
+ *
+ * @param {string} employeeId
+ * @param {'on_file_uploaded'|'on_file_modified'|'on_file_detected'} triggerType
+ * @param {object} triggerConfig - { driveId?, folderId?, filter?: string[], debounceMs?: number }
+ * @param {object} taskTemplate - { title, template_id|workflow_type, input_context, priority }
+ * @param {string} [createdBy]
+ * @returns {Promise<object>} Created schedule
+ */
+export async function createEventTrigger(employeeId, triggerType, triggerConfig, taskTemplate, createdBy = null) {
+  const schedule = await createSchedule(employeeId, {
+    schedule_type: triggerType,
+    trigger_config: triggerConfig,
+  }, taskTemplate, createdBy);
+
+  // Wire up the event listener
+  activateEventTrigger(schedule);
+
+  return schedule;
+}
+
+/**
+ * Activate an event-based trigger by subscribing to the matching eventBus event.
+ * @param {object} schedule
+ */
+export function activateEventTrigger(schedule) {
+  const type = schedule.schedule_type;
+  if (!type?.startsWith('on_file_')) return;
+
+  // Lazy import to avoid circular dependencies
+  const doActivate = async () => {
+    const { eventBus, EVENT_NAMES } = await import('./eventBus');
+
+    const eventMap = {
+      on_file_uploaded: EVENT_NAMES.OPENCLOUD_FILE_UPLOADED,
+      on_file_modified: EVENT_NAMES.OPENCLOUD_FILE_MODIFIED,
+      on_file_detected: EVENT_NAMES.OPENCLOUD_FILE_DETECTED,
+    };
+
+    const eventName = eventMap[type];
+    if (!eventName) return;
+
+    const config = schedule.trigger_config || schedule.task_template?.trigger_config || {};
+    let debounceTimer = null;
+
+    const handler = (payload) => {
+      // Filter by drive
+      if (config.driveId && payload.driveId !== config.driveId) return;
+
+      // Filter by folder
+      if (config.folderId && payload.item?.parentReference?.id !== config.folderId) return;
+
+      // Filter by file extension
+      if (config.filter?.length) {
+        const name = payload.item?.name || '';
+        if (!config.filter.some((ext) => name.toLowerCase().endsWith(ext))) return;
+      }
+
+      // Debounce rapid events
+      const debounceMs = config.debounceMs || 5000;
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        eventBus.emit(EVENT_NAMES.TRIGGER_FIRED, {
+          scheduleId: schedule.id,
+          triggerType: type,
+          taskTemplate: schedule.task_template,
+          triggerPayload: payload,
+          firedAt: new Date().toISOString(),
+        });
+      }, debounceMs);
+    };
+
+    const unsub = eventBus.on(eventName, handler);
+    _eventUnsubscribers.set(schedule.id, unsub);
+  };
+
+  doActivate().catch((err) => {
+    console.warn('[scheduledTaskService] Failed to activate event trigger:', err?.message);
+  });
+}
+
+/**
+ * Deactivate an event-based trigger.
+ * @param {string} scheduleId
+ */
+export function deactivateEventTrigger(scheduleId) {
+  const unsub = _eventUnsubscribers.get(scheduleId);
+  if (unsub) {
+    unsub();
+    _eventUnsubscribers.delete(scheduleId);
+  }
+}
+
+/**
+ * List all active event triggers.
+ * @returns {{ scheduleId: string, type: string }[]}
+ */
+export function listEventTriggers() {
+  return Array.from(_eventUnsubscribers.keys()).map((id) => ({
+    scheduleId: id,
+    active: true,
+  }));
+}
+
 // ── Default export ───────────────────────────────────────────────────────────
 
 export default {
@@ -328,4 +444,8 @@ export default {
   pauseSchedule,
   resumeSchedule,
   deleteSchedule,
+  createEventTrigger,
+  activateEventTrigger,
+  deactivateEventTrigger,
+  listEventTriggers,
 };

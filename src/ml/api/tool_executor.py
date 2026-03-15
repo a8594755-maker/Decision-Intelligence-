@@ -443,6 +443,8 @@ CODE QUALITY:
 - Use df.columns.tolist() to discover columns dynamically if unsure.
 - For numeric operations, use pd.to_numeric(df[col], errors='coerce') to handle mixed types.
 - ALWAYS produce at least 1 artifact. Empty artifacts = failure.
+- NEVER use pd.to_datetime(infer_datetime_format=True) — removed in pandas 2.0. Just use pd.to_datetime(col, errors='coerce').
+- NEVER use df.append() — removed in pandas 2.0. Use pd.concat([df, new_row]) instead.
 
 Return ONLY a JSON object (no markdown, no explanation):
 {
@@ -729,7 +731,7 @@ def _execute_code(code: str, input_data: dict, prior_artifacts: dict) -> dict:
             sanitized_artifacts.append({
                 "type": str(art.get("type", "data")),
                 "label": str(art.get("label", "Output")),
-                "data": data,
+                "data": _sanitize_result(data),
             })
 
         return {

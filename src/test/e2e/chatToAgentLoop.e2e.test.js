@@ -140,17 +140,17 @@ describe('Chat → Agent Loop pipeline', () => {
     expect(loopState.steps.length).toBeGreaterThanOrEqual(2);
   });
 
-  it('unknown instruction falls through to dynamic_tool and builds template', async () => {
+  it('unknown instruction falls through to python_tool and builds template', async () => {
     const decomposition = await decomposeTask({ userMessage: 'Xylophone giraffe paradox quasar' });
 
     // Should have at least one step
     expect(decomposition.subtasks.length).toBeGreaterThanOrEqual(1);
 
-    // dynamic_tool or registered_tool
-    const hasDynamic = decomposition.subtasks.some(s =>
-      s.workflow_type === 'dynamic_tool' || s.workflow_type === 'registered_tool'
+    // python_tool (default fallback), dynamic_tool, or registered_tool
+    const hasFallback = decomposition.subtasks.some(s =>
+      s.workflow_type === 'python_tool' || s.workflow_type === 'dynamic_tool' || s.workflow_type === 'registered_tool'
     );
-    expect(hasDynamic).toBe(true);
+    expect(hasFallback).toBe(true);
 
     // Can still build a template
     const template = buildDynamicTemplate(decomposition);

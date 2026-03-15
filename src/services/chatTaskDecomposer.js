@@ -34,6 +34,10 @@ const LEGACY_KEYWORD_WORKFLOWS = [
   // OpenCloud EU integration — cloud import/publish detected here, dispatched as builtin_tool
   { keywords: ['opencloud', 'cloud import', 'cloud file', '雲端匯入', '雲端檔案', '開放雲'], workflow: 'builtin_tool', name: 'opencloud_import_dataset' },
   { keywords: ['publish to cloud', 'cloud publish', 'upload to cloud', '雲端發布', '發布到雲端', '上傳雲端'], workflow: 'builtin_tool', name: 'opencloud_publish_report' },
+  { keywords: ['distribute report', 'share report', 'send report', '分發報告', '發送報告', '分享報告'], workflow: 'builtin_tool', name: 'opencloud_distribute_report' },
+  { keywords: ['search artifact', 'find artifact', 'search cloud', '搜尋', '搜索文件', '查找文件'], workflow: 'builtin_tool', name: 'opencloud_search_artifacts' },
+  { keywords: ['watch folder', 'monitor folder', '監控文件夾', '監視資料夾'], workflow: 'builtin_tool', name: 'opencloud_watch_folder' },
+  { keywords: ['find by tag', 'tag search', '標籤搜尋', '按標籤查找'], workflow: 'builtin_tool', name: 'opencloud_find_by_tag' },
 ];
 
 // ── General analysis detection ──────────────────────────────────────────────
@@ -56,6 +60,8 @@ const GENERAL_ANALYSIS_SIGNALS_ZH = [
   '格式一致', '命名統一', '標準化', '數據問題',
   '毛利率', '退貨率', '折扣率', '客訴', '工單',
   '投放效率', '庫存積壓', '達標', '通路',
+  '清洗資料', '清洗數據', '樞紐分析', '分析資料', '分析數據',
+  '計算kpi', 'mbr', '月度報告', '商業報告',
   '整理後', '可分析', '管理層',
 ];
 
@@ -71,8 +77,11 @@ const GENERAL_ANALYSIS_SIGNALS_ZH = [
 function _isGeneralAnalysisRequest(msgLower) {
   const tokens = msgLower.split(/[\s,;:!?。，；：！？\n]+/).filter(Boolean);
 
-  // Short messages are unlikely to be general analysis briefs
-  if (tokens.length < 20) return false;
+  // Short messages with few signals are unlikely to be general analysis briefs.
+  // Chinese text is denser (fewer tokens for more meaning), so use lower threshold.
+  const hasChinese = /[\u4e00-\u9fff]/.test(msgLower);
+  const minTokens = hasChinese ? 4 : 20;
+  if (tokens.length < minTokens) return false;
 
   // Count general analysis signal matches
   let signalCount = 0;
@@ -487,9 +496,11 @@ export async function decomposeTask({ userMessage, sessionContext = null, employ
     } catch { /* best-effort */ }
 
     if (!foundRegistered) {
+      // Prefer python_tool (server-side pandas) over dynamic_tool (JS sandbox)
+      // for any data-analysis task — dynamic_tool is only for trivial JS calculations
       subtasks.push({
         name: 'custom_analysis',
-        workflow_type: 'dynamic_tool',
+        workflow_type: 'python_tool',
         description: userMessage,
         requires_review: true,
         tool_hint: userMessage,

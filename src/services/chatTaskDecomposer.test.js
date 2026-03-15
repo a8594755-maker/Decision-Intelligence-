@@ -83,11 +83,11 @@ describe('decomposeTask', () => {
     expect(hasBuiltinTool(d, 'simulation')).toBe(true);
   });
 
-  it('defaults to dynamic_tool for unknown instructions', async () => {
+  it('defaults to python_tool for unknown instructions', async () => {
     const d = await decomposeTask({ userMessage: 'Do something completely new and weird' });
     expect(d.subtasks.length).toBeGreaterThanOrEqual(1);
     const hasKnownType = d.subtasks.some(s =>
-      s.workflow_type === 'dynamic_tool' || s.workflow_type === 'registered_tool'
+      s.workflow_type === 'python_tool' || s.workflow_type === 'dynamic_tool' || s.workflow_type === 'registered_tool'
     );
     expect(hasKnownType).toBe(true);
   });
