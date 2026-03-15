@@ -81,3 +81,8 @@ e2e/.auth/
 e2e/chatgpt-audit/
 e2e/output/
 output/
+
+# Discord bot secrets & data
+discord-bot/.env
+discord-bot/node_modules/
+discord-bot/.chat-history.json
