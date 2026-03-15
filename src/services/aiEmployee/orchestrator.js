@@ -303,6 +303,8 @@ async function _executeStep(task, step) {
   // Build step input
   const inputData = {
     ...(task.input_context?.inputData || {}),
+    title: task.title,
+    description: task.description,
     taskMeta: {
       id: task.id,
       title: task.title,

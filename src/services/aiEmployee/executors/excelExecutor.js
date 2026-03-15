@@ -20,10 +20,16 @@ const ML_API_BASE = 'http://localhost:8000';
  * @returns {Promise<{ok: boolean, artifacts: any[], logs: string[], error?: string}>}
  */
 export async function executeExcelTool(stepInput) {
-  const { step, inputData, taskId } = stepInput;
+  const { step, inputData, taskId, styleContext, outputProfile } = stepInput;
   const logs = [];
 
   logs.push(`[ExcelExecutor] Generating MBR workbook for task: ${taskId}`);
+  if (outputProfile?.profileName) {
+    logs.push(`[ExcelExecutor] Using output profile: ${outputProfile.profileName} (${outputProfile.docType}, v${outputProfile.version})`);
+  }
+  if (styleContext) {
+    logs.push(`[ExcelExecutor] Applied learned style context (${styleContext.length} chars)`);
+  }
 
   try {
     const resp = await fetch(`${ML_API_BASE}/agent/generate-excel`, {
@@ -33,6 +39,8 @@ export async function executeExcelTool(stepInput) {
         task_id: taskId,
         step_results: inputData.priorStepResults || [],
         title: inputData.title || step.tool_hint || '',
+        style_context: styleContext || '',
+        output_profile: outputProfile || null,
         open_file: true,
       }),
     });

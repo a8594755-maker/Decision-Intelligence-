@@ -761,13 +761,29 @@ class GenerateExcelRequest(BaseModel):
     task_id: str
     step_results: List[dict] = Field(..., description="List of step result dicts with artifacts")
     title: str = ""
+    style_context: str = Field(default="", description="Optional learned house-style guidance")
+    output_profile: Optional[dict] = Field(default=None, description="Optional resolved output profile metadata")
     open_file: bool = Field(default=True, description="Open the file in Excel desktop after generating")
     output_dir: str = Field(default="", description="Optional output directory (default: ./output/)")
 
 
-def _build_excel_codegen_prompt(step_results: list, title: str) -> str:
+def _build_excel_codegen_prompt(step_results: list, title: str, style_context: str = "", output_profile: Optional[dict] = None) -> str:
     """Build prompt for the LLM to generate openpyxl code."""
     parts = [f"## Task\nGenerate a professional Excel workbook titled: \"{title or 'Monthly Business Review'}\""]
+
+    if output_profile:
+        parts.append("\n## Output Profile")
+        parts.append(
+            f"- profile_name: {output_profile.get('profileName') or output_profile.get('profile_name') or 'default_profile'}\n"
+            f"- doc_type: {output_profile.get('docType') or output_profile.get('doc_type') or 'general_report'}\n"
+            f"- audience: {output_profile.get('audience') or 'Manager'}\n"
+            f"- format: {output_profile.get('format') or 'spreadsheet'}\n"
+            f"- source: {output_profile.get('source') or 'runtime_fallback'}"
+        )
+
+    if style_context:
+        parts.append("\n## Learned House Style Guidance")
+        parts.append(style_context[:4000])
 
     # Show artifact summary so LLM knows what data is available
     parts.append("\n## Available Artifacts from Analysis Steps")
@@ -909,7 +925,12 @@ async def generate_excel_workbook(request: GenerateExcelRequest):
     llm_config = LLMConfig(provider="anthropic", model="claude-opus-4-6", temperature=0.1, max_tokens=16384)
     llm_config = _pick_provider(llm_config)
 
-    prompt = _build_excel_codegen_prompt(step_results, title)
+    prompt = _build_excel_codegen_prompt(
+        step_results,
+        title,
+        request.style_context or "",
+        request.output_profile,
+    )
     logger.info(f"[excel-gen] Calling LLM ({llm_config.provider}/{llm_config.model or 'default'}) for openpyxl code...")
 
     try:
