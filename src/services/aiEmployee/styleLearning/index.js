@@ -108,6 +108,18 @@ export {
   resolveOutputProfileScope,
 } from './outputProfileService.js';
 
+// ── Company Output Profiles (versioned baseline / proposal lifecycle) ─────
+export {
+  getActiveCompanyOutputProfile,
+  listCompanyOutputProfiles,
+  createProfileFromLegacyStyleProfile,
+  createOutputProfileProposal,
+  approveOutputProfileProposal,
+  rejectOutputProfileProposal,
+  rollbackOutputProfile,
+  mapCompanyProfileRowToOutputProfile,
+} from './companyOutputProfileService.js';
+
 // ── Trust & Autonomy Metrics ────────────────────────────────
 export {
   computeMetrics as computeTrustMetrics,

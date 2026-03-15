@@ -4,8 +4,10 @@
  * First-wave bridge from the older style-learning pipeline to the newer
  * "company output profile" product language.
  *
- * This layer does not introduce new tables yet. Instead it adapts:
- *   - style_profiles      -> active output profiles
+ * This layer now prefers:
+ *   - company_output_profiles -> approved baseline output profiles
+ * and falls back to:
+ *   - style_profiles      -> legacy output profiles
  *   - style_exemplars     -> approved company exemplars
  *   - style_policies      -> company handbook / rules
  *
@@ -13,6 +15,11 @@
  * about the underlying legacy table names.
  */
 
+import {
+  getActiveCompanyOutputProfile,
+  listCompanyOutputProfiles,
+  mapCompanyProfileRowToOutputProfile,
+} from './companyOutputProfileService.js';
 import { getProfile, listProfiles } from './styleProfileService.js';
 import { getBestExemplars } from './exemplarService.js';
 import { getPoliciesForDocType } from './policyIngestionService.js';
@@ -145,37 +152,90 @@ function mapStoredProfileToOutputProfile(profile, scope) {
   };
 }
 
+function buildScopeKey(docType, teamId) {
+  return `${docType || 'unknown'}::${teamId || 'global'}`;
+}
+
 export async function getActiveOutputProfile({ employeeId, inputContext = {}, step = {} }) {
   const scope = resolveOutputProfileScope({ inputContext, step });
+
+  const companyProfile = await getActiveCompanyOutputProfile({
+    employeeId,
+    docType: scope.docType,
+    teamId: scope.teamId,
+  }).catch(() => null);
+
+  if (companyProfile) {
+    return mapCompanyProfileRowToOutputProfile(companyProfile, scope);
+  }
+
   const profile = await getProfile(employeeId, scope.docType, scope.teamId).catch(() => null);
   return mapStoredProfileToOutputProfile(profile, scope);
 }
 
 export async function listOutputProfiles(employeeId) {
-  const profiles = await listProfiles(employeeId).catch(() => []);
-  return profiles.map((profile) => mapStoredProfileToOutputProfile(profile, {
-    docType: profile.doc_type,
-    teamId: profile.team_id,
-    profileName: profile.profile_name,
-    deliverableType: null,
-    audience: null,
-    format: null,
-    channel: null,
-  }));
+  const [companyProfiles, legacyProfiles] = await Promise.all([
+    listCompanyOutputProfiles({ employeeId }).catch(() => []),
+    listProfiles(employeeId).catch(() => []),
+  ]);
+
+  const merged = new Map();
+
+  for (const profile of companyProfiles) {
+    const mapped = mapCompanyProfileRowToOutputProfile(profile, {
+      docType: profile.doc_type,
+      teamId: profile.team_id,
+      profileName: profile.profile_name,
+      deliverableType: profile.deliverable_type,
+      audience: profile.audience,
+      format: profile.format,
+      channel: profile.channel,
+    });
+    merged.set(buildScopeKey(mapped.docType, mapped.teamId), mapped);
+  }
+
+  for (const profile of legacyProfiles) {
+    const scope = {
+      docType: profile.doc_type,
+      teamId: profile.team_id,
+      profileName: profile.profile_name,
+      deliverableType: null,
+      audience: null,
+      format: null,
+      channel: null,
+    };
+    const key = buildScopeKey(scope.docType, scope.teamId);
+    if (!merged.has(key)) {
+      merged.set(key, mapStoredProfileToOutputProfile(profile, scope));
+    }
+  }
+
+  return Array.from(merged.values()).sort((a, b) => {
+    if (a.docType === b.docType) return (b.version || 0) - (a.version || 0);
+    return String(a.docType).localeCompare(String(b.docType));
+  });
 }
 
 export async function listOutputProfileAssets({ employeeId, inputContext = {}, step = {}, exemplarLimit = 3 }) {
   const scope = resolveOutputProfileScope({ inputContext, step });
 
-  const [profile, exemplars, policies] = await Promise.all([
-    getProfile(employeeId, scope.docType, scope.teamId).catch(() => null),
+  const companyProfile = await getActiveCompanyOutputProfile({
+    employeeId,
+    docType: scope.docType,
+    teamId: scope.teamId,
+  }).catch(() => null);
+
+  const [legacyProfile, exemplars, policies] = await Promise.all([
+    companyProfile ? Promise.resolve(null) : getProfile(employeeId, scope.docType, scope.teamId).catch(() => null),
     getBestExemplars(employeeId, scope.docType, { limit: exemplarLimit, teamId: scope.teamId }).catch(() => []),
     getPoliciesForDocType(employeeId, scope.docType).catch(() => []),
   ]);
 
   return {
     scope,
-    outputProfile: mapStoredProfileToOutputProfile(profile, scope),
+    outputProfile: companyProfile
+      ? mapCompanyProfileRowToOutputProfile(companyProfile, scope)
+      : mapStoredProfileToOutputProfile(legacyProfile, scope),
     exemplars,
     policies,
   };
