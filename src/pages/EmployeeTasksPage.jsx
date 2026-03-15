@@ -3,25 +3,42 @@ import { useState, useEffect, useCallback } from 'react';
 import {
   Plus, RefreshCw, Play, ChevronRight, Clock, CheckCircle2,
   AlertTriangle, Loader2, FileText, CalendarDays, Tag, Bell,
-  Calendar, Pause, PlayCircle, Trash2, Zap,
+  Calendar, Pause, PlayCircle, Trash2,
 } from 'lucide-react';
-import { Card, Modal, Select } from '../components/ui';
+import { Modal } from '../components/ui';
 import { useAuth } from '../contexts/AuthContext';
 import * as aiEmployeeService from '../services/aiEmployeeService';
-import { executeTaskWithLoop } from '../services/aiEmployeeExecutor';
 import { TEMPLATE_OPTIONS } from '../services/agentLoopTemplates';
-import { STEP_STATUS } from '../services/agentLoopService';
 import { getNotifications, getUnreadCount, markAllRead } from '../services/notificationService';
-import { getSchedules, createSchedule, pauseSchedule, resumeSchedule, deleteSchedule, SCHEDULE_TYPES } from '../services/scheduledTaskService';
+import {
+  createSchedule,
+  deleteSchedule,
+  getSchedules,
+  pauseSchedule,
+  resumeSchedule,
+  SCHEDULE_TYPES,
+} from '../services/scheduledTaskService';
+import {
+  getTaskStatus,
+  runTask as runTaskAction,
+  submitPlan,
+} from '../services/aiEmployee/index.js';
+import { buildPlanFromTemplateTask } from '../services/aiEmployee/templatePlanAdapter';
+import { EXECUTION_MODES } from '../services/aiEmployee/executionPolicy.js';
+import { createTaskDatasetContextFromFile } from '../services/aiEmployee/taskDatasetContextService.js';
 
 // ── Constants ─────────────────────────────────────────────────────────────
 
 const STATUS_FILTERS = [
   { value: '',               label: 'All' },
   { value: 'todo',           label: 'To Do' },
+  { value: 'waiting_approval',label: 'Ready to Run' },
+  { value: 'queued',         label: 'Queued' },
   { value: 'in_progress',   label: 'In Progress' },
   { value: 'waiting_review',label: 'Awaiting Review' },
+  { value: 'review_hold',   label: 'Awaiting Review' },
   { value: 'blocked',       label: 'Blocked' },
+  { value: 'failed',        label: 'Failed' },
   { value: 'done',          label: 'Done' },
 ];
 
@@ -36,15 +53,26 @@ const WORKFLOW_OPTIONS = TEMPLATE_OPTIONS;
 
 const STATUS_STYLE = {
   todo:           'text-slate-500  bg-slate-100  dark:bg-slate-800',
+  waiting_approval:'text-violet-600 bg-violet-50 dark:bg-violet-900/20',
+  queued:         'text-indigo-600 bg-indigo-50 dark:bg-indigo-900/20',
   in_progress:   'text-blue-600   bg-blue-50    dark:bg-blue-900/20',
   waiting_review:'text-amber-600  bg-amber-50   dark:bg-amber-900/20',
+  review_hold:   'text-amber-600  bg-amber-50   dark:bg-amber-900/20',
   blocked:       'text-red-600    bg-red-50     dark:bg-red-900/20',
+  failed:        'text-red-600    bg-red-50     dark:bg-red-900/20',
   done:          'text-emerald-600 bg-emerald-50 dark:bg-emerald-900/20',
 };
 
 const STATUS_LABEL = {
-  todo: 'To Do', in_progress: 'In Progress', waiting_review: 'Awaiting Review',
-  blocked: 'Blocked', done: 'Done',
+  todo: 'To Do',
+  waiting_approval: 'Ready to Run',
+  queued: 'Queued',
+  in_progress: 'In Progress',
+  waiting_review: 'Awaiting Review',
+  review_hold: 'Awaiting Review',
+  blocked: 'Blocked',
+  failed: 'Failed',
+  done: 'Done',
 };
 
 const PRIORITY_STYLE = {
@@ -53,6 +81,44 @@ const PRIORITY_STYLE = {
   high:   'text-orange-600 bg-orange-50',
   urgent: 'text-red-600   bg-red-50',
 };
+
+const EXECUTION_MODE_OPTIONS = [
+  { value: EXECUTION_MODES.MANUAL_APPROVE, label: 'Manual Approval' },
+  { value: EXECUTION_MODES.AUTO_RUN, label: 'Auto Run' },
+];
+
+const EXECUTION_MODE_STYLE = {
+  [EXECUTION_MODES.MANUAL_APPROVE]: 'text-slate-600 bg-slate-100 dark:bg-slate-800',
+  [EXECUTION_MODES.AUTO_RUN]: 'text-emerald-600 bg-emerald-50 dark:bg-emerald-900/20',
+};
+
+const EXECUTION_MODE_LABEL = {
+  [EXECUTION_MODES.MANUAL_APPROVE]: 'Manual',
+  [EXECUTION_MODES.AUTO_RUN]: 'Auto',
+};
+
+const SCHEDULE_TYPE_OPTIONS = [
+  { value: SCHEDULE_TYPES.DAILY, label: 'Daily' },
+  { value: SCHEDULE_TYPES.WEEKLY, label: 'Weekly' },
+  { value: SCHEDULE_TYPES.MONTHLY, label: 'Monthly' },
+];
+
+const DAY_OF_WEEK_OPTIONS = [
+  { value: 0, label: 'Sunday' },
+  { value: 1, label: 'Monday' },
+  { value: 2, label: 'Tuesday' },
+  { value: 3, label: 'Wednesday' },
+  { value: 4, label: 'Thursday' },
+  { value: 5, label: 'Friday' },
+  { value: 6, label: 'Saturday' },
+];
+
+const DAY_OF_MONTH_OPTIONS = Array.from({ length: 31 }, (_, index) => ({
+  value: index + 1,
+  label: String(index + 1),
+}));
+
+const ORCHESTRATOR_ACTIVE_STATUSES = ['queued', 'in_progress'];
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -74,6 +140,51 @@ function Badge({ label, className }) {
   );
 }
 
+function isOrchestratorTask(task) {
+  return Boolean(task?.plan_snapshot?.steps?.length);
+}
+
+function buildLoopState(task, stepRows = null) {
+  if (task?.loop_state?.steps?.length) return task.loop_state;
+
+  const rows = Array.isArray(stepRows)
+    ? [...stepRows].sort((a, b) => (a.step_index ?? 0) - (b.step_index ?? 0))
+    : null;
+
+  if (rows?.length) {
+    return {
+      steps: rows.map((step) => ({
+        index: step.step_index ?? 0,
+        name: step.step_name || `step_${step.step_index ?? 0}`,
+        workflow_type: step.tool_type || null,
+        status: step.status || 'pending',
+        retry_count: step.retry_count || 0,
+        error: step.error_message || null,
+      })),
+    };
+  }
+
+  const planSteps = task?.plan_snapshot?.steps || [];
+  if (!planSteps.length) return null;
+
+  return {
+    steps: planSteps.map((step, index) => ({
+      index,
+      name: step.name || `step_${index}`,
+      workflow_type: step.tool_type || null,
+      status: 'pending',
+      retry_count: 0,
+      error: null,
+    })),
+  };
+}
+
+function hydrateTaskForBoard(task, stepRows = null) {
+  if (!task) return task;
+  const loop_state = buildLoopState(task, stepRows);
+  return loop_state ? { ...task, loop_state } : task;
+}
+
 // ── New Task Modal ────────────────────────────────────────────────────────
 
 function NewTaskModal({ onClose, onCreated, employeeId, userId }) {
@@ -82,9 +193,10 @@ function NewTaskModal({ onClose, onCreated, employeeId, userId }) {
     description: '',
     priority: 'medium',
     template_id: 'plan',
-    dataset_profile_id: '',
+    execution_mode: EXECUTION_MODES.MANUAL_APPROVE,
     due_at: '',
   });
+  const [sourceFile, setSourceFile] = useState(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
 
@@ -97,29 +209,40 @@ function NewTaskModal({ onClose, onCreated, employeeId, userId }) {
     console.log('[NewTask] submit fired — employeeId:', employeeId, 'form:', form);
     if (!employeeId) { setError('Employee not loaded yet — please wait a moment and try again.'); return; }
     if (!form.title.trim()) { setError('Title is required.'); return; }
-    if (!form.dataset_profile_id.trim()) { setError('Dataset profile ID is required.'); return; }
+    if (!sourceFile) { setError('Attach a source file for the task.'); return; }
 
     setSaving(true);
     setError(null);
     try {
-      // Determine if this is a composite template or single-step
-      const isComposite = WORKFLOW_OPTIONS.find((o) => o.value === form.template_id)?.composite;
-      const task = await aiEmployeeService.createTask(employeeId, {
-        title: form.title.trim(),
-        description: form.description.trim() || null,
-        priority: form.priority,
-        input_context: {
-          workflow_type: isComposite ? form.template_id : form.template_id,
-          template_id: form.template_id,
-          dataset_profile_id: form.dataset_profile_id.trim(),
-        },
-        due_at: form.due_at ? new Date(form.due_at).toISOString() : null,
-        assigned_by_user_id: userId,
+      const datasetContext = await createTaskDatasetContextFromFile({
+        userId,
+        file: sourceFile,
       });
-      console.log('[NewTask] createTask result:', task);
+
+      const plan = await buildPlanFromTemplateTask({
+        templateId: form.template_id,
+        title: form.title.trim(),
+        description: form.description.trim() || '',
+        priority: form.priority,
+        dueAt: form.due_at ? new Date(form.due_at).toISOString() : null,
+        executionMode: form.execution_mode,
+        datasetProfileId: datasetContext.datasetProfileId,
+        datasetProfileRow: datasetContext.datasetProfileRow,
+        userId,
+      });
+      plan.taskMeta = {
+        ...(plan.taskMeta || {}),
+        source_file_name: datasetContext.summary.fileName,
+        source_file_size: datasetContext.summary.fileSize,
+        source_sheet_count: datasetContext.summary.sheetCount,
+        source_row_count: datasetContext.summary.totalRows,
+      };
+
+      const { task } = await submitPlan(plan, employeeId, userId);
+      console.log('[NewTask] submitPlan result:', task);
       onCreated(task);
     } catch (err) {
-      console.error('[NewTask] createTask error:', err);
+      console.error('[NewTask] submitPlan error:', err);
       setError(err?.message || 'Failed to create task.');
     } finally {
       setSaving(false);
@@ -149,10 +272,10 @@ function NewTaskModal({ onClose, onCreated, employeeId, userId }) {
           <textarea
             className={`${inputCls} resize-none`}
             style={inputStyle}
-            rows={2}
+            rows={3}
             value={form.description}
             onChange={(e) => set('description', e.target.value)}
-            placeholder="What should Aiden focus on?"
+            placeholder="Describe the outcome you want, the audience, and any formatting expectations."
           />
         </div>
 
@@ -187,16 +310,47 @@ function NewTaskModal({ onClose, onCreated, employeeId, userId }) {
         </div>
 
         <div>
-          <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
-            Dataset Profile ID *
-          </label>
-          <input
+          <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>Execution Mode</label>
+          <select
             className={inputCls}
             style={inputStyle}
-            value={form.dataset_profile_id}
-            onChange={(e) => set('dataset_profile_id', e.target.value)}
-            placeholder="Paste dataset profile UUID"
+            value={form.execution_mode}
+            onChange={(e) => set('execution_mode', e.target.value)}
+          >
+            {EXECUTION_MODE_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </select>
+        </div>
+
+        <div>
+          <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>Source File *</label>
+          <input
+            type="file"
+            accept=".xlsx,.xls,.csv"
+            className={inputCls}
+            style={inputStyle}
+            onChange={(e) => {
+              setSourceFile(e.target.files?.[0] || null);
+              setError(null);
+            }}
           />
+          <p className="mt-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+            Upload the workbook or CSV Aiden should use. The system will create the data context internally.
+          </p>
+          {sourceFile && (
+            <p className="mt-1 text-[11px]" style={{ color: 'var(--text-secondary)' }}>
+              Attached: <span className="font-medium">{sourceFile.name}</span> · {(Number(sourceFile.size || 0) / 1024).toFixed(1)} KB
+            </p>
+          )}
+        </div>
+
+        <div className="rounded-lg border px-3 py-2 text-[11px]" style={{ borderColor: 'var(--border-default)', color: 'var(--text-muted)' }}>
+          Aiden task example:
+          {' '}
+          <span style={{ color: 'var(--text-secondary)' }}>
+            "Use the attached workbook to produce a weekly supply chain report with forecast summary, replenishment recommendations, supplier risk highlights, and action items for the ops manager."
+          </span>
         </div>
 
         <div>
@@ -236,6 +390,265 @@ function NewTaskModal({ onClose, onCreated, employeeId, userId }) {
   );
 }
 
+function NewScheduleModal({ onClose, onCreated, employeeId, userId }) {
+  const [form, setForm] = useState({
+    title: '',
+    description: '',
+    priority: 'medium',
+    template_id: 'forecast',
+    execution_mode: EXECUTION_MODES.MANUAL_APPROVE,
+    schedule_type: SCHEDULE_TYPES.DAILY,
+    hour: '8',
+    day_of_week: '1',
+    day_of_month: '1',
+  });
+  const [sourceFile, setSourceFile] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+
+  function set(field, value) {
+    setForm((prev) => ({ ...prev, [field]: value }));
+  }
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    if (!employeeId) { setError('Employee not loaded yet — please wait a moment and try again.'); return; }
+    if (!form.title.trim()) { setError('Title is required.'); return; }
+    if (!sourceFile) { setError('Attach a source file for the scheduled task.'); return; }
+
+    setSaving(true);
+    setError(null);
+    try {
+      const datasetContext = await createTaskDatasetContextFromFile({
+        userId,
+        file: sourceFile,
+      });
+      if (!datasetContext.datasetProfileId) {
+        throw new Error('Failed to create a reusable dataset context for this schedule.');
+      }
+
+      const schedule = await createSchedule(
+        employeeId,
+        {
+          schedule_type: form.schedule_type,
+          hour: Number(form.hour),
+          day_of_week: form.schedule_type === SCHEDULE_TYPES.WEEKLY ? Number(form.day_of_week) : null,
+          day_of_month: form.schedule_type === SCHEDULE_TYPES.MONTHLY ? Number(form.day_of_month) : null,
+        },
+        {
+          title: form.title.trim(),
+          description: form.description.trim() || '',
+          priority: form.priority,
+          template_id: form.template_id,
+          dataset_profile_id: datasetContext.datasetProfileId,
+          execution_mode: form.execution_mode,
+          source_file_name: datasetContext.summary.fileName,
+          source_file_size: datasetContext.summary.fileSize,
+          source_sheet_count: datasetContext.summary.sheetCount,
+          source_row_count: datasetContext.summary.totalRows,
+          input_context: {
+            dataset_profile_id: datasetContext.datasetProfileId,
+            execution_mode: form.execution_mode,
+            source_file_name: datasetContext.summary.fileName,
+            source_file_size: datasetContext.summary.fileSize,
+            source_sheet_count: datasetContext.summary.sheetCount,
+            source_row_count: datasetContext.summary.totalRows,
+          },
+        },
+        userId
+      );
+
+      onCreated(schedule);
+    } catch (err) {
+      setError(err?.message || 'Failed to create schedule.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const inputCls = 'w-full px-3 py-2 rounded-lg border text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500';
+  const inputStyle = { borderColor: 'var(--border-default)', backgroundColor: 'var(--surface-bg)', color: 'var(--text-primary)' };
+
+  return (
+    <Modal isOpen onClose={onClose} title="New Schedule">
+      <form onSubmit={handleSubmit} className="space-y-4 p-1">
+        <div>
+          <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>Title *</label>
+          <input
+            className={inputCls}
+            style={inputStyle}
+            value={form.title}
+            onChange={(e) => set('title', e.target.value)}
+            placeholder="e.g. Monday forecast refresh"
+            autoFocus
+          />
+        </div>
+
+        <div>
+          <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>Description</label>
+          <textarea
+            className={`${inputCls} resize-none`}
+            style={inputStyle}
+            rows={2}
+            value={form.description}
+            onChange={(e) => set('description', e.target.value)}
+            placeholder="What should run on this schedule?"
+          />
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>Task Type</label>
+            <select
+              className={inputCls}
+              style={inputStyle}
+              value={form.template_id}
+              onChange={(e) => set('template_id', e.target.value)}
+            >
+              <optgroup label="Multi-Step">
+                {WORKFLOW_OPTIONS.filter((o) => o.composite).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </optgroup>
+              <optgroup label="Single Analysis">
+                {WORKFLOW_OPTIONS.filter((o) => !o.composite).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </optgroup>
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>Priority</label>
+            <select
+              className={inputCls}
+              style={inputStyle}
+              value={form.priority}
+              onChange={(e) => set('priority', e.target.value)}
+            >
+              {PRIORITY_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>Schedule</label>
+            <select
+              className={inputCls}
+              style={inputStyle}
+              value={form.schedule_type}
+              onChange={(e) => set('schedule_type', e.target.value)}
+            >
+              {SCHEDULE_TYPE_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>Execution Mode</label>
+            <select
+              className={inputCls}
+              style={inputStyle}
+              value={form.execution_mode}
+              onChange={(e) => set('execution_mode', e.target.value)}
+            >
+              {EXECUTION_MODE_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>Hour (UTC)</label>
+            <select
+              className={inputCls}
+              style={inputStyle}
+              value={form.hour}
+              onChange={(e) => set('hour', e.target.value)}
+            >
+              {Array.from({ length: 24 }, (_, hour) => (
+                <option key={hour} value={hour}>{String(hour).padStart(2, '0')}:00</option>
+              ))}
+            </select>
+          </div>
+          {form.schedule_type === SCHEDULE_TYPES.WEEKLY && (
+            <div>
+              <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>Day of Week</label>
+              <select
+                className={inputCls}
+                style={inputStyle}
+                value={form.day_of_week}
+                onChange={(e) => set('day_of_week', e.target.value)}
+              >
+                {DAY_OF_WEEK_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+            </div>
+          )}
+          {form.schedule_type === SCHEDULE_TYPES.MONTHLY && (
+            <div>
+              <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>Day of Month</label>
+              <select
+                className={inputCls}
+                style={inputStyle}
+                value={form.day_of_month}
+                onChange={(e) => set('day_of_month', e.target.value)}
+              >
+                {DAY_OF_MONTH_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+            </div>
+          )}
+        </div>
+
+        <div>
+          <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>Source File *</label>
+          <input
+            type="file"
+            accept=".xlsx,.xls,.csv"
+            className={inputCls}
+            style={inputStyle}
+            onChange={(e) => {
+              setSourceFile(e.target.files?.[0] || null);
+              setError(null);
+            }}
+          />
+          <p className="mt-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+            Upload the workbook or CSV this schedule should reuse on every run. The system stores the dataset context internally.
+          </p>
+          {sourceFile && (
+            <p className="mt-1 text-[11px]" style={{ color: 'var(--text-secondary)' }}>
+              Attached: <span className="font-medium">{sourceFile.name}</span> · {(Number(sourceFile.size || 0) / 1024).toFixed(1)} KB
+            </p>
+          )}
+        </div>
+
+        {error && (
+          <p className="text-xs text-red-600">{error}</p>
+        )}
+
+        <div className="flex justify-end gap-2 pt-1">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-4 py-2 rounded-lg text-sm border transition-colors hover:bg-[var(--surface-subtle)]"
+            style={{ borderColor: 'var(--border-default)', color: 'var(--text-secondary)' }}
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            disabled={saving}
+            className="px-4 py-2 rounded-lg text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+          >
+            {saving ? 'Creating…' : 'Create Schedule'}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
 // ── Task list item ────────────────────────────────────────────────────────
 
 function TaskListItem({ task, isSelected, onClick }) {
@@ -255,6 +668,12 @@ function TaskListItem({ task, isSelected, onClick }) {
         <div className="flex items-center gap-1.5 mt-1">
           <Badge label={STATUS_LABEL[task.status] || task.status} className={STATUS_STYLE[task.status] || ''} />
           <Badge label={task.priority} className={PRIORITY_STYLE[task.priority] || ''} />
+          {task.input_context?.execution_mode && (
+            <Badge
+              label={EXECUTION_MODE_LABEL[task.input_context.execution_mode] || task.input_context.execution_mode}
+              className={EXECUTION_MODE_STYLE[task.input_context.execution_mode] || ''}
+            />
+          )}
           {task.source_type === 'scheduled' && (
             <Badge label="auto" className="text-purple-600 bg-purple-50 dark:bg-purple-900/20" />
           )}
@@ -291,6 +710,7 @@ function WorklogEntry({ entry }) {
 const STEP_STATUS_STYLE = {
   pending:     'text-slate-500  bg-slate-100  dark:bg-slate-800',
   running:     'text-blue-600   bg-blue-50    dark:bg-blue-900/20',
+  retrying:    'text-blue-600   bg-blue-50    dark:bg-blue-900/20',
   succeeded:   'text-emerald-600 bg-emerald-50 dark:bg-emerald-900/20',
   failed:      'text-red-600    bg-red-50     dark:bg-red-900/20',
   blocked:     'text-red-600    bg-red-50     dark:bg-red-900/20',
@@ -301,6 +721,7 @@ const STEP_STATUS_STYLE = {
 const STEP_STATUS_ICON = {
   pending:     <Clock className="w-3 h-3" />,
   running:     <Loader2 className="w-3 h-3 animate-spin" />,
+  retrying:    <Loader2 className="w-3 h-3 animate-spin" />,
   succeeded:   <CheckCircle2 className="w-3 h-3" />,
   failed:      <AlertTriangle className="w-3 h-3" />,
   blocked:     <AlertTriangle className="w-3 h-3" />,
@@ -339,8 +760,15 @@ function StepProgressBar({ loopState }) {
 // ── Task detail panel ─────────────────────────────────────────────────────
 
 function TaskDetail({ task, logs, onRun, running }) {
-  const canRun = task.status === 'todo' || task.status === 'blocked';
+  const canRun = isOrchestratorTask(task)
+    ? ['waiting_approval', 'failed'].includes(task.status)
+    : ['todo', 'blocked'].includes(task.status);
   const ctx = task.input_context || {};
+  const runLabel = task.status === 'waiting_approval'
+    ? 'Approve & Run'
+    : task.status === 'failed'
+    ? 'Retry'
+    : 'Run Now';
 
   return (
     <div className="flex flex-col gap-5 p-6 overflow-y-auto">
@@ -352,6 +780,12 @@ function TaskDetail({ task, logs, onRun, running }) {
         </div>
         <div className="flex flex-wrap gap-1.5">
           <Badge label={task.priority} className={PRIORITY_STYLE[task.priority] || ''} />
+          {ctx.execution_mode && (
+            <Badge
+              label={EXECUTION_MODE_LABEL[ctx.execution_mode] || ctx.execution_mode}
+              className={EXECUTION_MODE_STYLE[ctx.execution_mode] || ''}
+            />
+          )}
           {(ctx.template_id || ctx.workflow_type) && (
             <Badge label={ctx.template_id || ctx.workflow_type} className="text-indigo-600 bg-indigo-50 dark:bg-indigo-900/20" />
           )}
@@ -374,10 +808,15 @@ function TaskDetail({ task, logs, onRun, running }) {
             <span>Due {fmtDate(task.due_at)}</span>
           </div>
         )}
-        {ctx.dataset_profile_id && (
+        {ctx.source_file_name ? (
+          <div className="flex items-center gap-1.5">
+            <FileText className="w-3.5 h-3.5" />
+            <span className="truncate">{ctx.source_file_name}</span>
+          </div>
+        ) : ctx.dataset_profile_id && (
           <div className="flex items-center gap-1.5">
             <Tag className="w-3.5 h-3.5" />
-            <span className="truncate font-mono">{ctx.dataset_profile_id}</span>
+            <span className="truncate font-mono">context {ctx.dataset_profile_id}</span>
           </div>
         )}
       </div>
@@ -392,14 +831,14 @@ function TaskDetail({ task, logs, onRun, running }) {
           >
             {running
               ? <><Loader2 className="w-4 h-4 animate-spin" /> Running…</>
-              : <><Play className="w-4 h-4" /> Run Now</>
+              : <><Play className="w-4 h-4" /> {runLabel}</>
             }
           </button>
         </div>
       )}
 
       {/* Waiting review notice */}
-      {task.status === 'waiting_review' && (
+      {(task.status === 'waiting_review' || task.status === 'review_hold') && (
         <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg bg-amber-50 dark:bg-amber-900/20 text-amber-700 text-sm">
           <Clock className="w-4 h-4 flex-shrink-0" />
           Awaiting manager review — go to the Review Queue to approve.
@@ -440,8 +879,21 @@ export default function EmployeeTasksPage() {
   const [showNotifs, setShowNotifs] = useState(false);
   const [schedules, setSchedules] = useState([]);
   const [showSchedules, setShowSchedules] = useState(false);
+  const [showNewSchedule, setShowNewSchedule] = useState(false);
 
   const selectedTask = tasks.find((t) => t.id === selectedTaskId) || null;
+
+  const refreshTaskRuntime = useCallback(async (taskId) => {
+    if (!taskId) return;
+    try {
+      const snapshot = await getTaskStatus(taskId);
+      if (!snapshot?.task) return;
+      const hydrated = hydrateTaskForBoard(snapshot.task, snapshot.steps);
+      setTasks((prev) => prev.map((task) => task.id === hydrated.id ? hydrated : task));
+    } catch {
+      // Legacy task or no orchestrator state — ignore.
+    }
+  }, []);
 
   // Load employee + tasks
   const loadTasks = useCallback(async () => {
@@ -450,7 +902,8 @@ export default function EmployeeTasksPage() {
     try {
       const emp = await aiEmployeeService.getOrCreateAiden(user.id);
       setEmployee(emp);
-      const ts = await aiEmployeeService.listTasksByUser(user.id, { status: statusFilter || undefined });
+      const rawTasks = await aiEmployeeService.listTasksByUser(user.id, { status: statusFilter || undefined });
+      const ts = rawTasks.map((task) => hydrateTaskForBoard(task));
       setTasks(ts);
       if (ts.length > 0 && !selectedTaskId) setSelectedTaskId(ts[0].id);
       // Load notifications + schedules (best-effort)
@@ -464,6 +917,58 @@ export default function EmployeeTasksPage() {
   }, [user?.id, statusFilter]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { loadTasks(); }, [loadTasks]);
+
+  useEffect(() => {
+    if (!selectedTaskId) return;
+    refreshTaskRuntime(selectedTaskId);
+  }, [selectedTaskId, refreshTaskRuntime]);
+
+  useEffect(() => {
+    const activeTaskIds = tasks
+      .filter((task) => isOrchestratorTask(task) && ORCHESTRATOR_ACTIVE_STATUSES.includes(task.status))
+      .map((task) => task.id);
+
+    if (activeTaskIds.length === 0) return undefined;
+
+    let cancelled = false;
+
+    const pollActiveTasks = async () => {
+      const snapshots = await Promise.all(
+        activeTaskIds.map(async (taskId) => {
+          try {
+            return await getTaskStatus(taskId);
+          } catch {
+            return null;
+          }
+        })
+      );
+
+      if (cancelled) return;
+
+      const hydratedSnapshots = snapshots
+        .filter((snapshot) => snapshot?.task?.id)
+        .map((snapshot) => hydrateTaskForBoard(snapshot.task, snapshot.steps));
+
+      if (hydratedSnapshots.length === 0) return;
+
+      const hydratedById = new Map(hydratedSnapshots.map((task) => [task.id, task]));
+      const shouldRefreshList = hydratedSnapshots.some((task) => !ORCHESTRATOR_ACTIVE_STATUSES.includes(task.status));
+
+      setTasks((prev) => prev.map((task) => hydratedById.get(task.id) || task));
+
+      if (shouldRefreshList) {
+        await loadTasks();
+      }
+    };
+
+    pollActiveTasks();
+    const intervalId = setInterval(pollActiveTasks, 2000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(intervalId);
+    };
+  }, [tasks, loadTasks]);
 
   // Load logs for selected task — use userId to query across all Aiden instances
   useEffect(() => {
@@ -480,22 +985,11 @@ export default function EmployeeTasksPage() {
     // Optimistically mark in_progress so the task stays visible
     setTasks((prev) => prev.map((t) => t.id === task.id ? { ...t, status: 'in_progress' } : t));
 
-    // Poll for step progress during execution
-    const pollInterval = setInterval(async () => {
-      try {
-        const fresh = await aiEmployeeService.getTask(task.id);
-        if (fresh) {
-          setTasks((prev) => prev.map((t) => t.id === fresh.id ? fresh : t));
-        }
-      } catch { /* ignore polling errors */ }
-    }, 2000);
-
     try {
-      await executeTaskWithLoop(task, user.id);
+      await runTaskAction(task, user.id);
     } catch (err) {
       setRunError(err?.message || 'Task execution failed.');
     } finally {
-      clearInterval(pollInterval);
       setRunningId(null);
       await loadTasks();
     }
@@ -503,9 +997,15 @@ export default function EmployeeTasksPage() {
 
   function handleTaskCreated(task) {
     console.log('[TaskBoard] handleTaskCreated:', task);
+    const hydrated = hydrateTaskForBoard(task);
     setShowNewTask(false);
-    setTasks((prev) => [task, ...prev]);
+    setTasks((prev) => [hydrated, ...prev]);
     setSelectedTaskId(task.id);
+  }
+
+  function handleScheduleCreated(schedule) {
+    setShowNewSchedule(false);
+    setSchedules((prev) => [schedule, ...prev]);
   }
 
   return (
@@ -683,6 +1183,12 @@ export default function EmployeeTasksPage() {
         >
           <div className="flex items-center justify-between px-3 py-2 border-b" style={{ borderColor: 'var(--border-default)' }}>
             <span className="text-xs font-medium" style={{ color: 'var(--text-primary)' }}>Scheduled Tasks</span>
+            <button
+              onClick={() => setShowNewSchedule(true)}
+              className="text-xs text-indigo-600 hover:underline"
+            >
+              New Schedule
+            </button>
           </div>
           {schedules.length === 0 ? (
             <p className="px-3 py-6 text-center text-xs" style={{ color: 'var(--text-muted)' }}>No schedules configured.</p>
@@ -697,10 +1203,28 @@ export default function EmployeeTasksPage() {
                   <p className="text-xs font-medium truncate" style={{ color: 'var(--text-primary)' }}>
                     {s.task_template?.title || s.schedule_type}
                   </p>
-                  <p className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
-                    {s.schedule_type} at {s.hour || 8}:00 UTC
-                    {s.status === 'paused' && ' (paused)'}
-                  </p>
+                  <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                    <Badge
+                      label={EXECUTION_MODE_LABEL[s.task_template?.execution_mode] || s.task_template?.execution_mode || 'Manual'}
+                      className={EXECUTION_MODE_STYLE[s.task_template?.execution_mode || EXECUTION_MODES.MANUAL_APPROVE] || ''}
+                    />
+                    {s.task_template?.source_file_name && (
+                      <span className="text-[11px] truncate max-w-[160px]" style={{ color: 'var(--text-secondary)' }}>
+                        {s.task_template.source_file_name}
+                      </span>
+                    )}
+                    <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                      {s.schedule_type}
+                    </span>
+                    {s.next_run_at && (
+                      <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                        Next {fmtTime(s.next_run_at)}
+                      </span>
+                    )}
+                    {s.status === 'paused' && (
+                      <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>(paused)</span>
+                    )}
+                  </div>
                 </div>
                 <button
                   onClick={async () => {
@@ -741,6 +1265,14 @@ export default function EmployeeTasksPage() {
         <NewTaskModal
           onClose={() => setShowNewTask(false)}
           onCreated={handleTaskCreated}
+          employeeId={employee?.id ?? null}
+          userId={user?.id}
+        />
+      )}
+      {showNewSchedule && (
+        <NewScheduleModal
+          onClose={() => setShowNewSchedule(false)}
+          onCreated={handleScheduleCreated}
           employeeId={employee?.id ?? null}
           userId={user?.id}
         />

@@ -5,6 +5,7 @@ import { useApp } from '../contexts/AppContext';
 import Sidebar from '../components/nav/TopNavBar';
 import ErrorBoundary from '../components/ErrorBoundary';
 import NetworkStatusBanner from '../components/NetworkStatusBanner';
+import AiEmployeeRuntimeManager from '../components/ai-employee/AiEmployeeRuntimeManager';
 
 export default function AppShell() {
   const { session, loading, notifications } = useAuth();
@@ -34,6 +35,7 @@ export default function AppShell() {
       style={{ backgroundColor: 'var(--surface-base)', color: 'var(--text-primary)' }}
     >
       <Sidebar />
+      <AiEmployeeRuntimeManager />
 
       {/* Notification toasts */}
       <div className="fixed top-4 right-4 z-50 space-y-2">
