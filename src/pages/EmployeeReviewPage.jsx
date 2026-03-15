@@ -1,22 +1,22 @@
 // @product: ai-employee
 // ============================================
-// Human Review Center — Artifacts + Revision Log + Approval
+// Human Review Center — Deliverables + Evidence + Approval
 // Left:  Queue list (narrow)
-// Center: Beautiful artifact viewer (data report)
+// Center: Employee-style deliverable preview with evidence on demand
 // Right:  Revision log + review actions
 // ============================================
 
 import { useState, useEffect, useCallback } from 'react';
 import {
   RefreshCw, CheckCircle2, XCircle, RotateCcw, AlertTriangle,
-  Clock, Loader2, FileText, Eye, ChevronRight,
-  BarChart3, Table2, Shield, Zap, ArrowRight,
+  Clock, Loader2, FileText, Eye,
+  BarChart3, Table2, Shield, Zap, Paperclip,
 } from 'lucide-react';
-import { Card } from '../components/ui';
 import { useAuth } from '../contexts/AuthContext';
 import * as aiEmployeeService from '../services/aiEmployeeService';
-import { approveStepAndContinue, reviseStepAndRetry } from '../services/agentLoopService';
 import { attachFeedback } from '../services/aiEmployeeMemoryService';
+import { resolveReviewDecision } from '../services/aiEmployee/index.js';
+import { buildDeliverablePreview } from '../services/aiEmployee/deliverableProfile.js';
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -69,15 +69,51 @@ function categorizeArtifact(type) {
   return 'other';
 }
 
-// ── Artifact Viewer (center panel) ────────────────────────────────────────
+function safePreviewText(value) {
+  return String(value || '')
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
 
-function ArtifactViewer({ item }) {
+function truncatePreview(value, limit = 1800) {
+  const normalized = safePreviewText(value);
+  if (normalized.length <= limit) return normalized;
+  return `${normalized.slice(0, limit).trim()}…`;
+}
+
+function StatusBanner({ latestRun }) {
+  if (!latestRun) return null;
+
+  const succeeded = latestRun.status === 'succeeded';
+
+  return (
+    <div
+      className="flex items-center gap-2 px-5 py-2.5 border-b text-sm"
+      style={{
+        borderColor: 'var(--border-default)',
+        backgroundColor: succeeded ? 'rgba(16, 185, 129, 0.05)' : 'rgba(239, 68, 68, 0.05)',
+      }}
+    >
+      {succeeded
+        ? <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0" />
+        : <AlertTriangle className="w-4 h-4 text-red-500 flex-shrink-0" />
+      }
+      <span style={{ color: 'var(--text-primary)' }}>
+        {latestRun.summary || (succeeded ? 'Completed successfully' : 'Completed with issues')}
+      </span>
+      <span className="ml-auto text-xs" style={{ color: 'var(--text-muted)' }}>
+        {fmtRelative(latestRun.ended_at)}
+      </span>
+    </div>
+  );
+}
+
+function EvidenceArtifactGrid({ artifactRefs }) {
   const [selectedArtifact, setSelectedArtifact] = useState(null);
-  const runs = item.ai_employee_runs || [];
-  const latestRun = runs[0] || null;
-  const artifactRefs = latestRun?.artifact_refs || [];
 
-  // Group artifacts by category
   const grouped = {};
   for (const ref of artifactRefs) {
     const cat = categorizeArtifact(ref.type || ref.artifact_type);
@@ -88,121 +124,259 @@ function ArtifactViewer({ item }) {
   const categoryLabels = { forecast: 'Forecast', plan: 'Plan', risk: 'Risk', report: 'Report', other: 'Other' };
   const categoryIcons = { forecast: BarChart3, plan: Table2, risk: Shield, report: FileText, other: FileText };
 
+  if (artifactRefs.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center py-14 gap-2">
+        <FileText className="w-10 h-10" style={{ color: 'var(--text-muted)' }} />
+        <p className="text-sm" style={{ color: 'var(--text-muted)' }}>No evidence artifacts captured for this run.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-5">
+      {Object.entries(grouped).map(([cat, artifacts]) => {
+        const CatIcon = categoryIcons[cat] || FileText;
+        return (
+          <div key={cat}>
+            <div className="flex items-center gap-2 mb-3">
+              <CatIcon className="w-4 h-4 text-indigo-500" />
+              <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>
+                {categoryLabels[cat] || cat}
+              </span>
+              <span className="text-xs px-1.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800" style={{ color: 'var(--text-muted)' }}>
+                {artifacts.length}
+              </span>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {artifacts.map((ref, i) => {
+                const ArtIcon = ARTIFACT_ICONS[ref.type || ref.artifact_type] || FileText;
+                const isSelected = selectedArtifact === `${cat}-${i}`;
+                return (
+                  <button
+                    key={`${cat}-${i}`}
+                    onClick={() => setSelectedArtifact(isSelected ? null : `${cat}-${i}`)}
+                    className={`text-left p-4 rounded-xl border transition-all ${
+                      isSelected
+                        ? 'border-indigo-300 bg-indigo-50/50 dark:bg-indigo-900/10 shadow-sm'
+                        : 'border-transparent hover:border-[var(--border-default)] hover:shadow-sm'
+                    }`}
+                    style={{
+                      backgroundColor: isSelected ? undefined : 'var(--surface-subtle)',
+                    }}
+                  >
+                    <div className="flex items-start gap-3">
+                      <div className="w-9 h-9 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 flex items-center justify-center flex-shrink-0">
+                        <ArtIcon className="w-4 h-4 text-indigo-500" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+                          {ref.label || ref.type || ref.artifact_type}
+                        </p>
+                        {ref.run_id && (
+                          <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                            Run #{ref.run_id}
+                          </p>
+                        )}
+                      </div>
+                      <Eye className="w-3.5 h-3.5 flex-shrink-0 mt-1" style={{ color: 'var(--text-muted)' }} />
+                    </div>
+
+                    {isSelected && ref.data && (
+                      <div className="mt-3 pt-3 border-t text-xs font-mono overflow-auto max-h-48 rounded" style={{ borderColor: 'var(--border-default)' }}>
+                        <pre style={{ color: 'var(--text-secondary)', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                          {typeof ref.data === 'string' ? ref.data : JSON.stringify(ref.data, null, 2).slice(0, 2000)}
+                        </pre>
+                      </div>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function DeliverableViewer({ item }) {
+  const [activeTab, setActiveTab] = useState('deliverable');
+
+  const workflowType = item.input_context?.workflow_type || 'task';
+  const deliverable = buildDeliverablePreview(item);
+  const latestRun = deliverable.latestRun;
+  const deliverableIcon = deliverable.previewKind === 'spreadsheet'
+    ? Table2
+    : deliverable.previewKind === 'bi'
+      ? BarChart3
+      : FileText;
+  const DeliverableIcon = deliverableIcon;
+  const previewExcerpt = deliverable.rawPreview ? truncatePreview(deliverable.rawPreview) : '';
+  const attachments = [
+    deliverable.primaryAttachmentName,
+    ...deliverable.attachmentNames,
+  ].filter(Boolean);
+
   return (
     <div className="h-full flex flex-col">
-      {/* Task header */}
       <div className="px-5 py-4 border-b flex-shrink-0" style={{ borderColor: 'var(--border-default)' }}>
-        <h2 className="font-semibold text-base" style={{ color: 'var(--text-primary)' }}>
-          {item.title}
-        </h2>
-        {item.description && (
-          <p className="text-sm mt-1 line-clamp-2" style={{ color: 'var(--text-secondary)' }}>
-            {item.description}
-          </p>
-        )}
-        <div className="flex items-center gap-3 mt-2 text-xs" style={{ color: 'var(--text-muted)' }}>
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h2 className="font-semibold text-base" style={{ color: 'var(--text-primary)' }}>
+              {item.title}
+            </h2>
+            {item.description && (
+              <p className="text-sm mt-1 line-clamp-2" style={{ color: 'var(--text-secondary)' }}>
+                {item.description}
+              </p>
+            )}
+          </div>
+          <div className="px-3 py-2 rounded-xl border min-w-[190px]" style={{ borderColor: 'var(--border-default)', backgroundColor: 'var(--surface-subtle)' }}>
+            <p className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>
+              Deliverable
+            </p>
+            <p className="text-sm font-semibold mt-1" style={{ color: 'var(--text-primary)' }}>
+              {deliverable.profile.label}
+            </p>
+            <p className="text-xs mt-1" style={{ color: 'var(--text-secondary)' }}>
+              {deliverable.profile.channel}
+            </p>
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-2 mt-3 text-xs" style={{ color: 'var(--text-muted)' }}>
           <span className="px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-600 dark:bg-indigo-900/20 dark:text-indigo-400 font-medium capitalize">
-            {item.input_context?.workflow_type || 'task'}
+            {workflowType}
           </span>
-          <span>Priority: <span className="capitalize font-medium">{item.priority}</span></span>
+          <span className="px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800">
+            {deliverable.profile.audience}
+          </span>
+          <span>Format: <span className="font-medium" style={{ color: 'var(--text-secondary)' }}>{deliverable.profile.format}</span></span>
+          <span>Priority: <span className="capitalize font-medium" style={{ color: 'var(--text-secondary)' }}>{item.priority}</span></span>
           {item.due_at && <span>Due {fmtTime(item.due_at)}</span>}
         </div>
       </div>
 
-      {/* Run status banner */}
-      {latestRun && (
-        <div
-          className="flex items-center gap-2 px-5 py-2.5 border-b text-sm"
-          style={{
-            borderColor: 'var(--border-default)',
-            backgroundColor: latestRun.status === 'succeeded' ? 'rgba(16, 185, 129, 0.05)' : 'rgba(239, 68, 68, 0.05)',
-          }}
-        >
-          {latestRun.status === 'succeeded'
-            ? <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0" />
-            : <AlertTriangle className="w-4 h-4 text-red-500 flex-shrink-0" />
-          }
-          <span style={{ color: 'var(--text-primary)' }}>
-            {latestRun.summary || (latestRun.status === 'succeeded' ? 'Completed successfully' : 'Completed with issues')}
-          </span>
-          <span className="ml-auto text-xs" style={{ color: 'var(--text-muted)' }}>
-            {fmtRelative(latestRun.ended_at)}
-          </span>
-        </div>
-      )}
+      <StatusBanner latestRun={latestRun} />
 
-      {/* Artifact grid */}
+      <div className="px-5 pt-4 pb-2 border-b flex items-center gap-2" style={{ borderColor: 'var(--border-default)' }}>
+        {[
+          { key: 'deliverable', label: 'Deliverable' },
+          { key: 'evidence', label: `Evidence${deliverable.evidenceArtifacts.length ? ` (${deliverable.evidenceArtifacts.length})` : ''}` },
+        ].map((tab) => (
+          <button
+            key={tab.key}
+            type="button"
+            onClick={() => setActiveTab(tab.key)}
+            className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
+              activeTab === tab.key ? 'text-white' : ''
+            }`}
+            style={{
+              backgroundColor: activeTab === tab.key ? '#4f46e5' : 'var(--surface-subtle)',
+              color: activeTab === tab.key ? '#ffffff' : 'var(--text-secondary)',
+            }}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
       <div className="flex-1 overflow-y-auto p-5">
-        {artifactRefs.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full gap-2">
-            <FileText className="w-10 h-10" style={{ color: 'var(--text-muted)' }} />
-            <p className="text-sm" style={{ color: 'var(--text-muted)' }}>No artifacts generated yet</p>
+        {activeTab === 'deliverable' ? (
+          <div className="space-y-4">
+            <section className="p-5 rounded-2xl border" style={{ borderColor: 'var(--border-default)', backgroundColor: 'var(--surface-card)' }}>
+              <div className="flex items-start gap-4">
+                <div className="w-11 h-11 rounded-2xl flex items-center justify-center border" style={{ borderColor: 'var(--border-default)', backgroundColor: 'var(--surface-subtle)' }}>
+                  <DeliverableIcon className="w-5 h-5 text-indigo-500" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>
+                    Manager-ready output
+                  </p>
+                  <h3 className="text-lg font-semibold mt-1" style={{ color: 'var(--text-primary)' }}>
+                    {deliverable.headline}
+                  </h3>
+                  <p className="text-sm mt-2 leading-6" style={{ color: 'var(--text-secondary)' }}>
+                    {deliverable.summary || 'Deliverable draft is ready for review.'}
+                  </p>
+                </div>
+              </div>
+            </section>
+
+            {deliverable.sections.length > 0 && (
+              <section className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                {deliverable.sections.map((section) => (
+                  <div
+                    key={section.label}
+                    className="p-4 rounded-2xl border"
+                    style={{ borderColor: 'var(--border-default)', backgroundColor: 'var(--surface-card)' }}
+                  >
+                    <h4 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                      {section.label}
+                    </h4>
+                    <ul className="mt-3 space-y-2">
+                      {section.items.map((entry, index) => (
+                        <li key={`${section.label}-${index}`} className="flex items-start gap-2 text-sm" style={{ color: 'var(--text-secondary)' }}>
+                          <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-indigo-500 flex-shrink-0" />
+                          <span>{entry}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ))}
+              </section>
+            )}
+
+            {previewExcerpt && (
+              <section className="p-4 rounded-2xl border" style={{ borderColor: 'var(--border-default)', backgroundColor: 'var(--surface-card)' }}>
+                <div className="flex items-center gap-2 mb-2">
+                  <FileText className="w-4 h-4 text-indigo-500" />
+                  <h4 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                    Draft excerpt
+                  </h4>
+                </div>
+                <p className="text-sm leading-6 whitespace-pre-wrap" style={{ color: 'var(--text-secondary)' }}>
+                  {previewExcerpt}
+                </p>
+              </section>
+            )}
+
+            <section className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+              <div className="p-4 rounded-2xl border" style={{ borderColor: 'var(--border-default)', backgroundColor: 'var(--surface-card)' }}>
+                <div className="flex items-center gap-2 mb-2">
+                  <Paperclip className="w-4 h-4 text-indigo-500" />
+                  <h4 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                    Deliverable package
+                  </h4>
+                </div>
+                {attachments.length > 0 ? (
+                  <ul className="space-y-2">
+                    {attachments.map((name, index) => (
+                      <li key={`${name}-${index}`} className="text-sm" style={{ color: 'var(--text-secondary)' }}>
+                        {name}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
+                    No named attachments were saved for this run.
+                  </p>
+                )}
+              </div>
+
+              <div className="p-4 rounded-2xl border" style={{ borderColor: 'var(--border-default)', backgroundColor: 'var(--surface-card)' }}>
+                <h4 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                  Review guidance
+                </h4>
+                <p className="text-sm mt-2 leading-6" style={{ color: 'var(--text-secondary)' }}>
+                  Approve if this reads like a normal employee deliverable for {deliverable.profile.audience.toLowerCase()}.
+                  Use Evidence when you need the underlying artifacts, intermediate outputs, or raw tool traces.
+                </p>
+              </div>
+            </section>
           </div>
         ) : (
-          <div className="space-y-5">
-            {Object.entries(grouped).map(([cat, artifacts]) => {
-              const CatIcon = categoryIcons[cat] || FileText;
-              return (
-                <div key={cat}>
-                  <div className="flex items-center gap-2 mb-3">
-                    <CatIcon className="w-4 h-4 text-indigo-500" />
-                    <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>
-                      {categoryLabels[cat] || cat}
-                    </span>
-                    <span className="text-xs px-1.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800" style={{ color: 'var(--text-muted)' }}>
-                      {artifacts.length}
-                    </span>
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    {artifacts.map((ref, i) => {
-                      const ArtIcon = ARTIFACT_ICONS[ref.type || ref.artifact_type] || FileText;
-                      const isSelected = selectedArtifact === `${cat}-${i}`;
-                      return (
-                        <button
-                          key={`${cat}-${i}`}
-                          onClick={() => setSelectedArtifact(isSelected ? null : `${cat}-${i}`)}
-                          className={`text-left p-4 rounded-xl border transition-all ${
-                            isSelected
-                              ? 'border-indigo-300 bg-indigo-50/50 dark:bg-indigo-900/10 shadow-sm'
-                              : 'border-transparent hover:border-[var(--border-default)] hover:shadow-sm'
-                          }`}
-                          style={{
-                            backgroundColor: isSelected ? undefined : 'var(--surface-subtle)',
-                          }}
-                        >
-                          <div className="flex items-start gap-3">
-                            <div className="w-9 h-9 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 flex items-center justify-center flex-shrink-0">
-                              <ArtIcon className="w-4 h-4 text-indigo-500" />
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <p className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
-                                {ref.label || ref.type || ref.artifact_type}
-                              </p>
-                              {ref.run_id && (
-                                <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
-                                  Run #{ref.run_id}
-                                </p>
-                              )}
-                            </div>
-                            <Eye className="w-3.5 h-3.5 flex-shrink-0 mt-1" style={{ color: 'var(--text-muted)' }} />
-                          </div>
-
-                          {/* Expanded preview */}
-                          {isSelected && ref.data && (
-                            <div className="mt-3 pt-3 border-t text-xs font-mono overflow-auto max-h-48 rounded" style={{ borderColor: 'var(--border-default)' }}>
-                              <pre style={{ color: 'var(--text-secondary)', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
-                                {typeof ref.data === 'string' ? ref.data : JSON.stringify(ref.data, null, 2).slice(0, 2000)}
-                              </pre>
-                            </div>
-                          )}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+          <EvidenceArtifactGrid artifactRefs={deliverable.evidenceArtifacts} />
         )}
       </div>
     </div>
@@ -237,7 +411,6 @@ function RevisionLogPanel({ item, onDecision, deciding }) {
             </div>
             <div className="relative pl-4 border-l-2" style={{ borderColor: 'var(--border-default)' }}>
               {loopSteps.map((step, i) => {
-                const isLast = i === loopSteps.length - 1;
                 const retried = step.retry_count > 0;
                 return (
                   <div key={step.name || i} className="relative pb-4 last:pb-0">
@@ -449,7 +622,11 @@ export default function EmployeeReviewPage() {
     try {
       const pending = await aiEmployeeService.listPendingReviews(user.id);
       setItems(pending);
-      if (pending.length > 0 && !selectedId) setSelectedId(pending[0].id);
+      if (pending.length === 0) {
+        setSelectedId(null);
+      } else if (!selectedId || !pending.some((item) => item.id === selectedId)) {
+        setSelectedId(pending[0].id);
+      }
     } finally {
       setLoading(false);
     }
@@ -475,52 +652,24 @@ export default function EmployeeReviewPage() {
       try { await attachFeedback(item.id, decision, comment || null); }
       catch { /* memory update is best-effort */ }
 
-      const nextStatus = decision === 'approved'
-        ? 'done'
-        : decision === 'needs_revision'
-        ? 'in_progress'
-        : 'blocked';
-
-      await aiEmployeeService.updateTaskStatus(item.id, nextStatus);
-
-      const empStatus = decision === 'approved' ? 'idle' : 'working';
       const empId = item.employee_id || item.ai_employees?.id;
-      if (empId) {
-        await aiEmployeeService.updateEmployeeStatus(empId, empStatus);
-      }
 
-      if (item.loop_state?.steps?.length > 0) {
-        const holdStep = item.loop_state.steps.find((s) => s.status === 'review_hold');
-        if (holdStep) {
-          try {
-            if (decision === 'approved') {
-              await approveStepAndContinue(item.id, holdStep.name);
-            } else if (decision === 'needs_revision') {
-              await reviseStepAndRetry(item.id, holdStep.name);
-            }
-          } catch (loopErr) {
-            console.warn('[EmployeeReview] Agent loop step update failed:', loopErr?.message);
-          }
-        }
-      }
+      const resolution = await resolveReviewDecision(item, {
+        userId: user.id,
+        decision,
+        comment,
+      });
 
       if (empId) {
         await aiEmployeeService.appendWorklog(empId, item.id, run?.id || null, 'task_update', {
-          previous_status: 'waiting_review',
-          new_status: nextStatus,
+          previous_status: resolution.previousStatus || item.status || 'waiting_review',
+          new_status: resolution.nextStatus,
           note: comment || `Manager ${decision}.`,
           review_decision: decision,
         });
       }
 
-      showToast(
-        decision === 'approved'
-          ? 'Task approved and marked done.'
-          : decision === 'needs_revision'
-          ? 'Revision requested \u2014 task sent back to Aiden.'
-          : 'Task rejected.',
-        decision === 'approved' ? 'success' : 'warning'
-      );
+      showToast(resolution.message, resolution.toastType);
 
       setItems((prev) => prev.filter((i) => i.id !== item.id));
       setSelectedId(null);
@@ -610,10 +759,10 @@ export default function EmployeeReviewPage() {
           </div>
         </aside>
 
-        {/* ── Center: Artifact viewer ── */}
+        {/* ── Center: Deliverable preview ── */}
         <main className="flex-1 min-w-0 overflow-hidden">
           {selectedItem ? (
-            <ArtifactViewer item={selectedItem} />
+            <DeliverableViewer key={selectedItem.id} item={selectedItem} />
           ) : (
             <div className="flex flex-col items-center justify-center h-full gap-3">
               <div className="w-14 h-14 rounded-2xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center">
@@ -623,7 +772,7 @@ export default function EmployeeReviewPage() {
                 {items.length > 0 ? 'Select a task to review' : 'Nothing to review'}
               </p>
               <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                Tasks completed by Aiden will appear here for your approval
+                Manager-ready deliverables will appear here for your approval
               </p>
             </div>
           )}
