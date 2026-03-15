@@ -103,6 +103,7 @@ export async function getOrCreateAiden(userId) {
         can_run_python_tool: true,
         can_sync_opencloud: true, can_import_opencloud: true,
         can_search_opencloud: true, can_distribute_opencloud: true, can_watch_opencloud: true,
+        can_drive_excel: true,
       };
       const currentPerms = existing.permissions || {};
       const missingKeys = Object.keys(requiredPerms).filter(k => !currentPerms[k]);
@@ -144,6 +145,7 @@ export async function getOrCreateAiden(userId) {
           can_search_opencloud: true,
           can_distribute_opencloud: true,
           can_watch_opencloud: true,
+          can_drive_excel: true,
         },
       })
       .select()
@@ -158,7 +160,7 @@ export async function getOrCreateAiden(userId) {
 
   // Local fallback
   const store = getLocalStore();
-  const allPerms = { can_run_forecast: true, can_run_plan: true, can_run_risk: true, can_run_builtin_tool: true, can_run_dynamic_tool: true, can_run_registered_tool: true, can_generate_report: true, can_export: true, can_write_worklog: true, can_submit_review: true, can_run_python_tool: true, can_sync_opencloud: true, can_import_opencloud: true, can_search_opencloud: true, can_distribute_opencloud: true, can_watch_opencloud: true };
+  const allPerms = { can_run_forecast: true, can_run_plan: true, can_run_risk: true, can_run_builtin_tool: true, can_run_dynamic_tool: true, can_run_registered_tool: true, can_generate_report: true, can_export: true, can_write_worklog: true, can_submit_review: true, can_run_python_tool: true, can_sync_opencloud: true, can_import_opencloud: true, can_search_opencloud: true, can_distribute_opencloud: true, can_watch_opencloud: true, can_drive_excel: true };
   let aiden = store.employees.find((e) => e.name === 'Aiden');
   if (!aiden) {
     aiden = {

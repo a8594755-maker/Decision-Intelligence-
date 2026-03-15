@@ -697,7 +697,7 @@ const callOpenAIChat = async ({
     requestBody: {
       messages,
       temperature,
-      max_tokens: maxOutputTokens,
+      max_completion_tokens: maxOutputTokens,
     },
     modelCandidates,
   }) as Record<string, unknown>;

@@ -400,6 +400,13 @@ export async function tickAgentLoop(taskId, userId) {
       );
     } catch { /* worklog is best-effort */ }
 
+    // Excel Ops auto-generation: push step artifacts as Excel operations (best-effort)
+    // The Excel Add-in polls for these and executes them via Office.js in real time.
+    try {
+      const { generateExcelOpsForStep } = await import('./excelOpsService');
+      await generateExcelOpsForStep(taskId, userId, nextStep, result);
+    } catch { /* Excel ops generation is best-effort */ }
+
     // If review_hold, set task to waiting_review
     if (nextStep.status === STEP_STATUS.REVIEW_HOLD) {
       await aiEmployeeService.updateTaskStatus(taskId, 'waiting_review');

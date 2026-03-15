@@ -396,6 +396,127 @@ function aggregateCosts(runs: Record<string, unknown>[]) {
   return { by_tier: byTier, by_model: byModel };
 }
 
+// ── Excel Ops Queue ─────────────────────────────────────────────────────────
+
+async function getExcelOps(userId: string, params: Record<string, unknown>) {
+  const sb = getServiceClient();
+  const limit = Math.min(Number(params.limit) || 50, 200);
+  const taskId = params.task_id ? String(params.task_id) : null;
+
+  let query = sb
+    .from('excel_ops_queue')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('status', 'pending')
+    .order('sequence', { ascending: true })
+    .limit(limit);
+
+  if (taskId) {
+    query = query.eq('task_id', taskId);
+  }
+
+  const { data, error } = await query;
+  if (error) throw error;
+
+  return { ops: data || [], total: data?.length || 0 };
+}
+
+async function uploadExcelArtifact(userId: string, params: Record<string, unknown>) {
+  const taskId = String(params.task_id || '');
+  const batchId = String(params.batch_id || '');
+  const filename = String(params.filename || `workbook_${Date.now()}.xlsx`);
+  const contentBase64 = String(params.content_base64 || '');
+  const contentType = String(
+    params.content_type || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  );
+
+  if (!contentBase64) throw new Error('content_base64 is required');
+
+  // Decode base64 → binary
+  const binaryStr = atob(contentBase64);
+  const bytes = new Uint8Array(binaryStr.length);
+  for (let i = 0; i < binaryStr.length; i++) {
+    bytes[i] = binaryStr.charCodeAt(i);
+  }
+
+  // Upload to Supabase Storage: artifacts bucket, path = excel/{taskId}/{filename}
+  const sb = getServiceClient();
+  const storagePath = `excel/${taskId}/${filename}`;
+  const { error: uploadError } = await sb.storage
+    .from('artifacts')
+    .upload(storagePath, bytes, {
+      contentType,
+      upsert: true,
+    });
+
+  if (uploadError) {
+    throw new Error(`Storage upload failed: ${uploadError.message}`);
+  }
+
+  // Get public URL
+  const { data: urlData } = sb.storage
+    .from('artifacts')
+    .getPublicUrl(storagePath);
+
+  // Record as artifact in ai_task_steps or task metadata (best-effort)
+  try {
+    await sb.from('ai_task_artifacts').insert({
+      task_id: taskId,
+      artifact_type: 'excel_workbook',
+      filename,
+      storage_path: storagePath,
+      public_url: urlData?.publicUrl || null,
+      batch_id: batchId,
+      user_id: userId,
+      created_at: new Date().toISOString(),
+    });
+  } catch {
+    /* artifact record is best-effort — storage upload is the critical part */
+  }
+
+  return {
+    artifact: {
+      storagePath,
+      filename,
+      publicUrl: urlData?.publicUrl || null,
+      taskId,
+      batchId,
+      uploaded_at: new Date().toISOString(),
+    },
+  };
+}
+
+async function updateExcelOps(userId: string, params: Record<string, unknown>) {
+  const updates = params.updates as Array<{
+    id: string;
+    status: string;
+    error?: string | null;
+    executed_at?: string;
+  }>;
+  if (!Array.isArray(updates) || updates.length === 0) {
+    throw new Error('updates array is required');
+  }
+
+  const sb = getServiceClient();
+  const results: Array<{ id: string; ok: boolean; error?: string }> = [];
+
+  for (const upd of updates) {
+    const { error } = await sb
+      .from('excel_ops_queue')
+      .update({
+        status: upd.status || 'succeeded',
+        error: upd.error || null,
+        executed_at: upd.executed_at || new Date().toISOString(),
+      })
+      .eq('id', upd.id)
+      .eq('user_id', userId);
+
+    results.push({ id: upd.id, ok: !error, error: error?.message });
+  }
+
+  return { updated: results.length, results };
+}
+
 // ── Action router ───────────────────────────────────────────────────────────
 
 type ActionHandler = (userId: string, params: Record<string, unknown>) => Promise<unknown>;
@@ -409,6 +530,9 @@ const ACTIONS: Record<string, ActionHandler> = {
   get_plan: getPlan,
   get_risk: getRisk,
   get_review: getReviewData,
+  get_excel_ops: getExcelOps,
+  update_excel_ops: updateExcelOps,
+  upload_excel_artifact: uploadExcelArtifact,
 };
 
 // ── Main handler ────────────────────────────────────────────────────────────

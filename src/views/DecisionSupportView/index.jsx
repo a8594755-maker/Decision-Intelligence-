@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useLocation } from 'react-router-dom';
-import { FileText } from 'lucide-react';
+import { Activity, Bot, FileText } from 'lucide-react';
 import { Card, Button } from '../../components/ui';
 import { supabase, userFilesService } from '../../services/supabaseClient';
 import { prepareChatUploadFromFile, buildDataSummaryCardPayload, MAX_UPLOAD_BYTES } from '../../services/chatDatasetProfilingService';
@@ -33,12 +33,15 @@ import { APP_NAME } from '../../config/branding';
 import { executeChatCanvasRun } from '../../services/chatCanvasWorkflowService';
 import CanvasPanel from '../../components/chat/CanvasPanel';
 import AgentExecutionPanel from '../../components/chat/AgentExecutionPanel';
+import AIEmployeeChatShell from '../../components/chat/AIEmployeeChatShell';
+import AIEmployeeConversationSidebar from '../../components/chat/AIEmployeeConversationSidebar';
 import { useAgentSSE } from '../../hooks/useAgentSSE';
 import { checkNegotiationTrigger, runNegotiation } from '../../services/negotiation/negotiationOrchestrator';
 import SplitShell from '../../components/chat/SplitShell';
 import ConversationSidebar from '../../components/chat/ConversationSidebar';
 import ChatThread from '../../components/chat/ChatThread';
 import ChatComposer from '../../components/chat/ChatComposer';
+import EmployeeProfilePanel from '../../components/ai-employee/EmployeeProfilePanel';
 import useSessionContext from '../../hooks/useSessionContext';
 import { parseIntent, routeIntent } from '../../services/chatIntentService';
 import { buildChatSessionContext, buildContextSummaryForPrompt, suggestNextActions } from '../../services/chatSessionContextBuilder';
@@ -52,6 +55,9 @@ import { decomposeTask } from '../../services/chatTaskDecomposer';
 import { buildDynamicTemplate } from '../../services/dynamicTemplateBuilder';
 import { getOrCreateAiden, createTask as createAiTask } from '../../services/aiEmployeeService';
 import { executeTaskWithLoop } from '../../services/aiEmployeeExecutor';
+// v2 orchestrator — single entry point for task lifecycle
+import { createPlan, submitPlan, approvePlan as orchestratorApprovePlan } from '../../services/aiEmployee/index.js';
+import { eventBus, EVENT_NAMES } from '../../services/eventBus.js';
 import {
   SIDEBAR_COLLAPSED_KEY_PREFIX,
   CANVAS_SPLIT_RATIO_KEY_PREFIX,
@@ -128,6 +134,7 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
   const [agentExecTaskTitle, setAgentExecTaskTitle] = useState('');
   const [agentExecPanelOpen, setAgentExecPanelOpen] = useState(false);
   const [agentExecSSETaskId, setAgentExecSSETaskId] = useState(null);
+  const [aiEmployeeDrawer, setAiEmployeeDrawer] = useState(null);
 
   // SSE connection for real-time agent step events (supplements onStepComplete callbacks)
   const agentSSE = useAgentSSE(agentExecSSETaskId, {
@@ -175,6 +182,8 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
   const textareaRef = useRef(null);
   const fileInputRef = useRef(null);
   const topologyAutoLoadRef = useRef({});
+  const prevAICanvasOpenRef = useRef(false);
+  const prevAIExecOpenRef = useRef(false);
 
   // Stable ref for canvas state updater used by useConversationManager
   const canvasStateByConversationRef = useRef(null);
@@ -234,6 +243,45 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
     handleNewConversation,
     handleDeleteConversation,
   } = convManager;
+
+  // ── v2 Orchestrator event listeners → UI state updates ──────────────────
+  useEffect(() => {
+    const unsubs = [
+      eventBus.on(EVENT_NAMES.AGENT_STEP_STARTED, ({ taskId, stepIndex, stepName }) => {
+        setAgentExecEvents(prev => [...prev, { step_name: stepName, status: 'running', step_index: stepIndex }]);
+        setAgentExecLoopState(prev => {
+          if (!prev?.steps) return prev;
+          const steps = prev.steps.map((s, i) => i === stepIndex ? { ...s, status: 'running', started_at: new Date().toISOString() } : s);
+          return { ...prev, steps };
+        });
+      }),
+      eventBus.on(EVENT_NAMES.AGENT_STEP_COMPLETED, ({ taskId, stepIndex, stepName, artifacts }) => {
+        setAgentExecEvents(prev => [...prev, { step_name: stepName, status: 'succeeded', step_index: stepIndex, artifacts }]);
+        setAgentExecLoopState(prev => {
+          if (!prev?.steps) return prev;
+          const steps = prev.steps.map((s, i) => i === stepIndex ? { ...s, status: 'succeeded', finished_at: new Date().toISOString() } : s);
+          return { ...prev, steps };
+        });
+        appendMessagesToCurrentConversation([{ role: 'ai', content: `Step "${stepName}": completed`, timestamp: new Date().toISOString() }]);
+      }),
+      eventBus.on(EVENT_NAMES.AGENT_STEP_FAILED, ({ taskId, stepIndex, error, healing, willRetry }) => {
+        const note = willRetry ? ` [retrying: ${healing?.healingStrategy}]` : '';
+        setAgentExecLoopState(prev => {
+          if (!prev?.steps) return prev;
+          const steps = prev.steps.map((s, i) => i === stepIndex ? { ...s, status: willRetry ? 'retrying' : 'failed' } : s);
+          return { ...prev, steps };
+        });
+        appendMessagesToCurrentConversation([{ role: 'ai', content: `Step ${stepIndex} failed: ${error?.slice(0, 200)}${note}`, timestamp: new Date().toISOString() }]);
+      }),
+      eventBus.on(EVENT_NAMES.TASK_COMPLETED, ({ taskId }) => {
+        appendMessagesToCurrentConversation([{ role: 'ai', content: 'All steps completed. Head to Review to check the results.', timestamp: new Date().toISOString() }]);
+      }),
+      eventBus.on(EVENT_NAMES.TASK_FAILED, ({ taskId, error }) => {
+        appendMessagesToCurrentConversation([{ role: 'ai', content: `Task failed: ${error || 'Unknown error'}`, timestamp: new Date().toISOString() }]);
+      }),
+    ];
+    return () => unsubs.forEach(unsub => unsub());
+  }, []);
 
   // ── Synthetic ERP Sandbox → Planning bridge ────────────────────────────
   const location = useLocation();
@@ -471,11 +519,72 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
     try { localStorage.setItem(sidebarCollapseStorageKey, '0'); } catch { /* noop */ }
   }, [sidebarCollapseStorageKey]);
 
+  const handleCloseSidebar = useCallback(() => {
+    setIsSidebarCollapsed(true);
+    try { localStorage.setItem(sidebarCollapseStorageKey, '1'); } catch { /* noop */ }
+  }, [sidebarCollapseStorageKey]);
+
   const handleSplitRatioCommit = useCallback((nextRatio) => {
     const clamped = clampSplitRatio(nextRatio);
     setSplitRatio(clamped);
     try { localStorage.setItem(splitRatioStorageKey, String(clamped)); } catch { /* noop */ }
   }, [splitRatioStorageKey]);
+
+  const openAIEmployeeProfile = useCallback(() => {
+    setAiEmployeeDrawer('profile');
+  }, []);
+
+  const closeAIEmployeeProfile = useCallback(() => {
+    setAiEmployeeDrawer((current) => (current === 'profile' ? null : current));
+  }, []);
+
+  const openAIEmployeeExecution = useCallback(() => {
+    if (agentExecLoopState?.steps?.length || agentExecEvents.length > 0) {
+      setAgentExecPanelOpen(true);
+      setAiEmployeeDrawer('execution');
+    }
+  }, [agentExecEvents.length, agentExecLoopState]);
+
+  const closeAIEmployeeExecution = useCallback(() => {
+    setAgentExecPanelOpen(false);
+    setAgentExecSSETaskId(null);
+    setAiEmployeeDrawer((current) => (current === 'execution' ? null : current));
+  }, []);
+
+  const openAIEmployeeArtifacts = useCallback(() => {
+    if (!currentConversationId) return;
+    updateCanvasState(currentConversationId, (prev) => ({ ...prev, isOpen: true }));
+    setAiEmployeeDrawer('artifacts');
+  }, [currentConversationId, updateCanvasState]);
+
+  const closeAIEmployeeArtifacts = useCallback(() => {
+    if (currentConversationId) {
+      updateCanvasState(currentConversationId, (prev) => ({ ...prev, isOpen: false }));
+    }
+    setAiEmployeeDrawer((current) => (current === 'artifacts' ? null : current));
+  }, [currentConversationId, updateCanvasState]);
+
+  const dismissAIEmployeeOverlays = useCallback(() => {
+    handleCloseSidebar();
+    if (aiEmployeeDrawer === 'profile') {
+      closeAIEmployeeProfile();
+    } else if (aiEmployeeDrawer === 'artifacts') {
+      closeAIEmployeeArtifacts();
+    } else if (aiEmployeeDrawer === 'execution') {
+      closeAIEmployeeExecution();
+    }
+  }, [
+    aiEmployeeDrawer,
+    closeAIEmployeeArtifacts,
+    closeAIEmployeeExecution,
+    closeAIEmployeeProfile,
+    handleCloseSidebar,
+  ]);
+
+  const handleSelectAIConversation = useCallback((conversationId) => {
+    setCurrentConversationId(conversationId);
+    handleCloseSidebar();
+  }, [handleCloseSidebar, setCurrentConversationId]);
 
   const handleCanvasToggle = useCallback(() => {
     if (!currentConversationId) return;
@@ -1640,140 +1749,70 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
               timestamp: new Date().toISOString(),
               _onApprove: async () => {
                 try {
-                  const template = buildDynamicTemplate(decomposition);
+                  // ── v2 Orchestrator path ──────────────────────────────────
                   const aiden = await getOrCreateAiden(user?.id);
-                  const task = await createAiTask(aiden.id, {
+
+                  // Build input data from uploaded dataset
+                  const rawRows = _rawRowsCache.get(String(datasetProfileId)) || activeDatasetContext?.rawRowsForStorage;
+                  const inputData = {};
+                  if (Array.isArray(rawRows) && rawRows.length > 0) {
+                    const sheetMap = {};
+                    rawRows.forEach(row => {
+                      const sheetName = row.__sheet_name || 'Sheet1';
+                      if (!sheetMap[sheetName]) sheetMap[sheetName] = [];
+                      const clean = {};
+                      Object.entries(row).forEach(([k, v]) => {
+                        if (k !== '__rowNum' && k !== '__sheet_name') clean[k] = v;
+                      });
+                      sheetMap[sheetName].push(clean);
+                    });
+                    inputData.sheets = sheetMap;
+                    inputData.totalRows = rawRows.length;
+                  }
+                  inputData.userId = user?.id;
+                  inputData.datasetProfileId = datasetProfileId;
+
+                  // Normalize decomposed steps into plan format
+                  const steps = (decomposition.subtasks || []).map((s, i) => ({
+                    name: s.name || s.step_name || `step_${i}`,
+                    tool_hint: s.tool_hint || s.description || s.name,
+                    tool_type: s.workflow_type || s.tool_type || 'python_tool',
+                    builtin_tool_id: s.builtin_tool_id || null,
+                    review_checkpoint: s.review_checkpoint || false,
+                  }));
+
+                  const plan = {
                     title: messageText.slice(0, 120),
-                    description: decomposition.original_instruction,
-                    priority: 'medium',
-                    source_type: 'chat_decomposed',
-                    input_context: {
-                      workflow_type: decomposition.subtasks[0]?.workflow_type || 'builtin_tool',
-                      dataset_profile_id: datasetProfileId,
-                      template_id: template.id,
-                      _dynamic_template: template,
-                      report_format: decomposition.report_format,
-                      _dataset_profile: (() => {
-                        const pj = activeDatasetContext?.profileJson;
-                        if (!pj?.sheets) return null;
-                        const sheets = pj.sheets.map(s => ({
-                          sheet_name: s.sheet_name,
-                          columns: s.original_headers || s.normalized_headers || [],
-                          row_count: s.row_count || 0,
-                          likely_role: s.likely_role,
-                        }));
-                        const rawRows = _rawRowsCache.get(String(datasetProfileId)) || activeDatasetContext?.rawRowsForStorage;
-                        const sampleRows = Array.isArray(rawRows) ? rawRows.slice(0, 5).map(r => {
-                          const row = {};
-                          Object.entries(r).forEach(([k, v]) => { if (k !== '__rowNum' && v != null) row[k] = v; });
-                          return row;
-                        }) : [];
-                        return { sheets, sample_rows: sampleRows, file_name: pj.file_name || activeDatasetContext?.fileName };
-                      })(),
-                      // Pass actual uploaded data to sandbox for processing
-                      _input_data: (() => {
-                        const rawRows = _rawRowsCache.get(String(datasetProfileId)) || activeDatasetContext?.rawRowsForStorage;
-                        if (!Array.isArray(rawRows) || rawRows.length === 0) return {};
-                        // Group rows by sheet name for multi-sheet workbooks
-                        const sheetMap = {};
-                        rawRows.forEach(row => {
-                          const sheetName = row.__sheet_name || 'Sheet1';
-                          if (!sheetMap[sheetName]) sheetMap[sheetName] = [];
-                          const clean = {};
-                          Object.entries(row).forEach(([k, v]) => {
-                            if (k !== '__rowNum' && k !== '__sheet_name') clean[k] = v;
-                          });
-                          sheetMap[sheetName].push(clean);
-                        });
-                        return { sheets: sheetMap, total_rows: rawRows.length };
-                      })(),
-                    },
-                    template_id: template.id,
-                  }, user?.id);
+                    description: decomposition.original_instruction || messageText,
+                    steps,
+                    inputData,
+                    llmConfig: { provider: 'anthropic', model: 'claude-sonnet-4-6', temperature: 0.15, max_tokens: 4096 },
+                  };
 
-                  console.log('[DSV] Task created:', { id: task?.id, template_id: task?.template_id, ic_template_id: task?.input_context?.template_id, has_dynamic: !!task?.input_context?._dynamic_template });
+                  // Submit plan → creates task in draft_plan → waiting_approval
+                  const { taskId } = await submitPlan(plan, aiden.id, user?.id);
 
-                  // Open execution dashboard + enable SSE
+                  // Open execution dashboard
                   setAgentExecEvents([]);
                   setAgentExecTaskTitle(messageText.slice(0, 80));
                   setAgentExecPanelOpen(true);
-                  setAgentExecSSETaskId(task?.id || null);
+                  setAgentExecSSETaskId(taskId);
 
-                  // ── Server-side vs. client-side dispatch ─────────────────────
-                  // If all steps are python_tool/python_report, use server-side loop
-                  // (data stays in memory as DataFrames, no JSON round-trips)
-                  const allPythonSteps = template.steps.every(s =>
-                    ['python_tool', 'python_report'].includes(s.workflow_type)
-                  );
-                  const ML_API = import.meta.env.VITE_ML_API_URL || 'http://localhost:8000';
+                  const initLoopSteps = steps.map((s, i) => ({
+                    name: s.name, index: i, status: 'pending',
+                    workflow_type: s.tool_type, retry_count: 0,
+                  }));
+                  setAgentExecLoopState({ steps: initLoopSteps, started_at: new Date().toISOString() });
 
-                  if (allPythonSteps && task?.input_context?._input_data?.sheets) {
-                    appendMessagesToCurrentConversation([{ role: 'ai', content: `Server-side execution: ${template.steps.length} steps with shared workspace (data stays in memory). Watch real-time progress →`, timestamp: new Date().toISOString() }]);
+                  appendMessagesToCurrentConversation([{
+                    role: 'ai',
+                    content: `Task created. Executing ${steps.length} steps via orchestrator...`,
+                    timestamp: new Date().toISOString(),
+                  }]);
 
-                    const sseTaskId = task.id || `task-${Date.now()}`;
+                  // Approve → orchestrator runs tick loop, events drive UI via eventBus
+                  await orchestratorApprovePlan(taskId, user?.id);
 
-                    // Build initial loop_state for the dashboard
-                    const initLoopSteps = template.steps.map((s, i) => ({
-                      name: s.name || s.step_name, index: i,
-                      status: 'pending', workflow_type: s.workflow_type,
-                      retry_count: 0, started_at: null, finished_at: null,
-                    }));
-                    setAgentExecLoopState({ steps: initLoopSteps, started_at: new Date().toISOString() });
-
-                    // Set SSE task ID FIRST so useAgentSSE connects before the async call
-                    setAgentExecSSETaskId(sseTaskId);
-
-                    // Fire-and-forget: start server-side agent loop ASYNC
-                    // SSE events will drive the real-time dashboard
-                    fetch(`${ML_API}/agent/run-async`, {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({
-                        task_id: sseTaskId,
-                        steps: template.steps.map(s => ({
-                          name: s.name || s.step_name,
-                          workflow_type: s.workflow_type,
-                          tool_hint: s.tool_hint || s.description || '',
-                        })),
-                        input_data: task.input_context._input_data,
-                        dataset_profile: task.input_context._dataset_profile || null,
-                        llm_config: { provider: 'anthropic', model: 'claude-sonnet-4-6', temperature: 0.15, max_tokens: 4096 },
-                      }),
-                    }).then(res => res.json()).then(data => {
-                      if (!data.ok) {
-                        appendMessagesToCurrentConversation([{ role: 'ai', content: `Server-side loop failed to start: ${data.error || 'unknown error'}`, timestamp: new Date().toISOString() }]);
-                      }
-                    }).catch(err => {
-                      appendMessagesToCurrentConversation([{ role: 'ai', content: `Server connection error: ${err.message}`, timestamp: new Date().toISOString() }]);
-                    });
-
-                    // Progress is now driven by SSE events via useAgentSSE hook
-                    // The AgentExecutionPanel will update in real-time as events arrive
-                  } else {
-                    // ── Fallback: client-side loop (for mixed workflow types) ──
-                    appendMessagesToCurrentConversation([{ role: 'ai', content: `Executing ${template.steps.length} steps...`, timestamp: new Date().toISOString() }]);
-
-                    const loopResult = await executeTaskWithLoop(task, user?.id, {
-                      onStepComplete: (stepEvent) => {
-                        setAgentExecEvents(prev => [...prev, stepEvent]);
-                        if (stepEvent.task?.loop_state) {
-                          setAgentExecLoopState(stepEvent.task.loop_state);
-                        }
-                        const healingNote = stepEvent.healing_strategy ? ` [self-healing: ${stepEvent.healing_strategy}]` : '';
-                        appendMessagesToCurrentConversation([{ role: 'ai', content: `Step "${stepEvent.step_name}": ${stepEvent.summary || stepEvent.status}${stepEvent.error ? ` — ${stepEvent.error}` : ''}${healingNote}`, timestamp: new Date().toISOString() }]);
-                      },
-                    });
-
-                    if (loopResult.task?.loop_state) {
-                      setAgentExecLoopState(loopResult.task.loop_state);
-                    }
-
-                    const completedCount = loopResult.completed_steps?.length || 0;
-                    const statusMsg = loopResult.halted_at
-                      ? `Done with ${completedCount} step(s). Paused at "${loopResult.halted_at}" — waiting for your review.`
-                      : `All ${completedCount} step(s) completed. Head to Review to check the results.`;
-                    appendMessagesToCurrentConversation([{ role: 'ai', content: statusMsg, timestamp: new Date().toISOString() }]);
-                  }
                 } catch (execErr) {
                   appendMessagesToCurrentConversation([{ role: 'ai', content: `Task execution failed: ${execErr?.message || 'Unknown error'}`, timestamp: new Date().toISOString() }]);
                 }
@@ -1849,134 +1888,62 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
                 timestamp: new Date().toISOString(),
                 _onApprove: async () => {
                   try {
-                    // 3. Build dynamic template and create AI employee task
-                    const template = buildDynamicTemplate(decomposition);
+                    // ── v2 Orchestrator path ──
                     const aiden = await getOrCreateAiden(user?.id);
 
-                    const task = await createAiTask(aiden.id, {
+                    const rawRows = _rawRowsCache.get(String(datasetProfileId)) || activeDatasetContext?.rawRowsForStorage;
+                    const inputData = { userId: user?.id, datasetProfileId };
+                    if (Array.isArray(rawRows) && rawRows.length > 0) {
+                      const sheetMap = {};
+                      rawRows.forEach(row => {
+                        const sheetName = row.__sheet_name || 'Sheet1';
+                        if (!sheetMap[sheetName]) sheetMap[sheetName] = [];
+                        const clean = {};
+                        Object.entries(row).forEach(([k, v]) => {
+                          if (k !== '__rowNum' && k !== '__sheet_name') clean[k] = v;
+                        });
+                        sheetMap[sheetName].push(clean);
+                      });
+                      inputData.sheets = sheetMap;
+                      inputData.totalRows = rawRows.length;
+                    }
+
+                    const steps = (decomposition.subtasks || []).map((s, i) => ({
+                      name: s.name || s.step_name || `step_${i}`,
+                      tool_hint: s.tool_hint || s.description || s.name,
+                      tool_type: s.workflow_type || s.tool_type || 'python_tool',
+                      builtin_tool_id: s.builtin_tool_id || null,
+                      review_checkpoint: s.review_checkpoint || false,
+                    }));
+
+                    const plan = {
                       title: (userMessage || messageText).slice(0, 120),
-                      description: decomposition.original_instruction,
-                      priority: 'medium',
-                      source_type: 'chat_decomposed',
-                      input_context: {
-                        workflow_type: decomposition.subtasks[0]?.workflow_type || 'builtin_tool',
-                        dataset_profile_id: datasetProfileId,
-                        template_id: template.id,
-                        _dynamic_template: template,
-                        report_format: decomposition.report_format,
-                        _dataset_profile: (() => {
-                          const pj = activeDatasetContext?.profileJson;
-                          if (!pj?.sheets) return null;
-                          const sheets = pj.sheets.map(s => ({
-                            sheet_name: s.sheet_name,
-                            columns: s.original_headers || s.normalized_headers || [],
-                            row_count: s.row_count || 0,
-                            likely_role: s.likely_role,
-                          }));
-                          const rawRows = _rawRowsCache.get(String(datasetProfileId)) || activeDatasetContext?.rawRowsForStorage;
-                          const sampleRows = Array.isArray(rawRows) ? rawRows.slice(0, 5).map(r => {
-                            const clean = {};
-                            Object.entries(r).forEach(([k, v]) => { if (k !== '__rowNum' && k !== '__sheet_name' && v != null) clean[k] = v; });
-                            return clean;
-                          }) : [];
-                          return { sheets, sample_rows: sampleRows, file_name: pj.file_name || activeDatasetContext?.fileName };
-                        })(),
-                        _input_data: (() => {
-                          const rawRows = _rawRowsCache.get(String(datasetProfileId)) || activeDatasetContext?.rawRowsForStorage;
-                          if (!Array.isArray(rawRows) || rawRows.length === 0) return {};
-                          const sheetMap = {};
-                          rawRows.forEach(row => {
-                            const sheetName = row.__sheet_name || 'Sheet1';
-                            if (!sheetMap[sheetName]) sheetMap[sheetName] = [];
-                            const clean = {};
-                            Object.entries(row).forEach(([k, v]) => {
-                              if (k !== '__rowNum' && k !== '__sheet_name') clean[k] = v;
-                            });
-                            sheetMap[sheetName].push(clean);
-                          });
-                          return { sheets: sheetMap, total_rows: rawRows.length };
-                        })(),
-                      },
-                      template_id: template.id,
-                    }, user?.id);
+                      description: decomposition.original_instruction || userMessage || messageText,
+                      steps,
+                      inputData,
+                      llmConfig: { provider: 'anthropic', model: 'claude-sonnet-4-6', temperature: 0.15, max_tokens: 4096 },
+                    };
 
-                    appendMessagesToCurrentConversation([{
-                      role: 'ai',
-                      content: `Task created and assigned to Aiden. Executing ${template.steps.length} steps...`,
-                      timestamp: new Date().toISOString(),
-                    }]);
+                    const { taskId } = await submitPlan(plan, aiden.id, user?.id);
 
-                    // Open execution dashboard + enable SSE
                     setAgentExecEvents([]);
                     setAgentExecTaskTitle((userMessage || messageText).slice(0, 80));
                     setAgentExecPanelOpen(true);
+                    setAgentExecSSETaskId(taskId);
 
-                    // 4. Server-side vs client-side dispatch
-                    const allPython2 = template.steps.every(s =>
-                      ['python_tool', 'python_report'].includes(s.workflow_type)
-                    );
-                    const ML_API2 = import.meta.env.VITE_ML_API_URL || 'http://localhost:8000';
-
-                    if (allPython2 && task?.input_context?._input_data?.sheets) {
-                      // ── Server-side: async + SSE real-time progress ──
-                      const sseTaskId2 = task.id || `task-${Date.now()}`;
-                      const initLoopSteps2 = template.steps.map((s, i) => ({
-                        name: s.name || s.step_name, index: i,
-                        status: 'pending', workflow_type: s.workflow_type,
-                        retry_count: 0, started_at: null, finished_at: null,
-                      }));
-                      setAgentExecLoopState({ steps: initLoopSteps2, started_at: new Date().toISOString() });
-                      setAgentExecSSETaskId(sseTaskId2);
-
-                      fetch(`${ML_API2}/agent/run-async`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                          task_id: sseTaskId2,
-                          steps: template.steps.map(s => ({
-                            name: s.name || s.step_name,
-                            workflow_type: s.workflow_type,
-                            tool_hint: s.tool_hint || s.description || '',
-                          })),
-                          input_data: task.input_context._input_data,
-                          dataset_profile: task.input_context._dataset_profile || null,
-                          llm_config: { provider: 'anthropic', model: 'claude-sonnet-4-6', temperature: 0.15, max_tokens: 4096 },
-                        }),
-                      }).catch(err => {
-                        appendMessagesToCurrentConversation([{ role: 'ai', content: `Server error: ${err.message}`, timestamp: new Date().toISOString() }]);
-                      });
-                    } else {
-                      // ── Client-side loop fallback ──
-                      setAgentExecSSETaskId(task?.id || null);
-
-                      const loopResult = await executeTaskWithLoop(task, user?.id, {
-                        onStepComplete: (stepEvent) => {
-                          setAgentExecEvents(prev => [...prev, stepEvent]);
-                          if (stepEvent.task?.loop_state) {
-                            setAgentExecLoopState(stepEvent.task.loop_state);
-                          }
-                          appendMessagesToCurrentConversation([{
-                            role: 'ai',
-                            content: `Step "${stepEvent.step_name}": ${stepEvent.summary || stepEvent.status}`,
-                            timestamp: new Date().toISOString(),
-                          }]);
-                        },
-                      });
-
-                      if (loopResult.task?.loop_state) {
-                        setAgentExecLoopState(loopResult.task.loop_state);
-                      }
-                    }
-
-                    // 5. Final status (for client-side path; server-side uses SSE onLoopDone)
-                    const completedCount = 0; // Will be updated by SSE or loop result
-                    const statusMsg = '';
+                    const initLoopSteps = steps.map((s, i) => ({
+                      name: s.name, index: i, status: 'pending',
+                      workflow_type: s.tool_type, retry_count: 0,
+                    }));
+                    setAgentExecLoopState({ steps: initLoopSteps, started_at: new Date().toISOString() });
 
                     appendMessagesToCurrentConversation([{
                       role: 'ai',
-                      content: statusMsg,
+                      content: `Task created. Executing ${steps.length} steps via orchestrator...`,
                       timestamp: new Date().toISOString(),
                     }]);
+
+                    await orchestratorApprovePlan(taskId, user?.id);
                   } catch (execErr) {
                     appendMessagesToCurrentConversation([{
                       role: 'ai',
@@ -2089,6 +2056,69 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
     return { text: parts.join(' | '), color: 'bg-green-100 text-green-700' };
   }, [domainContext, contextLoading, activeDatasetContext]);
 
+  const aiEmployeeComposerStatus = useMemo(() => {
+    if (!isAIEmployeeMode) return null;
+    if (isUploadingDataset) {
+      return {
+        text: uploadStatusText || 'Processing workbook...',
+        tone: 'info',
+      };
+    }
+    if (agentExecPanelOpen && agentExecLoopState?.steps?.length) {
+      const runningStep = agentExecLoopState.steps.find((step) => step.status === 'running');
+      return {
+        text: runningStep ? `Aiden is running: ${runningStep.name}` : 'Aiden is executing the current task',
+        tone: 'warning',
+      };
+    }
+    if (activeDatasetContext?.fileName) {
+      return {
+        text: `Attached dataset: ${activeDatasetContext.fileName}`,
+        tone: 'neutral',
+      };
+    }
+    if (contextLoading) {
+      return {
+        text: 'Loading workspace context...',
+        tone: 'info',
+      };
+    }
+    return {
+      text: 'Upload a workbook or describe the task you want Aiden to handle.',
+      tone: 'neutral',
+    };
+  }, [
+    isAIEmployeeMode,
+    isUploadingDataset,
+    uploadStatusText,
+    agentExecPanelOpen,
+    agentExecLoopState,
+    activeDatasetContext,
+    contextLoading,
+  ]);
+
+  useEffect(() => {
+    if (!isAIEmployeeMode) return;
+    const nextOpen = Boolean(agentExecPanelOpen);
+    if (nextOpen && !prevAIExecOpenRef.current) {
+      setAiEmployeeDrawer('execution');
+    } else if (!nextOpen && prevAIExecOpenRef.current) {
+      setAiEmployeeDrawer((current) => (current === 'execution' ? null : current));
+    }
+    prevAIExecOpenRef.current = nextOpen;
+  }, [agentExecPanelOpen, isAIEmployeeMode]);
+
+  useEffect(() => {
+    if (!isAIEmployeeMode) return;
+    const nextOpen = Boolean(activeCanvasState?.isOpen);
+    if (nextOpen && !prevAICanvasOpenRef.current) {
+      setAiEmployeeDrawer((current) => (current === 'execution' ? current : 'artifacts'));
+    } else if (!nextOpen && prevAICanvasOpenRef.current) {
+      setAiEmployeeDrawer((current) => (current === 'artifacts' ? null : current));
+    }
+    prevAICanvasOpenRef.current = nextOpen;
+  }, [activeCanvasState?.isOpen, isAIEmployeeMode]);
+
   const handleConfigureApiKey = useCallback(() => {
     addNotification?.('AI keys are now managed in Supabase Edge Function secrets (GEMINI_API_KEY / DEEPSEEK_API_KEY).', 'info');
   }, [addNotification]);
@@ -2135,85 +2165,282 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
     handleGenerateNegotiationOptions, handleApplyNegotiationOption, handleNegotiationAction
   ]);
 
+  const aiEmployeeHasArtifacts = Boolean(
+    activeCanvasState?.run
+    || (activeCanvasState?.logs || []).length > 0
+    || (activeCanvasState?.downloads || []).length > 0
+    || activeCanvasState?.codeText
+    || (effectiveCanvasChartPayload?.actual_vs_forecast || []).length > 0
+    || (effectiveCanvasChartPayload?.inventory_projection || []).length > 0
+    || (effectiveCanvasChartPayload?.cost_breakdown || []).length > 0
+    || effectiveCanvasChartPayload?.topology_graph
+  );
+
+  const aiEmployeeTitle = currentConversation
+    ? currentMessages.length <= 1 && currentConversation.title === 'New Conversation'
+      ? 'Chat with Aiden'
+      : currentConversation.title
+    : 'Aiden';
+
+  const aiEmployeeSubtitle = activeDatasetContext?.fileName
+    || (agentExecTaskTitle ? `Live task: ${agentExecTaskTitle}` : 'AI employee workspace');
+
+  let aiEmployeeSecondaryPanel = null;
+  if (isAIEmployeeMode && aiEmployeeDrawer === 'profile') {
+    aiEmployeeSecondaryPanel = {
+      title: 'Aiden Profile',
+      description: 'Skills, recent tasks, and current workload.',
+      onClose: closeAIEmployeeProfile,
+      content: (
+        <div className="h-full overflow-y-auto">
+          <EmployeeProfilePanel userId={user?.id} />
+        </div>
+      ),
+    };
+  } else if (isAIEmployeeMode && aiEmployeeDrawer === 'execution') {
+    aiEmployeeSecondaryPanel = {
+      title: 'Live Execution',
+      description: agentExecTaskTitle || 'Current task orchestration and step trace.',
+      onClose: closeAIEmployeeExecution,
+      content: (
+        <AgentExecutionPanel
+          loopState={agentExecLoopState}
+          stepEvents={agentExecEvents}
+          taskTitle={agentExecTaskTitle}
+          onClose={closeAIEmployeeExecution}
+          sseConnected={agentSSE.connected}
+        />
+      ),
+    };
+  } else if (isAIEmployeeMode && aiEmployeeDrawer === 'artifacts') {
+    aiEmployeeSecondaryPanel = {
+      title: 'Artifacts',
+      description: 'Logs, code, charts, topology, and downloadable outputs.',
+      onClose: closeAIEmployeeArtifacts,
+      content: (
+        <CanvasPanel
+          onToggleOpen={closeAIEmployeeArtifacts}
+          activeTab={activeCanvasState.activeTab}
+          onTabChange={(tabId) => {
+            if (!currentConversationId) return;
+            updateCanvasState(currentConversationId, (prev) => ({ ...prev, activeTab: tabId }));
+          }}
+          run={activeCanvasState.run}
+          logs={activeCanvasState.logs}
+          stepStatuses={activeCanvasState.stepStatuses}
+          codeText={activeCanvasState.codeText}
+          chartPayload={effectiveCanvasChartPayload}
+          forecastSeriesGroups={forecastSeriesGroups}
+          downloads={activeCanvasState.downloads}
+          topologyGraph={effectiveCanvasChartPayload.topology_graph || null}
+          topologyRunId={topologyRunId}
+          onRunTopology={handleRunTopology}
+          topologyRunning={Boolean(activeCanvasState.topologyRunning)}
+          userId={user?.id || null}
+          latestPlanRunId={latestPlanRunId}
+          datasetProfileId={activeDatasetContext?.dataset_profile_id || null}
+          datasetProfileRow={activeDatasetContext?.dataset_profile_id ? {
+            id: activeDatasetContext.dataset_profile_id,
+            user_file_id: activeDatasetContext.user_file_id || null,
+            profile_json: activeDatasetContext.profileJson || {},
+            contract_json: activeDatasetContext.contractJson || {},
+          } : null}
+          onPopout={null}
+          isDetached={false}
+        />
+      ),
+    };
+  }
+
   return (
     <div className="h-full w-full flex flex-col p-2 md:p-3 animate-fade-in">
-      <SplitShell
-        sidebar={(
-          <ConversationSidebar
-            title={isAIEmployeeMode ? 'Aiden Chat' : `${APP_NAME} Chat`}
-            conversations={conversations}
-            currentConversationId={currentConversationId}
-            onSelectConversation={setCurrentConversationId}
-            onDeleteConversation={handleDeleteConversation}
-            onNewConversation={() => (conversations.length > 0 ? setShowNewChatConfirm(true) : handleNewConversation())}
-            formatTime={formatTime}
-            searchQuery={conversationSearch}
-            onSearchQueryChange={setConversationSearch}
-            isLoading={isConversationsLoading}
-            collapsed={isSidebarCollapsed}
-            onExpandFromCollapsed={handleExpandSidebar}
-          />
-        )}
-        chat={(
-          <div className="h-full bg-[var(--chat-surface)] dark:bg-slate-900/80 border border-[var(--chat-border)] dark:border-slate-700/60 rounded-2xl shadow-sm overflow-hidden flex flex-col">
-            {currentConversation ? (
-              <>
-                <div className="px-4 md:px-6 py-3 border-b border-[var(--chat-border)] dark:border-slate-700/60 bg-white/85 dark:bg-slate-900/75 backdrop-blur-sm flex items-center justify-between">
-                  <div className="min-w-0">
-                    <h3 className="text-base font-medium text-slate-800 dark:text-slate-100 truncate">
-                      {isAIEmployeeMode && currentMessages.length <= 1 ? 'Chat with Aiden' : currentConversation.title}
-                    </h3>
-                    <div className="flex items-center gap-2 mt-1">
-                      {isAIEmployeeMode ? (
-                        <span className="text-xs px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-600 dark:bg-indigo-900/20 dark:text-indigo-400">AI Employee</span>
-                      ) : (
-                        <>
-                          <span className="text-xs text-slate-500">{currentMessages.length} messages</span>
-                          <span className={`text-xs px-2 py-0.5 rounded-full ${contextBadge.color}`}>{contextBadge.text}</span>
-                        </>
-                      )}
-                    </div>
-                  </div>
-                  <button type="button" onClick={() => setShowNewChatConfirm(true)} className="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors" title="New conversation">
-                    <FileText className="w-4 h-4 text-slate-500" />
-                  </button>
-                </div>
-
-                <ChatThread
-                  messages={currentMessages} isTyping={isTyping} streamingContent={streamingContent}
-                  formatTime={formatTime} renderSpecialMessage={renderSpecialMessage} quickPrompts={isAIEmployeeMode ? AI_EMPLOYEE_QUICK_PROMPTS : QUICK_PROMPTS}
-                  onSelectPrompt={(promptText) => { setInput(promptText); textareaRef.current?.focus(); }}
-                  showInitialEmptyState={currentMessages.length <= 1 && !isTyping} isLoading={false}
-                />
-
-                <ChatComposer
-                  input={input} onInputChange={handleTextareaChange} onKeyDown={handleKeyDown} onSubmit={handleSend}
-                  textareaRef={textareaRef} fileInputRef={fileInputRef} onFileInputChange={handleFileInputChange}
-                  onFilePicker={() => fileInputRef.current?.click()} isTyping={isTyping} isUploading={isUploadingDataset}
-                  uploadStatusText={uploadStatusText} isDragOver={isDragOverUpload}
-                  onDragEnter={(e) => { e.preventDefault(); e.stopPropagation(); if (!isUploadingDataset) setIsDragOverUpload(true); }}
-                  onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); if (!isUploadingDataset) setIsDragOverUpload(true); }}
-                  onDragLeave={(e) => { e.preventDefault(); e.stopPropagation(); if (!e.currentTarget.contains(e.relatedTarget)) setIsDragOverUpload(false); }}
-                  onDrop={handleDropUpload}
-                />
-              </>
-            ) : (
-              <div className="h-full flex items-center justify-center text-slate-500 text-sm">
-                Select a conversation or start a new one.
-              </div>
-            )}
-          </div>
-        )}
-        canvas={
-          isAIEmployeeMode && agentExecPanelOpen ? (
-            <AgentExecutionPanel
-              loopState={agentExecLoopState}
-              stepEvents={agentExecEvents}
-              taskTitle={agentExecTaskTitle}
-              onClose={() => { setAgentExecPanelOpen(false); setAgentExecSSETaskId(null); }}
-              sseConnected={agentSSE.connected}
+      {isAIEmployeeMode ? (
+        <AIEmployeeChatShell
+          title={aiEmployeeTitle}
+          subtitle={aiEmployeeSubtitle}
+          badge="AI Employee"
+          sidebarOpen={!isSidebarCollapsed}
+          onSidebarToggle={handleSidebarToggle}
+          onDismissOverlays={dismissAIEmployeeOverlays}
+          onNewConversation={() => (conversations.length > 0 ? setShowNewChatConfirm(true) : handleNewConversation())}
+          sidebar={(
+            <AIEmployeeConversationSidebar
+              title="Aiden"
+              conversations={conversations}
+              currentConversationId={currentConversationId}
+              onSelectConversation={handleSelectAIConversation}
+              onDeleteConversation={handleDeleteConversation}
+              onNewConversation={() => (conversations.length > 0 ? setShowNewChatConfirm(true) : handleNewConversation())}
+              formatTime={formatTime}
+              searchQuery={conversationSearch}
+              onSearchQueryChange={setConversationSearch}
+              isLoading={isConversationsLoading}
+              onClose={handleCloseSidebar}
+            />
+          )}
+          actions={[
+            {
+              key: 'profile',
+              label: 'Profile',
+              icon: Bot,
+              onClick: openAIEmployeeProfile,
+              active: aiEmployeeDrawer === 'profile',
+            },
+            {
+              key: 'steps',
+              label: 'Steps',
+              icon: Activity,
+              onClick: openAIEmployeeExecution,
+              active: aiEmployeeDrawer === 'execution',
+              disabled: !agentExecLoopState?.steps?.length && agentExecEvents.length === 0,
+            },
+            {
+              key: 'artifacts',
+              label: 'Artifacts',
+              icon: FileText,
+              onClick: openAIEmployeeArtifacts,
+              active: aiEmployeeDrawer === 'artifacts',
+              disabled: !aiEmployeeHasArtifacts,
+            },
+          ]}
+          thread={currentConversation ? (
+            <ChatThread
+              messages={currentMessages}
+              isTyping={isTyping}
+              streamingContent={streamingContent}
+              formatTime={formatTime}
+              renderSpecialMessage={renderSpecialMessage}
+              quickPrompts={AI_EMPLOYEE_QUICK_PROMPTS}
+              onSelectPrompt={(promptText) => {
+                setInput(promptText);
+                textareaRef.current?.focus();
+              }}
+              showInitialEmptyState={currentMessages.length <= 1 && !isTyping}
+              isLoading={false}
+              variant="ai_employee"
             />
           ) : (
+            <div className="flex flex-1 items-center justify-center px-6">
+              <div className="max-w-xl text-center">
+                <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-[22px] bg-slate-900 text-white shadow-sm dark:bg-slate-100 dark:text-slate-900">
+                  <Bot className="h-8 w-8" />
+                </div>
+                <h2 className="text-3xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">
+                  Start a chat with Aiden
+                </h2>
+                <p className="mt-3 text-sm leading-6 text-slate-500 dark:text-slate-400">
+                  Create a thread, upload a workbook, or assign a multi-step task and let the AI employee execute it transparently.
+                </p>
+                <button
+                  type="button"
+                  className="mt-6 rounded-full bg-slate-900 px-5 py-3 text-sm font-medium text-white transition hover:bg-slate-700 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-slate-200"
+                  onClick={handleNewConversation}
+                >
+                  New chat
+                </button>
+              </div>
+            </div>
+          )}
+          composer={currentConversation ? (
+            <ChatComposer
+              input={input}
+              onInputChange={handleTextareaChange}
+              onKeyDown={handleKeyDown}
+              onSubmit={handleSend}
+              textareaRef={textareaRef}
+              fileInputRef={fileInputRef}
+              onFileInputChange={handleFileInputChange}
+              onFilePicker={() => fileInputRef.current?.click()}
+              isTyping={isTyping}
+              isUploading={isUploadingDataset}
+              uploadStatusText={uploadStatusText}
+              isDragOver={isDragOverUpload}
+              onDragEnter={(e) => { e.preventDefault(); e.stopPropagation(); if (!isUploadingDataset) setIsDragOverUpload(true); }}
+              onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); if (!isUploadingDataset) setIsDragOverUpload(true); }}
+              onDragLeave={(e) => { e.preventDefault(); e.stopPropagation(); if (!e.currentTarget.contains(e.relatedTarget)) setIsDragOverUpload(false); }}
+              onDrop={handleDropUpload}
+              status={aiEmployeeComposerStatus}
+              variant="ai_employee"
+            />
+          ) : null}
+          secondaryPanel={aiEmployeeSecondaryPanel}
+        />
+      ) : (
+        <SplitShell
+          sidebar={(
+            <ConversationSidebar
+              title={`${APP_NAME} Chat`}
+              conversations={conversations}
+              currentConversationId={currentConversationId}
+              onSelectConversation={setCurrentConversationId}
+              onDeleteConversation={handleDeleteConversation}
+              onNewConversation={() => (conversations.length > 0 ? setShowNewChatConfirm(true) : handleNewConversation())}
+              formatTime={formatTime}
+              searchQuery={conversationSearch}
+              onSearchQueryChange={setConversationSearch}
+              isLoading={isConversationsLoading}
+              collapsed={isSidebarCollapsed}
+              onExpandFromCollapsed={handleExpandSidebar}
+            />
+          )}
+          chat={(
+            <div className="h-full bg-[var(--chat-surface)] dark:bg-slate-900/80 border border-[var(--chat-border)] dark:border-slate-700/60 rounded-2xl shadow-sm overflow-hidden flex flex-col">
+              {currentConversation ? (
+                <>
+                  <div className="px-4 md:px-6 py-3 border-b border-[var(--chat-border)] dark:border-slate-700/60 bg-white/85 dark:bg-slate-900/75 backdrop-blur-sm flex items-center justify-between">
+                    <div className="min-w-0">
+                      <h3 className="text-base font-medium text-slate-800 dark:text-slate-100 truncate">
+                        {currentConversation.title}
+                      </h3>
+                      <div className="flex items-center gap-2 mt-1">
+                        <span className="text-xs text-slate-500">{currentMessages.length} messages</span>
+                        <span className={`text-xs px-2 py-0.5 rounded-full ${contextBadge.color}`}>{contextBadge.text}</span>
+                      </div>
+                    </div>
+                    <button type="button" onClick={() => setShowNewChatConfirm(true)} className="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors" title="New conversation">
+                      <FileText className="w-4 h-4 text-slate-500" />
+                    </button>
+                  </div>
+
+                  <ChatThread
+                    messages={currentMessages}
+                    isTyping={isTyping}
+                    streamingContent={streamingContent}
+                    formatTime={formatTime}
+                    renderSpecialMessage={renderSpecialMessage}
+                    quickPrompts={QUICK_PROMPTS}
+                    onSelectPrompt={(promptText) => { setInput(promptText); textareaRef.current?.focus(); }}
+                    showInitialEmptyState={currentMessages.length <= 1 && !isTyping}
+                    isLoading={false}
+                  />
+
+                  <ChatComposer
+                    input={input}
+                    onInputChange={handleTextareaChange}
+                    onKeyDown={handleKeyDown}
+                    onSubmit={handleSend}
+                    textareaRef={textareaRef}
+                    fileInputRef={fileInputRef}
+                    onFileInputChange={handleFileInputChange}
+                    onFilePicker={() => fileInputRef.current?.click()}
+                    isTyping={isTyping}
+                    isUploading={isUploadingDataset}
+                    uploadStatusText={uploadStatusText}
+                    isDragOver={isDragOverUpload}
+                    onDragEnter={(e) => { e.preventDefault(); e.stopPropagation(); if (!isUploadingDataset) setIsDragOverUpload(true); }}
+                    onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); if (!isUploadingDataset) setIsDragOverUpload(true); }}
+                    onDragLeave={(e) => { e.preventDefault(); e.stopPropagation(); if (!e.currentTarget.contains(e.relatedTarget)) setIsDragOverUpload(false); }}
+                    onDrop={handleDropUpload}
+                  />
+                </>
+              ) : (
+                <div className="h-full flex items-center justify-center text-slate-500 text-sm">
+                  Select a conversation or start a new one.
+                </div>
+              )}
+            </div>
+          )}
+          canvas={(
             <CanvasPanel
               onToggleOpen={isCanvasDetached ? () => { setIsCanvasDetached(false); handleCanvasToggle(); } : handleCanvasToggle}
               onPopout={isCanvasDetached ? () => setIsCanvasDetached(false) : () => setIsCanvasDetached(true)}
@@ -2232,13 +2459,17 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
                 profile_json: activeDatasetContext.profileJson || {}, contract_json: activeDatasetContext.contractJson || {}
               } : null}
             />
-          )
-        }
-        sidebarCollapsed={isSidebarCollapsed} onSidebarToggle={handleSidebarToggle}
-        canvasOpen={isAIEmployeeMode ? agentExecPanelOpen : Boolean(activeCanvasState.isOpen)} onCanvasToggle={isAIEmployeeMode ? () => setAgentExecPanelOpen(p => !p) : handleCanvasToggle}
-        initialSplitRatio={splitRatio} onSplitRatioCommit={handleSplitRatioCommit} canvasDetached={isCanvasDetached}
-        hideCanvasButton={isAIEmployeeMode && !agentExecPanelOpen}
-      />
+          )}
+          sidebarCollapsed={isSidebarCollapsed}
+          onSidebarToggle={handleSidebarToggle}
+          canvasOpen={Boolean(activeCanvasState.isOpen)}
+          onCanvasToggle={handleCanvasToggle}
+          initialSplitRatio={splitRatio}
+          onSplitRatioCommit={handleSplitRatioCommit}
+          canvasDetached={isCanvasDetached}
+          hideCanvasButton={false}
+        />
+      )}
 
       {showNewChatConfirm && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">

@@ -8,6 +8,8 @@
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
+    "chatgpt-login": "node e2e/chatgpt-login.mjs",
+    "chatgpt-ui-audit": "node e2e/chatgpt-ui-audit.mjs",
     "test": "vitest",
     "test:ui": "vitest --ui",
     "test:run": "vitest run",

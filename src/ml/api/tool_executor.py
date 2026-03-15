@@ -446,6 +446,12 @@ CODE QUALITY:
 - NEVER use pd.to_datetime(infer_datetime_format=True) — removed in pandas 2.0. Just use pd.to_datetime(col, errors='coerce').
 - NEVER use df.append() — removed in pandas 2.0. Use pd.concat([df, new_row]) instead.
 
+CRITICAL — FUNCTION STRUCTURE:
+- The run() function MUST end with `return {"result": ..., "artifacts": [...]}`. NEVER forget the return statement.
+- Keep code concise. If asked for many outputs, use a helper function and loop — do NOT write 200+ lines of repetitive code.
+- Use try/except for each optional output so one error doesn't crash the whole function.
+- Build the artifacts list incrementally: `artifacts = []` then `artifacts.append(...)` for each output.
+
 Return ONLY a JSON object (no markdown, no explanation):
 {
   "code": "import pandas as pd\\n...",
@@ -539,6 +545,13 @@ _ALLOWED_MODULES = frozenset({
     "decimal", "fractions", "copy", "string", "textwrap",
     "operator", "numbers", "hashlib", "base64", "uuid",
     "scipy", "scipy.stats", "scipy.interpolate", "scipy.optimize",
+    # openpyxl — for LLM-generated Excel workbook code
+    "openpyxl", "openpyxl.styles", "openpyxl.utils", "openpyxl.chart",
+    "openpyxl.chart.series", "openpyxl.chart.label", "openpyxl.chart.reference",
+    "openpyxl.formatting", "openpyxl.formatting.rule",
+    # Internal modules used by pandas/datetime — needed for date parsing
+    "_strptime", "zoneinfo", "dateutil", "dateutil.parser",
+    "pytz", "warnings", "typing", "abc", "enum",
 })
 
 # Dangerous patterns to reject
@@ -705,6 +718,15 @@ def _execute_code(code: str, input_data: dict, prior_artifacts: dict) -> dict:
 
         execution_ms = int((time.time() - start) * 1000)
 
+        # Safety net: if run() returned None, try to find artifacts in namespace
+        if raw_result is None:
+            # Check if there's a global 'artifacts' or 'result' in namespace
+            ns_artifacts = namespace.get("artifacts") or namespace.get("_artifacts")
+            ns_result = namespace.get("result") or namespace.get("_result")
+            if ns_artifacts or ns_result:
+                raw_result = {"result": ns_result or {}, "artifacts": ns_artifacts or []}
+                logger.warning("[tool_executor] run() returned None but found artifacts in namespace — using them")
+
         if not isinstance(raw_result, dict):
             return {
                 "ok": False,
@@ -805,22 +827,86 @@ def _extract_code_from_llm(response_text: str) -> Optional[str]:
         pass
 
     # Try extracting from markdown code block
-    match = re.search(r'```(?:python)?\s*\n(.*?)```', response_text, re.DOTALL)
+    match = re.search(r'```(?:python|json)?\s*\n(.*?)```', response_text, re.DOTALL)
     if match:
-        return match.group(1).strip()
+        inner = match.group(1).strip()
+        # If the markdown block looks like JSON (starts with {), try parsing it
+        if inner.startswith('{'):
+            try:
+                data = json.loads(inner)
+                if isinstance(data, dict) and "code" in data:
+                    return data["code"]
+            except (json.JSONDecodeError, ValueError):
+                # JSON parse failed — try manual extraction of the "code" value
+                # This handles cases where the code string has invalid JSON escapes
+                code = _manual_extract_code_from_json(inner)
+                if code:
+                    return code
+        else:
+            # Raw Python code in markdown block
+            return inner
 
-    # Try extracting JSON from within the response
-    json_match = re.search(r'\{[^{}]*"code"\s*:\s*"(.*?)"[^{}]*\}', response_text, re.DOTALL)
-    if json_match:
-        code = json_match.group(1)
-        # Unescape
-        code = code.replace('\\n', '\n').replace('\\t', '\t').replace('\\"', '"')
-        return code
+    # Try extracting JSON from full response text (handles responses with text + JSON)
+    if '"code"' in response_text:
+        code = _manual_extract_code_from_json(response_text)
+        if code:
+            return code
 
     # If it looks like raw Python code, use it
     if 'def run(' in response_text:
         return response_text.strip()
 
+    return None
+
+
+def _manual_extract_code_from_json(text: str) -> Optional[str]:
+    """Extract Python code from a JSON-like string when json.loads fails.
+
+    Handles cases where the LLM generates a JSON wrapper around code but the
+    code string contains characters that break standard JSON parsing (e.g.
+    unescaped backslashes in regex patterns, CJK characters, etc.)
+    """
+    # Find "code": " and then capture everything until the closing "
+    # We need to handle escaped quotes inside the code string
+    match = re.search(r'"code"\s*:\s*"', text)
+    if not match:
+        return None
+
+    start = match.end()
+    # Walk forward, handling escaped characters
+    result = []
+    i = start
+    while i < len(text):
+        ch = text[i]
+        if ch == '\\' and i + 1 < len(text):
+            next_ch = text[i + 1]
+            if next_ch == 'n':
+                result.append('\n')
+            elif next_ch == 't':
+                result.append('\t')
+            elif next_ch == '"':
+                result.append('"')
+            elif next_ch == '\\':
+                result.append('\\')
+            elif next_ch == 'r':
+                result.append('\r')
+            elif next_ch == '/':
+                result.append('/')
+            else:
+                # Keep the backslash for unknown escapes (e.g. \b in regex)
+                result.append('\\')
+                result.append(next_ch)
+            i += 2
+        elif ch == '"':
+            # Unescaped quote = end of string
+            break
+        else:
+            result.append(ch)
+            i += 1
+
+    code = ''.join(result)
+    if 'def run(' in code and len(code) > 50:
+        return code
     return None
 
 
@@ -905,14 +991,49 @@ async def execute_tool(request: ToolExecutionRequest):
             execution_ms=int((time.time() - start_time) * 1000),
         )
 
-    # Step 3: Execute code in sandbox
+    # Step 3: Execute code in sandbox (with runtime error retry)
     exec_result = _execute_code(code, request.input_data, request.prior_artifacts)
+
+    # If execution failed with a runtime error, retry once with error context
+    if not exec_result.get("ok") and not request.code:
+        runtime_error = exec_result.get("error", "")
+        # Only retry for code-quality errors, not sandbox/resource limits
+        retryable = any(kw in runtime_error for kw in [
+            "KeyError", "IndexError", "NameError", "TypeError", "ValueError",
+            "AttributeError", "must return a dict", "NoneType",
+        ])
+        if retryable:
+            logger.warning(f"[tool_executor] Runtime error, retrying: {runtime_error[:200]}")
+            try:
+                fix_prompt = (
+                    f"The previous code failed at runtime with this error:\n{runtime_error}\n\n"
+                    f"The failing code started with:\n```python\n{code[:800]}\n```\n\n"
+                    f"CRITICAL fixes needed:\n"
+                    f"- Use df.columns.tolist() to discover actual column names before accessing\n"
+                    f"- The run() function MUST return a dict with 'result' and 'artifacts' keys\n"
+                    f"- Handle missing columns gracefully with if col in df.columns checks\n"
+                    f"- Keep string literals short and ASCII-only\n\n"
+                    f"Original task:\n{request.tool_hint}"
+                )
+                llm_response2 = await _call_llm(fix_prompt, CODE_GEN_SYSTEM_PROMPT, _pick_provider(request.llm_config))
+                code2 = _extract_code_from_llm(llm_response2)
+                if code2:
+                    safety2 = _validate_code(code2)
+                    if not safety2:
+                        exec_result2 = _execute_code(code2, request.input_data, request.prior_artifacts)
+                        if exec_result2.get("ok"):
+                            code = code2
+                            exec_result = exec_result2
+                            logger.info("[tool_executor] Runtime retry succeeded")
+                        else:
+                            logger.warning(f"[tool_executor] Runtime retry also failed: {exec_result2.get('error', '')[:200]}")
+            except Exception as retry_err:
+                logger.warning(f"[tool_executor] Runtime retry LLM call failed: {retry_err}")
 
     # Step 4: Verify results
     artifacts = exec_result.get("artifacts", [])
     if exec_result.get("ok") and not artifacts:
         logger.warning("[tool_executor] Code executed successfully but produced 0 artifacts")
-        # Don't fail — some steps legitimately produce no artifacts (e.g. validation)
 
     # Build metadata
     metadata = {

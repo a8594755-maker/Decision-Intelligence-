@@ -103,8 +103,11 @@ function showConnected() {
   document.getElementById('auth-connected').classList.remove('hidden');
   document.getElementById('auth-user').textContent = _userEmail;
   document.getElementById('main-content').classList.remove('hidden');
-  document.getElementById('settings-url').textContent = SUPABASE_URL;
-  document.getElementById('settings-user').textContent = _userEmail;
+
+  // Auto Mode is always on — start immediately
+  if (!_autoModeActive) {
+    startAutoMode();
+  }
 
   // Start listening for realtime task updates
   startRealtimeSubscription();
@@ -854,8 +857,8 @@ function escHtml(s) {
 }
 
 function setStatus(msg) {
-  const bar = document.getElementById('status-bar');
-  if (bar) bar.textContent = msg;
+  const el = document.getElementById('status-text');
+  if (el) el.textContent = msg;
 }
 
 // ── Realtime Subscription ────────────────────────────────────────────────────
@@ -1268,17 +1271,1007 @@ async function pullSelectedReportWithContext() {
 // Override the original
 pullSelectedReport = pullSelectedReportWithContext;
 
+// ── Auto Mode: AI Employee drives Excel via command queue ─────────────────────
+// Polls excel_ops_queue for pending operations and executes them via Office.js.
+// This makes the AI Employee operate Excel like a real person — creating sheets,
+// writing data, formatting cells, building charts in real time.
+
+let _autoModeActive = false;
+let _autoModeInterval = null;
+let _autoModeOpsExecuted = 0;
+let _autoModeOpsTotal = 0;
+let _autoModeCurrentBatch = null;
+
+function toggleAutoMode() {
+  if (_autoModeActive) {
+    stopAutoMode();
+  } else {
+    startAutoMode();
+  }
+}
+
+function startAutoMode() {
+  if (_autoModeActive) return;
+  _autoModeActive = true;
+  _autoModeOpsExecuted = 0;
+  _autoModeOpsTotal = 0;
+
+  _addAutoModeLog('info', 'Auto Mode started — polling for Excel operations...');
+  setStatus('Auto Mode active');
+
+  // Poll immediately, then every 2 seconds
+  _pollExcelOps();
+  _autoModeInterval = setInterval(_pollExcelOps, 2000);
+}
+
+function stopAutoMode() {
+  _autoModeActive = false;
+  if (_autoModeInterval) {
+    clearInterval(_autoModeInterval);
+    _autoModeInterval = null;
+  }
+  _addAutoModeLog('info', 'Auto Mode stopped.');
+  setStatus('Auto Mode stopped.');
+}
+
+async function _pollExcelOps() {
+  if (!_autoModeActive || !_accessToken) return;
+
+  try {
+    // Fetch pending ops from report-api
+    const data = await callReportApi('get_excel_ops', { limit: 50 });
+    const ops = data?.ops || [];
+
+    if (ops.length === 0) return;
+
+    _autoModeOpsTotal += ops.length;
+    _addAutoModeLog('info', `Found ${ops.length} pending operation(s). Executing...`);
+
+    // Group by batch_id for efficient execution
+    const batches = {};
+    for (const op of ops) {
+      const bid = op.batch_id || 'default';
+      if (!batches[bid]) batches[bid] = [];
+      batches[bid].push(op);
+    }
+
+    for (const [batchId, batchOps] of Object.entries(batches)) {
+      _autoModeCurrentBatch = batchId;
+      _addAutoModeLog('batch', `Batch: ${batchId} (${batchOps.length} ops)`);
+
+      // Sort by sequence
+      batchOps.sort((a, b) => (a.sequence ?? 0) - (b.sequence ?? 0));
+
+      // Execute in Excel.run()
+      await _executeAutoModeOps(batchOps);
+
+      // Report status back
+      await _reportOpsStatus(batchOps);
+
+      // Auto-save workbook after batch completes (if enabled in Settings)
+      const autoSaveEnabled = document.getElementById('pref-autosave')?.checked;
+      if (autoSaveEnabled) {
+        await _autoSaveWorkbook();
+      }
+
+      // Auto-upload workbook as artifact if enabled in Settings
+      const autoUploadEnabled = document.getElementById('pref-autoupload')?.checked;
+      const taskId = batchOps[0]?.task_id;
+      if (autoUploadEnabled && taskId) {
+        await _uploadExcelArtifact(taskId, batchId);
+      }
+    }
+
+    _autoModeCurrentBatch = null;
+
+  } catch (err) {
+    _addAutoModeLog('error', `Poll error: ${err.message}`);
+  }
+}
+
+async function _executeAutoModeOps(ops) {
+  await Excel.run(async (context) => {
+    const wb = context.workbook;
+
+    for (const cmd of ops) {
+      // Skip markers
+      if (cmd.op === 'batch_start') {
+        const summary = cmd.payload?.summary || '';
+        _addAutoModeLog('info', `Starting: ${summary}`);
+        cmd._status = 'succeeded';
+        _autoModeOpsExecuted++;
+        _updateAutoModeProgress();
+        continue;
+      }
+      if (cmd.op === 'batch_end') {
+        const summary = cmd.payload?.summary || '';
+        _addAutoModeLog('success', `Completed: ${summary}`);
+        cmd._status = 'succeeded';
+        _autoModeOpsExecuted++;
+        _updateAutoModeProgress();
+        continue;
+      }
+
+      try {
+        _addAutoModeLog('op', `${cmd.op} → ${cmd.target_sheet || ''}${cmd.range_addr ? ':' + cmd.range_addr : ''}`);
+
+        // Dispatch to the appropriate handler
+        await _dispatchAutoModeOp(context, wb, cmd);
+        cmd._status = 'succeeded';
+      } catch (err) {
+        cmd._status = 'failed';
+        cmd._error = err.message;
+        _addAutoModeLog('error', `Failed: ${cmd.op} — ${err.message}`);
+      }
+
+      _autoModeOpsExecuted++;
+      _updateAutoModeProgress();
+    }
+
+    await context.sync();
+  });
+}
+
+async function _dispatchAutoModeOp(context, wb, cmd) {
+  const { op, target_sheet, range_addr, payload } = cmd;
+  const p = payload || {};
+
+  switch (op) {
+    case 'create_sheet': {
+      let sheet;
+      try {
+        sheet = wb.worksheets.getItemOrNullObject(target_sheet);
+        await context.sync();
+        if (sheet.isNullObject) sheet = wb.worksheets.add(target_sheet);
+      } catch { sheet = wb.worksheets.add(target_sheet); }
+      if (p.activate) sheet.activate();
+      break;
+    }
+
+    case 'delete_sheet': {
+      try {
+        const sheet = wb.worksheets.getItem(target_sheet);
+        sheet.delete();
+      } catch { /* ok */ }
+      break;
+    }
+
+    case 'write_values': {
+      const sheet = wb.worksheets.getItem(target_sheet);
+      const values = p.values;
+      if (!values?.length) break;
+      const maxCols = Math.max(...values.map(r => Array.isArray(r) ? r.length : 1));
+      const padded = values.map(r => {
+        const row = Array.isArray(r) ? [...r] : [r];
+        while (row.length < maxCols) row.push('');
+        return row;
+      });
+      const addr = range_addr || `A1:${colLetter(maxCols - 1)}${padded.length}`;
+      const range = sheet.getRange(addr);
+      range.values = padded;
+      break;
+    }
+
+    case 'write_formula': {
+      const sheet = wb.worksheets.getItem(target_sheet);
+      const range = sheet.getRange(range_addr);
+      range.formulas = [[p.formula]];
+      break;
+    }
+
+    case 'write_formulas': {
+      const sheet = wb.worksheets.getItem(target_sheet);
+      const range = sheet.getRange(range_addr);
+      range.formulas = p.formulas;
+      break;
+    }
+
+    case 'format_cells': {
+      const sheet = wb.worksheets.getItem(target_sheet);
+      const range = sheet.getRange(range_addr);
+      if (p.font) {
+        if (p.font.bold !== undefined) range.format.font.bold = p.font.bold;
+        if (p.font.size) range.format.font.size = p.font.size;
+        if (p.font.color) range.format.font.color = p.font.color;
+        if (p.font.name) range.format.font.name = p.font.name;
+        if (p.font.italic !== undefined) range.format.font.italic = p.font.italic;
+      }
+      if (p.fill?.color) range.format.fill.color = p.fill.color;
+      if (p.alignment?.horizontal) range.format.horizontalAlignment = p.alignment.horizontal;
+      if (p.alignment?.vertical) range.format.verticalAlignment = p.alignment.vertical;
+      if (p.numberFormat) range.numberFormat = [[p.numberFormat]];
+      if (p.border?.bottom) {
+        const edge = range.format.borders.getItem('EdgeBottom');
+        edge.style = p.border.bottom.style || 'Thin';
+        if (p.border.bottom.color) edge.color = p.border.bottom.color;
+      }
+      break;
+    }
+
+    case 'create_table': {
+      const sheet = wb.worksheets.getItem(target_sheet);
+      try {
+        const safeName = (p.tableName || 'Table1').replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 40);
+        const table = sheet.tables.add(range_addr, p.hasHeaders !== false);
+        table.name = safeName;
+        table.style = p.style || 'TableStyleMedium2';
+        table.showFilterButton = true;
+        const range = sheet.getRange(range_addr);
+        range.format.autofitColumns();
+        range.format.autofitRows();
+      } catch (e) {
+        // Fallback
+        const range = sheet.getRange(range_addr);
+        range.format.autofitColumns();
+      }
+      break;
+    }
+
+    case 'create_chart': {
+      const sheet = wb.worksheets.getItem(target_sheet);
+      const chartTypeMap = {
+        line: Excel.ChartType.line,
+        columnClustered: Excel.ChartType.columnClustered,
+        barClustered: Excel.ChartType.barClustered,
+        pie: Excel.ChartType.pie,
+        area: Excel.ChartType.area,
+      };
+      const chartType = chartTypeMap[p.chartType] || Excel.ChartType.columnClustered;
+      const chart = sheet.charts.add(chartType, sheet.getRange(range_addr), Excel.ChartSeriesBy.columns);
+      chart.title.text = p.title || 'Chart';
+      chart.title.format.font.size = 14;
+      chart.title.format.font.bold = true;
+      chart.width = p.width || 600;
+      chart.height = p.height || 350;
+      chart.legend.position = Excel.ChartLegendPosition.bottom;
+      break;
+    }
+
+    case 'autofit_columns': {
+      const sheet = wb.worksheets.getItem(target_sheet);
+      sheet.getRange(range_addr || 'A:Z').format.autofitColumns();
+      break;
+    }
+
+    case 'autofit_rows': {
+      const sheet = wb.worksheets.getItem(target_sheet);
+      sheet.getRange(range_addr || 'A:Z').format.autofitRows();
+      break;
+    }
+
+    case 'merge_cells': {
+      const sheet = wb.worksheets.getItem(target_sheet);
+      sheet.getRange(range_addr).merge(true);
+      break;
+    }
+
+    case 'conditional_format': {
+      const sheet = wb.worksheets.getItem(target_sheet);
+      const range = sheet.getRange(range_addr);
+      if (p.type === 'color_scale') {
+        const cf = range.conditionalFormats.add(Excel.ConditionalFormatType.colorScale);
+        cf.colorScale.criteria = JSON.stringify({
+          minimum: { type: 'lowestValue', color: '#F8696B' },
+          midpoint: { type: 'percentile', value: 50, color: '#FFEB84' },
+          maximum: { type: 'highestValue', color: '#63BE7B' },
+        });
+      } else if (p.type === 'data_bar') {
+        const cf = range.conditionalFormats.add(Excel.ConditionalFormatType.dataBar);
+        cf.dataBar.barDirection = Excel.ConditionalDataBarDirection.context;
+      } else if (p.type === 'icon_set') {
+        const cf = range.conditionalFormats.add(Excel.ConditionalFormatType.iconSet);
+        cf.iconSet.style = Excel.IconSet.threeTrafficLights1;
+      }
+      break;
+    }
+
+    case 'freeze_panes': {
+      const sheet = wb.worksheets.getItem(target_sheet);
+      if (p.rows) sheet.freezePanes.freezeRows(p.rows);
+      if (p.cols) sheet.freezePanes.freezeColumns(p.cols);
+      break;
+    }
+
+    case 'set_column_width': {
+      const sheet = wb.worksheets.getItem(target_sheet);
+      sheet.getRange(range_addr).format.columnWidth = p.width;
+      break;
+    }
+
+    case 'sort_range': {
+      const sheet = wb.worksheets.getItem(target_sheet);
+      sheet.getRange(range_addr).sort.apply([{
+        key: p.colIndex || 0,
+        ascending: p.ascending !== undefined ? p.ascending : false,
+      }]);
+      break;
+    }
+
+    case 'kpi_dashboard': {
+      const sheet = wb.worksheets.getItem(target_sheet);
+      writeKPIDashboard(sheet, p.kpis || {});
+      break;
+    }
+
+    default:
+      console.warn('[autoMode] Unknown op:', op);
+  }
+}
+
+// ── Auto-save: save workbook after batch execution ─────────────────────────
+
+async function _autoSaveWorkbook() {
+  try {
+    await Excel.run(async (context) => {
+      context.workbook.save(Excel.SaveBehavior.save);
+      await context.sync();
+    });
+    _addAutoModeLog('success', 'Workbook auto-saved.');
+  } catch (err) {
+    // Save may fail if file is new/untitled — that's OK
+    _addAutoModeLog('info', `Auto-save skipped: ${err.message}`);
+  }
+}
+
+// ── Auto-upload: export workbook as artifact to Supabase Storage ─────────
+// Uses Office.js getFileAsync() to get the workbook binary, then uploads
+// via report-api Edge Function → Supabase Storage. The agent loop workflow
+// handles any downstream publishing (OpenCloud, etc.) as a separate step.
+
+async function _uploadExcelArtifact(taskId, batchId) {
+  try {
+    _addAutoModeLog('info', 'Uploading workbook as artifact...');
+
+    // Get workbook binary via Office.js
+    const fileData = await _getWorkbookBinary();
+    if (!fileData) {
+      _addAutoModeLog('info', 'Workbook export not available in this environment.');
+      return;
+    }
+
+    // Convert to base64 for JSON transport
+    const base64 = _arrayBufferToBase64(fileData);
+
+    // Upload via report-api → Supabase Storage
+    const result = await callReportApi('upload_excel_artifact', {
+      task_id: taskId,
+      batch_id: batchId,
+      filename: `MBR_${new Date().toISOString().slice(0, 10)}.xlsx`,
+      content_base64: base64,
+      content_type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    });
+
+    if (result?.artifact) {
+      _addAutoModeLog('success', `Artifact saved: ${result.artifact.filename}`);
+      if (result.artifact.publicUrl) {
+        _addAutoModeLog('info', `URL: ${result.artifact.publicUrl}`);
+      }
+    } else {
+      _addAutoModeLog('info', 'Artifact upload completed.');
+    }
+  } catch (err) {
+    _addAutoModeLog('error', `Artifact upload failed: ${err.message}`);
+    // Best-effort — don't break the flow
+  }
+}
+
+function _getWorkbookBinary() {
+  return new Promise((resolve) => {
+    try {
+      // Office.js getFileAsync returns the workbook as binary
+      Office.context.document.getFileAsync(
+        Office.FileType.Compressed,
+        { sliceSize: 4 * 1024 * 1024 }, // 4MB slices
+        (result) => {
+          if (result.status !== Office.AsyncResultStatus.Succeeded) {
+            resolve(null);
+            return;
+          }
+
+          const file = result.value;
+          const sliceCount = file.sliceCount;
+
+          if (sliceCount === 0) {
+            file.closeAsync();
+            resolve(null);
+            return;
+          }
+
+          // Read all slices and concatenate
+          const slices = [];
+          let slicesRead = 0;
+
+          for (let i = 0; i < sliceCount; i++) {
+            file.getSliceAsync(i, (sliceResult) => {
+              if (sliceResult.status === Office.AsyncResultStatus.Succeeded) {
+                slices[i] = sliceResult.value.data;
+              }
+              slicesRead++;
+
+              if (slicesRead === sliceCount) {
+                file.closeAsync();
+                // Concatenate all slices into one ArrayBuffer
+                const totalSize = slices.reduce((s, slice) => s + (slice?.byteLength || 0), 0);
+                const combined = new Uint8Array(totalSize);
+                let offset = 0;
+                for (const slice of slices) {
+                  if (slice) {
+                    combined.set(new Uint8Array(slice), offset);
+                    offset += slice.byteLength;
+                  }
+                }
+                resolve(combined.buffer);
+              }
+            });
+          }
+        }
+      );
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
+function _arrayBufferToBase64(buffer) {
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+}
+
+async function _reportOpsStatus(ops) {
+  try {
+    const updates = ops.map(op => ({
+      id: op.id,
+      status: op._status || 'succeeded',
+      error: op._error || null,
+      executed_at: new Date().toISOString(),
+    }));
+    await callReportApi('update_excel_ops', { updates });
+  } catch (err) {
+    console.warn('[autoMode] Status report failed:', err.message);
+  }
+}
+
+function _addAutoModeLog(level, message) {
+  const container = document.getElementById('automode-log');
+  if (!container) return;
+
+  const colors = {
+    info: 'var(--text-muted)',
+    success: 'var(--success)',
+    error: 'var(--danger)',
+    op: 'var(--primary)',
+    batch: 'var(--warning)',
+  };
+
+  const icons = {
+    info: 'ℹ️',
+    success: '✅',
+    error: '❌',
+    op: '⚙️',
+    batch: '📦',
+  };
+
+  const time = new Date().toLocaleTimeString();
+  const div = document.createElement('div');
+  div.style.cssText = `padding:2px 0;color:${colors[level] || 'inherit'};`;
+  div.textContent = `${time} ${icons[level] || ''} ${message}`;
+
+  // Remove placeholder
+  if (container.children.length === 1 && container.children[0].textContent.includes('No operations')) {
+    container.innerHTML = '';
+  }
+
+  container.appendChild(div);
+  container.scrollTop = container.scrollHeight;
+}
+
+function _updateAutoModeProgress() {
+  const bar = document.getElementById('automode-progress-bar');
+  const text = document.getElementById('automode-progress-text');
+  if (bar) bar.style.width = _autoModeOpsTotal > 0 ? `${Math.round((_autoModeOpsExecuted / _autoModeOpsTotal) * 100)}%` : '0%';
+  if (text) text.textContent = `${_autoModeOpsExecuted} / ${_autoModeOpsTotal}`;
+
+  // Update status bar ops count
+  const opsCount = document.getElementById('ops-count');
+  if (opsCount) opsCount.textContent = `${_autoModeOpsExecuted} ops`;
+}
+
+// ── MBR Analysis ─────────────────────────────────────────────────────────────
+// Reads active worksheet data → calls ML API /agent/run → writes 9 MBR sheets
+// directly via Office.js (no Supabase queue needed — Add-in has direct access).
+
+const ML_API_URL = 'http://localhost:8000';
+
+let _mbrRunning = false;
+
+/**
+ * Read worksheet data from the active workbook via Office.js.
+ * Returns { sheets: { sheetName: [{col: val, ...}, ...] } }
+ */
+async function _readWorksheetData(source) {
+  return Excel.run(async (context) => {
+    const wb = context.workbook;
+    const sheets = {};
+
+    if (source === 'all') {
+      const worksheets = wb.worksheets;
+      worksheets.load('items/name');
+      await context.sync();
+
+      for (const ws of worksheets.items) {
+        const data = await _readSingleSheet(context, ws);
+        if (data.length > 0) sheets[ws.name] = data;
+      }
+    } else {
+      const activeSheet = wb.worksheets.getActiveWorksheet();
+      activeSheet.load('name');
+      await context.sync();
+
+      const data = await _readSingleSheet(context, activeSheet);
+      if (data.length > 0) sheets[activeSheet.name] = data;
+    }
+
+    return { sheets };
+  });
+}
+
+async function _readSingleSheet(context, worksheet) {
+  const usedRange = worksheet.getUsedRangeOrNullObject(true);
+  usedRange.load('values');
+  await context.sync();
+
+  if (usedRange.isNullObject) return [];
+
+  const values = usedRange.values;
+  if (!values || values.length < 2) return [];
+
+  // First row = headers, rest = data rows → array of objects
+  const headers = values[0].map((h, i) => (h != null && h !== '') ? String(h) : `Column_${i + 1}`);
+  const rows = [];
+  for (let r = 1; r < values.length; r++) {
+    const row = {};
+    for (let c = 0; c < headers.length; c++) {
+      row[headers[c]] = values[r][c] != null ? values[r][c] : '';
+    }
+    rows.push(row);
+  }
+  return rows;
+}
+
+/**
+ * Main MBR analysis flow: read data → agent/run → write results to Excel.
+ */
+async function runMbrAnalysis() {
+  if (_mbrRunning) return;
+  _mbrRunning = true;
+
+  const btn = document.getElementById('mbr-run-btn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Analyzing...';
+
+  const progressCard = document.getElementById('mbr-progress');
+  const resultCard = document.getElementById('mbr-result');
+  progressCard.classList.remove('hidden');
+  resultCard.classList.add('hidden');
+  _updateMbrStep(0, 'pending');
+  setStatus('MBR: Reading worksheet data...');
+
+  try {
+    // 1. Read data from Excel
+    const source = document.getElementById('mbr-source').value;
+    const inputData = await _readWorksheetData(source);
+    const sheetNames = Object.keys(inputData.sheets);
+
+    if (sheetNames.length === 0) {
+      throw new Error('No data found in the worksheet. Please ensure the active sheet has data with headers in row 1.');
+    }
+
+    const totalRows = Object.values(inputData.sheets).reduce((s, rows) => s + rows.length, 0);
+    _addMbrLog(`Read ${totalRows} rows from ${sheetNames.length} sheet(s): ${sheetNames.join(', ')}`);
+    setStatus(`MBR: Read ${totalRows} rows. Sending to AI agent...`);
+
+    // 2. Call ML API /agent/mbr-analysis (convenience endpoint with pre-configured steps)
+    const customPrompt = document.getElementById('mbr-prompt').value.trim();
+    const taskId = `mbr_excel_${Date.now()}`;
+    _updateMbrStep(0, 'running');
+
+    const agentRes = await fetch(`${ML_API_URL}/agent/mbr-analysis`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        task_id: taskId,
+        input_data: inputData,
+        focus: customPrompt,
+        max_retries: 2,
+      }),
+    });
+
+    if (!agentRes.ok) {
+      const errBody = await agentRes.text();
+      throw new Error(`Agent API error (${agentRes.status}): ${errBody.slice(0, 200)}`);
+    }
+
+    const result = await agentRes.json();
+
+    // 4. Update progress from step results
+    const stepResults = result.step_results || [];
+    for (let i = 0; i < stepResults.length; i++) {
+      _updateMbrStep(i, stepResults[i].status === 'succeeded' ? 'done' : 'failed');
+    }
+
+    const succeeded = stepResults.filter(s => s.status === 'succeeded').length;
+    if (succeeded === 0) {
+      throw new Error('All analysis steps failed. Check ML API logs for details.');
+    }
+
+    _addMbrLog(`Agent completed: ${succeeded}/${stepResults.length} steps succeeded`);
+    setStatus(`MBR: Writing results to Excel (${succeeded} steps)...`);
+
+    // 5. Write results back to Excel as 9 MBR sheets
+    await _writeMbrResults(stepResults);
+
+    // 6. Show success
+    _showMbrResult(true, stepResults, result.total_execution_ms);
+    setStatus('MBR Analysis complete!');
+
+  } catch (err) {
+    _showMbrResult(false, [], 0, err.message);
+    setStatus(`MBR Error: ${err.message}`);
+  } finally {
+    _mbrRunning = false;
+    btn.disabled = false;
+    btn.textContent = 'Run MBR Analysis';
+  }
+}
+
+/**
+ * Write agent loop artifacts directly into Excel as 9 MBR sheets.
+ */
+async function _writeMbrResults(stepResults) {
+  await Excel.run(async (context) => {
+    const wb = context.workbook;
+    const period = new Date().toISOString().slice(0, 7);
+    const title = `Monthly Business Review — ${period}`;
+
+    // Collect artifacts from all steps
+    const allArtifacts = {};
+    for (const sr of stepResults) {
+      if (sr.status !== 'succeeded') continue;
+      allArtifacts[sr.step_name] = sr.artifacts || [];
+    }
+
+    // Helper: find artifact data by keyword match
+    function findData(keywords) {
+      for (const arts of Object.values(allArtifacts)) {
+        for (const art of arts) {
+          const type = (art.type || '').toLowerCase();
+          const label = (art.label || '').toLowerCase();
+          for (const kw of keywords) {
+            if (type.includes(kw) || label.includes(kw)) {
+              return art.data || art.content || null;
+            }
+          }
+        }
+      }
+      return null;
+    }
+
+    // Helper: extract KPIs
+    function extractKPIs() {
+      const kpis = {};
+      for (const arts of Object.values(allArtifacts)) {
+        for (const art of arts) {
+          const t = (art.type || '').toLowerCase();
+          const d = art.data || art.content;
+          if (!d || typeof d !== 'object' || Array.isArray(d)) continue;
+          if (t.includes('kpi') || t.includes('metric') || (art.label || '').toLowerCase().includes('kpi')) {
+            Object.assign(kpis, d);
+          }
+        }
+      }
+      return kpis;
+    }
+
+    // Helper: create or get sheet
+    async function getOrCreateSheet(name) {
+      let sheet;
+      try {
+        sheet = wb.worksheets.getItemOrNullObject(name);
+        await context.sync();
+        if (sheet.isNullObject) {
+          sheet = wb.worksheets.add(name);
+        } else {
+          sheet.getRange().clear();
+        }
+      } catch {
+        sheet = wb.worksheets.add(name);
+      }
+      return sheet;
+    }
+
+    // Helper: write array-of-objects as table
+    async function writeDataTable(sheetName, data, tableName, chartConfig) {
+      if (!Array.isArray(data) || data.length === 0) return;
+      const sheet = await getOrCreateSheet(sheetName);
+      const headers = Object.keys(data[0]);
+      const values = [headers];
+      for (const row of data) {
+        values.push(headers.map(h => {
+          const v = row[h];
+          if (v == null) return '';
+          if (typeof v === 'object') return JSON.stringify(v);
+          return v;
+        }));
+      }
+      const endCol = colLetter(headers.length - 1);
+      const range = `A1:${endCol}${values.length}`;
+      sheet.getRange(range).values = values;
+
+      // Format header
+      const headerRange = sheet.getRange(`A1:${endCol}1`);
+      headerRange.format.font.bold = true;
+      headerRange.format.fill.color = '#E2E8F0';
+      headerRange.format.autofitColumns();
+
+      // Create table
+      try {
+        const safeName = (tableName || 'Table1').replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 40);
+        const table = sheet.tables.add(range, true);
+        table.name = safeName;
+        table.style = 'TableStyleMedium2';
+      } catch { /* table creation can fail if name collision */ }
+
+      sheet.getRange(`A:${endCol}`).format.autofitColumns();
+
+      // Optional chart
+      if (chartConfig && data.length >= 3 && data.length <= 50) {
+        try {
+          const chartTypeMap = {
+            line: Excel.ChartType.line,
+            bar: Excel.ChartType.barClustered,
+            column: Excel.ChartType.columnClustered,
+          };
+          const ct = chartTypeMap[chartConfig.type] || Excel.ChartType.columnClustered;
+          const chart = sheet.charts.add(ct, sheet.getRange(range), Excel.ChartSeriesBy.columns);
+          chart.title.text = chartConfig.title || sheetName;
+          chart.width = 600;
+          chart.height = 350;
+        } catch { /* chart creation best-effort */ }
+      }
+    }
+
+    // ── Sheet 1: Cover ──
+    {
+      const sheet = await getOrCreateSheet('MBR_Cover');
+      sheet.getRange('A1:F1').values = [[title, '', '', '', '', '']];
+      sheet.getRange('A1:F1').merge(true);
+      sheet.getRange('A1:F1').format.font.size = 24;
+      sheet.getRange('A1:F1').format.font.bold = true;
+      sheet.getRange('A1:F1').format.font.color = '#1F4E79';
+      sheet.getRange('A1:F1').format.horizontalAlignment = 'Center';
+
+      sheet.getRange('A2:F2').values = [[`Generated: ${new Date().toLocaleString()}`, '', '', '', '', '']];
+      sheet.getRange('A2:F2').merge(true);
+      sheet.getRange('A2:F2').format.font.size = 10;
+      sheet.getRange('A2:F2').format.font.color = '#888888';
+      sheet.getRange('A2:F2').format.horizontalAlignment = 'Center';
+
+      const toc = [
+        ['Sheet', 'Description'],
+        ['MBR_KPIs', 'Key Performance Indicators'],
+        ['MBR_Cleaned_Data', 'Cleaned & standardized dataset'],
+        ['MBR_Data_Issues', 'Data quality issues log'],
+        ['MBR_Analysis', 'Pivot analysis & insights'],
+        ['MBR_Dashboard', 'One-page management dashboard'],
+      ];
+      sheet.getRange(`A4:B${4 + toc.length - 1}`).values = toc;
+      sheet.getRange('A4:B4').format.font.bold = true;
+      sheet.getRange('A4:B4').format.fill.color = '#E2E8F0';
+      sheet.getRange('A:F').format.autofitColumns();
+      sheet.activate();
+    }
+
+    // ── Sheet 2: KPIs ──
+    {
+      const kpis = extractKPIs();
+      const sheet = await getOrCreateSheet('MBR_KPIs');
+      const entries = Object.entries(kpis);
+      if (entries.length > 0) {
+        writeKPIDashboard(sheet, kpis);
+      } else {
+        sheet.getRange('A1').values = [['KPI data will be populated by the analysis.']];
+      }
+    }
+
+    // ── Sheet 3: Cleaned Data ──
+    {
+      const data = findData(['cleaned', 'clean', 'standardized']);
+      await writeDataTable('MBR_Cleaned_Data', data, 'T_CleanedData');
+      if (!data || !Array.isArray(data) || data.length === 0) {
+        const sheet = await getOrCreateSheet('MBR_Cleaned_Data');
+        sheet.getRange('A1').values = [['Cleaned data not available.']];
+      }
+    }
+
+    // ── Sheet 4: Data Issues ──
+    {
+      const data = findData(['issue', 'quality', 'log', 'problem']);
+      await writeDataTable('MBR_Data_Issues', data, 'T_DataIssues');
+      if (!data || !Array.isArray(data) || data.length === 0) {
+        const sheet = await getOrCreateSheet('MBR_Data_Issues');
+        sheet.getRange('A1:C1').values = [['Issue', 'Description', 'Resolution']];
+        sheet.getRange('A1:C1').format.font.bold = true;
+      }
+    }
+
+    // ── Sheet 5: Analysis (Pivots + Insights) ──
+    {
+      const pivotData = findData(['pivot', 'analysis', 'summary', 'breakdown']);
+      const insights = findData(['insight', 'observation', 'finding']);
+      const sheet = await getOrCreateSheet('MBR_Analysis');
+
+      let row = 1;
+
+      // Write pivot/analysis data if available
+      if (Array.isArray(pivotData) && pivotData.length > 0) {
+        const headers = Object.keys(pivotData[0]);
+        const vals = [headers, ...pivotData.map(r => headers.map(h => {
+          const v = r[h];
+          return v == null ? '' : (typeof v === 'object' ? JSON.stringify(v) : v);
+        }))];
+        const endCol = colLetter(headers.length - 1);
+        sheet.getRange(`A1:${endCol}${vals.length}`).values = vals;
+        sheet.getRange(`A1:${endCol}1`).format.font.bold = true;
+        sheet.getRange(`A1:${endCol}1`).format.fill.color = '#E2E8F0';
+        row = vals.length + 2;
+      }
+
+      // Write insights
+      const insightList = Array.isArray(insights) ? insights : [];
+      if (insightList.length > 0) {
+        sheet.getRange(`A${row}`).values = [['Management Insights']];
+        sheet.getRange(`A${row}`).format.font.size = 14;
+        sheet.getRange(`A${row}`).format.font.bold = true;
+        row++;
+        for (let i = 0; i < insightList.length; i++) {
+          const text = typeof insightList[i] === 'string' ? insightList[i] : JSON.stringify(insightList[i]);
+          sheet.getRange(`A${row + i}`).values = [[`${i + 1}. ${text}`]];
+        }
+      }
+
+      sheet.getRange('A:H').format.autofitColumns();
+    }
+
+    // ── Sheet 6: Dashboard ──
+    {
+      const kpis = extractKPIs();
+      const sheet = await getOrCreateSheet('MBR_Dashboard');
+
+      // Title
+      sheet.getRange('A1:H1').values = [[title, '', '', '', '', '', '', '']];
+      sheet.getRange('A1:H1').merge(true);
+      sheet.getRange('A1:H1').format.font.size = 20;
+      sheet.getRange('A1:H1').format.font.bold = true;
+      sheet.getRange('A1:H1').format.font.color = '#1F4E79';
+      sheet.getRange('A1:H1').format.horizontalAlignment = 'Center';
+      sheet.getRange('A1:H1').format.fill.color = '#F2F7FB';
+
+      // KPI cards row
+      const kpiEntries = Object.entries(kpis).slice(0, 8);
+      if (kpiEntries.length > 0) {
+        const labels = kpiEntries.map(([k]) => k);
+        const vals = kpiEntries.map(([, v]) => v);
+        const endCol = colLetter(kpiEntries.length - 1);
+        sheet.getRange(`A3:${endCol}3`).values = [labels];
+        sheet.getRange(`A4:${endCol}4`).values = [vals];
+        sheet.getRange(`A3:${endCol}3`).format.font.size = 9;
+        sheet.getRange(`A3:${endCol}3`).format.font.bold = true;
+        sheet.getRange(`A3:${endCol}3`).format.font.color = '#666666';
+        sheet.getRange(`A4:${endCol}4`).format.font.size = 18;
+        sheet.getRange(`A4:${endCol}4`).format.font.bold = true;
+        sheet.getRange(`A4:${endCol}4`).format.font.color = '#1F4E79';
+      }
+
+      // Insights section
+      const insights = findData(['insight', 'observation', 'finding']);
+      const insightList = Array.isArray(insights) ? insights : [];
+      sheet.getRange('A7:H7').values = [['Key Observations & Management Insights', '', '', '', '', '', '', '']];
+      sheet.getRange('A7:H7').merge(true);
+      sheet.getRange('A7:H7').format.font.size = 14;
+      sheet.getRange('A7:H7').format.font.bold = true;
+      sheet.getRange('A7:H7').format.font.color = '#1F4E79';
+
+      for (let i = 0; i < Math.min(insightList.length, 5); i++) {
+        const text = typeof insightList[i] === 'string' ? insightList[i] : JSON.stringify(insightList[i]);
+        sheet.getRange(`A${8 + i}:H${8 + i}`).values = [[`${i + 1}. ${text}`, '', '', '', '', '', '', '']];
+        sheet.getRange(`A${8 + i}:H${8 + i}`).merge(true);
+      }
+
+      sheet.getRange('A:H').format.autofitColumns();
+    }
+
+    await context.sync();
+    _addMbrLog('All MBR sheets written to workbook.');
+  });
+}
+
+// ── MBR UI helpers ──
+
+function _updateMbrStep(stepIndex, status) {
+  const container = document.getElementById('mbr-steps');
+  if (!container) return;
+
+  const stepNames = ['Clean Data', 'Calculate KPIs', 'Pivot Analysis'];
+  const icons = { pending: '\u25CB', running: '\u25D4', done: '\u2713', failed: '\u2717' };
+  const colors = { pending: 'var(--text-muted)', running: 'var(--primary)', done: 'var(--success)', failed: 'var(--danger)' };
+
+  // Rebuild all steps
+  let html = '';
+  for (let i = 0; i < stepNames.length; i++) {
+    const st = i < stepIndex ? 'done' : i === stepIndex ? status : 'pending';
+    html += `<div style="display:flex;align-items:center;gap:6px;padding:4px 0;color:${colors[st]};">
+      <span style="font-size:14px;">${icons[st]}</span>
+      <span>Step ${i + 1}: ${stepNames[i]}</span>
+      ${st === 'running' ? '<span class="spinner" style="margin-left:auto;"></span>' : ''}
+    </div>`;
+  }
+  container.innerHTML = html;
+
+  // Update progress bar
+  const completed = stepIndex + (status === 'done' || status === 'failed' ? 1 : 0);
+  const pct = Math.round((completed / stepNames.length) * 100);
+  const bar = document.getElementById('mbr-progress-bar');
+  const text = document.getElementById('mbr-progress-text');
+  if (bar) bar.style.width = `${pct}%`;
+  if (text) text.textContent = `${completed} / ${stepNames.length} steps`;
+}
+
+function _showMbrResult(success, stepResults, totalMs, errorMsg) {
+  const card = document.getElementById('mbr-result');
+  const titleEl = document.getElementById('mbr-result-title');
+  const bodyEl = document.getElementById('mbr-result-body');
+  card.classList.remove('hidden');
+
+  if (success) {
+    titleEl.textContent = 'Analysis Complete';
+    titleEl.style.color = 'var(--success)';
+
+    const totalArtifacts = stepResults.reduce((s, r) => s + (r.artifacts?.length || 0), 0);
+    const secs = totalMs ? `${(totalMs / 1000).toFixed(1)}s` : '';
+    bodyEl.innerHTML = `
+      <div style="margin-bottom:6px;"><strong>${stepResults.filter(s => s.status === 'succeeded').length}</strong> steps completed, <strong>${totalArtifacts}</strong> artifacts generated ${secs ? `in ${secs}` : ''}</div>
+      <div style="color:var(--text-muted);">Results written to MBR_Cover, MBR_KPIs, MBR_Cleaned_Data, MBR_Data_Issues, MBR_Analysis, MBR_Dashboard sheets.</div>
+    `;
+  } else {
+    titleEl.textContent = 'Analysis Failed';
+    titleEl.style.color = 'var(--danger)';
+    bodyEl.innerHTML = `<div style="color:var(--danger);">${escHtml(errorMsg || 'Unknown error')}</div>`;
+  }
+}
+
+function _addMbrLog(msg) {
+  console.log(`[MBR] ${msg}`);
+}
+
 // ── Expose to global scope (for onclick handlers in HTML) ───────────────────
 
 window.doLogin = doLogin;
 window.doLogout = doLogout;
-window.loadReports = loadReports;
-window.selectReport = selectReport;
-window.pullSelectedReport = pullSelectedReportWithContext;
-window.loadKPIs = loadKPIs;
-window.pullKPIsToSheet = pullKPIsToSheet;
-window.loadMonthly = loadMonthly;
-window.pullMonthlyToSheet = pullMonthlyToSheet;
-window.switchTab = switchTab;
 window.sendChat = sendChat;
 window.quickChat = quickChat;
+
+// Legacy exports (kept for backward compat, no longer in UI)
+window.loadReports = loadReports;
+window.selectReport = selectReport;
+window.pullSelectedReport = typeof pullSelectedReportWithContext !== 'undefined' ? pullSelectedReportWithContext : function(){};
+window.loadKPIs = typeof loadKPIs !== 'undefined' ? loadKPIs : function(){};
+window.pullKPIsToSheet = typeof pullKPIsToSheet !== 'undefined' ? pullKPIsToSheet : function(){};
+window.loadMonthly = typeof loadMonthly !== 'undefined' ? loadMonthly : function(){};
+window.pullMonthlyToSheet = typeof pullMonthlyToSheet !== 'undefined' ? pullMonthlyToSheet : function(){};
+window.switchTab = typeof switchTab !== 'undefined' ? switchTab : function(){};
+window.toggleAutoMode = toggleAutoMode;
+window.runMbrAnalysis = typeof runMbrAnalysis !== 'undefined' ? runMbrAnalysis : function(){};

@@ -28,14 +28,15 @@ const markdownComponents = {
   )
 };
 
-function ChatMessageBubble({ message, renderSpecialMessage, timestampText = '' }) {
+function ChatMessageBubble({ message, renderSpecialMessage, timestampText = '', variant = 'default' }) {
   const isUser = message?.role === 'user';
   const hasSpecial = Boolean(message?.type);
   const isProactive = Boolean(message?.is_proactive);
+  const isAIEmployeeVariant = variant === 'ai_employee';
 
   return (
     <div className={`w-full flex ${isUser ? 'justify-end' : 'justify-start'} animate-fade-in`}>
-      <div className={`max-w-[88%] ${hasSpecial ? 'w-full' : ''}`}>
+      <div className={`${isAIEmployeeVariant ? (hasSpecial ? 'w-full' : 'max-w-[min(100%,40rem)]') : `max-w-[88%] ${hasSpecial ? 'w-full' : ''}`}`}>
         {/* Proactive alert banner */}
         {isProactive && (
           <div className="flex items-center gap-1.5 mb-1 px-1">
@@ -47,23 +48,29 @@ function ChatMessageBubble({ message, renderSpecialMessage, timestampText = '' }
           <div className={`w-full ${isProactive ? 'border-l-2 border-amber-400 pl-2' : ''}`}>{renderSpecialMessage?.(message)}</div>
         ) : (
           <div
-            className={`rounded-2xl px-4 py-2.5 shadow-sm ${
-              isUser
-                ? 'bg-blue-600 text-white rounded-br-md'
-                : 'bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 border border-slate-200/70 dark:border-slate-700/70 rounded-bl-md'
+            className={`${
+              isAIEmployeeVariant
+                ? isUser
+                  ? 'rounded-[24px] rounded-br-lg bg-slate-900 px-4 py-2.5 text-white shadow-sm dark:bg-slate-100 dark:text-slate-900'
+                  : 'px-1 py-1 text-slate-900 dark:text-slate-100'
+                : `rounded-2xl px-4 py-2.5 shadow-sm ${
+                    isUser
+                      ? 'bg-blue-600 text-white rounded-br-md'
+                      : 'bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 border border-slate-200/70 dark:border-slate-700/70 rounded-bl-md'
+                  }`
             }`}
           >
             {isUser ? (
-              <p className="text-sm whitespace-pre-wrap leading-relaxed">{message.content}</p>
+              <p className={`whitespace-pre-wrap leading-relaxed ${isAIEmployeeVariant ? 'text-[14px]' : 'text-sm'}`}>{message.content}</p>
             ) : (
-              <div className="text-sm leading-relaxed prose prose-sm dark:prose-invert max-w-none">
+              <div className={`leading-relaxed prose prose-sm max-w-none dark:prose-invert ${isAIEmployeeVariant ? 'text-[15px] prose-p:leading-7 prose-headings:mb-3 prose-p:my-2' : 'text-sm'}`}>
                 <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
                   {message.content || ''}
                 </ReactMarkdown>
               </div>
             )}
             {timestampText ? (
-              <p className={`mt-1 text-[11px] ${isUser ? 'text-blue-100' : 'text-slate-400'}`}>
+              <p className={`mt-1 text-[11px] ${isAIEmployeeVariant ? (isUser ? 'text-slate-300 dark:text-slate-500' : 'text-slate-400') : isUser ? 'text-blue-100' : 'text-slate-400'}`}>
                 {timestampText}
               </p>
             ) : null}

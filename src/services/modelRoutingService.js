@@ -37,18 +37,20 @@ export const ESCALATION_TRIGGERS = {
 // ── In-memory defaults (used when Supabase is unavailable) ───────────────────
 
 const DEFAULT_MODELS = [
-  // Tier A — High-reasoning (task decomposition, high-risk, final review)
-  { provider: 'anthropic', model_name: 'claude-opus-4-6',        capability_tier: 'tier_a', cost_per_1k_input: 0.015,   cost_per_1k_output: 0.075,   max_context_tokens: 200000,  active: true },
-  { provider: 'openai',    model_name: 'gpt-5.4',                capability_tier: 'tier_a', cost_per_1k_input: 0.003,   cost_per_1k_output: 0.012,   max_context_tokens: 1048576, active: true },
-  { provider: 'gemini',    model_name: 'gemini-3.1-pro-preview', capability_tier: 'tier_a', cost_per_1k_input: 0.00125, cost_per_1k_output: 0.005,   max_context_tokens: 1048576, active: true },
-  // Tier B — Specialist (complex analysis, reasoning chains)
-  { provider: 'openai',    model_name: 'o4-mini',                capability_tier: 'tier_b', cost_per_1k_input: 0.00110, cost_per_1k_output: 0.00440, max_context_tokens: 200000,  active: true },
-  { provider: 'deepseek',  model_name: 'deepseek-reasoner',      capability_tier: 'tier_b', cost_per_1k_input: 0.00055, cost_per_1k_output: 0.00220, max_context_tokens: 65536,   active: true },
-  // Tier C — Low-cost utility (summaries, formatting, data cleaning)
-  { provider: 'deepseek',  model_name: 'deepseek-chat',          capability_tier: 'tier_c', cost_per_1k_input: 0.00014, cost_per_1k_output: 0.00028, max_context_tokens: 65536,   active: true },
-  { provider: 'openai',    model_name: 'gpt-4.1-mini',           capability_tier: 'tier_c', cost_per_1k_input: 0.0004,  cost_per_1k_output: 0.0016,  max_context_tokens: 1048576, active: true },
-  { provider: 'openai',    model_name: 'gpt-4.1-nano',           capability_tier: 'tier_c', cost_per_1k_input: 0.0001,  cost_per_1k_output: 0.0004,  max_context_tokens: 1048576, active: true },
-  { provider: 'anthropic', model_name: 'claude-haiku-4-5',       capability_tier: 'tier_c', cost_per_1k_input: 0.0008,  cost_per_1k_output: 0.004,   max_context_tokens: 200000,  active: true },
+  // Tier A — High-reasoning (task decomposition, high-risk, final review, code/agent/Excel)
+  { provider: 'anthropic', model_name: 'claude-opus-4-6',        capability_tier: 'tier_a', cost_per_1k_input: 0.005,    cost_per_1k_output: 0.025,    max_context_tokens: 200000,  active: true },
+  { provider: 'openai',    model_name: 'gpt-5.4',                capability_tier: 'tier_a', cost_per_1k_input: 0.0025,   cost_per_1k_output: 0.015,    max_context_tokens: 1048576, active: true },
+  { provider: 'gemini',    model_name: 'gemini-3.1-pro-preview', capability_tier: 'tier_a', cost_per_1k_input: 0.002,    cost_per_1k_output: 0.012,    max_context_tokens: 1048576, active: true },
+  // Tier B — Team workhorse, daily 80% tasks (complex analysis, reasoning chains)
+  { provider: 'openai',    model_name: 'gpt-5-mini',             capability_tier: 'tier_b', cost_per_1k_input: 0.00025,  cost_per_1k_output: 0.002,    max_context_tokens: 1048576, active: true },
+  { provider: 'gemini',    model_name: 'gemini-2.5-flash',       capability_tier: 'tier_b', cost_per_1k_input: 0.0003,   cost_per_1k_output: 0.0025,   max_context_tokens: 1048576, active: true },
+  { provider: 'anthropic', model_name: 'claude-sonnet-4-6',      capability_tier: 'tier_b', cost_per_1k_input: 0.003,    cost_per_1k_output: 0.015,    max_context_tokens: 200000,  active: true },
+  { provider: 'deepseek',  model_name: 'deepseek-reasoner',      capability_tier: 'tier_b', cost_per_1k_input: 0.00055,  cost_per_1k_output: 0.00219,  max_context_tokens: 65536,   active: true },
+  // Tier C — Low-cost utility (summaries, formatting, data cleaning, bulk tasks)
+  // DeepSeek Chat listed first so selectModel() picks it as default (cheapest-first sort still applies,
+  // but we give it a slight edge by using cache-hit pricing to reflect real-world usage)
+  { provider: 'deepseek',  model_name: 'deepseek-chat',          capability_tier: 'tier_c', cost_per_1k_input: 0.00007,  cost_per_1k_output: 0.0011,   max_context_tokens: 65536,   active: true },
+  { provider: 'gemini',    model_name: 'gemini-2.5-flash-lite',  capability_tier: 'tier_c', cost_per_1k_input: 0.0001,   cost_per_1k_output: 0.0004,   max_context_tokens: 1048576, active: true },
 ];
 
 const DEFAULT_POLICIES = {
@@ -56,9 +58,9 @@ const DEFAULT_POLICIES = {
   plan:                    { preferred_tier: 'tier_c', fallback_tier: 'tier_b', escalation_rules: { on_failure: 'tier_a', on_high_risk: 'tier_a' } },
   risk:                    { preferred_tier: 'tier_c', fallback_tier: 'tier_b', escalation_rules: { on_failure: 'tier_a' } },
   synthesize:              { preferred_tier: 'tier_c', fallback_tier: null,     escalation_rules: {} },
-  task_decomposition:      { preferred_tier: 'tier_a', fallback_tier: null,     escalation_rules: {} },
-  review:                  { preferred_tier: 'tier_a', fallback_tier: 'tier_b', escalation_rules: {} },
-  dynamic_tool_generation: { preferred_tier: 'tier_a', fallback_tier: 'tier_b', escalation_rules: { on_failure: 'tier_a' } },
+  task_decomposition:      { preferred_tier: 'tier_a', fallback_tier: null,     preferred_model: 'gpt-5.4', escalation_rules: {} },
+  review:                  { preferred_tier: 'tier_a', fallback_tier: 'tier_b', preferred_model: 'gpt-5.4', escalation_rules: {} },
+  dynamic_tool_generation: { preferred_tier: 'tier_a', fallback_tier: 'tier_b', preferred_model: 'gpt-5.4', escalation_rules: { on_failure: 'tier_a' } },
   registered_tool:         { preferred_tier: 'tier_c', fallback_tier: null,     escalation_rules: {} },
   report:                  { preferred_tier: 'tier_b', fallback_tier: 'tier_c', escalation_rules: {} },
   export:                  { preferred_tier: 'tier_c', fallback_tier: null,     escalation_rules: {} },
@@ -266,6 +268,17 @@ export async function resolveModel(taskType, context = {}) {
   }
 
   // ── Model selection ─────────────────────────────────────────────────────
+
+  // If policy specifies a preferred_model, try to use it directly
+  const policyPreferredModel = policy.preferred_model;
+  if (policyPreferredModel) {
+    const allModels = await listModels({});
+    const pinned = allModels.find((m) => m.model_name === policyPreferredModel);
+    if (pinned) {
+      return { provider: pinned.provider, model: pinned.model_name, tier: pinned.capability_tier, escalated, escalatedFrom };
+    }
+    // preferred_model not found/active — fall through to tier-based selection
+  }
 
   const candidates = await listModels({ tier: effectiveTier });
 

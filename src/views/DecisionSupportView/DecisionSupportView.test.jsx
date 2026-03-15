@@ -2,7 +2,7 @@
  * @vitest-environment jsdom
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import '@testing-library/jest-dom';
 
@@ -10,7 +10,10 @@ import '@testing-library/jest-dom';
 vi.mock('../../services/supabaseClient', () => ({
   supabase: {
     from: () => ({
-      select: () => ({ eq: () => ({ order: () => ({ data: [], error: null }) }) }),
+      select: () => ({
+        eq: () => ({ order: () => ({ data: [], error: null }) }),
+        limit: () => ({ error: null }),
+      }),
       insert: () => ({ data: null, error: null }),
       update: () => ({ eq: () => ({ data: null, error: null }) }),
       delete: () => ({ eq: () => ({ data: null, error: null }) }),
@@ -213,32 +216,50 @@ describe('DecisionSupportView', () => {
     localStorageMock.clear();
   });
 
-  it('renders without crashing', () => {
+  it('renders without crashing', async () => {
     const { container } = render(
       <MemoryRouter>
         <DecisionSupportView user={mockUser} addNotification={mockAddNotification} />
       </MemoryRouter>
     );
+    await waitFor(() => expect(container).toBeTruthy());
     expect(container).toBeTruthy();
   });
 
-  it('shows empty state when no conversation is selected', () => {
+  it('shows empty state when no conversation is selected', async () => {
     render(
       <MemoryRouter>
         <DecisionSupportView user={mockUser} addNotification={mockAddNotification} />
       </MemoryRouter>
     );
+    await waitFor(() => expect(screen.getAllByText(/select a conversation|start a new/i).length).toBeGreaterThan(0));
     const matches = screen.getAllByText(/select a conversation|start a new/i);
     expect(matches.length).toBeGreaterThan(0);
   });
 
-  it('renders the new chat button', () => {
+  it('renders the new chat button', async () => {
     render(
       <MemoryRouter>
         <DecisionSupportView user={mockUser} addNotification={mockAddNotification} />
       </MemoryRouter>
     );
+    await waitFor(() => expect(screen.getByRole('button', { name: /new/i })).toBeInTheDocument());
     const newChatBtn = screen.getByRole('button', { name: /new/i });
     expect(newChatBtn).toBeInTheDocument();
+  });
+
+  it('renders the AI employee chat shell without the legacy canvas workspace', async () => {
+    render(
+      <MemoryRouter>
+        <DecisionSupportView user={mockUser} addNotification={mockAddNotification} mode="ai_employee" />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => expect(screen.getByText(/start a chat with aiden/i)).toBeInTheDocument());
+    expect(screen.getByText(/start a chat with aiden/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /profile/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /steps/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /artifacts/i })).toBeInTheDocument();
+    expect(screen.queryByTitle(/open canvas/i)).not.toBeInTheDocument();
   });
 });

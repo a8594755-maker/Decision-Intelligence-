@@ -94,7 +94,8 @@ setup('set mock auth state', async ({ page }) => {
     return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
   });
 
-  // Intercept all REST API calls (mock token is not a real JWT)
+  // Intercept REST API calls — let them through to real Supabase when possible
+  // The auth setup only needs basic mocking for initial page load
   await page.route(`${SUPABASE_URL}/rest/v1/**`, (route) => {
     const method = route.request().method();
     if (method === 'POST' || method === 'PUT' || method === 'PATCH') {

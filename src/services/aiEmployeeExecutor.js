@@ -96,6 +96,10 @@ function buildSummary(workflowType, result) {
       return `Export completed (${result?.export?.format || 'unknown'} format).`;
     case 'builtin_tool':
       return `Built-in tool completed. ${result?.artifact_refs?.length || 0} artifact(s) generated.`;
+    case 'excel_ops': {
+      const eo = result?.excel_ops;
+      return `Excel workbook built: ${eo?.count || 0} operations across ${eo?.sheets?.length || 0} sheets. Batch: ${eo?.batch_id || 'unknown'}.`;
+    }
     default:
       return `${workflowType} run completed.`;
   }
@@ -126,7 +130,7 @@ export async function executeTask(task, userId) {
     task.input_context || {};
 
   if (!workflow_type) throw new Error('task.input_context.workflow_type is required');
-  const NO_DATASET_TYPES = ['synthesize', 'dynamic_tool', 'registered_tool', 'report', 'export', 'builtin_tool', 'python_tool', 'python_report'];
+  const NO_DATASET_TYPES = ['synthesize', 'dynamic_tool', 'registered_tool', 'report', 'export', 'builtin_tool', 'python_tool', 'python_report', 'excel_ops'];
   if (!dataset_profile_id && !NO_DATASET_TYPES.includes(workflow_type)) {
     throw new Error('task.input_context.dataset_profile_id is required');
   }
@@ -438,6 +442,30 @@ export async function executeTask(task, userId) {
         break;
       }
 
+      case 'excel_ops': {
+        // Build Excel operation commands from prior step artifacts and push to queue.
+        // The Excel Add-in polls for these ops and executes them via Office.js.
+        const { buildMbrOps } = await import('./excelOpsTemplates');
+        const { pushExcelOps } = await import('./excelOpsService');
+        const priorArtifactsForExcel = task.input_context?._prior_step_artifacts || {};
+        const excelMeta = {
+          title: task.title || 'Monthly Business Review',
+          period: task.input_context?.period || new Date().toISOString().slice(0, 7),
+        };
+        const excelOps = buildMbrOps(task.id, userId, priorArtifactsForExcel, excelMeta);
+        const pushResult = await pushExcelOps(task.id, userId, excelOps);
+        result = {
+          excel_ops: {
+            batch_id: pushResult.batch_id,
+            count: pushResult.count,
+            sheets: ['MBR_Cover', 'MBR_KPIs', 'MBR_Cleaned_Data', 'MBR_Data_Issues',
+                     'MBR_Forecast', 'MBR_Plan', 'MBR_Risk', 'MBR_Analysis', 'MBR_Dashboard'],
+          },
+          artifact_refs: [],
+        };
+        break;
+      }
+
       default:
         throw new Error(`Unknown workflow_type: ${workflow_type}`);
     }
@@ -645,26 +673,61 @@ export async function executeTask(task, userId) {
  * @param {object} [opts] - { onStepComplete, signal }
  * @returns {Promise<object>}
  */
+/**
+ * @deprecated Use orchestrator.submitPlan() + orchestrator.approvePlan() instead.
+ * This shim delegates to the v2 orchestrator when possible, falling back to
+ * the legacy agentLoopService path for tasks that already have loop_state.
+ */
 export async function executeTaskWithLoop(task, userId, opts = {}) {
+  console.warn('[executeTaskWithLoop] DEPRECATED — use orchestrator.submitPlan() + approvePlan() instead');
+
   const templateId = task.template_id || task.input_context?.template_id;
-  console.log('[executeTaskWithLoop] taskId:', task?.id, 'templateId:', templateId, 'has_loop_state:', !!task?.loop_state);
 
-  if (!templateId) {
-    console.log('[executeTaskWithLoop] No templateId — falling back to single-step');
-    return executeTask(task, userId);
+  // Legacy path for tasks that already have loop_state (in-progress resumption)
+  if (task.loop_state || !templateId) {
+    if (!templateId) {
+      return executeTask(task, userId);
+    }
+    const { initAgentLoop, runAgentLoop } = await import('./agentLoopService');
+    if (!task.loop_state) {
+      await initAgentLoop(task.id, userId);
+    }
+    return runAgentLoop(task.id, userId, opts);
   }
 
-  // Agent loop path
-  const { initAgentLoop, runAgentLoop } = await import('./agentLoopService');
+  // v2 path: delegate to orchestrator
+  try {
+    const { submitPlan, approvePlan } = await import('./aiEmployee/index.js');
 
-  if (!task.loop_state) {
-    console.log('[executeTaskWithLoop] Initializing agent loop...');
-    await initAgentLoop(task.id, userId);
-    console.log('[executeTaskWithLoop] Agent loop initialized');
+    const dynamicTemplate = task.input_context?._dynamic_template;
+    const steps = (dynamicTemplate?.steps || []).map((s, i) => ({
+      name: s.name || s.step_name || `step_${i}`,
+      tool_hint: s.tool_hint || s.description || s.name,
+      tool_type: s.workflow_type || 'python_tool',
+      builtin_tool_id: s.builtin_tool_id || null,
+    }));
+
+    const plan = {
+      title: task.title || 'Untitled task',
+      description: task.description || '',
+      steps,
+      inputData: task.input_context?._input_data || {},
+      llmConfig: { provider: 'anthropic', model: 'claude-sonnet-4-6', temperature: 0.15, max_tokens: 4096 },
+    };
+
+    const { taskId } = await submitPlan(plan, task.employee_id, userId);
+    await approvePlan(taskId, userId);
+
+    return { task: { id: taskId }, completed_steps: steps.map(s => s.name) };
+  } catch (err) {
+    console.error('[executeTaskWithLoop] v2 orchestrator fallback failed, trying legacy:', err);
+    // Final fallback to legacy
+    const { initAgentLoop, runAgentLoop } = await import('./agentLoopService');
+    if (!task.loop_state) {
+      await initAgentLoop(task.id, userId);
+    }
+    return runAgentLoop(task.id, userId, opts);
   }
-
-  console.log('[executeTaskWithLoop] Running agent loop...');
-  return runAgentLoop(task.id, userId, opts);
 }
 
 export default { executeTask, executeTaskWithLoop };

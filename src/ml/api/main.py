@@ -178,6 +178,10 @@ ALLOWED_ORIGINS = _parse_allowed_origins(
         f"http://{host}:{port}"
         for host in ("localhost", "127.0.0.1")
         for port in range(5173, 5180)
+    ] + [
+        # Excel Add-in dev server (HTTPS on port 3100)
+        "https://127.0.0.1:3100",
+        "https://localhost:3100",
     ]))
 )
 

@@ -60,6 +60,22 @@ const V1_VALIDATORS = {
   powerbi_dataset: validatePowerBIDataset,
   // OpenCloud EU integration — file reference artifact
   opencloud_file_ref: validateOpenCloudFileRef,
+  // Expanded tool catalog — new artifact types
+  supplier_kpi_summary: validateObjectPayloadOnly,
+  risk_replan_recommendation: validateObjectPayloadOnly,
+  approval_request: validateObjectPayloadOnly,
+  plan_commit_receipt: validateObjectPayloadOnly,
+  daily_summary: validateObjectPayloadOnly,
+  macro_oracle_signals: validateObjectPayloadOnly,
+  sku_analysis: validateObjectPayloadOnly,
+  backtest_results: validateObjectPayloadOnly,
+  model_artifact: validateObjectPayloadOnly,
+  feature_importance: validateObjectPayloadOnly,
+  drift_report: validateObjectPayloadOnly,
+  stress_test_results: validateObjectPayloadOnly,
+  optimization_results: validateObjectPayloadOnly,
+  reoptimization_results: validateObjectPayloadOnly,
+  simulation_comparison: validateObjectPayloadOnly,
 };
 
 const MAX_ISSUES = 50;
@@ -985,6 +1001,11 @@ function validatePowerBIDataset(payload, issues) {
 // ---------------------------------------------------------------------------
 // OpenCloud EU integration — file reference
 // ---------------------------------------------------------------------------
+
+/** Lightweight validator: only checks that payload is a non-null object. */
+function validateObjectPayloadOnly(payload, issues) {
+  ensureObjectPayload(issues, payload);
+}
 
 function validateOpenCloudFileRef(payload, issues) {
   const root = ensureObjectPayload(issues, payload);

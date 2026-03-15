@@ -25,10 +25,12 @@ function ChatThread({
   quickPrompts,
   onSelectPrompt,
   showInitialEmptyState,
-  isLoading
+  isLoading,
+  variant = 'default',
 }) {
   const scrollRef = useRef(null);
   const [isPinnedToBottom, setIsPinnedToBottom] = useState(true);
+  const isAIEmployeeVariant = variant === 'ai_employee';
 
   const hasMessages = Array.isArray(messages) && messages.length > 0;
 
@@ -64,19 +66,27 @@ function ChatThread({
 
   return (
     <div className="relative flex-1 min-h-0 overflow-hidden">
-      <div ref={scrollRef} className="h-full overflow-y-auto chat-scrollbar px-4 md:px-6 py-5 space-y-4">
+      <div
+        ref={scrollRef}
+        className={`h-full overflow-y-auto chat-scrollbar ${
+          isAIEmployeeVariant ? 'px-3 py-6 sm:px-6 sm:py-8' : 'px-4 py-5 md:px-6'
+        }`}
+      >
         {isLoading ? (
           <ChatSkeleton />
         ) : showInitialEmptyState ? (
-          <EmptyChatState quickPrompts={quickPrompts} onSelectPrompt={onSelectPrompt} />
+          <div className={isAIEmployeeVariant ? 'mx-auto max-w-4xl' : ''}>
+            <EmptyChatState quickPrompts={quickPrompts} onSelectPrompt={onSelectPrompt} variant={variant} />
+          </div>
         ) : (
-          <>
+          <div className={isAIEmployeeVariant ? 'mx-auto w-full max-w-3xl space-y-6' : 'space-y-4'}>
             {hasMessages && messages.map((message, idx) => (
               <ChatMessageBubble
                 key={`${message.timestamp || idx}_${idx}`}
                 message={message}
                 renderSpecialMessage={renderSpecialMessage}
                 timestampText={message.type ? '' : formatTime(message.timestamp)}
+                variant={variant}
               />
             ))}
             {isTyping ? (
@@ -86,15 +96,16 @@ function ChatThread({
                     message={typingMessage}
                     renderSpecialMessage={renderSpecialMessage}
                     timestampText=""
+                    variant={variant}
                   />
                 ) : (
-                  <div className="rounded-2xl rounded-bl-md border border-slate-200/70 dark:border-slate-700/70 bg-white dark:bg-slate-800 px-4 py-2.5 shadow-sm">
+                  <div className={`${isAIEmployeeVariant ? 'px-1 py-1 text-slate-900 dark:text-slate-100' : 'rounded-2xl rounded-bl-md border border-slate-200/70 bg-white px-4 py-2.5 shadow-sm dark:border-slate-700/70 dark:bg-slate-800'}`}>
                     <TypingIndicator />
                   </div>
                 )}
               </div>
             ) : null}
-          </>
+          </div>
         )}
       </div>
 

@@ -149,24 +149,19 @@ The user uploaded a multi-sheet business data file. Your job:
       description: 'Calculate all KPI metrics from cleaned data: revenue, margin, return rate, inventory, marketing ROAS, support metrics',
       requires_review: false,
       tool_hint: `KPI Calculation Task:
-Using cleaned data from the prior step (prior_artifacts["clean_data"]), calculate comprehensive business KPIs.
+Using cleaned data from the prior step (prior_artifacts["clean_data"]), calculate business KPIs.
 
-Required KPIs (at minimum):
-- Sales: Total Revenue, Units Sold, Gross Profit, Gross Margin %, Avg Selling Price, Return Rate, Discount Rate, Sales vs Target
-- Breakdowns: Revenue by Month, by Region, by Product Family, by Channel
-- Inventory: Ending Inventory, Weeks of Supply, Low Stock / Overstock item counts, Top inventory risk SKUs
-- Marketing: Marketing Spend, ROAS or efficiency by campaign/channel, best/worst campaigns
-- Support: Ticket Volume, Avg Resolution Time, Complaint Rate, problem concentration by product/region/channel
+IMPORTANT: Keep code SHORT. Use helper functions. Build artifacts list incrementally.
 
-Produce these artifacts:
-- "kpi_summary" (type: "data"): Table of all KPIs with columns: category, metric_name, value, unit, vs_target
-- "revenue_by_month" (type: "data"): Monthly revenue breakdown
-- "revenue_by_region" (type: "data"): Regional breakdown
-- "revenue_by_product" (type: "data"): Product family breakdown
-- "revenue_by_channel" (type: "data"): Channel breakdown
-- "inventory_risk" (type: "data"): SKUs with inventory risk (overstock/low stock)
-- "marketing_performance" (type: "data"): Campaign/channel performance comparison
-- "support_analysis" (type: "data"): Support ticket analysis by product/region`,
+Steps:
+1. Load cleaned data: df = pd.DataFrame(prior_artifacts["clean_data"][0]["data"])
+2. Discover columns dynamically: cols = df.columns.tolist()
+3. Calculate available KPIs based on columns found (revenue, units, margin, etc.)
+4. Build breakdowns by available dimensions (month, region, product, channel)
+
+Produce exactly 2 artifacts:
+- "kpi_summary" (type: "data"): All KPIs in one table with columns: category, metric_name, value, unit
+- "breakdowns" (type: "data"): Revenue/units breakdown by all available dimensions (month, region, product, channel) in long format with columns: dimension, dimension_value, metric, value`,
       tool_id: null,
       builtin_tool_id: null,
       depends_on: ['clean_data'],
@@ -179,18 +174,19 @@ Produce these artifacts:
       description: 'Deep analysis: performance vs targets, problem areas, risk identification, top 3-5 management insights',
       requires_review: false,
       tool_hint: `Business Analysis & Insights Task:
-Using KPI data from prior steps (prior_artifacts["calculate_kpis"]), produce management-ready analysis.
+Using KPI data from prior steps (prior_artifacts["calculate_kpis"]), produce management insights.
 
-Answer these questions:
-1. Performance: Did we hit targets? Which regions drove growth? Which products dragged? Which channels are anomalous?
-2. Problems: High return rate products/regions/channels? High discount but low margin categories? Inventory pressure SKUs? Are support issues linked to returns/quality/logistics?
-3. Management Insights: Provide 3-5 key observations with business context, not just numbers.
-   Example: "Revenue grew but margin eroded by heavy discounting", "Region X has high sales but also high returns — investigate quality"
+IMPORTANT: Keep code SHORT. Use df.columns.tolist() to discover columns. Do NOT hardcode column names.
 
-Produce these artifacts:
-- "performance_analysis" (type: "data"): Target vs actual by dimension
-- "problem_areas" (type: "data"): Identified problems with severity, affected dimension, evidence
-- "management_insights" (type: "data"): Top 3-5 insights with columns: priority, insight, evidence, recommendation`,
+Steps:
+1. Load KPI summary: kpis = pd.DataFrame(prior_artifacts["calculate_kpis"][0]["data"])
+2. Load breakdowns if available: breakdowns = pd.DataFrame(prior_artifacts["calculate_kpis"][1]["data"]) if len(prior_artifacts["calculate_kpis"]) > 1 else pd.DataFrame()
+3. Identify top/bottom performers, outliers, and notable patterns
+4. Produce 3-5 key management insights
+
+Produce exactly 2 artifacts:
+- "analysis_summary" (type: "data"): Table with columns: dimension, metric, top_performer, bottom_performer, gap, observation
+- "management_insights" (type: "data"): Table with columns: priority, insight, evidence, recommendation`,
       tool_id: null,
       builtin_tool_id: null,
       depends_on: ['calculate_kpis'],
