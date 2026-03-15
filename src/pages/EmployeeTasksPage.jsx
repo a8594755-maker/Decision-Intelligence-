@@ -3,11 +3,11 @@ import { useState, useEffect, useCallback } from 'react';
 import {
   Plus, RefreshCw, Play, ChevronRight, Clock, CheckCircle2,
   AlertTriangle, Loader2, FileText, CalendarDays, Tag, Bell,
-  Calendar, Pause, PlayCircle, Trash2,
+  Calendar, Pause, PlayCircle, Trash2, Send,
 } from 'lucide-react';
 import { Modal } from '../components/ui';
 import { useAuth } from '../contexts/AuthContext';
-import * as aiEmployeeService from '../services/aiEmployeeService';
+import { getOrCreateWorker, listTasksByUser, listWorklogs } from '../services/aiEmployee/queries.js';
 import { TEMPLATE_OPTIONS } from '../services/agentLoopTemplates';
 import { getNotifications, getUnreadCount, markAllRead } from '../services/notificationService';
 import {
@@ -22,6 +22,7 @@ import {
   getTaskStatus,
   runTask as runTaskAction,
   submitPlan,
+  createPlan,
 } from '../services/aiEmployee/index.js';
 import { buildPlanFromTemplateTask } from '../services/aiEmployee/templatePlanAdapter';
 import { EXECUTION_MODES } from '../services/aiEmployee/executionPolicy.js';
@@ -37,7 +38,7 @@ const STATUS_FILTERS = [
   { value: 'in_progress',   label: 'In Progress' },
   { value: 'waiting_review',label: 'Awaiting Review' },
   { value: 'review_hold',   label: 'Awaiting Review' },
-  { value: 'blocked',       label: 'Blocked' },
+  { value: 'blocked',       label: 'Needs Input' },
   { value: 'failed',        label: 'Failed' },
   { value: 'done',          label: 'Done' },
 ];
@@ -70,7 +71,7 @@ const STATUS_LABEL = {
   in_progress: 'In Progress',
   waiting_review: 'Awaiting Review',
   review_hold: 'Awaiting Review',
-  blocked: 'Blocked',
+  blocked: 'Needs Input',
   failed: 'Failed',
   done: 'Done',
 };
@@ -209,15 +210,17 @@ function NewTaskModal({ onClose, onCreated, employeeId, userId }) {
     console.log('[NewTask] submit fired — employeeId:', employeeId, 'form:', form);
     if (!employeeId) { setError('Employee not loaded yet — please wait a moment and try again.'); return; }
     if (!form.title.trim()) { setError('Title is required.'); return; }
-    if (!sourceFile) { setError('Attach a source file for the task.'); return; }
 
     setSaving(true);
     setError(null);
     try {
-      const datasetContext = await createTaskDatasetContextFromFile({
-        userId,
-        file: sourceFile,
-      });
+      let datasetContext = null;
+      if (sourceFile) {
+        datasetContext = await createTaskDatasetContextFromFile({
+          userId,
+          file: sourceFile,
+        });
+      }
 
       const plan = await buildPlanFromTemplateTask({
         templateId: form.template_id,
@@ -226,17 +229,19 @@ function NewTaskModal({ onClose, onCreated, employeeId, userId }) {
         priority: form.priority,
         dueAt: form.due_at ? new Date(form.due_at).toISOString() : null,
         executionMode: form.execution_mode,
-        datasetProfileId: datasetContext.datasetProfileId,
-        datasetProfileRow: datasetContext.datasetProfileRow,
+        datasetProfileId: datasetContext?.datasetProfileId || null,
+        datasetProfileRow: datasetContext?.datasetProfileRow || null,
         userId,
       });
-      plan.taskMeta = {
-        ...(plan.taskMeta || {}),
-        source_file_name: datasetContext.summary.fileName,
-        source_file_size: datasetContext.summary.fileSize,
-        source_sheet_count: datasetContext.summary.sheetCount,
-        source_row_count: datasetContext.summary.totalRows,
-      };
+      if (datasetContext) {
+        plan.taskMeta = {
+          ...(plan.taskMeta || {}),
+          source_file_name: datasetContext.summary.fileName,
+          source_file_size: datasetContext.summary.fileSize,
+          source_sheet_count: datasetContext.summary.sheetCount,
+          source_row_count: datasetContext.summary.totalRows,
+        };
+      }
 
       const { task } = await submitPlan(plan, employeeId, userId);
       console.log('[NewTask] submitPlan result:', task);
@@ -324,7 +329,7 @@ function NewTaskModal({ onClose, onCreated, employeeId, userId }) {
         </div>
 
         <div>
-          <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>Source File *</label>
+          <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>Source File (optional)</label>
           <input
             type="file"
             accept=".xlsx,.xls,.csv"
@@ -336,7 +341,7 @@ function NewTaskModal({ onClose, onCreated, employeeId, userId }) {
             }}
           />
           <p className="mt-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-            Upload the workbook or CSV Aiden should use. The system will create the data context internally.
+            Attach a workbook or CSV. If omitted, data-dependent steps will pause until a file is provided.
           </p>
           {sourceFile && (
             <p className="mt-1 text-[11px]" style={{ color: 'var(--text-secondary)' }}>
@@ -649,9 +654,40 @@ function NewScheduleModal({ onClose, onCreated, employeeId, userId }) {
   );
 }
 
+// ── Status group config ───────────────────────────────────────────────────
+
+const STATUS_GROUPS = [
+  { key: 'active',    label: 'Active',          statuses: ['in_progress', 'queued'], color: 'text-blue-600' },
+  { key: 'attention', label: 'Needs Attention',  statuses: ['waiting_approval', 'waiting_review', 'review_hold', 'blocked'], color: 'text-amber-600' },
+  { key: 'pending',   label: 'Pending',          statuses: ['todo'], color: 'text-slate-500' },
+  { key: 'completed', label: 'Completed',        statuses: ['done'], color: 'text-emerald-600' },
+  { key: 'failed',    label: 'Failed',           statuses: ['failed', 'cancelled'], color: 'text-red-600' },
+];
+
+function fmtElapsed(iso) {
+  if (!iso) return null;
+  const ms = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(ms / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h`;
+  return `${Math.floor(hrs / 24)}d`;
+}
+
+function stepProgress(task) {
+  const steps = task.loop_state?.steps;
+  if (!steps?.length) return null;
+  const done = steps.filter((s) => s.status === 'succeeded' || s.status === 'skipped').length;
+  return { done, total: steps.length };
+}
+
 // ── Task list item ────────────────────────────────────────────────────────
 
 function TaskListItem({ task, isSelected, onClick }) {
+  const progress = stepProgress(task);
+  const elapsed = fmtElapsed(task.created_at);
+
   return (
     <button
       onClick={onClick}
@@ -668,20 +704,78 @@ function TaskListItem({ task, isSelected, onClick }) {
         <div className="flex items-center gap-1.5 mt-1">
           <Badge label={STATUS_LABEL[task.status] || task.status} className={STATUS_STYLE[task.status] || ''} />
           <Badge label={task.priority} className={PRIORITY_STYLE[task.priority] || ''} />
-          {task.input_context?.execution_mode && (
-            <Badge
-              label={EXECUTION_MODE_LABEL[task.input_context.execution_mode] || task.input_context.execution_mode}
-              className={EXECUTION_MODE_STYLE[task.input_context.execution_mode] || ''}
-            />
-          )}
           {task.source_type === 'scheduled' && (
             <Badge label="auto" className="text-purple-600 bg-purple-50 dark:bg-purple-900/20" />
+          )}
+        </div>
+        {/* Step progress + elapsed */}
+        <div className="flex items-center gap-2 mt-1.5">
+          {progress && (
+            <div className="flex items-center gap-1">
+              <div className="flex gap-0.5">
+                {Array.from({ length: progress.total }, (_, i) => (
+                  <div
+                    key={i}
+                    className={`w-1.5 h-1.5 rounded-full ${i < progress.done ? 'bg-emerald-500' : 'bg-slate-200 dark:bg-slate-700'}`}
+                  />
+                ))}
+              </div>
+              <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                {progress.done}/{progress.total}
+              </span>
+            </div>
+          )}
+          {elapsed && (
+            <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+              {elapsed}
+            </span>
           )}
         </div>
       </div>
       {isSelected && <ChevronRight className="w-4 h-4 text-indigo-400 flex-shrink-0 mt-0.5" />}
     </button>
   );
+}
+
+// ── Grouped task list ────────────────────────────────────────────────────
+
+function GroupedTaskList({ tasks, selectedTaskId, onSelect, statusFilter }) {
+  // When a status filter is active, show flat list
+  if (statusFilter) {
+    return tasks.map((t) => (
+      <TaskListItem
+        key={t.id}
+        task={t}
+        isSelected={t.id === selectedTaskId}
+        onClick={() => onSelect(t.id)}
+      />
+    ));
+  }
+
+  return STATUS_GROUPS.map((group) => {
+    const groupTasks = tasks.filter((t) => group.statuses.includes(t.status));
+    if (groupTasks.length === 0) return null;
+    return (
+      <div key={group.key} className="mb-2">
+        <div className="flex items-center gap-1.5 px-3 pt-2 pb-1">
+          <span className={`text-[10px] font-semibold uppercase tracking-wider ${group.color}`}>
+            {group.label}
+          </span>
+          <span className="text-[10px] px-1 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800" style={{ color: 'var(--text-muted)' }}>
+            {groupTasks.length}
+          </span>
+        </div>
+        {groupTasks.map((t) => (
+          <TaskListItem
+            key={t.id}
+            task={t}
+            isSelected={t.id === selectedTaskId}
+            onClick={() => onSelect(t.id)}
+          />
+        ))}
+      </div>
+    );
+  });
 }
 
 // ── Worklog entry ─────────────────────────────────────────────────────────
@@ -708,25 +802,27 @@ function WorklogEntry({ entry }) {
 // ── Step progress bar (agent loop) ────────────────────────────────────────
 
 const STEP_STATUS_STYLE = {
-  pending:     'text-slate-500  bg-slate-100  dark:bg-slate-800',
-  running:     'text-blue-600   bg-blue-50    dark:bg-blue-900/20',
-  retrying:    'text-blue-600   bg-blue-50    dark:bg-blue-900/20',
-  succeeded:   'text-emerald-600 bg-emerald-50 dark:bg-emerald-900/20',
-  failed:      'text-red-600    bg-red-50     dark:bg-red-900/20',
-  blocked:     'text-red-600    bg-red-50     dark:bg-red-900/20',
-  review_hold: 'text-amber-600  bg-amber-50   dark:bg-amber-900/20',
-  skipped:     'text-slate-400  bg-slate-50   dark:bg-slate-800',
+  pending:       'text-slate-500  bg-slate-100  dark:bg-slate-800',
+  waiting_input: 'text-amber-600  bg-amber-50   dark:bg-amber-900/20',
+  running:       'text-blue-600   bg-blue-50    dark:bg-blue-900/20',
+  retrying:      'text-blue-600   bg-blue-50    dark:bg-blue-900/20',
+  succeeded:     'text-emerald-600 bg-emerald-50 dark:bg-emerald-900/20',
+  failed:        'text-red-600    bg-red-50     dark:bg-red-900/20',
+  blocked:       'text-red-600    bg-red-50     dark:bg-red-900/20',
+  review_hold:   'text-amber-600  bg-amber-50   dark:bg-amber-900/20',
+  skipped:       'text-slate-400  bg-slate-50   dark:bg-slate-800',
 };
 
 const STEP_STATUS_ICON = {
-  pending:     <Clock className="w-3 h-3" />,
-  running:     <Loader2 className="w-3 h-3 animate-spin" />,
-  retrying:    <Loader2 className="w-3 h-3 animate-spin" />,
-  succeeded:   <CheckCircle2 className="w-3 h-3" />,
-  failed:      <AlertTriangle className="w-3 h-3" />,
-  blocked:     <AlertTriangle className="w-3 h-3" />,
-  review_hold: <Clock className="w-3 h-3" />,
-  skipped:     null,
+  pending:       <Clock className="w-3 h-3" />,
+  waiting_input: <AlertTriangle className="w-3 h-3" />,
+  running:       <Loader2 className="w-3 h-3 animate-spin" />,
+  retrying:      <Loader2 className="w-3 h-3 animate-spin" />,
+  succeeded:     <CheckCircle2 className="w-3 h-3" />,
+  failed:        <AlertTriangle className="w-3 h-3" />,
+  blocked:       <AlertTriangle className="w-3 h-3" />,
+  review_hold:   <Clock className="w-3 h-3" />,
+  skipped:       null,
 };
 
 function StepProgressBar({ loopState }) {
@@ -770,6 +866,9 @@ function TaskDetail({ task, logs, onRun, running }) {
     ? 'Retry'
     : 'Run Now';
 
+  const progress = stepProgress(task);
+  const elapsed = fmtElapsed(task.created_at);
+
   return (
     <div className="flex flex-col gap-5 p-6 overflow-y-auto">
       {/* Title + badges */}
@@ -778,7 +877,7 @@ function TaskDetail({ task, logs, onRun, running }) {
           <h2 className="font-semibold text-base" style={{ color: 'var(--text-primary)' }}>{task.title}</h2>
           <Badge label={STATUS_LABEL[task.status] || task.status} className={`flex-shrink-0 ${STATUS_STYLE[task.status] || ''}`} />
         </div>
-        <div className="flex flex-wrap gap-1.5">
+        <div className="flex flex-wrap items-center gap-1.5">
           <Badge label={task.priority} className={PRIORITY_STYLE[task.priority] || ''} />
           {ctx.execution_mode && (
             <Badge
@@ -789,7 +888,26 @@ function TaskDetail({ task, logs, onRun, running }) {
           {(ctx.template_id || ctx.workflow_type) && (
             <Badge label={ctx.template_id || ctx.workflow_type} className="text-indigo-600 bg-indigo-50 dark:bg-indigo-900/20" />
           )}
+          {elapsed && (
+            <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+              Created {elapsed} ago
+            </span>
+          )}
         </div>
+        {/* Step progress summary */}
+        {progress && (
+          <div className="flex items-center gap-2 mt-3">
+            <div className="flex-1 h-1.5 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
+              <div
+                className="h-full rounded-full bg-emerald-500 transition-all"
+                style={{ width: `${(progress.done / progress.total) * 100}%` }}
+              />
+            </div>
+            <span className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>
+              {progress.done}/{progress.total} steps
+            </span>
+          </div>
+        )}
       </div>
 
       {/* Step progress bar (agent loop) */}
@@ -880,6 +998,8 @@ export default function EmployeeTasksPage() {
   const [schedules, setSchedules] = useState([]);
   const [showSchedules, setShowSchedules] = useState(false);
   const [showNewSchedule, setShowNewSchedule] = useState(false);
+  const [quickTaskInput, setQuickTaskInput] = useState('');
+  const [quickTaskLoading, setQuickTaskLoading] = useState(false);
 
   const selectedTask = tasks.find((t) => t.id === selectedTaskId) || null;
 
@@ -900,9 +1020,9 @@ export default function EmployeeTasksPage() {
     if (!user?.id) return;
     setLoading(true);
     try {
-      const emp = await aiEmployeeService.getOrCreateAiden(user.id);
+      const emp = await getOrCreateWorker(user.id);
       setEmployee(emp);
-      const rawTasks = await aiEmployeeService.listTasksByUser(user.id, { status: statusFilter || undefined });
+      const rawTasks = await listTasksByUser(user.id, { status: statusFilter || undefined });
       const ts = rawTasks.map((task) => hydrateTaskForBoard(task));
       setTasks(ts);
       if (ts.length > 0 && !selectedTaskId) setSelectedTaskId(ts[0].id);
@@ -973,7 +1093,7 @@ export default function EmployeeTasksPage() {
   // Load logs for selected task — use userId to query across all Aiden instances
   useEffect(() => {
     if (!selectedTask || !user?.id) { setLogs([]); return; }
-    aiEmployeeService.listWorklogs(employee?.id, { taskId: selectedTask.id, limit: 10, userId: user.id })
+    listWorklogs(employee?.id, { taskId: selectedTask.id, limit: 10, userId: user.id })
       .then(setLogs)
       .catch(() => setLogs([]));
   }, [selectedTask?.id, user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -992,6 +1112,31 @@ export default function EmployeeTasksPage() {
     } finally {
       setRunningId(null);
       await loadTasks();
+    }
+  }
+
+  async function handleQuickTask(e) {
+    e.preventDefault();
+    const msg = quickTaskInput.trim();
+    if (!msg || !employee?.id || !user?.id) return;
+
+    setQuickTaskLoading(true);
+    setRunError(null);
+    try {
+      const plan = await createPlan({
+        userMessage: msg,
+        employeeId: employee.id,
+        userId: user.id,
+      });
+      const { task } = await submitPlan(plan, employee.id, user.id);
+      const hydrated = hydrateTaskForBoard(task);
+      setTasks((prev) => [hydrated, ...prev]);
+      setSelectedTaskId(task.id);
+      setQuickTaskInput('');
+    } catch (err) {
+      setRunError(err?.message || 'Failed to create task from description.');
+    } finally {
+      setQuickTaskLoading(false);
     }
   }
 
@@ -1062,6 +1207,31 @@ export default function EmployeeTasksPage() {
         </div>
       </div>
 
+      {/* ── Quick Task bar ── */}
+      <form
+        onSubmit={handleQuickTask}
+        className="flex items-center gap-2 px-4 py-2 border-b"
+        style={{ backgroundColor: 'var(--surface-card)', borderColor: 'var(--border-default)' }}
+      >
+        <input
+          type="text"
+          value={quickTaskInput}
+          onChange={(e) => setQuickTaskInput(e.target.value)}
+          placeholder="Describe a task in plain language, e.g. &quot;Generate a weekly supply chain report from the latest dataset&quot;"
+          className="flex-1 px-3 py-1.5 rounded-lg border text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          style={{ borderColor: 'var(--border-default)', backgroundColor: 'var(--surface-bg)', color: 'var(--text-primary)' }}
+          disabled={quickTaskLoading || !employee?.id}
+        />
+        <button
+          type="submit"
+          disabled={quickTaskLoading || !quickTaskInput.trim() || !employee?.id}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+        >
+          {quickTaskLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+          {quickTaskLoading ? 'Planning...' : 'Quick Task'}
+        </button>
+      </form>
+
       <div className="flex flex-1 overflow-hidden">
         {/* ── Left: task list ── */}
         <aside
@@ -1099,14 +1269,12 @@ export default function EmployeeTasksPage() {
                 </button>
               </div>
             ) : (
-              tasks.map((t) => (
-                <TaskListItem
-                  key={t.id}
-                  task={t}
-                  isSelected={t.id === selectedTaskId}
-                  onClick={() => setSelectedTaskId(t.id)}
-                />
-              ))
+              <GroupedTaskList
+                tasks={tasks}
+                selectedTaskId={selectedTaskId}
+                onSelect={setSelectedTaskId}
+                statusFilter={statusFilter}
+              />
             )}
           </div>
         </aside>

@@ -14,6 +14,7 @@ const DATASET_REQUIRED_STEP_TYPES = new Set(['forecast', 'plan', 'risk']);
 
 function mapTemplateStep(templateId, step) {
   const review_checkpoint = Boolean(step.requires_review);
+  const requires_dataset = DATASET_REQUIRED_STEP_TYPES.has(step.workflow_type);
 
   switch (step.workflow_type) {
     case 'forecast':
@@ -22,6 +23,7 @@ function mapTemplateStep(templateId, step) {
         tool_hint: 'Run demand forecast from the selected dataset profile.',
         tool_type: 'builtin_tool',
         builtin_tool_id: 'run_forecast',
+        requires_dataset,
         review_checkpoint,
       };
 
@@ -34,6 +36,7 @@ function mapTemplateStep(templateId, step) {
         tool_type: 'builtin_tool',
         builtin_tool_id: templateId === 'risk_aware_plan' ? 'run_risk_aware_plan' : 'run_plan',
         input_args: templateId === 'risk_aware_plan' ? { riskMode: 'on' } : {},
+        requires_dataset,
         review_checkpoint,
       };
 
@@ -43,6 +46,7 @@ function mapTemplateStep(templateId, step) {
         tool_hint: 'Run supplier risk analysis from the selected dataset profile.',
         tool_type: 'builtin_tool',
         builtin_tool_id: 'run_risk_analysis',
+        requires_dataset,
         review_checkpoint,
       };
 
@@ -52,6 +56,7 @@ function mapTemplateStep(templateId, step) {
         tool_hint: 'Generate an executive-ready report from prior step artifacts.',
         tool_type: 'report',
         report_format: 'html',
+        requires_dataset: false,
         review_checkpoint,
       };
 
@@ -61,6 +66,7 @@ function mapTemplateStep(templateId, step) {
         tool_hint: step.name,
         tool_type: 'builtin_tool',
         builtin_tool_id: step.builtin_tool_id || null,
+        requires_dataset: false,
         review_checkpoint,
       };
 
@@ -69,6 +75,7 @@ function mapTemplateStep(templateId, step) {
         name: step.name,
         tool_hint: 'Generate an Excel workbook from the accumulated step artifacts.',
         tool_type: 'excel',
+        requires_dataset: false,
         review_checkpoint,
       };
 
@@ -105,7 +112,9 @@ async function resolveDatasetProfileContext({
   }
 
   if (!resolvedRow) {
-    throw new Error('A dataset profile is required for this task source, but none was provided or found.');
+    // Dataset not available yet — task can still be created.
+    // Steps that need data will pause in waiting_input state until a dataset is attached.
+    return { datasetProfileId: null, datasetProfileRow: null };
   }
 
   return {

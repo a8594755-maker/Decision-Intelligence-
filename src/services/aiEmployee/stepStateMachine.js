@@ -1,33 +1,42 @@
 /**
  * stepStateMachine.js — Pure state transition functions for agent loop steps.
  *
- * Step States (6):
+ * Step States (7):
  *   pending → running → succeeded
  *                    → failed → retrying → succeeded | failed
  *                    → skipped
+ *   pending → waiting_input → pending (when input received)
  */
 
 export const STEP_STATES = Object.freeze({
-  PENDING:   'pending',
-  RUNNING:   'running',
-  SUCCEEDED: 'succeeded',
-  FAILED:    'failed',
-  RETRYING:  'retrying',
-  SKIPPED:   'skipped',
+  PENDING:       'pending',
+  WAITING_INPUT: 'waiting_input',
+  RUNNING:       'running',
+  SUCCEEDED:     'succeeded',
+  FAILED:        'failed',
+  RETRYING:      'retrying',
+  SKIPPED:       'skipped',
 });
 
 export const STEP_EVENTS = Object.freeze({
-  START:    'start',
-  SUCCEED:  'succeed',
-  FAIL:     'fail',
-  RETRY:    'retry',
-  SKIP:     'skip',
+  START:          'start',
+  SUCCEED:        'succeed',
+  FAIL:           'fail',
+  RETRY:          'retry',
+  SKIP:           'skip',
+  NEED_INPUT:     'need_input',
+  INPUT_RECEIVED: 'input_received',
 });
 
 const TRANSITIONS = {
   [STEP_STATES.PENDING]: {
-    [STEP_EVENTS.START]: STEP_STATES.RUNNING,
-    [STEP_EVENTS.SKIP]:  STEP_STATES.SKIPPED,
+    [STEP_EVENTS.START]:      STEP_STATES.RUNNING,
+    [STEP_EVENTS.SKIP]:       STEP_STATES.SKIPPED,
+    [STEP_EVENTS.NEED_INPUT]: STEP_STATES.WAITING_INPUT,
+  },
+  [STEP_STATES.WAITING_INPUT]: {
+    [STEP_EVENTS.INPUT_RECEIVED]: STEP_STATES.PENDING,
+    [STEP_EVENTS.SKIP]:           STEP_STATES.SKIPPED,
   },
   [STEP_STATES.RUNNING]: {
     [STEP_EVENTS.SUCCEED]: STEP_STATES.SUCCEEDED,
@@ -80,4 +89,8 @@ export function isStepTerminal(state) {
 
 export function isStepFailed(state) {
   return state === STEP_STATES.FAILED;
+}
+
+export function isStepWaitingInput(state) {
+  return state === STEP_STATES.WAITING_INPUT;
 }

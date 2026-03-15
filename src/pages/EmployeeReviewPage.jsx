@@ -9,11 +9,12 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
   RefreshCw, CheckCircle2, XCircle, RotateCcw, AlertTriangle,
-  Clock, Loader2, FileText, Eye,
-  BarChart3, Table2, Shield, Zap, Paperclip,
+  Clock, Loader2, FileText, Eye, Bot,
+  BarChart3, Table2, Shield, Zap, Paperclip, GitCompare,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
-import * as aiEmployeeService from '../services/aiEmployeeService';
+import { listPendingReviews, createReview } from '../services/aiEmployee/queries.js';
+import { appendWorklog } from '../services/aiEmployee/persistence/worklogRepo.js';
 import { attachFeedback } from '../services/aiEmployeeMemoryService';
 import { resolveReviewDecision } from '../services/aiEmployee/index.js';
 import { buildDeliverablePreview } from '../services/aiEmployee/deliverableProfile.js';
@@ -200,6 +201,68 @@ function EvidenceArtifactGrid({ artifactRefs }) {
   );
 }
 
+function StepTracker({ loopState }) {
+  const steps = loopState?.steps;
+  if (!steps?.length) return null;
+
+  const statusColor = {
+    succeeded: 'bg-emerald-500 border-emerald-200',
+    done: 'bg-emerald-500 border-emerald-200',
+    running: 'bg-blue-500 border-blue-200 animate-pulse',
+    failed: 'bg-red-500 border-red-200',
+    review_hold: 'bg-amber-500 border-amber-200',
+    waiting_input: 'bg-amber-500 border-amber-200',
+    pending: 'bg-slate-300 border-slate-200',
+    skipped: 'bg-slate-200 border-slate-100',
+  };
+
+  return (
+    <div className="flex items-center gap-1 py-2">
+      {steps.map((step, i) => (
+        <div key={step.name || i} className="flex items-center">
+          {i > 0 && <div className="w-4 h-px mx-0.5" style={{ backgroundColor: 'var(--border-default)' }} />}
+          <div className="flex items-center gap-1" title={`${step.name}: ${step.status}`}>
+            <div className={`w-2.5 h-2.5 rounded-full border-2 ${statusColor[step.status] || statusColor.pending}`} />
+            <span className="text-[10px] capitalize" style={{ color: 'var(--text-muted)' }}>{step.name}</span>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function RevisionDiffView({ runs }) {
+  if (!runs || runs.length < 2) return null;
+
+  const current = runs[0];
+  const previous = runs[1];
+  const currentSummary = current?.summary || 'No summary';
+  const previousSummary = previous?.summary || 'No summary';
+
+  if (currentSummary === previousSummary) return null;
+
+  return (
+    <div className="p-4 rounded-2xl border" style={{ borderColor: 'var(--border-default)', backgroundColor: 'var(--surface-card)' }}>
+      <div className="flex items-center gap-2 mb-3">
+        <GitCompare className="w-4 h-4 text-indigo-500" />
+        <h4 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+          Revision Comparison
+        </h4>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <div className="p-3 rounded-xl" style={{ backgroundColor: 'rgba(239, 68, 68, 0.05)' }}>
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-red-500 mb-1">Previous</p>
+          <p className="text-xs leading-5" style={{ color: 'var(--text-secondary)' }}>{previousSummary}</p>
+        </div>
+        <div className="p-3 rounded-xl" style={{ backgroundColor: 'rgba(16, 185, 129, 0.05)' }}>
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-emerald-500 mb-1">Current</p>
+          <p className="text-xs leading-5" style={{ color: 'var(--text-secondary)' }}>{currentSummary}</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function DeliverableViewer({ item }) {
   const [activeTab, setActiveTab] = useState('deliverable');
 
@@ -259,6 +322,13 @@ function DeliverableViewer({ item }) {
 
       <StatusBanner latestRun={latestRun} />
 
+      {/* Step tracker */}
+      {item.loop_state && (
+        <div className="px-5 border-b" style={{ borderColor: 'var(--border-default)' }}>
+          <StepTracker loopState={item.loop_state} />
+        </div>
+      )}
+
       <div className="px-5 pt-4 pb-2 border-b flex items-center gap-2" style={{ borderColor: 'var(--border-default)' }}>
         {[
           { key: 'deliverable', label: 'Deliverable' },
@@ -284,6 +354,9 @@ function DeliverableViewer({ item }) {
       <div className="flex-1 overflow-y-auto p-5">
         {activeTab === 'deliverable' ? (
           <div className="space-y-4">
+            {/* Revision diff (shown when task has multiple runs) */}
+            <RevisionDiffView runs={item.ai_employee_runs} />
+
             <section className="p-5 rounded-2xl border" style={{ borderColor: 'var(--border-default)', backgroundColor: 'var(--surface-card)' }}>
               <div className="flex items-start gap-4">
                 <div className="w-11 h-11 rounded-2xl flex items-center justify-center border" style={{ borderColor: 'var(--border-default)', backgroundColor: 'var(--surface-subtle)' }}>
@@ -571,6 +644,8 @@ function QueueItem({ item, isSelected, onClick }) {
   const latestRun = runs[0];
   const steps = item.loop_state?.steps || [];
   const retries = steps.reduce((n, s) => n + (s.retry_count || 0), 0);
+  const workerName = item.ai_employees?.name || null;
+  const revisionCount = runs.length > 1 ? runs.length - 1 : 0;
 
   return (
     <button
@@ -584,6 +659,12 @@ function QueueItem({ item, isSelected, onClick }) {
       <p className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
         {item.title}
       </p>
+      {workerName && (
+        <div className="flex items-center gap-1 mt-1">
+          <Bot className="w-3 h-3 text-indigo-400" />
+          <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{workerName}</span>
+        </div>
+      )}
       <div className="flex items-center gap-1.5 mt-1.5">
         <span className="text-xs px-1.5 py-0.5 rounded-full text-indigo-600 bg-indigo-50 dark:bg-indigo-900/20 capitalize font-medium">
           {item.input_context?.workflow_type || 'task'}
@@ -591,6 +672,11 @@ function QueueItem({ item, isSelected, onClick }) {
         {retries > 0 && (
           <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">
             {retries} self-fix
+          </span>
+        )}
+        {revisionCount > 0 && (
+          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-violet-100 text-violet-700 font-medium">
+            rev {revisionCount}
           </span>
         )}
       </div>
@@ -620,7 +706,7 @@ export default function EmployeeReviewPage() {
     if (!user?.id) return;
     setLoading(true);
     try {
-      const pending = await aiEmployeeService.listPendingReviews(user.id);
+      const pending = await listPendingReviews(user.id);
       setItems(pending);
       if (pending.length === 0) {
         setSelectedId(null);
@@ -643,10 +729,10 @@ export default function EmployeeReviewPage() {
     if (!user?.id) return;
     setDeciding(decision);
     try {
-      const review = await aiEmployeeService.createReview(item.id, run?.id || null, {
+      const review = await createReview(item.id, run?.id || null, {
         decision,
         comments: comment || null,
-        created_by: user.id,
+        createdBy: user.id,
       });
 
       try { await attachFeedback(item.id, decision, comment || null); }
@@ -663,7 +749,7 @@ export default function EmployeeReviewPage() {
       });
 
       if (empId) {
-        await aiEmployeeService.appendWorklog(empId, item.id, run?.id || null, 'task_update', {
+        await appendWorklog(empId, item.id, run?.id || null, 'task_update', {
           previous_status: resolution.previousStatus || item.status || 'waiting_review',
           new_status: resolution.nextStatus,
           note: comment || `Manager ${decision}.`,

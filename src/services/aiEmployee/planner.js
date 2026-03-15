@@ -8,6 +8,12 @@
 import { decomposeTask } from '../chatTaskDecomposer.js';
 import { findToolsByQuery, BUILTIN_TOOLS } from '../builtinToolCatalog.js';
 
+// Tool types that require a dataset to execute
+const DATASET_REQUIRED_TOOL_IDS = new Set([
+  'run_forecast', 'run_plan', 'run_risk_analysis', 'run_risk_aware_plan',
+  'run_data_quality', 'run_scenario_analysis',
+]);
+
 /**
  * @typedef {object} TaskPlan
  * @property {string} title
@@ -62,6 +68,7 @@ export async function createPlan({ userMessage, sessionContext, employeeId, user
       tool_hint: raw.tool_hint || raw.description || raw.name,
       tool_type: toolType,
       builtin_tool_id: raw.builtin_tool_id || null,
+      requires_dataset: raw.requires_dataset ?? DATASET_REQUIRED_TOOL_IDS.has(raw.builtin_tool_id),
       review_checkpoint: raw.review_checkpoint || false,
       report_format: raw.report_format || null,
       opencloud_action: raw.opencloud_action || null,

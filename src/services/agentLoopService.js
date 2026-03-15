@@ -1,8 +1,13 @@
 // @product: ai-employee
 //
+// @deprecated — Use src/services/aiEmployee/orchestrator.js instead.
+// All capabilities (tick loop, review hold, AI review, self-healing, SSE,
+// memory recall, budget check, worklog) have been ported to the orchestrator.
+// This file is kept only for backward compatibility during transition.
+//
 // agentLoopService.js
 // ─────────────────────────────────────────────────────────────────────────────
-// Core agent loop engine for multi-step task execution.
+// LEGACY agent loop engine for multi-step task execution.
 //
 // Pull-based tick model: each call to `tickAgentLoop` advances exactly one
 // step, persists progress to loop_state, and returns. This avoids long-running

@@ -1,13 +1,14 @@
 // @product: ai-employee
 //
+// @deprecated — Use src/services/aiEmployee/queries.js for reads and
+// src/services/aiEmployee/orchestrator.js for mutations.
+// This file is kept for backward compatibility with internal services
+// (agentLoopService, aiEmployeeExecutor, dailySummaryService) that still import it.
+// It will be removed once all consumers are migrated.
+//
 // aiEmployeeService.js
 // ─────────────────────────────────────────────────────────────────────────────
-// Data layer for the AI Employee product surface.
-// All five tables + KPI view are accessed here; nothing else touches Supabase
-// for this product.
-//
-// Follows the trySupabase + localStorage fallback pattern from
-// negotiationPersistenceService.js so the UI works without Supabase configured.
+// LEGACY Data layer for the AI Employee product surface.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { supabase } from './supabaseClient';

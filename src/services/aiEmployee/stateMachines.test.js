@@ -4,7 +4,7 @@ import {
   TASK_STATES, TASK_EVENTS,
 } from './taskStateMachine.js';
 import {
-  stepTransition, canStepTransition, isStepTerminal, isStepFailed,
+  stepTransition, canStepTransition, isStepTerminal, isStepFailed, isStepWaitingInput,
   STEP_STATES, STEP_EVENTS,
 } from './stepStateMachine.js';
 import {
@@ -128,6 +128,28 @@ describe('stepStateMachine', () => {
   it('retry can also fail again', () => {
     const state = stepTransition(STEP_STATES.RETRYING, STEP_EVENTS.FAIL);
     expect(state).toBe(STEP_STATES.FAILED);
+  });
+
+  it('waiting_input flow: pending → waiting_input → pending → running → succeeded', () => {
+    let state = STEP_STATES.PENDING;
+    state = stepTransition(state, STEP_EVENTS.NEED_INPUT);
+    expect(state).toBe(STEP_STATES.WAITING_INPUT);
+    expect(isStepWaitingInput(state)).toBe(true);
+    expect(isStepTerminal(state)).toBe(false);
+
+    state = stepTransition(state, STEP_EVENTS.INPUT_RECEIVED);
+    expect(state).toBe(STEP_STATES.PENDING);
+
+    state = stepTransition(state, STEP_EVENTS.START);
+    expect(state).toBe(STEP_STATES.RUNNING);
+
+    state = stepTransition(state, STEP_EVENTS.SUCCEED);
+    expect(state).toBe(STEP_STATES.SUCCEEDED);
+  });
+
+  it('waiting_input can be skipped', () => {
+    const state = stepTransition(STEP_STATES.WAITING_INPUT, STEP_EVENTS.SKIP);
+    expect(state).toBe(STEP_STATES.SKIPPED);
   });
 
   it('throws on invalid', () => {

@@ -1,12 +1,18 @@
 // @product: ai-employee
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Bot, CheckCircle2, Clock, AlertTriangle, BarChart3, ChevronRight, Plus, FileText, DollarSign } from 'lucide-react';
-import { Card } from '../components/ui';
+import { Bot, CheckCircle2, Clock, AlertTriangle, BarChart3, ChevronRight, Plus, FileText, DollarSign, ShieldCheck } from 'lucide-react';
+import { Card, Modal } from '../components/ui';
 import { useAuth } from '../contexts/AuthContext';
-import * as aiEmployeeService from '../services/aiEmployeeService';
+import { getOrCreateWorker, listEmployeesByManager, getKpis, WORKER_TEMPLATES } from '../services/aiEmployee/queries.js';
 import { getLatestSummary } from '../services/dailySummaryService';
 import { getEmployeeCostSummary } from '../services/modelRoutingService';
+
+const TEMPLATE_ICON = {
+  'bar-chart': BarChart3,
+  'file-text': FileText,
+  'shield-check': ShieldCheck,
+};
 
 // ── Status badge ──────────────────────────────────────────────────────────
 
@@ -44,14 +50,18 @@ function KpiTile({ label, value, icon: Icon, color = 'text-slate-700 dark:text-s
 
 // ── Employee card ─────────────────────────────────────────────────────────
 
-function EmployeeCard({ employee, kpis, onViewTasks }) {
+function EmployeeCard({ employee, kpis, cost, onViewTasks }) {
+  // Resolve icon from template
+  const templateEntry = Object.values(WORKER_TEMPLATES).find((t) => t.role === employee.role);
+  const IconComp = (templateEntry && TEMPLATE_ICON[templateEntry.icon]) || Bot;
+
   return (
     <Card variant="elevated" className="p-6 flex flex-col gap-5">
       {/* Header */}
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-full bg-indigo-100 dark:bg-indigo-900/30 flex items-center justify-center flex-shrink-0">
-            <Bot className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
+            <IconComp className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
           </div>
           <div>
             <p className="font-semibold text-sm" style={{ color: 'var(--text-primary)' }}>
@@ -73,7 +83,7 @@ function EmployeeCard({ employee, kpis, onViewTasks }) {
       )}
 
       {/* KPI grid */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 pt-2 border-t" style={{ borderColor: 'var(--border-default)' }}>
+      <div className="grid grid-cols-3 sm:grid-cols-5 gap-4 pt-2 border-t" style={{ borderColor: 'var(--border-default)' }}>
         <KpiTile
           label="Tasks Done"
           value={kpis?.tasks_completed ?? 0}
@@ -98,6 +108,12 @@ function EmployeeCard({ employee, kpis, onViewTasks }) {
           icon={AlertTriangle}
           color="text-amber-600"
         />
+        <KpiTile
+          label="Cost"
+          value={cost?.total_cost != null ? `$${cost.total_cost.toFixed(2)}` : '—'}
+          icon={DollarSign}
+          color="text-slate-600"
+        />
       </div>
 
       {/* Footer actions */}
@@ -114,49 +130,209 @@ function EmployeeCard({ employee, kpis, onViewTasks }) {
   );
 }
 
+// ── Create Worker Modal ───────────────────────────────────────────────────
+
+function CreateWorkerModal({ onClose, onCreated, existingRoles }) {
+  const templateEntries = Object.entries(WORKER_TEMPLATES).filter(
+    ([, tmpl]) => !existingRoles.includes(tmpl.role)
+  );
+
+  if (templateEntries.length === 0) {
+    return (
+      <Modal isOpen onClose={onClose} title="Create Worker">
+        <div className="p-6 text-center">
+          <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
+            All available worker types have already been created.
+          </p>
+          <button
+            onClick={onClose}
+            className="mt-4 px-4 py-2 rounded-lg text-sm border transition-colors hover:bg-[var(--surface-subtle)]"
+            style={{ borderColor: 'var(--border-default)', color: 'var(--text-secondary)' }}
+          >
+            Close
+          </button>
+        </div>
+      </Modal>
+    );
+  }
+
+  return (
+    <Modal isOpen onClose={onClose} title="Create Worker">
+      <div className="p-4 space-y-3">
+        <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+          Choose a worker template. Each worker type can only be created once.
+        </p>
+        {templateEntries.map(([templateId, tmpl]) => {
+          const IconComp = TEMPLATE_ICON[tmpl.icon] || Bot;
+          return (
+            <button
+              key={templateId}
+              onClick={() => onCreated(templateId)}
+              className="w-full flex items-start gap-3 p-4 rounded-lg border text-left transition-colors hover:bg-[var(--surface-subtle)]"
+              style={{ borderColor: 'var(--border-default)' }}
+            >
+              <div className="w-10 h-10 rounded-full bg-indigo-100 dark:bg-indigo-900/30 flex items-center justify-center flex-shrink-0">
+                <IconComp className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+                  {tmpl.name}
+                </p>
+                <p className="text-xs capitalize" style={{ color: 'var(--text-muted)' }}>
+                  {tmpl.role.replace(/_/g, ' ')}
+                </p>
+                <p className="text-xs mt-1" style={{ color: 'var(--text-secondary)' }}>
+                  {tmpl.description}
+                </p>
+                <div className="flex flex-wrap gap-1 mt-2">
+                  {tmpl.capabilities.map((cap) => (
+                    <span
+                      key={cap}
+                      className="px-1.5 py-0.5 text-[10px] rounded bg-indigo-50 text-indigo-600 dark:bg-indigo-900/20"
+                    >
+                      {cap}
+                    </span>
+                  ))}
+                </div>
+              </div>
+              <ChevronRight className="w-4 h-4 flex-shrink-0 mt-3" style={{ color: 'var(--text-muted)' }} />
+            </button>
+          );
+        })}
+      </div>
+    </Modal>
+  );
+}
+
+// ── Team Performance Summary ─────────────────────────────────────────────
+
+function TeamPerformanceSummary({ workers, kpisMap, costsMap }) {
+  if (workers.length === 0) return null;
+
+  // Aggregate KPIs across all workers
+  let totalCompleted = 0;
+  let totalOpen = 0;
+  let onTimeSum = 0;
+  let onTimeCount = 0;
+  let reviewPassSum = 0;
+  let reviewPassCount = 0;
+  let totalCost = 0;
+
+  for (const w of workers) {
+    const k = kpisMap[w.id];
+    if (k) {
+      totalCompleted += k.tasks_completed ?? 0;
+      totalOpen += k.tasks_open ?? 0;
+      if (k.on_time_rate_pct != null) { onTimeSum += k.on_time_rate_pct; onTimeCount++; }
+      if (k.review_pass_rate_pct != null) { reviewPassSum += k.review_pass_rate_pct; reviewPassCount++; }
+    }
+    const c = costsMap[w.id];
+    if (c?.total_cost) totalCost += c.total_cost;
+  }
+
+  const avgOnTime = onTimeCount ? Math.round(onTimeSum / onTimeCount) : null;
+  const avgReviewPass = reviewPassCount ? Math.round(reviewPassSum / reviewPassCount) : null;
+  const costPerTask = totalCompleted > 0 ? (totalCost / totalCompleted).toFixed(2) : null;
+
+  const tiles = [
+    { label: 'Total Completed', value: totalCompleted, icon: CheckCircle2, color: 'text-emerald-600' },
+    { label: 'Open Tasks', value: totalOpen, icon: Clock, color: 'text-blue-600' },
+    { label: 'Avg On-Time %', value: avgOnTime != null ? `${avgOnTime}%` : '—', icon: BarChart3, color: 'text-indigo-600' },
+    { label: 'Avg Review Pass %', value: avgReviewPass != null ? `${avgReviewPass}%` : '—', icon: AlertTriangle, color: 'text-amber-600' },
+    { label: 'Total Cost', value: totalCost > 0 ? `$${totalCost.toFixed(2)}` : '—', icon: DollarSign, color: 'text-slate-600' },
+    { label: 'Cost / Task', value: costPerTask ? `$${costPerTask}` : '—', icon: DollarSign, color: 'text-slate-600' },
+  ];
+
+  return (
+    <Card variant="elevated" className="p-5 mb-4">
+      <p className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: 'var(--text-muted)' }}>
+        Team Performance
+      </p>
+      <div className="grid grid-cols-3 sm:grid-cols-6 gap-4">
+        {tiles.map((t) => (
+          <KpiTile key={t.label} label={t.label} value={t.value} icon={t.icon} color={t.color} />
+        ))}
+      </div>
+    </Card>
+  );
+}
+
 // ── Page ──────────────────────────────────────────────────────────────────
 
 export default function EmployeesPage() {
   const { user } = useAuth();
   const navigate = useNavigate();
 
-  const [employee, setEmployee] = useState(null);
-  const [kpis, setKpis] = useState(null);
-  const [dailySummary, setDailySummary] = useState(null);
-  const [costData, setCostData] = useState(null);
+  const [workers, setWorkers] = useState([]);
+  const [kpisMap, setKpisMap] = useState({});
+  const [costsMap, setCostsMap] = useState({});
   const [loading, setLoading] = useState(true);
+  const [showCreate, setShowCreate] = useState(false);
+  const [creating, setCreating] = useState(false);
 
-  useEffect(() => {
+  const loadWorkers = useCallback(async () => {
     if (!user?.id) return;
-    let cancelled = false;
+    setLoading(true);
+    try {
+      let emps = await listEmployeesByManager(user.id);
 
-    async function load() {
-      setLoading(true);
-      try {
-        const emp = await aiEmployeeService.getOrCreateAiden(user.id);
-        if (cancelled) return;
-        setEmployee(emp);
-
-        const k = await aiEmployeeService.getKpis(emp.id);
-        if (!cancelled) setKpis(k);
-
-        // Phase 3: daily summary + cost (best-effort)
-        try {
-          const summary = await getLatestSummary(emp.id);
-          if (!cancelled) setDailySummary(summary);
-        } catch { /* */ }
-        try {
-          const cost = await getEmployeeCostSummary(emp.id, { days: 7 });
-          if (!cancelled) setCostData(cost);
-        } catch { /* */ }
-      } finally {
-        if (!cancelled) setLoading(false);
+      // Auto-create default Aiden if no workers exist
+      if (emps.length === 0) {
+        await getOrCreateWorker(user.id);
+        emps = await listEmployeesByManager(user.id);
       }
-    }
 
-    load();
-    return () => { cancelled = true; };
+      setWorkers(emps);
+
+      // Load KPIs + costs for each worker (best-effort, parallel)
+      const [kpiResults, costResults] = await Promise.all([
+        Promise.all(
+          emps.map(async (emp) => {
+            try {
+              return { id: emp.id, kpis: await getKpis(emp.id) };
+            } catch {
+              return { id: emp.id, kpis: null };
+            }
+          })
+        ),
+        Promise.all(
+          emps.map(async (emp) => {
+            try {
+              return { id: emp.id, cost: await getEmployeeCostSummary(emp.id) };
+            } catch {
+              return { id: emp.id, cost: null };
+            }
+          })
+        ),
+      ]);
+
+      const kMap = {};
+      for (const r of kpiResults) kMap[r.id] = r.kpis;
+      setKpisMap(kMap);
+
+      const cMap = {};
+      for (const r of costResults) cMap[r.id] = r.cost;
+      setCostsMap(cMap);
+    } finally {
+      setLoading(false);
+    }
   }, [user?.id]);
+
+  useEffect(() => { loadWorkers(); }, [loadWorkers]);
+
+  async function handleCreateWorker(templateId) {
+    if (!user?.id || creating) return;
+    setCreating(true);
+    try {
+      await getOrCreateWorker(user.id, templateId);
+      setShowCreate(false);
+      await loadWorkers();
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  const existingRoles = workers.map((w) => w.role);
 
   return (
     <div className="h-full flex flex-col" style={{ backgroundColor: 'var(--surface-bg)' }}>
@@ -168,16 +344,31 @@ export default function EmployeesPage() {
         <div className="flex items-center gap-2.5">
           <Bot className="w-5 h-5 text-indigo-600" />
           <span className="font-semibold text-sm" style={{ color: 'var(--text-primary)' }}>
-            AI Employees
+            Digital Workers
           </span>
+          {workers.length > 0 && (
+            <span className="text-xs px-1.5 py-0.5 rounded-full bg-indigo-50 text-indigo-600 dark:bg-indigo-900/20">
+              {workers.length}
+            </span>
+          )}
         </div>
-        <button
-          onClick={() => navigate('/employees/tasks')}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-indigo-600 text-white hover:bg-indigo-700 transition-colors"
-        >
-          <Plus className="w-3.5 h-3.5" />
-          New Task
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => navigate('/employees/tasks')}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors hover:bg-[var(--surface-subtle)]"
+            style={{ borderColor: 'var(--border-default)', color: 'var(--text-secondary)' }}
+          >
+            <Clock className="w-3.5 h-3.5" />
+            Task Board
+          </button>
+          <button
+            onClick={() => setShowCreate(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-indigo-600 text-white hover:bg-indigo-700 transition-colors"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            Create Worker
+          </button>
+        </div>
       </div>
 
       {/* ── Content ── */}
@@ -186,66 +377,23 @@ export default function EmployeesPage() {
           <div className="flex items-center justify-center h-32">
             <div className="w-6 h-6 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
           </div>
-        ) : employee ? (
-          <div className="max-w-2xl">
-            <EmployeeCard
-              employee={employee}
-              kpis={kpis}
-              onViewTasks={() => navigate('/employees/tasks')}
-            />
+        ) : workers.length > 0 ? (
+          <div className="max-w-3xl space-y-4">
+            {/* Team-level performance summary */}
+            <TeamPerformanceSummary workers={workers} kpisMap={kpisMap} costsMap={costsMap} />
 
-            {/* Daily Summary + Cost cards */}
-            <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {/* Daily Summary */}
-              <Card variant="elevated" className="p-4">
-                <div className="flex items-center gap-2 mb-3">
-                  <FileText className="w-4 h-4 text-blue-500" />
-                  <span className="text-xs font-medium" style={{ color: 'var(--text-primary)' }}>Daily Summary</span>
-                </div>
-                {dailySummary ? (
-                  <div className="space-y-1.5 text-xs" style={{ color: 'var(--text-secondary)' }}>
-                    <p>{dailySummary.tasks_completed ?? 0} completed, {dailySummary.tasks_failed ?? 0} failed, {dailySummary.tasks_in_progress ?? 0} in progress</p>
-                    {dailySummary.highlights?.map((h, i) => (
-                      <p key={i} className="text-emerald-600">{h}</p>
-                    ))}
-                    {dailySummary.issues?.map((issue, i) => (
-                      <p key={i} className="text-red-600">{issue}</p>
-                    ))}
-                    <p className="pt-1" style={{ color: 'var(--text-muted)' }}>
-                      {dailySummary.date}
-                    </p>
-                  </div>
-                ) : (
-                  <p className="text-xs" style={{ color: 'var(--text-muted)' }}>No summary available yet.</p>
-                )}
-              </Card>
-
-              {/* 7-Day Cost */}
-              <Card variant="elevated" className="p-4">
-                <div className="flex items-center gap-2 mb-3">
-                  <DollarSign className="w-4 h-4 text-emerald-500" />
-                  <span className="text-xs font-medium" style={{ color: 'var(--text-primary)' }}>7-Day Cost</span>
-                </div>
-                {costData ? (
-                  <div className="space-y-1.5 text-xs" style={{ color: 'var(--text-secondary)' }}>
-                    <p className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>
-                      ${costData.total_cost?.toFixed(4) ?? '0.0000'}
-                    </p>
-                    <p>{costData.total_calls ?? 0} model calls</p>
-                    {costData.by_tier && Object.entries(costData.by_tier).map(([tier, data]) => (
-                      <p key={tier}>
-                        {tier}: ${data.cost?.toFixed(4)} ({data.calls} calls)
-                      </p>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-xs" style={{ color: 'var(--text-muted)' }}>No cost data yet.</p>
-                )}
-              </Card>
-            </div>
+            {workers.map((emp) => (
+              <EmployeeCard
+                key={emp.id}
+                employee={emp}
+                kpis={kpisMap[emp.id]}
+                cost={costsMap[emp.id]}
+                onViewTasks={() => navigate('/employees/tasks')}
+              />
+            ))}
 
             {/* Quick links */}
-            <div className="mt-4 grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-2 gap-3 pt-2">
               <button
                 onClick={() => navigate('/employees/tasks')}
                 className="flex items-center gap-2 p-4 rounded-lg border text-sm font-medium transition-colors hover:bg-[var(--surface-subtle)]"
@@ -261,20 +409,34 @@ export default function EmployeesPage() {
               >
                 <CheckCircle2 className="w-4 h-4 text-amber-500" />
                 Review Queue
-                {(kpis?.tasks_open ?? 0) > 0 && (
-                  <span className="ml-auto px-1.5 py-0.5 text-xs rounded-full bg-amber-100 text-amber-700 font-medium">
-                    {kpis.tasks_open}
-                  </span>
-                )}
               </button>
             </div>
           </div>
         ) : (
-          <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
-            No AI employees found.
-          </p>
+          <div className="flex flex-col items-center justify-center h-48 gap-4">
+            <Bot className="w-12 h-12 text-indigo-300" />
+            <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
+              No digital workers yet. Create your first one.
+            </p>
+            <button
+              onClick={() => setShowCreate(true)}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700 transition-colors"
+            >
+              <Plus className="w-4 h-4" />
+              Create Worker
+            </button>
+          </div>
         )}
       </div>
+
+      {/* ── Create Worker Modal ── */}
+      {showCreate && (
+        <CreateWorkerModal
+          onClose={() => setShowCreate(false)}
+          onCreated={handleCreateWorker}
+          existingRoles={existingRoles}
+        />
+      )}
     </div>
   );
 }

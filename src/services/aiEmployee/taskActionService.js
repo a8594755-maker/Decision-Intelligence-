@@ -1,16 +1,9 @@
-import * as aiEmployeeService from '../aiEmployeeService.js';
-import { approvePlan, approveReview, retryTask } from './orchestrator.js';
+import { approvePlan, approveReview, retryTask, cancelTask } from './orchestrator.js';
+import * as taskRepo from './persistence/taskRepo.js';
+import * as employeeRepo from './persistence/employeeRepo.js';
 import { callLLM } from '../aiEmployeeLLMService.js';
 import { buildDeliverablePreview } from './deliverableProfile.js';
 import { maybeCreateOutputProfileProposalFromReview } from './styleLearning/reviewProposalService.js';
-
-function isOrchestratorTask(task) {
-  return Boolean(task?.plan_snapshot?.steps?.length);
-}
-
-async function importLegacyLoopActions() {
-  return import('../agentLoopService.js');
-}
 
 function buildReviewLlmFn(task, runId = null) {
   return async (prompt) => {
@@ -32,33 +25,41 @@ function buildReviewLlmFn(task, runId = null) {
   };
 }
 
+/**
+ * Run a task from the task board.
+ * All tasks now go through the orchestrator.
+ */
 export async function runTask(task, userId) {
-  if (!task?.id) {
-    throw new Error('Task is required.');
-  }
-  if (!userId) {
-    throw new Error('userId is required.');
-  }
+  if (!task?.id) throw new Error('Task is required.');
+  if (!userId) throw new Error('userId is required.');
 
-  if (isOrchestratorTask(task)) {
-    if (task.status === 'waiting_approval') {
-      await approvePlan(task.id, userId);
-      return { nextStatus: 'queued' };
-    }
-
-    if (task.status === 'failed') {
-      await retryTask(task.id, userId);
-      return { nextStatus: 'queued' };
-    }
-
-    throw new Error(`Task status "${task.status}" cannot be run from the task board.`);
+  if (task.status === 'waiting_approval') {
+    await approvePlan(task.id, userId);
+    return { nextStatus: 'queued' };
   }
 
-  const { executeTaskWithLoop } = await import('../aiEmployeeExecutor.js');
-  await executeTaskWithLoop(task, userId);
-  return { nextStatus: 'in_progress' };
+  if (task.status === 'failed') {
+    await retryTask(task.id, userId);
+    return { nextStatus: 'queued' };
+  }
+
+  // Legacy tasks in 'todo' status: they don't have plan_snapshot,
+  // so they cannot be run through the orchestrator. Show a clear error.
+  if (task.status === 'todo' && !task.plan_snapshot?.steps?.length) {
+    throw new Error(
+      'This task was created with the legacy system and cannot be executed. ' +
+      'Please create a new task from the task board.',
+    );
+  }
+
+  throw new Error(`Task status "${task.status}" cannot be run from the task board.`);
 }
 
+/**
+ * Resolve a manager review decision.
+ * Unified to always go through the orchestrator for review_hold tasks.
+ * Falls back to direct DB updates for legacy waiting_review tasks.
+ */
 export async function resolveReviewDecision(task, {
   userId,
   decision,
@@ -66,12 +67,8 @@ export async function resolveReviewDecision(task, {
   review = null,
   run = null,
 } = {}) {
-  if (!task?.id) {
-    throw new Error('Task is required.');
-  }
-  if (!userId) {
-    throw new Error('userId is required.');
-  }
+  if (!task?.id) throw new Error('Task is required.');
+  if (!userId) throw new Error('userId is required.');
 
   const empId = task.employee_id || task.ai_employees?.id || null;
   const reviewLlmFn = comment ? buildReviewLlmFn(task, run?.id || null) : null;
@@ -87,6 +84,7 @@ export async function resolveReviewDecision(task, {
 
   let outputProfileProposal = null;
 
+  // ── Path 1: Orchestrator review_hold — the primary path ──
   if (task.status === 'review_hold') {
     if (decision === 'approved') {
       await approveReview(task.id, userId, {
@@ -95,17 +93,7 @@ export async function resolveReviewDecision(task, {
         llmFn: reviewLlmFn,
       });
 
-      outputProfileProposal = await maybeCreateOutputProfileProposalFromReview({
-        task,
-        review,
-        run,
-        decision,
-        comment,
-        actorUserId: userId,
-      }).catch((err) => {
-        console.warn('[taskActionService] review proposal creation failed:', err?.message || err);
-        return null;
-      });
+      outputProfileProposal = await _tryCreateProposal(task, review, run, decision, comment, userId);
 
       return {
         previousStatus: 'review_hold',
@@ -119,25 +107,18 @@ export async function resolveReviewDecision(task, {
       };
     }
 
+    // needs_revision or rejected
     const nextStatus = decision === 'needs_revision' ? 'failed' : 'blocked';
     const employeeStatus = decision === 'needs_revision' ? 'idle' : 'blocked';
 
-    await aiEmployeeService.updateTaskStatus(task.id, nextStatus);
+    // Use taskRepo directly (version-aware update)
+    const currentTask = await taskRepo.getTask(task.id);
+    await taskRepo.updateTaskStatus(task.id, nextStatus, currentTask.version);
     if (empId) {
-      await aiEmployeeService.updateEmployeeStatus(empId, employeeStatus);
+      try { await employeeRepo.updateEmployeeStatus(empId, employeeStatus); } catch { /* best-effort */ }
     }
 
-    outputProfileProposal = await maybeCreateOutputProfileProposalFromReview({
-      task,
-      review,
-      run,
-      decision,
-      comment,
-      actorUserId: userId,
-    }).catch((err) => {
-      console.warn('[taskActionService] review proposal creation failed:', err?.message || err);
-      return null;
-    });
+    outputProfileProposal = await _tryCreateProposal(task, review, run, decision, comment, userId);
 
     return {
       previousStatus: 'review_hold',
@@ -155,100 +136,8 @@ export async function resolveReviewDecision(task, {
     };
   }
 
-  const holdStep = task.loop_state?.steps?.find((step) => step.status === 'review_hold');
-
-  if (holdStep) {
-    const { approveStepAndContinue, reviseStepAndRetry } = await importLegacyLoopActions();
-
-    if (decision === 'approved') {
-      await approveStepAndContinue(task.id, holdStep.name);
-      if (empId) {
-        await aiEmployeeService.updateEmployeeStatus(empId, 'working');
-      }
-
-      outputProfileProposal = await maybeCreateOutputProfileProposalFromReview({
-        task,
-        review,
-        run,
-        decision,
-        comment,
-        actorUserId: userId,
-      }).catch((err) => {
-        console.warn('[taskActionService] review proposal creation failed:', err?.message || err);
-        return null;
-      });
-
-      return {
-        previousStatus: 'waiting_review',
-        nextStatus: 'in_progress',
-        employeeStatus: 'working',
-        message: outputProfileProposal
-          ? 'Review approved and execution resumed. House-style proposal queued for approval.'
-          : 'Review approved and execution resumed.',
-        toastType: 'success',
-        outputProfileProposal,
-      };
-    }
-
-    if (decision === 'needs_revision') {
-      await reviseStepAndRetry(task.id, holdStep.name);
-      if (empId) {
-        await aiEmployeeService.updateEmployeeStatus(empId, 'working');
-      }
-
-      outputProfileProposal = await maybeCreateOutputProfileProposalFromReview({
-        task,
-        review,
-        run,
-        decision,
-        comment,
-        actorUserId: userId,
-      }).catch((err) => {
-        console.warn('[taskActionService] review proposal creation failed:', err?.message || err);
-        return null;
-      });
-
-      return {
-        previousStatus: 'waiting_review',
-        nextStatus: 'in_progress',
-        employeeStatus: 'working',
-        message: outputProfileProposal
-          ? 'Revision requested — task sent back to Aiden. House-style proposal queued for approval.'
-          : 'Revision requested — task sent back to Aiden.',
-        toastType: 'warning',
-        outputProfileProposal,
-      };
-    }
-
-    await aiEmployeeService.updateTaskStatus(task.id, 'blocked');
-    if (empId) {
-      await aiEmployeeService.updateEmployeeStatus(empId, 'blocked');
-    }
-
-    outputProfileProposal = await maybeCreateOutputProfileProposalFromReview({
-      task,
-      review,
-      run,
-      decision,
-      comment,
-      actorUserId: userId,
-    }).catch((err) => {
-      console.warn('[taskActionService] review proposal creation failed:', err?.message || err);
-      return null;
-    });
-
-    return {
-      previousStatus: 'waiting_review',
-      nextStatus: 'blocked',
-      employeeStatus: 'blocked',
-      message: outputProfileProposal
-        ? 'Task rejected. House-style proposal queued for approval.'
-        : 'Task rejected.',
-      toastType: 'error',
-      outputProfileProposal,
-    };
-  }
-
+  // ── Path 2: Legacy waiting_review tasks ──
+  // These are old tasks that went through the legacy loop. Handle with direct DB updates.
   const nextStatus = decision === 'approved'
     ? 'done'
     : decision === 'needs_revision'
@@ -260,12 +149,38 @@ export async function resolveReviewDecision(task, {
       ? 'working'
       : 'blocked';
 
-  await aiEmployeeService.updateTaskStatus(task.id, nextStatus);
+  const currentTask = await taskRepo.getTask(task.id);
+  await taskRepo.updateTaskStatus(task.id, nextStatus, currentTask.version);
   if (empId) {
-    await aiEmployeeService.updateEmployeeStatus(empId, employeeStatus);
+    try { await employeeRepo.updateEmployeeStatus(empId, employeeStatus); } catch { /* best-effort */ }
   }
 
-  outputProfileProposal = await maybeCreateOutputProfileProposalFromReview({
+  outputProfileProposal = await _tryCreateProposal(task, review, run, decision, comment, userId);
+
+  return {
+    previousStatus: task.status || 'waiting_review',
+    nextStatus,
+    employeeStatus,
+    message: outputProfileProposal
+      ? `${decision === 'approved'
+        ? 'Task approved and marked done.'
+        : decision === 'needs_revision'
+          ? 'Revision requested — task sent back for retry.'
+          : 'Task rejected.'} House-style proposal queued for approval.`
+      : decision === 'approved'
+        ? 'Task approved and marked done.'
+        : decision === 'needs_revision'
+          ? 'Revision requested — task sent back for retry.'
+          : 'Task rejected.',
+    toastType: decision === 'approved' ? 'success' : decision === 'needs_revision' ? 'warning' : 'error',
+    outputProfileProposal,
+  };
+}
+
+// ── Helpers ──
+
+async function _tryCreateProposal(task, review, run, decision, comment, userId) {
+  return maybeCreateOutputProfileProposalFromReview({
     task,
     review,
     run,
@@ -276,25 +191,6 @@ export async function resolveReviewDecision(task, {
     console.warn('[taskActionService] review proposal creation failed:', err?.message || err);
     return null;
   });
-
-  return {
-    previousStatus: task.status || 'waiting_review',
-    nextStatus,
-    employeeStatus,
-    message: outputProfileProposal
-      ? `${decision === 'approved'
-        ? 'Task approved and marked done.'
-        : decision === 'needs_revision'
-          ? 'Revision requested — task sent back to Aiden.'
-          : 'Task rejected.'} House-style proposal queued for approval.`
-      : decision === 'approved'
-        ? 'Task approved and marked done.'
-        : decision === 'needs_revision'
-          ? 'Revision requested — task sent back to Aiden.'
-          : 'Task rejected.',
-    toastType: decision === 'approved' ? 'success' : decision === 'needs_revision' ? 'warning' : 'error',
-    outputProfileProposal,
-  };
 }
 
 export default {

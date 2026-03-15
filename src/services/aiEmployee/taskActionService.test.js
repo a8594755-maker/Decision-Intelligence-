@@ -3,11 +3,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mockApprovePlan = vi.fn();
 const mockApproveReview = vi.fn();
 const mockRetryTask = vi.fn();
-const mockUpdateTaskStatus = vi.fn();
-const mockUpdateEmployeeStatus = vi.fn();
-const mockExecuteTaskWithLoop = vi.fn();
-const mockApproveStepAndContinue = vi.fn();
-const mockReviseStepAndRetry = vi.fn();
+const mockTaskRepoGetTask = vi.fn();
+const mockTaskRepoUpdateTaskStatus = vi.fn();
+const mockEmployeeRepoUpdateStatus = vi.fn();
 const mockMaybeCreateOutputProfileProposalFromReview = vi.fn();
 
 vi.mock('./orchestrator.js', () => ({
@@ -16,18 +14,13 @@ vi.mock('./orchestrator.js', () => ({
   retryTask: (...args) => mockRetryTask(...args),
 }));
 
-vi.mock('../aiEmployeeService.js', () => ({
-  updateTaskStatus: (...args) => mockUpdateTaskStatus(...args),
-  updateEmployeeStatus: (...args) => mockUpdateEmployeeStatus(...args),
+vi.mock('./persistence/taskRepo.js', () => ({
+  getTask: (...args) => mockTaskRepoGetTask(...args),
+  updateTaskStatus: (...args) => mockTaskRepoUpdateTaskStatus(...args),
 }));
 
-vi.mock('../aiEmployeeExecutor.js', () => ({
-  executeTaskWithLoop: (...args) => mockExecuteTaskWithLoop(...args),
-}));
-
-vi.mock('../agentLoopService.js', () => ({
-  approveStepAndContinue: (...args) => mockApproveStepAndContinue(...args),
-  reviseStepAndRetry: (...args) => mockReviseStepAndRetry(...args),
+vi.mock('./persistence/employeeRepo.js', () => ({
+  updateEmployeeStatus: (...args) => mockEmployeeRepoUpdateStatus(...args),
 }));
 
 vi.mock('../aiEmployeeLLMService.js', () => ({
@@ -53,6 +46,8 @@ describe('taskActionService', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockMaybeCreateOutputProfileProposalFromReview.mockResolvedValue(null);
+    mockTaskRepoGetTask.mockResolvedValue({ id: 'task-x', version: 1 });
+    mockTaskRepoUpdateTaskStatus.mockResolvedValue({ id: 'task-x', version: 2 });
   });
 
   describe('runTask', () => {
@@ -78,18 +73,12 @@ describe('taskActionService', () => {
       expect(result).toEqual({ nextStatus: 'queued' });
     });
 
-    it('delegates legacy tasks to executeTaskWithLoop', async () => {
-      const result = await runTask({
+    it('rejects legacy tasks that have no plan_snapshot', async () => {
+      await expect(runTask({
         id: 'legacy-1',
         status: 'todo',
         template_id: 'forecast',
-      }, 'user-1');
-
-      expect(mockExecuteTaskWithLoop).toHaveBeenCalledWith(
-        expect.objectContaining({ id: 'legacy-1' }),
-        'user-1'
-      );
-      expect(result).toEqual({ nextStatus: 'in_progress' });
+      }, 'user-1')).rejects.toThrow('legacy system');
     });
   });
 
@@ -147,6 +136,8 @@ describe('taskActionService', () => {
     });
 
     it('marks orchestrator review_hold tasks failed on revision request', async () => {
+      mockTaskRepoGetTask.mockResolvedValue({ id: 'task-4', version: 3 });
+
       const result = await resolveReviewDecision({
         id: 'task-4',
         status: 'review_hold',
@@ -156,34 +147,32 @@ describe('taskActionService', () => {
         decision: 'needs_revision',
       });
 
-      expect(mockUpdateTaskStatus).toHaveBeenCalledWith('task-4', 'failed');
-      expect(mockUpdateEmployeeStatus).toHaveBeenCalledWith('emp-1', 'idle');
+      expect(mockTaskRepoGetTask).toHaveBeenCalledWith('task-4');
+      expect(mockTaskRepoUpdateTaskStatus).toHaveBeenCalledWith('task-4', 'failed', 3);
+      expect(mockEmployeeRepoUpdateStatus).toHaveBeenCalledWith('emp-1', 'idle');
       expect(result).toEqual(expect.objectContaining({
         previousStatus: 'review_hold',
         nextStatus: 'failed',
       }));
     });
 
-    it('resumes legacy review_hold steps through agentLoopService', async () => {
+    it('handles legacy waiting_review tasks via direct DB update', async () => {
+      mockTaskRepoGetTask.mockResolvedValue({ id: 'task-5', version: 2 });
+
       const result = await resolveReviewDecision({
         id: 'task-5',
         status: 'waiting_review',
         employee_id: 'emp-2',
-        loop_state: {
-          steps: [
-            { name: 'synthesize', status: 'review_hold' },
-          ],
-        },
       }, {
         userId: 'user-1',
         decision: 'approved',
       });
 
-      expect(mockApproveStepAndContinue).toHaveBeenCalledWith('task-5', 'synthesize');
-      expect(mockUpdateEmployeeStatus).toHaveBeenCalledWith('emp-2', 'working');
+      expect(mockTaskRepoGetTask).toHaveBeenCalledWith('task-5');
+      expect(mockTaskRepoUpdateTaskStatus).toHaveBeenCalledWith('task-5', 'done', 2);
       expect(result).toEqual(expect.objectContaining({
         previousStatus: 'waiting_review',
-        nextStatus: 'in_progress',
+        nextStatus: 'done',
       }));
     });
   });

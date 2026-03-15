@@ -15,6 +15,7 @@ export {
   cancelTask,
   retryTask,
   approveReview,
+  provideStepInput,
   tick,
   getTaskStatus,
 } from './orchestrator.js';
@@ -29,7 +30,26 @@ export { routeModel } from './router.js';
 export { reviewStep } from './review.js';
 export { runTask, resolveReviewDecision } from './taskActionService.js';
 
+// ── Queries (unified read facade — replaces aiEmployeeService read methods) ──
+export {
+  getOrCreateWorker,
+  getEmployee,
+  listEmployeesByManager,
+  getKpis,
+  getTask,
+  getTaskWithSteps,
+  listTasks,
+  listTasksByUser,
+  listTasksByStatus,
+  listPendingReviews,
+  listWorklogs,
+  createReview,
+  listReviewsForTask,
+  enrichRunsWithArtifacts,
+  WORKER_TEMPLATES,
+} from './queries.js';
+
 // ── State machines (for UI display / guards) ──
 export { TASK_STATES, TASK_EVENTS, taskTransition, canTaskTransition, isTaskTerminal } from './taskStateMachine.js';
-export { STEP_STATES, STEP_EVENTS, stepTransition, isStepTerminal } from './stepStateMachine.js';
+export { STEP_STATES, STEP_EVENTS, stepTransition, isStepTerminal, isStepWaitingInput } from './stepStateMachine.js';
 export { EMPLOYEE_STATES, EMPLOYEE_EVENTS, employeeTransition } from './employeeStateMachine.js';

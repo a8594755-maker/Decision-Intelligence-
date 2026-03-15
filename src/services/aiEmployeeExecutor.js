@@ -1,8 +1,12 @@
 // @product: ai-employee
 //
+// @deprecated — Use src/services/aiEmployee/orchestrator.js + executors/ instead.
+// This file is kept for backward compatibility with agentLoopService.js.
+// It will be removed once agentLoopService is fully retired.
+//
 // aiEmployeeExecutor.js
 // ─────────────────────────────────────────────────────────────────────────────
-// Accepts a task row and drives it through the DI core engines.
+// LEGACY executor. Accepts a task row and drives it through the DI core engines.
 // Pure async logic — no React, no UI dependencies.
 //
 // Execution flow:
