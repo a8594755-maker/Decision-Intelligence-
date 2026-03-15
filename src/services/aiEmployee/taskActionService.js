@@ -1,5 +1,8 @@
 import * as aiEmployeeService from '../aiEmployeeService.js';
 import { approvePlan, approveReview, retryTask } from './orchestrator.js';
+import { callLLM } from '../aiEmployeeLLMService.js';
+import { buildDeliverablePreview } from './deliverableProfile.js';
+import { maybeCreateOutputProfileProposalFromReview } from './styleLearning/reviewProposalService.js';
 
 function isOrchestratorTask(task) {
   return Boolean(task?.plan_snapshot?.steps?.length);
@@ -7,6 +10,26 @@ function isOrchestratorTask(task) {
 
 async function importLegacyLoopActions() {
   return import('../agentLoopService.js');
+}
+
+function buildReviewLlmFn(task, runId = null) {
+  return async (prompt) => {
+    const { text } = await callLLM({
+      taskType: 'review',
+      prompt,
+      systemPrompt: 'Return only the requested content. If JSON is requested, return valid JSON without markdown fences.',
+      maxTokens: 2200,
+      routingContext: { highRisk: true },
+      trackingMeta: {
+        taskId: task.id,
+        employeeId: task.employee_id || task.ai_employees?.id || null,
+        runId,
+        agentRole: 'review_learning',
+        stepName: 'manager_review',
+      },
+    });
+    return text;
+  };
 }
 
 export async function runTask(task, userId) {
@@ -40,6 +63,8 @@ export async function resolveReviewDecision(task, {
   userId,
   decision,
   comment = null,
+  review = null,
+  run = null,
 } = {}) {
   if (!task?.id) {
     throw new Error('Task is required.');
@@ -49,16 +74,48 @@ export async function resolveReviewDecision(task, {
   }
 
   const empId = task.employee_id || task.ai_employees?.id || null;
+  const reviewLlmFn = comment ? buildReviewLlmFn(task, run?.id || null) : null;
+  const deliverable = task ? buildDeliverablePreview(task) : null;
+  const revision = deliverable ? {
+    original: {
+      headline: deliverable.headline,
+      summary: deliverable.summary,
+      sections: deliverable.sections,
+      previewKind: deliverable.previewKind,
+    },
+  } : undefined;
+
+  let outputProfileProposal = null;
 
   if (task.status === 'review_hold') {
     if (decision === 'approved') {
-      await approveReview(task.id, userId, { feedback: comment || null });
+      await approveReview(task.id, userId, {
+        feedback: comment || null,
+        revision,
+        llmFn: reviewLlmFn,
+      });
+
+      outputProfileProposal = await maybeCreateOutputProfileProposalFromReview({
+        task,
+        review,
+        run,
+        decision,
+        comment,
+        actorUserId: userId,
+      }).catch((err) => {
+        console.warn('[taskActionService] review proposal creation failed:', err?.message || err);
+        return null;
+      });
+
       return {
         previousStatus: 'review_hold',
         nextStatus: 'in_progress',
         employeeStatus: 'working',
-        message: 'Review approved and execution resumed.',
+        message: outputProfileProposal
+          ? 'Review approved and execution resumed. House-style proposal queued for approval.'
+          : 'Review approved and execution resumed.',
         toastType: 'success',
+        outputProfileProposal,
       };
     }
 
@@ -70,14 +127,31 @@ export async function resolveReviewDecision(task, {
       await aiEmployeeService.updateEmployeeStatus(empId, employeeStatus);
     }
 
+    outputProfileProposal = await maybeCreateOutputProfileProposalFromReview({
+      task,
+      review,
+      run,
+      decision,
+      comment,
+      actorUserId: userId,
+    }).catch((err) => {
+      console.warn('[taskActionService] review proposal creation failed:', err?.message || err);
+      return null;
+    });
+
     return {
       previousStatus: 'review_hold',
       nextStatus,
       employeeStatus,
-      message: decision === 'needs_revision'
-        ? 'Revision requested. Task marked failed and can be retried from the Task Board.'
-        : 'Task rejected.',
+      message: outputProfileProposal
+        ? `${decision === 'needs_revision'
+          ? 'Revision requested. Task marked failed and can be retried from the Task Board.'
+          : 'Task rejected.'} House-style proposal queued for approval.`
+        : decision === 'needs_revision'
+          ? 'Revision requested. Task marked failed and can be retried from the Task Board.'
+          : 'Task rejected.',
       toastType: decision === 'needs_revision' ? 'warning' : 'error',
+      outputProfileProposal,
     };
   }
 
@@ -91,12 +165,28 @@ export async function resolveReviewDecision(task, {
       if (empId) {
         await aiEmployeeService.updateEmployeeStatus(empId, 'working');
       }
+
+      outputProfileProposal = await maybeCreateOutputProfileProposalFromReview({
+        task,
+        review,
+        run,
+        decision,
+        comment,
+        actorUserId: userId,
+      }).catch((err) => {
+        console.warn('[taskActionService] review proposal creation failed:', err?.message || err);
+        return null;
+      });
+
       return {
         previousStatus: 'waiting_review',
         nextStatus: 'in_progress',
         employeeStatus: 'working',
-        message: 'Review approved and execution resumed.',
+        message: outputProfileProposal
+          ? 'Review approved and execution resumed. House-style proposal queued for approval.'
+          : 'Review approved and execution resumed.',
         toastType: 'success',
+        outputProfileProposal,
       };
     }
 
@@ -105,12 +195,28 @@ export async function resolveReviewDecision(task, {
       if (empId) {
         await aiEmployeeService.updateEmployeeStatus(empId, 'working');
       }
+
+      outputProfileProposal = await maybeCreateOutputProfileProposalFromReview({
+        task,
+        review,
+        run,
+        decision,
+        comment,
+        actorUserId: userId,
+      }).catch((err) => {
+        console.warn('[taskActionService] review proposal creation failed:', err?.message || err);
+        return null;
+      });
+
       return {
         previousStatus: 'waiting_review',
         nextStatus: 'in_progress',
         employeeStatus: 'working',
-        message: 'Revision requested — task sent back to Aiden.',
+        message: outputProfileProposal
+          ? 'Revision requested — task sent back to Aiden. House-style proposal queued for approval.'
+          : 'Revision requested — task sent back to Aiden.',
         toastType: 'warning',
+        outputProfileProposal,
       };
     }
 
@@ -119,12 +225,27 @@ export async function resolveReviewDecision(task, {
       await aiEmployeeService.updateEmployeeStatus(empId, 'blocked');
     }
 
+    outputProfileProposal = await maybeCreateOutputProfileProposalFromReview({
+      task,
+      review,
+      run,
+      decision,
+      comment,
+      actorUserId: userId,
+    }).catch((err) => {
+      console.warn('[taskActionService] review proposal creation failed:', err?.message || err);
+      return null;
+    });
+
     return {
       previousStatus: 'waiting_review',
       nextStatus: 'blocked',
       employeeStatus: 'blocked',
-      message: 'Task rejected.',
+      message: outputProfileProposal
+        ? 'Task rejected. House-style proposal queued for approval.'
+        : 'Task rejected.',
       toastType: 'error',
+      outputProfileProposal,
     };
   }
 
@@ -144,16 +265,35 @@ export async function resolveReviewDecision(task, {
     await aiEmployeeService.updateEmployeeStatus(empId, employeeStatus);
   }
 
+  outputProfileProposal = await maybeCreateOutputProfileProposalFromReview({
+    task,
+    review,
+    run,
+    decision,
+    comment,
+    actorUserId: userId,
+  }).catch((err) => {
+    console.warn('[taskActionService] review proposal creation failed:', err?.message || err);
+    return null;
+  });
+
   return {
     previousStatus: task.status || 'waiting_review',
     nextStatus,
     employeeStatus,
-    message: decision === 'approved'
-      ? 'Task approved and marked done.'
-      : decision === 'needs_revision'
-        ? 'Revision requested — task sent back to Aiden.'
-        : 'Task rejected.',
+    message: outputProfileProposal
+      ? `${decision === 'approved'
+        ? 'Task approved and marked done.'
+        : decision === 'needs_revision'
+          ? 'Revision requested — task sent back to Aiden.'
+          : 'Task rejected.'} House-style proposal queued for approval.`
+      : decision === 'approved'
+        ? 'Task approved and marked done.'
+        : decision === 'needs_revision'
+          ? 'Revision requested — task sent back to Aiden.'
+          : 'Task rejected.',
     toastType: decision === 'approved' ? 'success' : decision === 'needs_revision' ? 'warning' : 'error',
+    outputProfileProposal,
   };
 }
 

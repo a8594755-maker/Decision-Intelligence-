@@ -643,7 +643,7 @@ export default function EmployeeReviewPage() {
     if (!user?.id) return;
     setDeciding(decision);
     try {
-      await aiEmployeeService.createReview(item.id, run?.id || null, {
+      const review = await aiEmployeeService.createReview(item.id, run?.id || null, {
         decision,
         comments: comment || null,
         created_by: user.id,
@@ -658,6 +658,8 @@ export default function EmployeeReviewPage() {
         userId: user.id,
         decision,
         comment,
+        review,
+        run,
       });
 
       if (empId) {
@@ -666,6 +668,8 @@ export default function EmployeeReviewPage() {
           new_status: resolution.nextStatus,
           note: comment || `Manager ${decision}.`,
           review_decision: decision,
+          output_profile_proposal_id: resolution.outputProfileProposal?.id || null,
+          output_profile_proposal_status: resolution.outputProfileProposal?.status || null,
         });
       }
 

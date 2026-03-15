@@ -7,6 +7,15 @@ function firstDefined(...values) {
   return values.find((value) => value !== undefined && value !== null && String(value).trim() !== '') ?? null;
 }
 
+function firstJson(...values) {
+  for (const value of values) {
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      return value;
+    }
+  }
+  return {};
+}
+
 function defaultNow() {
   return new Date().toISOString();
 }
@@ -33,19 +42,55 @@ async function resolveActorUserId(db, actorUserId) {
   return data.user.id;
 }
 
-function normalizeCanonical(candidateProfile = {}) {
+function normalizeCanonical(candidateProfile = {}, defaults = {}) {
   const canonical = candidateProfile.canonical || {};
+  const fallbackCanonical = defaults.canonical || {};
   return {
-    canonical_structure: candidateProfile.canonical_structure || candidateProfile.canonicalStructure || canonical.structure || {},
-    canonical_formatting: candidateProfile.canonical_formatting || candidateProfile.canonicalFormatting || canonical.formatting || {},
-    canonical_charts: candidateProfile.canonical_charts || candidateProfile.canonicalCharts || canonical.charts || {},
-    canonical_kpi_layout: candidateProfile.canonical_kpi_layout || candidateProfile.canonicalKpiLayout || canonical.kpiLayout || {},
-    canonical_text_style: candidateProfile.canonical_text_style || candidateProfile.canonicalTextStyle || canonical.textStyle || {},
+    canonical_structure: firstJson(
+      candidateProfile.canonical_structure,
+      candidateProfile.canonicalStructure,
+      canonical.structure,
+      defaults.canonical_structure,
+      defaults.canonicalStructure,
+      fallbackCanonical.structure
+    ),
+    canonical_formatting: firstJson(
+      candidateProfile.canonical_formatting,
+      candidateProfile.canonicalFormatting,
+      canonical.formatting,
+      defaults.canonical_formatting,
+      defaults.canonicalFormatting,
+      fallbackCanonical.formatting
+    ),
+    canonical_charts: firstJson(
+      candidateProfile.canonical_charts,
+      candidateProfile.canonicalCharts,
+      canonical.charts,
+      defaults.canonical_charts,
+      defaults.canonicalCharts,
+      fallbackCanonical.charts
+    ),
+    canonical_kpi_layout: firstJson(
+      candidateProfile.canonical_kpi_layout,
+      candidateProfile.canonicalKpiLayout,
+      canonical.kpiLayout,
+      defaults.canonical_kpi_layout,
+      defaults.canonicalKpiLayout,
+      fallbackCanonical.kpiLayout
+    ),
+    canonical_text_style: firstJson(
+      candidateProfile.canonical_text_style,
+      candidateProfile.canonicalTextStyle,
+      canonical.textStyle,
+      defaults.canonical_text_style,
+      defaults.canonicalTextStyle,
+      fallbackCanonical.textStyle
+    ),
   };
 }
 
 function normalizeCandidateProfile(candidateProfile = {}, defaults = {}) {
-  const canonical = normalizeCanonical(candidateProfile);
+  const canonical = normalizeCanonical(candidateProfile, defaults);
   return {
     profile_name: firstDefined(candidateProfile.profile_name, candidateProfile.profileName, defaults.profileName, defaults.docType ? `${defaults.docType}_baseline` : null) || 'baseline_profile',
     deliverable_type: firstDefined(candidateProfile.deliverable_type, candidateProfile.deliverableType, defaults.deliverableType),
@@ -302,6 +347,9 @@ export async function createOutputProfileProposal({
   candidateProfile = {},
   baseProfileId = null,
   sourceStyleProfileId = null,
+  sourceTaskId = null,
+  sourceReviewId = null,
+  sourceRunId = null,
   actorUserId = null,
   db = supabase,
   now = defaultNow,
@@ -324,6 +372,11 @@ export async function createOutputProfileProposal({
     sampleCount: activeProfile?.sample_count,
     confidence: activeProfile?.confidence,
     highVarianceDims: activeProfile?.high_variance_dims,
+    canonical_structure: activeProfile?.canonical_structure,
+    canonical_formatting: activeProfile?.canonical_formatting,
+    canonical_charts: activeProfile?.canonical_charts,
+    canonical_kpi_layout: activeProfile?.canonical_kpi_layout,
+    canonical_text_style: activeProfile?.canonical_text_style,
   });
 
   const { data, error } = await db
@@ -345,6 +398,9 @@ export async function createOutputProfileProposal({
       proposed_changes: proposedChanges || {},
       comparison_summary: comparisonSummary || {},
       candidate_profile: normalizedCandidate,
+      source_task_id: sourceTaskId,
+      source_review_id: sourceReviewId,
+      source_run_id: sourceRunId,
       requested_by: requestedBy,
       requested_at: nowIso,
     })

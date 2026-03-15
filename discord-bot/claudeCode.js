@@ -7,10 +7,19 @@ import { config } from './config.js';
  */
 export function askClaude(message) {
   return new Promise((resolve, reject) => {
+    const systemPrompt = [
+      '你正在 Discord 聊天環境中回覆。格式規則：',
+      '1. Discord 不支援 Markdown 表格（| header | 語法），所有表格必須包在 ```code block``` 裡',
+      '2. 用繁體中文回覆',
+      '3. 保持回覆簡潔，Discord 單則訊息上限 2000 字',
+      '4. 可以用 **粗體**、*斜體*、`行內code`、```code block```',
+    ].join('\n');
+
     const args = [
       '-p', message,
       '--output-format', 'text',
       '--dangerously-skip-permissions',
+      '--system-prompt', systemPrompt,
     ];
 
     const env = { ...process.env };

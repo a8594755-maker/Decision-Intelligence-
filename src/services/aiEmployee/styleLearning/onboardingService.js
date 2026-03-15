@@ -336,20 +336,69 @@ function groupFingerprints(fingerprints, defaultDocType) {
   return groups;
 }
 
+/**
+ * Classify doc type from fingerprint content.
+ * Three layers:
+ *   1. Filename patterns (EN/ZH)
+ *   2. Sheet name patterns (EN/ZH)
+ *   3. KPI keyword density in extracted text/fields
+ * Falls back to 'general_report' — still valid for learning.
+ */
 function classifyDocType(fp) {
+  // Layer 1: filename
+  const fname = (fp.source_file || '').toLowerCase();
+  const fnameMatch = classifyByFilename(fname);
+  if (fnameMatch) return fnameMatch;
+
+  // Layer 2: sheet names
   const names = (fp.structure?.sheet_names || []).map(n => n.toLowerCase());
   const allNames = names.join(' ');
 
-  if (allNames.includes('kpi') || allNames.includes('dashboard') || allNames.includes('cover'))
+  // MBR / monthly report
+  if (allNames.includes('kpi') || allNames.includes('dashboard') || allNames.includes('cover')
+    || allNames.includes('指標') || allNames.includes('儀表') || allNames.includes('封面')
+    || allNames.includes('summary') || allNames.includes('總覽') || allNames.includes('摘要'))
     return 'mbr_report';
-  if (allNames.includes('forecast') || allNames.includes('預測'))
+
+  // Weekly ops
+  if (allNames.includes('weekly') || allNames.includes('週報') || allNames.includes('周報')
+    || allNames.includes('week'))
+    return 'weekly_ops';
+
+  // QBR / quarterly
+  if (allNames.includes('qbr') || allNames.includes('quarterly') || allNames.includes('季')
+    || allNames.includes('q1') || allNames.includes('q2') || allNames.includes('q3') || allNames.includes('q4'))
+    return 'qbr_deck';
+
+  // Forecast
+  if (allNames.includes('forecast') || allNames.includes('預測') || allNames.includes('demand')
+    || allNames.includes('需求'))
     return 'forecast_report';
-  if (allNames.includes('risk') || allNames.includes('風險'))
+
+  // Risk
+  if (allNames.includes('risk') || allNames.includes('風險') || allNames.includes('exception')
+    || allNames.includes('異常'))
     return 'risk_report';
-  if (fp.structure?.sheet_count === 1)
-    return 'ad_hoc_analysis';
+
+  // Layer 3: KPI keyword density
+  const kpiKeywords = fp.kpi_layout?.kpi_keywords_found || [];
+  if (kpiKeywords.length >= 3) return 'mbr_report';
+
+  // Structure heuristics
+  if (fp.structure?.sheet_count === 1) return 'ad_hoc_analysis';
+  if (fp.structure?.sheet_count >= 5) return 'mbr_report'; // complex workbook → likely MBR
 
   return 'general_report';
+}
+
+function classifyByFilename(fname) {
+  if (/mbr|monthly.?business|月報|月會|monthly.?report/i.test(fname)) return 'mbr_report';
+  if (/weekly|週報|周報/i.test(fname)) return 'weekly_ops';
+  if (/qbr|quarterly|季報|季度/i.test(fname)) return 'qbr_deck';
+  if (/forecast|預測|demand|需求/i.test(fname)) return 'forecast_report';
+  if (/risk|風險|exception|異常/i.test(fname)) return 'risk_report';
+  if (/email|mail|update|摘要/i.test(fname)) return 'manager_email';
+  return null;
 }
 
 export const _testExports = { classifyDocType, groupFingerprints, ONBOARDING_STAGES };

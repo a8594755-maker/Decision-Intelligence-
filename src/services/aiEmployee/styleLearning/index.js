@@ -120,6 +120,10 @@ export {
   mapCompanyProfileRowToOutputProfile,
 } from './companyOutputProfileService.js';
 
+export {
+  maybeCreateOutputProfileProposalFromReview,
+} from './reviewProposalService.js';
+
 // ── Trust & Autonomy Metrics ────────────────────────────────
 export {
   computeMetrics as computeTrustMetrics,

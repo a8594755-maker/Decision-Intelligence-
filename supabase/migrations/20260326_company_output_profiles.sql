@@ -75,6 +75,9 @@ CREATE TABLE IF NOT EXISTS company_output_profile_proposals (
   proposed_changes      JSONB DEFAULT '{}',
   comparison_summary    JSONB DEFAULT '{}',
   candidate_profile     JSONB DEFAULT '{}',
+  source_task_id        TEXT,
+  source_review_id      TEXT,
+  source_run_id         TEXT,
 
   requested_by          UUID REFERENCES auth.users(id),
   requested_at          TIMESTAMPTZ DEFAULT now(),

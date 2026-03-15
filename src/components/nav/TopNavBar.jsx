@@ -3,7 +3,7 @@ import { NavLink as RouterNavLink, useNavigate } from 'react-router-dom';
 import {
   Activity, MessageSquare, ClipboardList, CheckSquare, LayoutDashboard,
   Settings, Moon, Sun, LogOut,
-  ChevronsLeft, ChevronsRight, BarChart3, Database, Bot, Wrench,
+  ChevronsLeft, ChevronsRight, BarChart3, Database, Bot, Wrench, FileText,
   ChevronDown, Calculator, TrendingUp, ShieldAlert, Cpu, GitCompare, Handshake,
   ArrowLeftRight,
 } from 'lucide-react';
@@ -29,6 +29,7 @@ const DI_ADVANCED_ITEMS = [
   { to: '/employees/tasks',  label: 'Tasks',        icon: ClipboardList },
   { to: '/employees/review', label: 'Review',       icon: CheckSquare },
   { to: '/employees/tools',  label: 'Tool Library', icon: Wrench },
+  { to: '/employees/profiles', label: 'Output Profiles', icon: FileText },
 ];
 
 // ────────────────────────────────────────────────────────────
@@ -40,6 +41,7 @@ const AI_NAV_ITEMS = [
   { to: '/employees/review', label: 'Review',        icon: CheckSquare },
   { to: '/employees',        label: 'AI Employee',   icon: Bot },
   { to: '/employees/tools',  label: 'Tool Library',  icon: Wrench },
+  { to: '/employees/profiles', label: 'Profiles',     icon: FileText },
 ];
 
 const AI_ADVANCED_ITEMS = [
