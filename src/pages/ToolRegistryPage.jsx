@@ -4,7 +4,7 @@
 // Lists custom tools + built-in DI engine tools, with search, filter, and management actions.
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { listTools, deprecateTool, approveTool } from '../services/toolRegistryService';
+import { listTools, deprecateTool, approveTool, registerTool } from '../services/toolRegistryService';
 import { listBuiltinTools, TOOL_CATEGORY } from '../services/builtinToolCatalog';
 
 const CUSTOM_CATEGORIES = [
@@ -58,6 +58,156 @@ const CATEGORY_COLORS = {
   monitoring: '#ea580c',
 };
 
+// ── Create Tool Form ──
+
+function CreateToolForm({ onCreated, onCancel }) {
+  const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
+  const [category, setCategory] = useState('custom');
+  const [code, setCode] = useState('');
+  const [tags, setTags] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!name.trim()) { setError('Name is required'); return; }
+    if (!code.trim()) { setError('Code is required'); return; }
+
+    setSaving(true);
+    setError('');
+    try {
+      await registerTool({
+        name: name.trim(),
+        description: description.trim(),
+        category,
+        code: code.trim(),
+        tags: tags.split(',').map(t => t.trim()).filter(Boolean),
+        input_schema: {},
+      });
+      onCreated();
+    } catch (err) {
+      setError(err?.message || 'Failed to create tool');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div style={{
+      border: '2px solid #6366f1',
+      borderRadius: 10,
+      padding: 20,
+      background: '#fafafe',
+      marginBottom: 20,
+    }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+        <strong style={{ fontSize: 15 }}>Create Custom Tool</strong>
+        <button onClick={onCancel} style={{ background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: '#999' }}>
+          &times;
+        </button>
+      </div>
+
+      <form onSubmit={handleSubmit}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
+          <div>
+            <label style={{ display: 'block', fontSize: 12, color: '#555', marginBottom: 4 }}>Tool Name *</label>
+            <input
+              type="text"
+              value={name}
+              onChange={e => setName(e.target.value)}
+              placeholder="e.g. demand_forecaster_v2"
+              style={{ width: '100%', padding: '8px 12px', borderRadius: 6, border: '1px solid #d1d5db', fontSize: 13 }}
+            />
+          </div>
+          <div>
+            <label style={{ display: 'block', fontSize: 12, color: '#555', marginBottom: 4 }}>Category</label>
+            <select
+              value={category}
+              onChange={e => setCategory(e.target.value)}
+              style={{ width: '100%', padding: '8px 12px', borderRadius: 6, border: '1px solid #d1d5db', fontSize: 13 }}
+            >
+              {CUSTOM_CATEGORIES.filter(c => c.value).map(c => (
+                <option key={c.value} value={c.value}>{c.label}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        <div style={{ marginBottom: 12 }}>
+          <label style={{ display: 'block', fontSize: 12, color: '#555', marginBottom: 4 }}>Description</label>
+          <input
+            type="text"
+            value={description}
+            onChange={e => setDescription(e.target.value)}
+            placeholder="What does this tool do?"
+            style={{ width: '100%', padding: '8px 12px', borderRadius: 6, border: '1px solid #d1d5db', fontSize: 13 }}
+          />
+        </div>
+
+        <div style={{ marginBottom: 12 }}>
+          <label style={{ display: 'block', fontSize: 12, color: '#555', marginBottom: 4 }}>Tags (comma-separated)</label>
+          <input
+            type="text"
+            value={tags}
+            onChange={e => setTags(e.target.value)}
+            placeholder="e.g. forecast, ml, demand"
+            style={{ width: '100%', padding: '8px 12px', borderRadius: 6, border: '1px solid #d1d5db', fontSize: 13 }}
+          />
+        </div>
+
+        <div style={{ marginBottom: 12 }}>
+          <label style={{ display: 'block', fontSize: 12, color: '#555', marginBottom: 4 }}>Code *</label>
+          <textarea
+            value={code}
+            onChange={e => setCode(e.target.value)}
+            placeholder="// Tool implementation code..."
+            rows={8}
+            style={{
+              width: '100%',
+              padding: '10px 12px',
+              borderRadius: 6,
+              border: '1px solid #d1d5db',
+              fontSize: 12,
+              fontFamily: 'monospace',
+              resize: 'vertical',
+            }}
+          />
+        </div>
+
+        {error && (
+          <div style={{ color: '#ef4444', fontSize: 12, marginBottom: 12 }}>{error}</div>
+        )}
+
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+          <button
+            type="button"
+            onClick={onCancel}
+            style={{
+              padding: '6px 16px', borderRadius: 6,
+              border: '1px solid #d1d5db', background: '#fff',
+              fontSize: 13, cursor: 'pointer',
+            }}
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            disabled={saving}
+            style={{
+              padding: '6px 16px', borderRadius: 6,
+              border: 'none', background: saving ? '#999' : '#6366f1',
+              color: '#fff', fontSize: 13, cursor: saving ? 'default' : 'pointer',
+            }}
+          >
+            {saving ? 'Creating...' : 'Create Tool'}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
 export default function ToolRegistryPage() {
   const [tab, setTab] = useState('builtin'); // 'builtin' | 'custom'
   const [tools, setTools] = useState([]);
@@ -66,6 +216,7 @@ export default function ToolRegistryPage() {
   const [categoryFilter, setCategoryFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [expandedId, setExpandedId] = useState(null);
+  const [showCreateForm, setShowCreateForm] = useState(false);
 
   // ── Custom tools loading ──
   const loadCustomTools = useCallback(async () => {
@@ -383,12 +534,37 @@ export default function ToolRegistryPage() {
       {/* ── Custom Tools Tab ── */}
       {tab === 'custom' && (
         <>
+          {/* Create button */}
+          {!showCreateForm && (
+            <div style={{ marginBottom: 16 }}>
+              <button
+                onClick={() => setShowCreateForm(true)}
+                style={{
+                  padding: '8px 16px', borderRadius: 6,
+                  border: 'none', background: '#6366f1',
+                  color: '#fff', fontSize: 13, cursor: 'pointer',
+                  display: 'flex', alignItems: 'center', gap: 6,
+                }}
+              >
+                + Create Custom Tool
+              </button>
+            </div>
+          )}
+
+          {/* Create form */}
+          {showCreateForm && (
+            <CreateToolForm
+              onCreated={() => { setShowCreateForm(false); loadCustomTools(); }}
+              onCancel={() => setShowCreateForm(false)}
+            />
+          )}
+
           {loading && <div style={{ color: '#666', fontSize: 14 }}>Loading tools...</div>}
 
-          {!loading && filteredCustomTools.length === 0 && (
+          {!loading && filteredCustomTools.length === 0 && !showCreateForm && (
             <div style={{ textAlign: 'center', padding: 40, color: '#999' }}>
               <div style={{ fontSize: 40, marginBottom: 8 }}>🔧</div>
-              <div>No tools found. Tools are created when AI-generated code passes human review.</div>
+              <div>No tools found. Click "Create Custom Tool" to add one, or tools are automatically created when AI-generated code passes human review.</div>
             </div>
           )}
 

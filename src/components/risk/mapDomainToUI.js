@@ -105,10 +105,10 @@ export const mapDomainRiskToTableRow = (domainRisk, inventoryData = {}, options 
     // Supply-demand gap (unified terminology)
     gapQty: gapQty,                    // Gap qty
     requiredInHorizon: requiredInHorizon, // Required (horizon)
-    inboundQtyInHorizon: inboundQtyInHorizon, // Inbound qty (horizon) - TODO
-    
+    inboundQtyInHorizon: inboundQtyInHorizon, // Inbound qty (horizon) - derived from PO open lines
+
     // Replenishment info (unified terminology)
-    nextInboundEta: nextInboundEta,    // Next inbound ETA - TODO
+    nextInboundEta: nextInboundEta,    // Next inbound ETA - derived from earliest PO line time_bucket
     
     // Other
     dailyDemand: dailyDemand,

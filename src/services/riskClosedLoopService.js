@@ -202,6 +202,12 @@ export function evaluateRiskReplanRecommendation({
   planRunId = null,
   config = RISK_REPLAN_CONFIG,
 }) {
+  // Cooldown check: skip if recently evaluated for same dataset
+  const cooldownKey = `${datasetProfileId}_${planRunId || 'none'}`;
+  if (isCooldownActive(cooldownKey, config.cooldown_ms)) {
+    return { shouldReplan: false, recommendationCard: null, analysis: null, skippedReason: 'cooldown_active' };
+  }
+
   const analysis = analyzeRiskForReplan(riskScores, config);
 
   if (!analysis.shouldReplan) {
@@ -220,5 +226,112 @@ export function evaluateRiskReplanRecommendation({
     benefit,
   });
 
+  // Record cooldown
+  setCooldown(cooldownKey, config.cooldown_ms);
+
+  // Record evaluation history
+  recordEvaluation({
+    cooldownKey,
+    riskRunId,
+    planRunId,
+    datasetProfileId,
+    shouldReplan: true,
+    highRiskCount: analysis.highRiskSkus.length,
+    criticalRiskCount: analysis.criticalRiskSkus.length,
+    maxScore: analysis.maxScore,
+    replanParams,
+    estimatedNetBenefit: benefit.estimated_net_benefit_usd,
+    timestamp: new Date().toISOString(),
+  });
+
   return { shouldReplan: true, recommendationCard, analysis, replanParams, benefit };
+}
+
+// ── Cooldown Management ──────────────────────────────────────────────────────
+
+const _cooldowns = new Map();
+
+function isCooldownActive(key, cooldownMs) {
+  const expiresAt = _cooldowns.get(key);
+  if (!expiresAt) return false;
+  return Date.now() < expiresAt;
+}
+
+function setCooldown(key, cooldownMs) {
+  _cooldowns.set(key, Date.now() + cooldownMs);
+}
+
+export function clearCooldown(key) {
+  _cooldowns.delete(key);
+}
+
+export function clearAllCooldowns() {
+  _cooldowns.clear();
+}
+
+// ── Evaluation History ───────────────────────────────────────────────────────
+
+const _evaluationHistory = [];
+const MAX_HISTORY = 100;
+
+function recordEvaluation(entry) {
+  _evaluationHistory.unshift(entry);
+  if (_evaluationHistory.length > MAX_HISTORY) {
+    _evaluationHistory.length = MAX_HISTORY;
+  }
+}
+
+export function getEvaluationHistory({ datasetProfileId, limit = 20 } = {}) {
+  let results = _evaluationHistory;
+  if (datasetProfileId) {
+    results = results.filter(e => e.datasetProfileId === datasetProfileId);
+  }
+  return results.slice(0, limit);
+}
+
+// ── Aggregate Risk Insights ──────────────────────────────────────────────────
+
+/**
+ * Generate aggregate risk insights from risk scores for dashboard display.
+ *
+ * @param {Array} riskScores - All risk_scores rows
+ * @returns {{ riskDistribution, topRiskSkus, avgRiskScore, riskTrend }}
+ */
+export function generateRiskInsights(riskScores = []) {
+  const rows = Array.isArray(riskScores) ? riskScores : [];
+  if (!rows.length) {
+    return {
+      riskDistribution: { low: 0, medium: 0, high: 0, critical: 0 },
+      topRiskSkus: [],
+      avgRiskScore: 0,
+      totalSkusAtRisk: 0,
+    };
+  }
+
+  const scores = rows.map(r => Number(r.risk_score ?? r.riskScore ?? 0));
+  const avgRiskScore = scores.reduce((a, b) => a + b, 0) / scores.length;
+
+  const riskDistribution = {
+    low: scores.filter(s => s <= 30).length,
+    medium: scores.filter(s => s > 30 && s <= 60).length,
+    high: scores.filter(s => s > 60 && s <= 80).length,
+    critical: scores.filter(s => s > 80).length,
+  };
+
+  const topRiskSkus = rows
+    .map(r => ({
+      sku: r.material_code ?? r.materialCode ?? r.sku ?? 'unknown',
+      plant_id: r.plant_id ?? r.plantId ?? null,
+      risk_score: Number(r.risk_score ?? r.riskScore ?? 0),
+      impact_usd: Number(r.impact_usd ?? r.impactUsd ?? 0),
+    }))
+    .sort((a, b) => b.risk_score - a.risk_score)
+    .slice(0, 10);
+
+  return {
+    riskDistribution,
+    topRiskSkus,
+    avgRiskScore: Math.round(avgRiskScore * 10) / 10,
+    totalSkusAtRisk: riskDistribution.high + riskDistribution.critical,
+  };
 }

@@ -150,10 +150,174 @@ export function generateAlerts({
     top_impact_usd:    sortedAlerts[0]?.impact_usd    || null,
   };
 
+  // Enrich alerts with root cause analysis
+  const enrichedAlerts = sortedAlerts.map(alert => enrichAlertWithRootCause(alert, riskScores, stockoutData));
+
   return {
-    version: 'v1',
+    version: 'v2',
     generated_at: generatedAt,
-    alerts: sortedAlerts,
+    alerts: enrichedAlerts,
     summary,
+    insights: generateInsights(enrichedAlerts),
   };
+}
+
+// ── Root Cause Analysis ──────────────────────────────────────────────────────
+
+/**
+ * Enrich an alert with root cause analysis and prescriptive actions.
+ */
+function enrichAlertWithRootCause(alert, riskScores, stockoutData) {
+  const rootCauses = [];
+  const prescriptiveActions = [];
+
+  const entity = riskScores.find(r =>
+    (r.material_code || '').toUpperCase() === alert.material_code &&
+    (r.plant_id || '').toUpperCase() === alert.plant_id
+  );
+  const metrics = entity?.metrics || {};
+
+  // Analyze root causes
+  if (metrics.on_time_rate != null && metrics.on_time_rate < 0.85) {
+    rootCauses.push({
+      factor: 'supplier_reliability',
+      description: `Supplier on-time delivery rate is ${(metrics.on_time_rate * 100).toFixed(0)}% (below 85% target)`,
+      severity: metrics.on_time_rate < 0.70 ? 'critical' : 'high',
+    });
+    prescriptiveActions.push({
+      action: 'supplier_review',
+      description: 'Schedule supplier performance review meeting',
+      urgency: 'high',
+      estimated_impact: 'Improve on-time rate by 10-15%',
+    });
+  }
+
+  if (metrics.p90_delay_days != null && metrics.p90_delay_days > 7) {
+    rootCauses.push({
+      factor: 'lead_time_variability',
+      description: `P90 delivery delay is ${metrics.p90_delay_days.toFixed(1)} days (high variability)`,
+      severity: metrics.p90_delay_days > 14 ? 'critical' : 'high',
+    });
+    prescriptiveActions.push({
+      action: 'buffer_increase',
+      description: `Increase lead time buffer by ${Math.ceil(metrics.p90_delay_days * 0.3)} days`,
+      urgency: 'medium',
+      estimated_impact: `Reduce stockout risk by ~${Math.min(30, Math.round(metrics.p90_delay_days * 2))}%`,
+    });
+  }
+
+  if (alert.p_stockout > 0.60 && alert.days_to_stockout != null && alert.days_to_stockout < 14) {
+    rootCauses.push({
+      factor: 'imminent_stockout',
+      description: `Stockout expected in ${alert.days_to_stockout} days with ${(alert.p_stockout * 100).toFixed(0)}% probability`,
+      severity: 'critical',
+    });
+    prescriptiveActions.push({
+      action: 'emergency_order',
+      description: 'Place emergency purchase order with expedited shipping',
+      urgency: 'critical',
+      estimated_impact: `Protect $${(alert.impact_usd || 0).toLocaleString()} revenue exposure`,
+    });
+  }
+
+  if (alert.alert_type === 'dual_source_rec') {
+    rootCauses.push({
+      factor: 'single_source_dependency',
+      description: 'Critical dependency on single supplier with high risk score',
+      severity: 'high',
+    });
+    prescriptiveActions.push({
+      action: 'qualify_backup_supplier',
+      description: 'Start qualification process for secondary supplier',
+      urgency: 'medium',
+      estimated_impact: 'Reduce supply chain risk by 40-60%',
+    });
+  }
+
+  // If no specific root causes identified, add generic analysis
+  if (rootCauses.length === 0) {
+    rootCauses.push({
+      factor: 'general_risk',
+      description: 'Risk score elevated due to combination of factors',
+      severity: 'medium',
+    });
+  }
+
+  return {
+    ...alert,
+    root_causes: rootCauses,
+    prescriptive_actions: prescriptiveActions.length > 0 ? prescriptiveActions : alert.recommended_actions.map(a => ({
+      action: 'recommended',
+      description: a,
+      urgency: alert.severity === 'critical' ? 'critical' : 'medium',
+    })),
+    analysis_version: 'v2',
+  };
+}
+
+// ── Cross-Alert Insights ─────────────────────────────────────────────────────
+
+/**
+ * Generate aggregate insights from all alerts.
+ */
+function generateInsights(alerts) {
+  if (!alerts.length) return [];
+
+  const insights = [];
+
+  // Concentration risk: multiple alerts for same supplier
+  const supplierAlerts = {};
+  alerts.forEach(a => {
+    if (a.supplier) {
+      if (!supplierAlerts[a.supplier]) supplierAlerts[a.supplier] = [];
+      supplierAlerts[a.supplier].push(a);
+    }
+  });
+
+  for (const [supplier, sAlerts] of Object.entries(supplierAlerts)) {
+    if (sAlerts.length >= 2) {
+      const totalImpact = sAlerts.reduce((s, a) => s + (a.impact_usd || 0), 0);
+      insights.push({
+        type: 'concentration_risk',
+        title: `Supplier concentration: ${supplier}`,
+        description: `${sAlerts.length} alerts tied to ${supplier}. Total exposure: $${totalImpact.toLocaleString()}.`,
+        severity: sAlerts.some(a => a.severity === 'critical') ? 'critical' : 'high',
+        affected_materials: sAlerts.map(a => a.material_code),
+      });
+    }
+  }
+
+  // Cascade risk: multiple materials at same plant
+  const plantAlerts = {};
+  alerts.forEach(a => {
+    if (a.plant_id) {
+      if (!plantAlerts[a.plant_id]) plantAlerts[a.plant_id] = [];
+      plantAlerts[a.plant_id].push(a);
+    }
+  });
+
+  for (const [plant, pAlerts] of Object.entries(plantAlerts)) {
+    if (pAlerts.length >= 3) {
+      insights.push({
+        type: 'plant_cascade_risk',
+        title: `Multiple risks at plant ${plant}`,
+        description: `${pAlerts.length} materials at risk in plant ${plant}. Consider plant-level contingency plan.`,
+        severity: 'high',
+        affected_materials: pAlerts.map(a => a.material_code),
+      });
+    }
+  }
+
+  // Total exposure insight
+  const totalExposure = alerts.reduce((s, a) => s + (a.impact_usd || 0), 0);
+  if (totalExposure > 0) {
+    insights.push({
+      type: 'total_exposure',
+      title: 'Total financial exposure',
+      description: `$${totalExposure.toLocaleString()} at risk across ${alerts.length} alert(s).`,
+      severity: totalExposure > 100000 ? 'critical' : totalExposure > 50000 ? 'high' : 'medium',
+    });
+  }
+
+  return insights;
 }
