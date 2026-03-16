@@ -178,11 +178,17 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
   });
 
   const alertMonitorRef = useRef(null);
+  const chatAbortRef = useRef(null);
   const textareaRef = useRef(null);
   const fileInputRef = useRef(null);
   const topologyAutoLoadRef = useRef({});
   const prevAICanvasOpenRef = useRef(false);
   const prevAIExecOpenRef = useRef(false);
+
+  // Abort any in-flight chat streaming on unmount
+  useEffect(() => {
+    return () => { chatAbortRef.current?.abort(); };
+  }, []);
 
   // Stable ref for canvas state updater used by useConversationManager
   const canvasStateByConversationRef = useRef(null);
@@ -1980,12 +1986,44 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
     const history = updatedMessages.slice(-10);
     let fullResult = '';
     let aiErrorPayload = null;
+
+    // --- "Still thinking" heartbeat: show dots every 12s if no chunks arrive ---
+    let lastChunkAt = Date.now();
+    const thinkingInterval = setInterval(() => {
+      const silenceMs = Date.now() - lastChunkAt;
+      if (silenceMs >= 12_000) {
+        setStreamingContent((prev) => prev + (prev ? '\n' : '') + '💭 still thinking...');
+        lastChunkAt = Date.now(); // reset so next dot comes after another 12s
+      }
+    }, 4_000);
+
+    const attemptChat = async (retryCount = 0) => {
+      chatAbortRef.current?.abort();
+      chatAbortRef.current = new AbortController();
+      try {
+        return await streamChatWithAI(messageText, history, systemPrompt, (chunk) => {
+          lastChunkAt = Date.now();
+          setStreamingContent((prev) => prev + chunk);
+        }, { signal: chatAbortRef.current.signal });
+      } catch (error) {
+        const isTimeout = error?.name === 'AbortError' || /timed?\s*out/i.test(error?.message);
+        if (isTimeout && retryCount < 1) {
+          console.warn('[DSV] Chat timed out, retrying once...');
+          setStreamingContent((prev) => prev + '\n⏱️ Request timed out, retrying...\n');
+          return attemptChat(retryCount + 1);
+        }
+        throw error;
+      }
+    };
+
     try {
-      fullResult = await streamChatWithAI(messageText, history, systemPrompt, (chunk) => { setStreamingContent((prev) => prev + chunk); });
+      fullResult = await attemptChat();
     } catch (error) {
       console.error('AI call failed:', error);
       if (isApiKeyConfigError(error?.message)) { aiErrorPayload = { title: 'AI service configuration required', message: 'Server-side AI keys are missing or invalid. Ask an admin to set Supabase Edge Function secrets.', ctaLabel: 'Show setup hint' }; }
       else { fullResult = `❌ AI service temporarily unavailable\n\nError: ${error.message}`; }
+    } finally {
+      clearInterval(thinkingInterval);
     }
 
     if (!aiErrorPayload && isApiKeyConfigError(fullResult)) {

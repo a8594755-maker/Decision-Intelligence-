@@ -52,12 +52,24 @@ export const warmupEdgeFunction = () => {
     .catch((e) => console.warn(`[aiProxy] warmup failed in ${Math.round(performance.now() - t0)}ms:`, e.message));
 };
 
-export const invokeAiProxy = async (mode, payload = {}, { signal } = {}) => {
+/** Default timeout for AI proxy requests (180 seconds — long tasks are common). */
+const AI_PROXY_TIMEOUT_MS = 180_000;
+
+export const invokeAiProxy = async (mode, payload = {}, { signal, timeoutMs = AI_PROXY_TIMEOUT_MS } = {}) => {
   acquireOrThrow('ai_proxy');
 
   if (!EDGE_FN_URL) {
     throw new Error('Edge Function URL not configured. Check VITE_SUPABASE_URL.');
   }
+
+  // Build a signal that respects both caller abort and timeout
+  const timeoutController = new AbortController();
+  const timeoutId = setTimeout(() => timeoutController.abort(new Error(`AI proxy timed out after ${timeoutMs}ms`)), timeoutMs);
+  const effectiveSignal = signal
+    ? (AbortSignal.any
+        ? AbortSignal.any([signal, timeoutController.signal])
+        : (() => { const c = new AbortController(); const onAbort = () => c.abort(); signal.addEventListener('abort', onAbort, { once: true }); timeoutController.signal.addEventListener('abort', onAbort, { once: true }); return c.signal; })())
+    : timeoutController.signal;
 
   const accessToken = getStoredAccessToken();
   const headers = {
@@ -71,12 +83,17 @@ export const invokeAiProxy = async (mode, payload = {}, { signal } = {}) => {
   const t0 = performance.now();
   console.info(`[aiProxy] Calling Edge Function "${AI_PROXY_FUNCTION_NAME}" (mode=${mode}) via raw fetch...`);
 
-  const res = await fetch(EDGE_FN_URL, {
+  let res;
+  try {
+  res = await fetch(EDGE_FN_URL, {
     method: 'POST',
     headers,
     body: JSON.stringify({ mode, payload }),
-    signal,
+    signal: effectiveSignal,
   });
+  } finally {
+    clearTimeout(timeoutId);
+  }
 
   const elapsed = Math.round(performance.now() - t0);
   console.info(`[aiProxy] Edge Function "${AI_PROXY_FUNCTION_NAME}" (mode=${mode}) responded in ${elapsed}ms — status ${res.status}`);

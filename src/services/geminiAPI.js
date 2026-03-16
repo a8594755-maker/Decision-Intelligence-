@@ -75,7 +75,8 @@ const postGeminiWithModelFallback = async ({
   apiKey,
   action,
   requestBody,
-  query = ''
+  query = '',
+  signal
 }) => {
   let retryableFailure = null;
 
@@ -84,7 +85,8 @@ const postGeminiWithModelFallback = async ({
     const response = await fetch(apiUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(requestBody)
+      body: JSON.stringify(requestBody),
+      signal
     });
 
     if (response.ok) {
@@ -250,7 +252,8 @@ const buildDeepSeekMessages = ({ message, conversationHistory = [], systemPrompt
 
 const postDeepSeekWithModelFallback = async ({
   apiKey,
-  requestBody
+  requestBody,
+  signal
 }) => {
   const modelCandidates = Array.from(new Set(
     [requestBody?.model, ...DEEPSEEK_CHAT_MODEL_CANDIDATES]
@@ -270,7 +273,8 @@ const postDeepSeekWithModelFallback = async ({
       body: JSON.stringify({
         ...requestBody,
         model
-      })
+      }),
+      signal
     });
 
     if (response.ok) {
@@ -761,6 +765,7 @@ const _streamGeminiChat = async ({
   message,
   fullContext,
   onChunk,
+  signal,
   temperature = 0.7,
   maxOutputTokens = 8192
 }) => {
@@ -780,7 +785,8 @@ const _streamGeminiChat = async ({
     apiKey,
     action: 'streamGenerateContent',
     requestBody,
-    query: 'alt=sse'
+    query: 'alt=sse',
+    signal
   });
 
   if (!request.ok) {
@@ -800,31 +806,36 @@ const _streamGeminiChat = async ({
   let fullText = '';
   let buffer = '';
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
+  try {
+    while (true) {
+      if (signal?.aborted) break;
+      const { done, value } = await reader.read();
+      if (done) break;
 
-    buffer += decoder.decode(value, { stream: true });
+      buffer += decoder.decode(value, { stream: true });
 
-    const lines = buffer.split('\n');
-    buffer = lines.pop() || '';
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
 
-    for (const line of lines) {
-      if (!line.startsWith('data: ')) continue;
-      const jsonStr = line.slice(6).trim();
-      if (!jsonStr || jsonStr === '[DONE]') continue;
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const jsonStr = line.slice(6).trim();
+        if (!jsonStr || jsonStr === '[DONE]') continue;
 
-      try {
-        const parsed = JSON.parse(jsonStr);
-        const chunk = parsed.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (chunk) {
-          fullText += chunk;
-          onChunk?.(chunk);
+        try {
+          const parsed = JSON.parse(jsonStr);
+          const chunk = parsed.candidates?.[0]?.content?.parts?.[0]?.text;
+          if (chunk) {
+            fullText += chunk;
+            onChunk?.(chunk);
+          }
+        } catch {
+          // Skip malformed JSON chunks
         }
-      } catch {
-        // Skip malformed JSON chunks
       }
     }
+  } finally {
+    try { reader.cancel(); } catch { /* ignore */ }
   }
 
   return fullText || 'No response generated.';
@@ -835,9 +846,8 @@ const streamDeepSeekChat = async ({
   message,
   conversationHistory,
   systemPrompt,
-  
-  
   onChunk,
+  signal,
   temperature = 0.7,
   maxOutputTokens = 8192
 }) => {
@@ -853,7 +863,8 @@ const streamDeepSeekChat = async ({
       temperature,
       max_tokens: maxOutputTokens,
       stream: true
-    }
+    },
+    signal
   });
 
   if (!request.ok) {
@@ -869,34 +880,39 @@ const streamDeepSeekChat = async ({
   let fullText = '';
   let buffer = '';
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
+  try {
+    while (true) {
+      if (signal?.aborted) break;
+      const { done, value } = await reader.read();
+      if (done) break;
 
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split('\n');
-    buffer = lines.pop() || '';
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
 
-    for (const line of lines) {
-      if (!line.startsWith('data:')) continue;
-      const jsonStr = line.slice(5).trim();
-      if (!jsonStr || jsonStr === '[DONE]') continue;
+      for (const line of lines) {
+        if (!line.startsWith('data:')) continue;
+        const jsonStr = line.slice(5).trim();
+        if (!jsonStr || jsonStr === '[DONE]') continue;
 
-      try {
-        const parsed = JSON.parse(jsonStr);
-        const delta = parsed?.choices?.[0]?.delta?.content;
-        const chunk = typeof delta === 'string'
-          ? delta
-          : Array.isArray(delta)
-            ? delta.map((part) => part?.text || '').join('')
-            : '';
-        if (!chunk) continue;
-        fullText += chunk;
-        onChunk?.(chunk);
-      } catch {
-        // Skip malformed chunks
+        try {
+          const parsed = JSON.parse(jsonStr);
+          const delta = parsed?.choices?.[0]?.delta?.content;
+          const chunk = typeof delta === 'string'
+            ? delta
+            : Array.isArray(delta)
+              ? delta.map((part) => part?.text || '').join('')
+              : '';
+          if (!chunk) continue;
+          fullText += chunk;
+          onChunk?.(chunk);
+        } catch {
+          // Skip malformed chunks
+        }
       }
     }
+  } finally {
+    try { reader.cancel(); } catch { /* ignore */ }
   }
 
   return fullText || 'No response generated.';
@@ -911,7 +927,26 @@ const streamDeepSeekChat = async ({
  * @param {function} onChunk - Called with each text chunk as it streams
  * @returns {Promise<string>} Full concatenated response
  */
-export const streamChatWithAI = async (message, conversationHistory = [], systemPrompt = '', onChunk = null) => {
+/** Default timeout for chat streaming requests (180 seconds — long analysis tasks need more time). */
+const STREAM_CHAT_TIMEOUT_MS = 180_000;
+
+export const streamChatWithAI = async (message, conversationHistory = [], systemPrompt = '', onChunk = null, { signal: externalSignal } = {}) => {
+  // Build a combined AbortSignal: external cancel OR timeout
+  const timeoutController = new AbortController();
+  const timeoutId = setTimeout(() => timeoutController.abort(new Error(`Chat request timed out after ${STREAM_CHAT_TIMEOUT_MS / 1000}s`)), STREAM_CHAT_TIMEOUT_MS);
+  const combinedSignal = externalSignal
+    ? AbortSignal.any
+      ? AbortSignal.any([externalSignal, timeoutController.signal])
+      : (() => { // Fallback for browsers without AbortSignal.any
+          const c = new AbortController();
+          const onAbort = () => c.abort();
+          externalSignal.addEventListener('abort', onAbort, { once: true });
+          timeoutController.signal.addEventListener('abort', onAbort, { once: true });
+          return c.signal;
+        })()
+    : timeoutController.signal;
+
+  try {
   if (USE_EDGE_AI_PROXY) {
     const t0 = Date.now();
     try {
@@ -922,7 +957,7 @@ export const streamChatWithAI = async (message, conversationHistory = [], system
         temperature: 0.7,
         maxOutputTokens: 8192,
         model: 'deepseek-chat'
-      });
+      }, { signal: combinedSignal });
       const text = typeof result?.text === 'string' ? result.text : 'No response generated.';
       const usage = result?.usage;
       trackLlmUsage({
@@ -983,7 +1018,8 @@ export const streamChatWithAI = async (message, conversationHistory = [], system
         message,
         conversationHistory,
         systemPrompt,
-        onChunk
+        onChunk,
+        signal: combinedSignal
       });
       trackLlmUsage({
         source: 'deepseek_api',
@@ -1013,6 +1049,9 @@ export const streamChatWithAI = async (message, conversationHistory = [], system
   const fallback = '❌ 未設定 DeepSeek API Key，無法進行對話。\n\n請在設定中加入 DeepSeek API Key。';
   onChunk?.(fallback);
   return fallback;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 };
 
 export default {
