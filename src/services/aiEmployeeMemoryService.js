@@ -335,6 +335,339 @@ export function summarizeMemories(memories) {
   };
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Knowledge Vault — Style / Policy / Exemplar Memory (P1-3)
+//
+// Three core memory types beyond execution outcomes:
+//   1. Company Policy Memory — "how this org operates"
+//   2. Approved Exemplars    — "what good output looks like"
+//   3. Style Retrieval       — "how to deliver for this manager"
+// ═══════════════════════════════════════════════════════════════════════════
+
+const VAULT_LOCAL_KEY = 'ai_employee_knowledge_vault_v1';
+
+function getVaultStore() {
+  try {
+    const raw = localStorage.getItem(VAULT_LOCAL_KEY);
+    return raw ? JSON.parse(raw) : { policies: [], exemplars: [], styles: [] };
+  } catch {
+    return { policies: [], exemplars: [], styles: [] };
+  }
+}
+
+function setVaultStore(store) {
+  try {
+    const trimmed = {
+      policies: (store.policies || []).slice(-100),
+      exemplars: (store.exemplars || []).slice(-100),
+      styles: (store.styles || []).slice(-50),
+    };
+    localStorage.setItem(VAULT_LOCAL_KEY, JSON.stringify(trimmed));
+  } catch { /* quota */ }
+}
+
+// ── Policy Memory ──────────────────────────────────────────────────────────
+
+/**
+ * Store a company/org policy that governs how the AI employee operates.
+ *
+ * @param {Object} params
+ * @param {string} params.employeeId
+ * @param {string} params.category     - 'naming_convention'|'approval_rule'|'data_handling'|'reporting'|'communication'
+ * @param {string} params.rule         - The policy rule text
+ * @param {string} [params.scope]      - 'global'|'workflow_type'|'dataset'
+ * @param {string} [params.scopeValue] - e.g. 'forecast', 'plan'
+ * @param {string} [params.createdBy]  - Manager user ID
+ * @returns {Promise<Object>}
+ */
+export async function writePolicy({ employeeId, category, rule, scope = 'global', scopeValue = null, createdBy = null }) {
+  const entry = {
+    id: `pol_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+    employee_id: employeeId,
+    type: 'policy',
+    category,
+    rule,
+    scope,
+    scope_value: scopeValue,
+    is_active: true,
+    created_by: createdBy,
+    created_at: now(),
+  };
+
+  const sbResult = await trySupabase(async () => {
+    const { data, error } = await supabase
+      .from('ai_employee_knowledge_vault')
+      .insert(entry)
+      .select()
+      .single();
+    if (error) throw error;
+    return data;
+  });
+  if (sbResult) return sbResult;
+
+  const store = getVaultStore();
+  store.policies.push(entry);
+  setVaultStore(store);
+  return entry;
+}
+
+/**
+ * Retrieve active policies for an employee, optionally filtered by scope.
+ */
+export async function recallPolicies(employeeId, { category, scope, scopeValue } = {}) {
+  const sbResult = await trySupabase(async () => {
+    let q = supabase
+      .from('ai_employee_knowledge_vault')
+      .select('*')
+      .eq('employee_id', employeeId)
+      .eq('type', 'policy')
+      .eq('is_active', true)
+      .order('created_at', { ascending: false });
+
+    if (category) q = q.eq('category', category);
+    if (scope) q = q.eq('scope', scope);
+    if (scopeValue) q = q.eq('scope_value', scopeValue);
+
+    const { data, error } = await q;
+    if (error) throw error;
+    return data;
+  });
+  if (sbResult !== null) return sbResult;
+
+  let results = getVaultStore().policies.filter((p) => p.employee_id === employeeId && p.is_active);
+  if (category) results = results.filter((p) => p.category === category);
+  if (scope) results = results.filter((p) => p.scope === scope);
+  if (scopeValue) results = results.filter((p) => p.scope_value === scopeValue);
+  return results;
+}
+
+// ── Approved Exemplars ─────────────────────────────────────────────────────
+
+/**
+ * Store an approved exemplar — a reference output that was explicitly approved
+ * by the manager. Used for future output comparison and style matching.
+ *
+ * @param {Object} params
+ * @param {string} params.employeeId
+ * @param {string} params.workflowType   - 'forecast'|'plan'|'risk'|'report'
+ * @param {string} params.taskId         - Source task
+ * @param {Object} params.outputSnapshot - Snapshot of the approved output
+ * @param {Object} [params.kpis]         - KPIs at time of approval
+ * @param {string} [params.managerNotes] - Why this was approved/exemplary
+ * @param {string[]} [params.tags]       - Searchable tags
+ * @returns {Promise<Object>}
+ */
+export async function writeExemplar({ employeeId, workflowType, taskId, outputSnapshot, kpis = {}, managerNotes = '', tags = [] }) {
+  const entry = {
+    id: `exm_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+    employee_id: employeeId,
+    type: 'exemplar',
+    workflow_type: workflowType,
+    task_id: taskId,
+    output_snapshot: outputSnapshot,
+    kpis,
+    manager_notes: managerNotes,
+    tags,
+    is_active: true,
+    created_at: now(),
+  };
+
+  const sbResult = await trySupabase(async () => {
+    const { data, error } = await supabase
+      .from('ai_employee_knowledge_vault')
+      .insert(entry)
+      .select()
+      .single();
+    if (error) throw error;
+    return data;
+  });
+  if (sbResult) return sbResult;
+
+  const store = getVaultStore();
+  store.exemplars.push(entry);
+  setVaultStore(store);
+  return entry;
+}
+
+/**
+ * Retrieve exemplars for an employee by workflow type.
+ */
+export async function recallExemplars(employeeId, { workflowType, tags, limit = 5 } = {}) {
+  const sbResult = await trySupabase(async () => {
+    let q = supabase
+      .from('ai_employee_knowledge_vault')
+      .select('*')
+      .eq('employee_id', employeeId)
+      .eq('type', 'exemplar')
+      .eq('is_active', true)
+      .order('created_at', { ascending: false })
+      .limit(limit);
+
+    if (workflowType) q = q.eq('workflow_type', workflowType);
+    if (tags?.length) q = q.contains('tags', tags);
+
+    const { data, error } = await q;
+    if (error) throw error;
+    return data;
+  });
+  if (sbResult !== null) return sbResult;
+
+  let results = getVaultStore().exemplars.filter((e) => e.employee_id === employeeId && e.is_active);
+  if (workflowType) results = results.filter((e) => e.workflow_type === workflowType);
+  if (tags?.length) results = results.filter((e) => tags.some((t) => (e.tags || []).includes(t)));
+  return results.sort((a, b) => b.created_at.localeCompare(a.created_at)).slice(0, limit);
+}
+
+// ── Style Retrieval ──────────────────────────────────────────────────────────
+
+/**
+ * Store a style preference for this employee (learned from manager feedback).
+ *
+ * @param {Object} params
+ * @param {string} params.employeeId
+ * @param {string} params.dimension     - 'tone'|'detail_level'|'format'|'terminology'|'visual_style'
+ * @param {string} params.preference    - The style preference value
+ * @param {string} [params.context]     - When to apply (e.g. 'reporting', 'email', 'all')
+ * @param {number} [params.confidence]  - 0-1 confidence in this preference
+ * @param {string} [params.learnedFrom] - Task ID where this was learned
+ * @returns {Promise<Object>}
+ */
+export async function writeStylePreference({ employeeId, dimension, preference, context = 'all', confidence = 0.5, learnedFrom = null }) {
+  const entry = {
+    id: `sty_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+    employee_id: employeeId,
+    type: 'style',
+    dimension,
+    preference,
+    context,
+    confidence,
+    learned_from: learnedFrom,
+    is_active: true,
+    created_at: now(),
+    updated_at: now(),
+  };
+
+  // Upsert: if same dimension+context exists, update instead of insert
+  const sbResult = await trySupabase(async () => {
+    // Check for existing
+    const { data: existing } = await supabase
+      .from('ai_employee_knowledge_vault')
+      .select('id')
+      .eq('employee_id', employeeId)
+      .eq('type', 'style')
+      .eq('dimension', dimension)
+      .eq('context', context)
+      .eq('is_active', true)
+      .maybeSingle();
+
+    if (existing) {
+      const { data, error } = await supabase
+        .from('ai_employee_knowledge_vault')
+        .update({ preference, confidence, learned_from: learnedFrom, updated_at: now() })
+        .eq('id', existing.id)
+        .select()
+        .single();
+      if (error) throw error;
+      return data;
+    }
+
+    const { data, error } = await supabase
+      .from('ai_employee_knowledge_vault')
+      .insert(entry)
+      .select()
+      .single();
+    if (error) throw error;
+    return data;
+  });
+  if (sbResult) return sbResult;
+
+  const store = getVaultStore();
+  const idx = store.styles.findIndex(
+    (s) => s.employee_id === employeeId && s.dimension === dimension && s.context === context
+  );
+  if (idx >= 0) {
+    Object.assign(store.styles[idx], { preference, confidence, learned_from: learnedFrom, updated_at: now() });
+  } else {
+    store.styles.push(entry);
+  }
+  setVaultStore(store);
+  return idx >= 0 ? store.styles[idx] : entry;
+}
+
+/**
+ * Retrieve all style preferences for an employee.
+ * Returns a style profile object keyed by dimension.
+ */
+export async function recallStyleProfile(employeeId, { context } = {}) {
+  const sbResult = await trySupabase(async () => {
+    let q = supabase
+      .from('ai_employee_knowledge_vault')
+      .select('*')
+      .eq('employee_id', employeeId)
+      .eq('type', 'style')
+      .eq('is_active', true)
+      .order('confidence', { ascending: false });
+
+    if (context) q = q.in('context', [context, 'all']);
+
+    const { data, error } = await q;
+    if (error) throw error;
+    return data;
+  });
+
+  const styles = sbResult ?? getVaultStore().styles.filter(
+    (s) => s.employee_id === employeeId && s.is_active && (!context || s.context === context || s.context === 'all')
+  );
+
+  // Build profile object
+  const profile = {};
+  for (const s of styles) {
+    if (!profile[s.dimension] || s.confidence > (profile[s.dimension].confidence || 0)) {
+      profile[s.dimension] = {
+        preference: s.preference,
+        confidence: s.confidence,
+        context: s.context,
+        learned_from: s.learned_from,
+      };
+    }
+  }
+  return profile;
+}
+
+/**
+ * Build a full knowledge context for task execution.
+ * Combines execution memory, policies, exemplars, and style preferences.
+ *
+ * @param {string} employeeId
+ * @param {Object} [query] - Recall query (workflowType, datasetFingerprint, etc.)
+ * @returns {Promise<Object>} Combined knowledge context
+ */
+export async function buildKnowledgeContext(employeeId, query = {}) {
+  const [memories, policies, exemplars, styleProfile] = await Promise.all([
+    recall(employeeId, { workflowType: query.workflowType, limit: 3 }),
+    recallPolicies(employeeId, { scopeValue: query.workflowType }),
+    recallExemplars(employeeId, { workflowType: query.workflowType, limit: 2 }),
+    recallStyleProfile(employeeId),
+  ]);
+
+  return {
+    execution_memory: summarizeMemories(memories),
+    active_policies: policies.map((p) => ({
+      category: p.category,
+      rule: p.rule,
+      scope: p.scope,
+    })),
+    exemplars: exemplars.map((e) => ({
+      workflow_type: e.workflow_type,
+      output_snapshot: e.output_snapshot,
+      kpis: e.kpis,
+      notes: e.manager_notes,
+    })),
+    style_profile: styleProfile,
+    has_knowledge: policies.length > 0 || exemplars.length > 0 || Object.keys(styleProfile).length > 0,
+  };
+}
+
 export default {
   extractOutcomeKpis,
   extractInputParams,
@@ -342,4 +675,12 @@ export default {
   attachFeedback,
   recall,
   summarizeMemories,
+  // Knowledge Vault
+  writePolicy,
+  recallPolicies,
+  writeExemplar,
+  recallExemplars,
+  writeStylePreference,
+  recallStyleProfile,
+  buildKnowledgeContext,
 };

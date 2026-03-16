@@ -19,6 +19,7 @@ import { Card } from '../components/ui';
 import { useAuth } from '../contexts/AuthContext';
 import { listEmployeesByManager, getKpis } from '../services/aiEmployee/queries.js';
 import { getLatestSummary } from '../services/dailySummaryService';
+import { listPending, getGovernanceStats } from '../services/governanceService';
 import DecisionSupportView from '../views/DecisionSupportView';
 
 // ── Quick Stats Card ────────────────────────────────────────────────────────
@@ -147,15 +148,22 @@ export default function AIEmployeeHome() {
   const [kpisMap, setKpisMap] = useState({});
   const [dailySummary, setDailySummary] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [pendingApprovals, setPendingApprovals] = useState([]);
+  const [govStats, setGovStats] = useState(null);
 
   const loadData = useCallback(async () => {
     if (!user?.id) return;
     setLoading(true);
     try {
-      const [emps, summary] = await Promise.all([
+      const [emps, summary, approvals, gStats] = await Promise.all([
         listEmployeesByManager(user.id).catch(() => []),
         getLatestSummary(user.id).catch(() => null),
+        listPending(user.id, { limit: 10 }).catch(() => []),
+        getGovernanceStats(user.id).catch(() => null),
       ]);
+
+      setPendingApprovals(approvals || []);
+      setGovStats(gStats);
 
       setWorkers(emps || []);
       setDailySummary(summary);
@@ -273,6 +281,109 @@ export default function AIEmployeeHome() {
             </div>
             <ArrowUpRight className="w-4 h-4 text-amber-600" />
           </button>
+        )}
+
+        {/* Approval Inbox */}
+        {pendingApprovals.length > 0 && (
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
+                Approval Inbox ({pendingApprovals.length})
+              </h2>
+              {govStats && (
+                <div className="flex gap-2 text-[10px]">
+                  <span className="px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700">{govStats.approved} approved</span>
+                  <span className="px-1.5 py-0.5 rounded bg-red-100 dark:bg-red-900/40 text-red-700">{govStats.rejected} rejected</span>
+                </div>
+              )}
+            </div>
+            <div className="grid gap-2">
+              {pendingApprovals.slice(0, 5).map((approval) => {
+                const remaining = approval.expires_at ? new Date(approval.expires_at).getTime() - Date.now() : null;
+                const isUrgent = remaining != null && remaining > 0 && remaining <= 4 * 3600000;
+                const isCritical = remaining != null && remaining > 0 && remaining <= 3600000;
+                const isExpired = remaining != null && remaining <= 0;
+
+                return (
+                  <div
+                    key={approval.id}
+                    className="flex items-center gap-3 p-3 rounded-lg border transition-colors hover:bg-[var(--surface-subtle)]"
+                    style={{ borderColor: isUrgent ? 'var(--risk-warning)' : 'var(--border-default)' }}
+                  >
+                    <div className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                      isExpired ? 'bg-slate-400' : isCritical ? 'bg-red-500 animate-pulse' : isUrgent ? 'bg-amber-500' : 'bg-blue-500'
+                    }`} />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>{approval.title}</p>
+                      <div className="flex items-center gap-2 text-[10px] text-slate-500">
+                        <span className="uppercase">{(approval.type || '').replace(/_/g, ' ')}</span>
+                        {remaining != null && !isExpired && (
+                          <span className={isCritical ? 'text-red-600 font-medium' : isUrgent ? 'text-amber-600' : ''}>
+                            {Math.floor(remaining / 3600000)}h {Math.floor((remaining % 3600000) / 60000)}m left
+                          </span>
+                        )}
+                        {isExpired && <span className="text-slate-400">Expired</span>}
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => navigate('/chat')}
+                      className="text-xs px-2.5 py-1 rounded-md font-medium bg-indigo-600 text-white hover:bg-indigo-700 transition-colors"
+                    >
+                      Review
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Trust & Autonomy Dashboard */}
+        {workers.length > 0 && (
+          <div className="space-y-2">
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">Trust & Autonomy</h2>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              {workers.map((w) => {
+                const k = kpisMap[w.id];
+                const trustScore = k ? Math.min(100, Math.round(
+                  ((k.on_time_rate_pct ?? 50) * 0.4) +
+                  ((k.review_pass_rate_pct ?? 50) * 0.3) +
+                  (Math.min((k.tasks_completed ?? 0) * 2, 100) * 0.3)
+                )) : 0;
+                const autonomyLevel = trustScore >= 80 ? 'A3' : trustScore >= 60 ? 'A2' : trustScore >= 30 ? 'A1' : 'A0';
+                const autonomyLabel = { A0: 'Manual', A1: 'Assisted', A2: 'Supervised', A3: 'Autonomous' }[autonomyLevel];
+
+                return (
+                  <Card key={w.id} className="!p-3">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Bot className="w-3.5 h-3.5 text-indigo-500" />
+                      <span className="text-xs font-medium truncate" style={{ color: 'var(--text-primary)' }}>{w.name}</span>
+                    </div>
+                    <div className="flex items-end gap-2 mb-1.5">
+                      <span className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>{trustScore}</span>
+                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                        autonomyLevel === 'A3' ? 'bg-emerald-100 text-emerald-700'
+                          : autonomyLevel === 'A2' ? 'bg-blue-100 text-blue-700'
+                            : autonomyLevel === 'A1' ? 'bg-amber-100 text-amber-700'
+                              : 'bg-slate-100 text-slate-600'
+                      }`}>
+                        {autonomyLevel}
+                      </span>
+                    </div>
+                    <div className="w-full h-1.5 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden">
+                      <div
+                        className={`h-full rounded-full ${
+                          trustScore >= 80 ? 'bg-emerald-500' : trustScore >= 60 ? 'bg-blue-500' : trustScore >= 30 ? 'bg-amber-500' : 'bg-red-500'
+                        }`}
+                        style={{ width: `${trustScore}%` }}
+                      />
+                    </div>
+                    <p className="text-[10px] text-slate-500 mt-1">{autonomyLabel}</p>
+                  </Card>
+                );
+              })}
+            </div>
+          </div>
         )}
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
