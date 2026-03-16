@@ -59,7 +59,7 @@ function SidebarSkeleton() {
 }
 
 function AIEmployeeConversationSidebar({
-  title = 'Aiden',
+  title = 'Digital Worker',
   conversations,
   currentConversationId,
   onSelectConversation,
@@ -148,7 +148,7 @@ function AIEmployeeConversationSidebar({
               No saved chats
             </div>
             <p className="mt-3 text-sm text-slate-500 dark:text-slate-400">
-              Start a new chat and Aiden will keep the thread here.
+              Start a new chat and your worker will keep the thread here.
             </p>
           </div>
         ) : (

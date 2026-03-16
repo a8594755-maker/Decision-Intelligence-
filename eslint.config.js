@@ -11,6 +11,10 @@ export default defineConfig([
     '.venv',
     'venv312',
     '.netlify',
+    '.claude/**',
+    'discord-bot',
+    'excel-addin',
+    'node_modules',
     'PHASE1_CONSOLE_TEST.js',
   ]),
   {
@@ -35,6 +39,12 @@ export default defineConfig([
       'no-prototype-builtins': 'warn',
       'no-case-declarations': 'warn',
       'react-refresh/only-export-components': 'warn',
+      // New React compiler rules — aspirational, downgrade to warn for now
+      'react-hooks/purity': 'warn',
+      'react-hooks/refs': 'warn',
+      'react-hooks/set-state-in-effect': 'warn',
+      'react-hooks/preserve-manual-memoization': 'warn',
+      'react-hooks/immutability': 'warn',
     },
   },
   {
@@ -42,6 +52,15 @@ export default defineConfig([
     languageOptions: {
       globals: {
         process: 'readonly',
+        Buffer: 'readonly',
+      },
+    },
+  },
+  {
+    files: ['**/cfr/**/*.{js,jsx}'],
+    languageOptions: {
+      globals: {
+        Buffer: 'readonly',
       },
     },
   },

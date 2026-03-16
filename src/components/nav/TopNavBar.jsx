@@ -25,21 +25,21 @@ const DI_NAV_ITEMS = [
 ];
 
 const DI_ADVANCED_ITEMS = [
-  { to: '/employees',        label: 'AI Employee',  icon: Bot },
-  { to: '/employees/tasks',  label: 'Tasks',        icon: ClipboardList },
-  { to: '/employees/review', label: 'Review',       icon: CheckSquare },
-  { to: '/employees/tools',  label: 'Tool Library', icon: Wrench },
+  { to: '/employees',        label: 'Digital Worker',  icon: Bot },
+  { to: '/employees/tasks',  label: 'Tasks',           icon: ClipboardList },
+  { to: '/employees/review', label: 'Review',          icon: CheckSquare },
+  { to: '/employees/tools',  label: 'Tool Library',    icon: Wrench },
   { to: '/employees/profiles', label: 'Output Profiles', icon: FileText },
 ];
 
 // ────────────────────────────────────────────────────────────
-// AI Employee Workspace nav
+// Digital Worker Workspace nav
 // ────────────────────────────────────────────────────────────
 const AI_NAV_ITEMS = [
-  { to: '/',                 label: 'Chat',          icon: MessageSquare, end: true },
-  { to: '/employees/tasks',  label: 'Tasks',         icon: ClipboardList },
-  { to: '/employees/review', label: 'Review',        icon: CheckSquare },
-  { to: '/employees',        label: 'AI Employee',   icon: Bot },
+  { to: '/',                 label: 'Chat',           icon: MessageSquare, end: true },
+  { to: '/employees/tasks',  label: 'Tasks',          icon: ClipboardList },
+  { to: '/employees/review', label: 'Review',         icon: CheckSquare },
+  { to: '/employees',        label: 'Digital Worker',  icon: Bot },
   { to: '/employees/tools',  label: 'Tool Library',  icon: Wrench },
   { to: '/employees/profiles', label: 'Profiles',     icon: FileText },
 ];
@@ -62,7 +62,7 @@ const BOTTOM_ITEMS = [
 
 const WS_META = {
   di:          { label: 'Decision Intelligence', short: 'DI', icon: LayoutDashboard, color: 'text-blue-600' },
-  ai_employee: { label: 'AI Employee',          short: 'AI', icon: Bot,              color: 'text-indigo-600' },
+  ai_employee: { label: 'Digital Worker',        short: 'DW', icon: Bot,              color: 'text-indigo-600' },
 };
 
 export default function Sidebar() {
@@ -126,7 +126,7 @@ export default function Sidebar() {
               style={{ color: 'var(--text-muted)' }}
             >
               <ChevronDown className={`w-3.5 h-3.5 transition-transform ${advancedOpen ? '' : '-rotate-90'}`} />
-              {isAI ? 'Advanced Tools' : 'AI Employee'}
+              {isAI ? 'Advanced Tools' : 'Digital Worker'}
             </button>
             {advancedOpen && (
               <div className="flex flex-col gap-0.5 mt-0.5">

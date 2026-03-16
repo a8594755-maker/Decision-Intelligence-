@@ -45,7 +45,7 @@ export async function getEmployee(employeeId) {
 }
 
 /**
- * Get employee by manager user ID (for Aiden lookup).
+ * Get employee by manager user ID.
  */
 export async function getEmployeeByManager(userId) {
   const { data, error } = await supabase
@@ -90,51 +90,62 @@ const DEFAULT_PERMISSIONS = {
 };
 
 // ── Built-in worker templates ──
+// IDs match DB migration (worker_templates table) and capabilityModelService.
 const WORKER_TEMPLATES = {
-  analytics_worker: {
-    id: 'analytics_worker',
-    name: 'Aiden',
-    role: 'analytics_worker',
+  data_analyst: {
+    id: 'data_analyst',
+    name: 'Data Analyst',
+    role: 'data_analyst',
     icon: 'bar-chart',
-    description: 'AI analytics worker. Runs forecasts, replenishment plans, risk assessments, and business reports on demand.',
+    description: 'Digital worker for data analysis. Runs forecasts, plans, risk assessments, and business reports on demand.',
     capabilities: ['forecast', 'plan', 'risk', 'report', 'excel', 'opencloud'],
     defaultTemplates: ['full_report', 'forecast_then_plan', 'risk_aware_plan'],
     permissions: DEFAULT_PERMISSIONS,
   },
-  report_writer: {
-    id: 'report_writer',
-    name: 'Riley',
-    role: 'report_writer',
+  supply_chain_analyst: {
+    id: 'supply_chain_analyst',
+    name: 'Supply Chain Analyst',
+    role: 'supply_chain_analyst',
     icon: 'file-text',
-    description: 'AI report writer. Specializes in data-driven reports, dashboards, and presentations.',
-    capabilities: ['report', 'excel', 'opencloud'],
-    defaultTemplates: ['full_report', 'mbr_with_excel'],
+    description: 'Digital worker for supply chain analysis. Specializes in planning, procurement analysis, and operational reports.',
+    capabilities: ['forecast', 'plan', 'risk', 'report', 'excel', 'opencloud'],
+    defaultTemplates: ['full_report', 'mbr_with_excel', 'risk_aware_plan'],
     permissions: { ...DEFAULT_PERMISSIONS },
   },
-  data_quality_analyst: {
-    id: 'data_quality_analyst',
-    name: 'Dana',
-    role: 'data_quality_analyst',
+  procurement_specialist: {
+    id: 'procurement_specialist',
+    name: 'Procurement Specialist',
+    role: 'procurement_specialist',
+    icon: 'shopping-cart',
+    description: 'Digital worker for procurement. Handles negotiation support, supplier analysis, and procurement workflows.',
+    capabilities: ['forecast', 'plan', 'risk', 'report'],
+    defaultTemplates: ['full_report', 'risk_aware_plan'],
+    permissions: { ...DEFAULT_PERMISSIONS },
+  },
+  operations_coordinator: {
+    id: 'operations_coordinator',
+    name: 'Operations Coordinator',
+    role: 'operations_coordinator',
     icon: 'shield-check',
-    description: 'AI data quality analyst. Validates data integrity, detects anomalies, and produces data quality reports.',
-    capabilities: ['data_quality', 'report'],
-    defaultTemplates: ['forecast'],
+    description: 'Digital worker for operations. Monitors data quality, validates integrity, and coordinates cross-system workflows.',
+    capabilities: ['data_quality', 'report', 'opencloud'],
+    defaultTemplates: ['full_report'],
     permissions: { ...DEFAULT_PERMISSIONS },
   },
 };
 
 /**
  * Get or create a worker for the given user, driven by a worker template.
- * Replaces the hardcoded getOrCreateAiden().
+ * Creates a worker from a template if none exists for this user.
  *
  * @param {string} userId - Manager user ID
- * @param {string} [templateId='analytics_worker'] - Template to use for creation
+ * @param {string} [templateId='data_analyst'] - Template to use for creation
  * @returns {Promise<object>} employee row
  */
-export async function getOrCreateWorker(userId, templateId = 'analytics_worker') {
+export async function getOrCreateWorker(userId, templateId = 'data_analyst') {
   // Try DB-backed template first, fall back to hardcoded
   const dbTemplate = await getWorkerTemplateFromDB(templateId).catch(() => null);
-  const template = dbTemplate || WORKER_TEMPLATES[templateId] || WORKER_TEMPLATES.analytics_worker;
+  const template = dbTemplate || WORKER_TEMPLATES[templateId] || WORKER_TEMPLATES.data_analyst;
 
   // Try to find an existing worker with matching role for this user
   const { data: rows, error: selErr } = await supabase
@@ -266,9 +277,14 @@ export async function updateWorker(employeeId, updates) {
 }
 
 /**
- * List all available templates.
+ * List all available templates (DB-first, hardcoded fallback).
+ * @returns {Promise<Object[]>}
  */
-export function listTemplates() {
+export async function listTemplates() {
+  try {
+    const dbTemplates = await listTemplatesFromDB();
+    if (dbTemplates.length > 0) return dbTemplates;
+  } catch { /* DB unavailable — fall through */ }
   return Object.values(WORKER_TEMPLATES).map(t => ({
     id: t.id,
     name: t.name,

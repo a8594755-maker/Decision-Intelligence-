@@ -16,6 +16,10 @@
 /src/services/ @a8594755-maker
 /supabase/ @a8594755-maker
 /sql/ @a8594755-maker
+/discord-bot/ @a8594755-maker
+/excel-addin/ @a8594755-maker
+/opencloud-extension/ @a8594755-maker
+/powerbi-connector/ @a8594755-maker
 
 # ML and solver runtime
 /src/ml/ @a8594755-maker
@@ -27,4 +31,3 @@
 /docs/ @a8594755-maker
 /README.md @a8594755-maker
 /CHANGELOG.md @a8594755-maker
-

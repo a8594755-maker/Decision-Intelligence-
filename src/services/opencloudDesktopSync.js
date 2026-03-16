@@ -42,20 +42,20 @@ export function isDesktopSyncConfigured() {
 /**
  * Get the expected local path for a task's artifacts.
  * @param {string} taskId
- * @param {string} [employeeName='Aiden']
+ * @param {string} [employeeName='Data Analyst']
  * @returns {string|null} Local filesystem path, or null if not configured
  */
-export function getLocalTaskPath(taskId, employeeName = 'Aiden') {
+export function getLocalTaskPath(taskId, employeeName = 'Data Analyst') {
   if (!DESKTOP_SYNC_FOLDER) return null;
   return `${DESKTOP_SYNC_FOLDER}/${OPENCLOUD_BASE_FOLDER}/${employeeName}/tasks/${taskId}`;
 }
 
 /**
  * Get the expected local path for reports.
- * @param {string} [employeeName='Aiden']
+ * @param {string} [employeeName='Data Analyst']
  * @returns {string|null}
  */
-export function getLocalReportsPath(employeeName = 'Aiden') {
+export function getLocalReportsPath(employeeName = 'Data Analyst') {
   if (!DESKTOP_SYNC_FOLDER) return null;
   return `${DESKTOP_SYNC_FOLDER}/${OPENCLOUD_BASE_FOLDER}/${employeeName}/reports`;
 }
@@ -132,7 +132,7 @@ export function generateSyncSetupGuide() {
       description: 'Expected folder structure after sync',
       tree: [
         `${syncFolder}/`,
-        `  Aiden/`,
+        `  Data Analyst/`,
         `    tasks/`,
         `      <task-id>/`,
         `        forecast/`,

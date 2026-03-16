@@ -27,4 +27,4 @@ Keep ADRs short. Link to deeper specs, PRs, or runbooks instead of copying them.
 ## Index
 
 - [0001 Repository Boundaries And Ownership](0001-repository-boundaries-and-ownership.md)
-
+- [0002 Node Workspaces For Supporting Integrations](0002-node-workspaces-for-supporting-integrations.md)

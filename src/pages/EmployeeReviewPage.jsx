@@ -704,7 +704,7 @@ function RevisionLogPanel({ item, onDecision, deciding }) {
             rows={3}
             value={comment}
             onChange={(e) => setComment(e.target.value)}
-            placeholder="Leave feedback for Aiden..."
+            placeholder="Leave feedback for the worker..."
             disabled={deciding}
           />
 

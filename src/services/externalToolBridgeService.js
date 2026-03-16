@@ -8,6 +8,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { saveJsonArtifact } from '../utils/artifactStore';
+import { syncTaskOutputsToOpenCloud } from './opencloudArtifactSync';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -105,7 +106,7 @@ export function toPowerBIDataset(artifacts) {
  * @param {object} [cfg] - Configuration { includeRevisionLog: boolean }
  * @returns {{ sheets: object[], metadata: object, artifact_ref: object|null }}
  */
-export function toExcelWithRefresh(artifacts, cfg = {}) {
+export function toExcelWithRefresh(artifacts, _cfg = {}) {
   const allRefs = flattenArtifacts(artifacts);
   const sheets = [];
 
@@ -175,7 +176,6 @@ function inferDataType(value) {
  * @returns {Promise<{ fileRefs: object[], artifact_ref: object|null }>}
  */
 export async function toOpenCloudUpload(artifacts, driveId, folderPath) {
-  const { syncTaskOutputsToOpenCloud } = await import('./opencloudArtifactSync');
   const allRefs = flattenArtifacts(artifacts);
   return syncTaskOutputsToOpenCloud(
     `export_${Date.now()}`,

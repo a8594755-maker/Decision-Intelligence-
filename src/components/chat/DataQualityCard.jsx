@@ -51,6 +51,11 @@ const DATASET_LABELS = {
 };
 
 export default function DataQualityCard({ payload }) {
+  const unlockRanking = useMemo(() => {
+    if (!payload?.capabilities) return [];
+    return rankCapabilityUnlocks(payload.capabilities);
+  }, [payload?.capabilities]);
+
   if (!payload) return null;
 
   const {
@@ -66,11 +71,6 @@ export default function DataQualityCard({ payload }) {
 
   const config = LEVEL_CONFIG[coverage_level] || LEVEL_CONFIG.minimal;
   const Icon = config.icon;
-
-  const unlockRanking = useMemo(() => {
-    if (!capabilities) return [];
-    return rankCapabilityUnlocks(capabilities);
-  }, [capabilities]);
 
   return (
     <Card className={`w-full border ${config.border} ${config.bg}`}>

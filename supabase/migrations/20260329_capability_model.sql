@@ -80,3 +80,15 @@ INSERT INTO worker_templates (id, name, description, allowed_capabilities, defau
   ('operations_coordinator', 'Operations Coordinator', 'Integration, monitoring, and cross-system coordination',
    ARRAY['integration','monitoring','reporting','synthesis'], 'A1', 'A3')
 ON CONFLICT (id) DO NOTHING;
+
+-- Seed default capability policies (class-level defaults, no capability_id override)
+INSERT INTO capability_policies (id, capability_class, capability_id, approval_required, min_autonomy_level, auto_approve_at, review_required, max_retry, data_access, sensitive_data_allowed, budget_tier, is_active) VALUES
+  ('policy_planning',     'planning',     NULL, true,  'A1', 'A3', true,  3, 'read',       false, 'tier_c', true),
+  ('policy_analysis',     'analysis',     NULL, false, 'A1', 'A2', true,  3, 'read',       false, 'tier_b', true),
+  ('policy_reporting',    'reporting',    NULL, false, 'A1', 'A2', true,  2, 'read',       false, 'tier_a', true),
+  ('policy_synthesis',    'synthesis',    NULL, false, 'A1', 'A1', false, 2, 'read',       false, 'tier_a', true),
+  ('policy_integration',  'integration',  NULL, true,  'A2', 'A4', true,  1, 'read_write', true,  'tier_c', true),
+  ('policy_custom_code',  'custom_code',  NULL, false, 'A1', 'A3', true,  3, 'read',       false, 'tier_b', true),
+  ('policy_negotiation',  'negotiation',  NULL, true,  'A2', 'A4', true,  2, 'read',       true,  'tier_c', true),
+  ('policy_monitoring',   'monitoring',   NULL, false, 'A1', 'A1', false, 1, 'read',       false, 'tier_a', true)
+ON CONFLICT (id) DO NOTHING;

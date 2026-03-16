@@ -278,7 +278,7 @@ function NewTaskModal({ onClose, onCreated, employeeId, userId }) {
             style={inputStyle}
             value={form.title}
             onChange={(e) => set('title', e.target.value)}
-            placeholder="e.g. Weekly replenishment plan for SKU-A"
+            placeholder="e.g. Weekly performance report for Q1 review"
             autoFocus
           />
         </div>
@@ -362,10 +362,10 @@ function NewTaskModal({ onClose, onCreated, employeeId, userId }) {
         </div>
 
         <div className="rounded-lg border px-3 py-2 text-[11px]" style={{ borderColor: 'var(--border-default)', color: 'var(--text-muted)' }}>
-          Aiden task example:
+          Task example:
           {' '}
           <span style={{ color: 'var(--text-secondary)' }}>
-            "Use the attached workbook to produce a weekly supply chain report with forecast summary, replenishment recommendations, supplier risk highlights, and action items for the ops manager."
+            "Analyze the attached dataset, generate a forecast with key insights, flag any anomalies or risks, and produce a summary report with action items for the team lead."
           </span>
         </div>
 
@@ -1176,7 +1176,7 @@ export default function EmployeeTasksPage() {
     };
   }, [tasks, loadTasks]);
 
-  // Load logs for selected task — use userId to query across all Aiden instances
+  // Load logs for selected task — use userId to query across all worker instances
   useEffect(() => {
     if (!selectedTask || !user?.id) { setLogs([]); return; }
     listWorklogs(employee?.id, { taskId: selectedTask.id, limit: 10, userId: user.id })
@@ -1320,7 +1320,7 @@ export default function EmployeeTasksPage() {
           type="text"
           value={quickTaskInput}
           onChange={(e) => setQuickTaskInput(e.target.value)}
-          placeholder="Describe a task in plain language, e.g. &quot;Generate a weekly supply chain report from the latest dataset&quot;"
+          placeholder="Describe a task in plain language, e.g. &quot;Analyze last month's data and generate a summary report&quot;"
           className="flex-1 px-3 py-1.5 rounded-lg border text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
           style={{ borderColor: 'var(--border-default)', backgroundColor: 'var(--surface-bg)', color: 'var(--text-primary)' }}
           disabled={quickTaskLoading || !employee?.id}

@@ -9,10 +9,10 @@ export default function EmptyChatState({ quickPrompts = [], onSelectPrompt, vari
           <Bot className="h-7 w-7" />
         </div>
         <h2 className="text-3xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">
-          What should Aiden work on?
+          What should your worker handle?
         </h2>
         <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-500 dark:text-slate-400">
-          Describe an analysis, upload a workbook, ask for a report, or let the AI employee break a task into steps and run it.
+          Describe an analysis, upload a dataset, ask for a report, or let the digital worker break a task into steps and run it.
         </p>
 
         <div className="mt-8 flex items-center gap-1.5 text-xs font-medium uppercase tracking-[0.18em] text-slate-400">
@@ -46,7 +46,7 @@ export default function EmptyChatState({ quickPrompts = [], onSelectPrompt, vari
       </div>
       <h2 className="text-base font-medium text-slate-800 dark:text-slate-100">How can I help today?</h2>
       <p className="text-sm text-slate-500 dark:text-slate-400 mt-1 max-w-lg">
-        Upload data with the paperclip, ask for a forecast or replenishment plan, and review white-box artifacts in Canvas.
+        Upload data with the paperclip, assign a task or ask a question, and review deliverables in Canvas.
       </p>
 
       <div className="mt-5 flex items-center gap-1 text-xs text-slate-400">

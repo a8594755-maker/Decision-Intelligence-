@@ -1,12 +1,13 @@
 # Decision Intelligence
 
-Decision Intelligence is a chat-first supply chain planning workspace for turning uploaded operational data into forecast diagnostics, replenishment decisions, and scenario review.
+Decision Intelligence is a Digital Worker platform that deploys managed, auditable digital workers into enterprise operations and analytics workflows.
 
-It is built as a multi-service product prototype with a React frontend, Supabase platform services, and a FastAPI planning / forecasting backend.
+Each digital worker has a defined role, permission boundaries, available tools, style policies, and escalation rules — operating like a new hire that learns your processes, not a chatbot that answers questions.
 
 | Proof point | Evidence |
 | --- | --- |
-| Product shape | Chat-first planning + forecasting workspace |
+| Product shape | Digital Worker Platform — task-driven, auditable, role-based |
+| v1 beachhead | Analytics Digital Worker (data analysis, forecasting, reporting, risk assessment) |
 | Runtime stack | React + Supabase + FastAPI ML API |
 | Engineering signal | Regression-gated repo with demo flow, CI workflows, and in-repo release notes |
 
@@ -16,27 +17,26 @@ It is built as a multi-service product prototype with a React frontend, Supabase
 
 ## What You Can Do In 5 Minutes
 
-- Load the sample workbook and bootstrap a planning workspace.
-- Generate a replenishment plan and review editable planning outputs.
-- Inspect forecast diagnostics, demand artifacts, and model-facing results.
-- Compare supplier risk and what-if scenarios before approving action.
+- Assign a task to an AI worker via chat or the task board.
+- Watch the worker decompose, execute, and deliver artifacts with full audit trail.
+- Review outputs in Canvas, approve or request revisions, and track trust progression.
+- Explore built-in domain tools: forecasting, planning, risk analysis, scenario simulation.
 
 Follow the guided walkthrough in [docs/DEMO.md](docs/DEMO.md).
 
 ## Core Workflows
 
-### 1. Intake and normalize planning data
+### 1. Task intake and decomposition
 
-Upload workbook or CSV inputs, map operational fields, and persist a planning-ready dataset through Supabase-backed services.
-Plan Studio acts as the entry point for readiness checks, plan generation, inline edits, and approval flow.
+Workers accept tasks from chat, email, transcripts, scheduled triggers, or proactive signals. Each task is decomposed into executable steps using the built-in tool catalog.
 
-### 2. Generate and compare forecasts and plans
+### 2. Autonomous execution with guardrails
 
-Run forecasting and planning logic through the FastAPI ML service and review diagnostics, demand artifacts, and regression-backed solver outputs.
+Workers execute steps through domain-specific tools (forecast, plan, risk, report, Excel, OpenCloud) with capability policies and autonomy levels (A1–A4) governing what requires human review.
 
-### 3. Review risk, simulate scenarios, and approve actions
+### 3. Review, feedback, and trust progression
 
-Explore supplier risk and supply exceptions in Risk Center, then use Digital Twin and Scenario Studio to compare outcomes before approving action.
+Managers review deliverables, approve or revise, and the system learns style preferences and adjusts autonomy over time. Full execution timeline is available for audit.
 
 ## Fast Path
 
@@ -74,7 +74,7 @@ Default local endpoints:
 Expected first-success path:
 
 1. Open the frontend at `http://localhost:5173`
-2. Upload `public/sample_data/test_data.xlsx`
+2. Navigate to **Digital Workers** and assign a task to the Analytics Worker
 3. Follow the walkthrough in [docs/DEMO.md](docs/DEMO.md)
 
 For migrations, Edge Functions, and hosted deployment, see [docs/SETUP.md](docs/SETUP.md) and [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
@@ -83,14 +83,15 @@ For migrations, Edge Functions, and hosted deployment, see [docs/SETUP.md](docs/
 
 ```mermaid
 flowchart LR
-    U[Planner / Analyst] --> FE[React + Vite Frontend]
-    FE --> SB[(Supabase Auth + Postgres + Storage)]
-    FE --> EF[Supabase Edge Functions<br/>ai-proxy / bom-explosion / sync-*]
-    FE --> ML[FastAPI ML API]
+    M[Manager / Analyst] --> FE[React + Vite Frontend]
+    FE --> WK[AI Digital Workers<br/>Task Board · Chat · Review]
+    WK --> TC[Built-in Tool Catalog<br/>~19 DI engines]
+    TC --> SB[(Supabase Auth + Postgres + Storage)]
+    TC --> EF[Supabase Edge Functions<br/>ai-proxy / bom-explosion / sync-*]
+    TC --> ML[FastAPI ML API]
     EF --> LLM[Gemini / DeepSeek]
     ML --> REG[(Model Registry + Governance Store)]
-    ML --> SB
-    ML --> ERP[Synthetic ERP / SAP Adapters]
+    WK --> OC[OpenCloud EU · Excel Autopilot]
 ```
 
 ## Engineering Confidence
@@ -99,6 +100,7 @@ flowchart LR
 | --- | --- |
 | Frontend quality | lint, unit, component, build, and E2E checks |
 | Planning reliability | deterministic regression suite |
+| Agent loop | 12 E2E tests covering chat → decompose → execute → review |
 | Delivery discipline | frontend CI, ML CI, guardrail checks, release gating |
 | Change history | in-repo release notes in [CHANGELOG.md](CHANGELOG.md) |
 
@@ -114,12 +116,12 @@ python -m pytest -q tests/regression
 npm run test:phase4-guardrails
 ```
 
-## Prototype Scope
+## Product Scope
 
 **Current baseline**
 
 - `0.1.0` documented on `2026-03-08`
-- Verified on demo flow, planning regression, forecast diagnostics, and core workspace navigation
+- v1 Digital Worker converged on `2026-03-16` (9-gate audit passed)
 
 **Operating boundary**
 
@@ -131,6 +133,8 @@ See [docs/KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md) for the detailed oper
 
 ## Docs
 
+- Product Requirements: [docs/DIGITAL_WORKER_PRD_zh-TW.md](docs/DIGITAL_WORKER_PRD_zh-TW.md)
+- Gap Analysis: [docs/DIGITAL_WORKER_GAP_ANALYSIS_zh-TW.md](docs/DIGITAL_WORKER_GAP_ANALYSIS_zh-TW.md)
 - Demo walkthrough: [docs/DEMO.md](docs/DEMO.md)
 - Architecture and request flow: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - Deployment and environment setup: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
@@ -138,4 +142,4 @@ See [docs/KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md) for the detailed oper
 - Release notes: [CHANGELOG.md](CHANGELOG.md)
 - Full docs index: [docs/README.md](docs/README.md)
 
-This repository is maintained as a private product prototype for evaluation and portfolio review.
+This repository is maintained as the reference implementation for the Decision Intelligence Digital Worker Platform.

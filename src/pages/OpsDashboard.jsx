@@ -309,7 +309,7 @@ export default function OpsDashboard() {
           <Card className="!p-8 text-center">
             <BarChart3 className="w-12 h-12 mx-auto mb-3 text-slate-300 dark:text-slate-600" />
             <p className="text-sm text-slate-500">No operational data available yet.</p>
-            <p className="text-xs text-slate-400 mt-1">Run imports and planning workflows to generate metrics.</p>
+            <p className="text-xs text-slate-400 mt-1">Run imports and planning tasks to generate metrics.</p>
           </Card>
         )}
       </div>

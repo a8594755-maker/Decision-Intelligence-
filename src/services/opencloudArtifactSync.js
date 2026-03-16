@@ -173,7 +173,7 @@ export async function syncArtifactToOpenCloud(artifactRef, driveId, folderPath) 
  * @param {string} taskId
  * @param {string} driveId
  * @param {object} [opts]
- * @param {string} [opts.employeeName='Aiden']
+ * @param {string} [opts.employeeName='Data Analyst']
  * @param {object} [opts.loopState] - Task loop_state with step artifacts
  * @param {object[]} [opts.artifactRefs] - Direct artifact refs (if no loop_state)
  * @returns {Promise<{ fileRefs: object[], artifact_ref: object|null }>}
@@ -184,7 +184,7 @@ export async function syncTaskOutputsToOpenCloud(taskId, driveId, opts = {}) {
     return { fileRefs: [], artifact_ref: null };
   }
 
-  const employeeName = opts.employeeName || 'Aiden';
+  const employeeName = opts.employeeName || 'Data Analyst';
   const basePath = `${OPENCLOUD_BASE_FOLDER}/${employeeName}/tasks/${taskId}`;
   const fileRefs = [];
 
@@ -368,7 +368,7 @@ export async function browseFiles(driveId, folderId = null, opts = {}) {
 export async function distributeReport(reportResult, driveId, taskId, opts = {}) {
   if (!isOpenCloudConfigured()) return null;
 
-  const folderPath = `${OPENCLOUD_BASE_FOLDER}/${opts.employeeName || 'Aiden'}/reports`;
+  const folderPath = `${OPENCLOUD_BASE_FOLDER}/${opts.employeeName || 'Data Analyst'}/reports`;
   const filename = reportResult.filename || `report_${taskId}.${reportResult.format || 'html'}`;
   const blob = typeof reportResult.blob === 'string'
     ? new Blob([reportResult.blob], { type: 'text/html' })

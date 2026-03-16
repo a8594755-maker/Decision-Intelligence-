@@ -62,12 +62,7 @@ export default defineConfig({
     },
 
     pool: 'threads',
-    poolOptions: {
-      threads: {
-        singleThread: false,
-        maxThreads: 4,
-      },
-    },
+    maxWorkers: 4,
 
     reporters: ['verbose', 'json'],
     outputFile: {

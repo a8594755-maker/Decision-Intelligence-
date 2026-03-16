@@ -7,18 +7,18 @@ import {
   canExecute,
 } from './toolPermissionGuard';
 
-const AIDEN_FULL = {
-  name: 'Aiden',
+const WORKER_FULL = {
+  name: 'Data Analyst',
   permissions: { can_run_forecast: true, can_run_plan: true, can_run_risk: true },
 };
 
-const AIDEN_LIMITED = {
-  name: 'Aiden',
+const WORKER_LIMITED = {
+  name: 'Data Analyst',
   permissions: { can_run_forecast: true, can_run_plan: false, can_run_risk: false },
 };
 
-const AIDEN_EMPTY = {
-  name: 'Aiden',
+const WORKER_EMPTY = {
+  name: 'Data Analyst',
   permissions: {},
 };
 
@@ -36,22 +36,22 @@ describe('PERMISSION_REGISTRY', () => {
 
 describe('checkPermission', () => {
   it('allows when employee has all required permissions', () => {
-    expect(checkPermission(AIDEN_FULL, 'forecast')).toBe(true);
-    expect(checkPermission(AIDEN_FULL, 'plan')).toBe(true);
-    expect(checkPermission(AIDEN_FULL, 'risk')).toBe(true);
+    expect(checkPermission(WORKER_FULL, 'forecast')).toBe(true);
+    expect(checkPermission(WORKER_FULL, 'plan')).toBe(true);
+    expect(checkPermission(WORKER_FULL, 'risk')).toBe(true);
   });
 
   it('allows synthesize with no permissions', () => {
-    expect(checkPermission(AIDEN_EMPTY, 'synthesize')).toBe(true);
+    expect(checkPermission(WORKER_EMPTY, 'synthesize')).toBe(true);
   });
 
   it('allows unknown workflow types (fail at executor dispatch instead)', () => {
-    expect(checkPermission(AIDEN_EMPTY, 'unknown_type')).toBe(true);
+    expect(checkPermission(WORKER_EMPTY, 'unknown_type')).toBe(true);
   });
 
   it('throws PermissionDeniedError when permission is missing', () => {
-    expect(() => checkPermission(AIDEN_LIMITED, 'plan')).toThrow(PermissionDeniedError);
-    expect(() => checkPermission(AIDEN_LIMITED, 'risk')).toThrow(PermissionDeniedError);
+    expect(() => checkPermission(WORKER_LIMITED, 'plan')).toThrow(PermissionDeniedError);
+    expect(() => checkPermission(WORKER_LIMITED, 'risk')).toThrow(PermissionDeniedError);
   });
 
   it('throws PermissionDeniedError when permission is false', () => {
@@ -61,11 +61,11 @@ describe('checkPermission', () => {
 
   it('throws with correct metadata', () => {
     try {
-      checkPermission(AIDEN_LIMITED, 'plan');
+      checkPermission(WORKER_LIMITED, 'plan');
       expect.unreachable('should have thrown');
     } catch (err) {
       expect(err).toBeInstanceOf(PermissionDeniedError);
-      expect(err.employeeName).toBe('Aiden');
+      expect(err.employeeName).toBe('Data Analyst');
       expect(err.workflowType).toBe('plan');
       expect(err.missingPermissions).toEqual(['can_run_plan']);
     }
@@ -82,24 +82,24 @@ describe('checkPermission', () => {
 
 describe('canExecute', () => {
   it('returns allowed=true when permissions are present', () => {
-    const result = canExecute(AIDEN_FULL, 'forecast');
+    const result = canExecute(WORKER_FULL, 'forecast');
     expect(result.allowed).toBe(true);
     expect(result.missing).toEqual([]);
   });
 
   it('returns allowed=false with missing permissions listed', () => {
-    const result = canExecute(AIDEN_LIMITED, 'risk');
+    const result = canExecute(WORKER_LIMITED, 'risk');
     expect(result.allowed).toBe(false);
     expect(result.missing).toEqual(['can_run_risk']);
   });
 
   it('returns allowed=true for synthesize regardless of permissions', () => {
-    const result = canExecute(AIDEN_EMPTY, 'synthesize');
+    const result = canExecute(WORKER_EMPTY, 'synthesize');
     expect(result.allowed).toBe(true);
   });
 
   it('returns allowed=true for unknown workflow types', () => {
-    const result = canExecute(AIDEN_EMPTY, 'future_workflow');
+    const result = canExecute(WORKER_EMPTY, 'future_workflow');
     expect(result.allowed).toBe(true);
   });
 });

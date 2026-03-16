@@ -19,7 +19,10 @@ import {
 } from './negotiation-types.js';
 
 function importServerModule(specifier) {
-  return new Function('modulePath', 'return import(modulePath);')(specifier);
+  // Use a regular dynamic import so Vitest's module registry can intercept it.
+  // The new Function() wrapper was used to evade static bundler analysis but
+  // breaks in Vitest's VM environment ("A dynamic import callback was not specified").
+  return import(specifier);
 }
 
 // ---------------------------------------------------------------------------

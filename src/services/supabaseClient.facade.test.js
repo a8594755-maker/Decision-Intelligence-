@@ -30,8 +30,15 @@ describe('supabaseClient facade', () => {
     expect(mod.authService.getSession).toBeTypeOf('function');
     expect(mod.uploadMappingsService.smartMapping).toBeTypeOf('function');
     expect(mod.bomEdgesService.batchInsert).toBeTypeOf('function');
+    expect(mod.demandFgService.fetchDemandFg).toBeTypeOf('function');
+    expect(mod.demandForecastService.getForecastsByRun).toBeTypeOf('function');
+    expect(mod.forecastRunsService.createRun).toBeTypeOf('function');
+    expect(mod.componentDemandService.upsertComponentDemand).toBeTypeOf('function');
+    expect(mod.componentDemandTraceService.insertComponentDemandTrace).toBeTypeOf('function');
+    expect(mod.poOpenLinesService.getInboundByBuckets).toBeTypeOf('function');
+    expect(mod.inventorySnapshotsService.getLatestInventorySnapshots).toBeTypeOf('function');
+    expect(mod.fgFinancialsService.getFgFinancial).toBeTypeOf('function');
 
     errorSpy.mockRestore();
   });
 });
-

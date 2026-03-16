@@ -38,7 +38,7 @@ import { checkBudget } from '../taskBudgetService.js';
 import { recall, summarizeMemories } from '../aiEmployeeMemoryService.js';
 import { reviewStepOutput, shouldReview } from '../aiReviewerService.js';
 import { getLatestMetrics, recordReviewOutcome } from './styleLearning/trustMetricsService.js';
-import { resolveCapabilityClass, CAPABILITY_POLICIES, getCapabilityPolicyFromDB } from '../capabilityModelService.js';
+import { resolveCapabilityClass, getCapabilityPolicyFromDB } from '../capabilityModelService.js';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 

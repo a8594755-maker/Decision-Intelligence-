@@ -165,9 +165,9 @@ describe('Permission integration', () => {
     expect(PERMISSION_REGISTRY.builtin_tool).toEqual(['can_run_builtin_tool']);
   });
 
-  it('Aiden-like employee with all permissions passes builtin_tool check', () => {
+  it('Worker with all permissions passes builtin_tool check', () => {
     const employee = {
-      name: 'Aiden',
+      name: 'Data Analyst',
       permissions: {
         can_run_forecast: true,
         can_run_plan: true,

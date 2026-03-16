@@ -12,7 +12,7 @@ import {
   reviseStepAndRetry,
   STEP_STATUS,
   MAX_RETRIES,
-} from './agentLoopService';
+} from './_archive/agentLoopService';
 
 describe('agentLoopService (deprecated stub)', () => {
   it('still exports MAX_RETRIES constant', () => {

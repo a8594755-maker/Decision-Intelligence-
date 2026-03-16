@@ -10,6 +10,26 @@ This repository is maintained as a product prototype with multiple runtime surfa
 - Update docs when behavior, setup, or operating boundaries change.
 - Record non-trivial architecture decisions in `docs/adr/`.
 
+## Workspace Surfaces
+
+The root `package.json` is the entry point for Node-based surfaces:
+
+- root app: frontend, shared services, Playwright, and Vitest
+- `discord-bot/`: operational bot bridge
+- `excel-addin/`: Office/Excel integration surface
+
+Use root workspace commands so installs and lockfile changes stay reviewable:
+
+```bash
+npm ci
+npm run bot:dev
+npm run excel:dev
+```
+
+The root `package-lock.json` is the canonical lockfile for workspace-managed Node surfaces.
+
+See `docs/WORKSPACES.md` for the current workspace boundary and what is intentionally kept outside it.
+
 ## Before Opening a PR
 
 Run the smallest relevant checks locally:
@@ -63,4 +83,3 @@ Create an ADR for decisions such as:
 - changing release, rollback, or observability policy
 
 Use `docs/adr/README.md` for the format and index.
-

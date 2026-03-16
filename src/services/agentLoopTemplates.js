@@ -29,7 +29,7 @@ export const AGENT_LOOP_TEMPLATES = {
 
   full_report: {
     id: 'full_report',
-    label: 'Full Supply Chain Report',
+    label: 'Full Analysis Report',
     description: 'Forecast + Plan + Risk + Synthesis',
     steps: [
       { name: 'forecast',   workflow_type: 'forecast',   requires_review: false },
@@ -115,7 +115,7 @@ export const AGENT_LOOP_TEMPLATES = {
  * Composite templates first, then single-step wrappers.
  */
 export const TEMPLATE_OPTIONS = [
-  { value: 'full_report',        label: 'Full Supply Chain Report', composite: true },
+  { value: 'full_report',        label: 'Full Analysis Report', composite: true },
   { value: 'forecast_then_plan', label: 'Forecast + Plan',         composite: true },
   { value: 'risk_aware_plan',    label: 'Risk-Aware Plan',         composite: true },
   { value: 'full_report_with_publish', label: 'Full Report + OpenCloud Publish', composite: true },

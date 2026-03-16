@@ -248,15 +248,15 @@ describe('DecisionSupportView', () => {
     expect(newChatBtn).toBeInTheDocument();
   });
 
-  it('renders the AI employee chat shell without the legacy canvas workspace', async () => {
+  it('renders the digital worker chat shell without the legacy canvas workspace', async () => {
     render(
       <MemoryRouter>
         <DecisionSupportView user={mockUser} addNotification={mockAddNotification} mode="ai_employee" />
       </MemoryRouter>
     );
 
-    await waitFor(() => expect(screen.getByText(/start a chat with aiden/i)).toBeInTheDocument());
-    expect(screen.getByText(/start a chat with aiden/i)).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText(/start a chat with your worker/i)).toBeInTheDocument());
+    expect(screen.getByText(/start a chat with your worker/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /profile/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /steps/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /artifacts/i })).toBeInTheDocument();

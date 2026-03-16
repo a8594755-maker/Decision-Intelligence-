@@ -21,6 +21,7 @@
 import { BUILTIN_TOOLS, TOOL_CATEGORY } from './builtinToolCatalog.js';
 import { listToolTypes } from './aiEmployee/executors/executorRegistry.js';
 import { supabase } from './supabaseClient';
+import { getWorkerTemplateFromDB, listTemplatesFromDB } from './aiEmployee/persistence/employeeRepo.js';
 
 // ── Capability Classes ──────────────────────────────────────────────────────
 
@@ -474,7 +475,9 @@ export async function resolvePolicy(capabilityId, autonomyLevel, workerTemplate 
   }
 
   const policy = capability.policy;
-  const template = workerTemplate ? WORKER_TEMPLATES[workerTemplate] : null;
+  const template = workerTemplate
+    ? (await getWorkerTemplateFromDB(workerTemplate).catch(() => null)) || WORKER_TEMPLATES[workerTemplate] || null
+    : null;
 
   // Check template binding
   if (template && !template.allowed_capabilities.includes(capability.capability_class)) {
@@ -556,11 +559,12 @@ export function checkDataAccess(capabilityClass, datasetType, fields = []) {
  * @param {string} workerTemplateId
  * @returns {Object[]}
  */
-export function listCapabilitiesForWorker(workerTemplateId) {
-  const template = WORKER_TEMPLATES[workerTemplateId];
+export async function listCapabilitiesForWorker(workerTemplateId) {
+  const template = (await getWorkerTemplateFromDB(workerTemplateId).catch(() => null))
+    || WORKER_TEMPLATES[workerTemplateId];
   if (!template) return [];
 
-  const catalog = buildCapabilityCatalog();
+  const catalog = await buildCapabilityCatalogAsync();
   return catalog.filter(c => template.allowed_capabilities.includes(c.capability_class));
 }
 
@@ -582,8 +586,8 @@ export function resolveCapabilityClass(step) {
 /**
  * Get all available worker templates.
  */
-export function listWorkerTemplates() {
-  return Object.values(WORKER_TEMPLATES);
+export async function listWorkerTemplates() {
+  return listTemplatesFromDB().catch(() => Object.values(WORKER_TEMPLATES));
 }
 
 /**
@@ -591,10 +595,13 @@ export function listWorkerTemplates() {
  *
  * @returns {Object[]} Array of { templateId, templateName, capabilityCount, classes }
  */
-export function getCapabilityCoverage() {
-  const catalog = buildCapabilityCatalog();
+export async function getCapabilityCoverage() {
+  const [catalog, templates] = await Promise.all([
+    buildCapabilityCatalogAsync(),
+    listTemplatesFromDB().catch(() => Object.values(WORKER_TEMPLATES)),
+  ]);
 
-  return Object.values(WORKER_TEMPLATES).map(template => {
+  return templates.map(template => {
     const available = catalog.filter(c => template.allowed_capabilities.includes(c.capability_class));
     const classCounts = {};
     for (const cap of available) {

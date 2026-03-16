@@ -1,5 +1,10 @@
 // @product: ai-employee
 //
+// ★ ARCHIVED — This file has ZERO production imports. ★
+// The tick loop, review hold, retry, and all step execution now live in
+// orchestrator.js. This stub exports constants and deprecation-throwing
+// functions for test verification only.
+//
 // @deprecated — Use src/services/aiEmployee/orchestrator.js instead.
 // All capabilities (tick loop, review hold, AI review, self-healing, SSE,
 // memory recall, budget check, worklog) have been ported to the orchestrator.

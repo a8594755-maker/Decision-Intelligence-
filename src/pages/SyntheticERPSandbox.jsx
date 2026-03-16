@@ -787,16 +787,9 @@ function CompareMetricTile({ icon: Icon, label, leftVal, rightVal, format = v =>
 }
 
 function CompareView({ leftDataset, rightDataset, templateInfo }) {
-  if (!leftDataset || !rightDataset) return null;
-  const lk = leftDataset.kpis?.aggregate || {};
-  const rk = rightDataset.kpis?.aggregate || {};
-  const lId = leftDataset.descriptor.dataset_id;
-  const rId = rightDataset.descriptor.dataset_id;
-  const lDisruptions = leftDataset.descriptor.disruptions || [];
-  const rDisruptions = rightDataset.descriptor.disruptions || [];
-
-  // Overlay time series
+  // Hooks must be called before any early return
   const overlayData = React.useMemo(() => {
+    if (!leftDataset || !rightDataset) return [];
     const lts = leftDataset.kpis?.time_series || [];
     const rts = rightDataset.kpis?.time_series || [];
     const maxLen = Math.max(lts.length, rts.length);
@@ -816,6 +809,7 @@ function CompareView({ leftDataset, rightDataset, templateInfo }) {
 
   // By-material delta table
   const deltaRows = React.useMemo(() => {
+    if (!leftDataset || !rightDataset) return [];
     const lm = leftDataset.kpis?.by_material || {};
     const rm = rightDataset.kpis?.by_material || {};
     const allMats = [...new Set([...Object.keys(lm), ...Object.keys(rm)])].sort();
@@ -833,6 +827,15 @@ function CompareView({ leftDataset, rightDataset, templateInfo }) {
       };
     });
   }, [leftDataset, rightDataset]);
+
+  if (!leftDataset || !rightDataset) return null;
+
+  const lk = leftDataset.kpis?.aggregate || {};
+  const rk = rightDataset.kpis?.aggregate || {};
+  const lId = leftDataset.descriptor.dataset_id;
+  const rId = rightDataset.descriptor.dataset_id;
+  const lDisruptions = leftDataset.descriptor.disruptions || [];
+  const rDisruptions = rightDataset.descriptor.disruptions || [];
 
   const fmtPct = v => v != null ? `${(v * 100).toFixed(1)}%` : '--';
   const fmtCost = v => `$${(v || 0).toLocaleString()}`;

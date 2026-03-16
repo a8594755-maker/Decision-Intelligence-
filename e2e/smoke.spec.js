@@ -14,7 +14,7 @@ test.describe('Smoke: app shell', () => {
   });
 
   test('root renders without JS error overlay', async ({ page }) => {
-    const errors: string[] = [];
+    const errors = [];
     page.on('pageerror', (err) => errors.push(err.message));
     await page.goto('/');
     await page.waitForLoadState('networkidle', { timeout: 15000 });
@@ -44,7 +44,7 @@ test.describe('Smoke: CSV upload and planning', () => {
 
     // File input must exist somewhere in the page (even if hidden)
     const fileInput = page.locator('input[type="file"]');
-    await expect(fileInput).toHaveCount({ minimum: 1 } as Parameters<typeof expect>[0] extends never ? never : any);
+    await expect(fileInput).toHaveCount(1);
   });
 
   test('decision support view is reachable', async ({ page }) => {

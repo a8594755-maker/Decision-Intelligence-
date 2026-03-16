@@ -379,7 +379,7 @@ export default function EmployeesPage() {
     try {
       let emps = await listEmployeesByManager(user.id);
 
-      // Auto-create default Aiden if no workers exist
+      // Auto-create default worker if none exist
       if (emps.length === 0) {
         await getOrCreateWorker(user.id);
         emps = await listEmployeesByManager(user.id);

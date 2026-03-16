@@ -1,7 +1,7 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { eventBus, EVENT_NAMES } from './eventBus.js';
 
-const mockGetOrCreateAiden = vi.fn();
+const mockGetOrCreateWorker = vi.fn();
 const mockGetDueTasks = vi.fn();
 const mockGetSchedule = vi.fn();
 const mockGetSchedules = vi.fn();
@@ -11,8 +11,8 @@ const mockDeactivateEventTrigger = vi.fn();
 const mockListEventTriggers = vi.fn();
 const mockApprovePlan = vi.fn();
 
-vi.mock('./aiEmployeeService.js', () => ({
-  getOrCreateAiden: (...args) => mockGetOrCreateAiden(...args),
+vi.mock('./aiEmployee/queries.js', () => ({
+  getOrCreateWorker: (...args) => mockGetOrCreateWorker(...args),
 }));
 
 vi.mock('./scheduledTaskService.js', () => ({
@@ -40,7 +40,7 @@ describe('aiEmployeeRuntimeService', () => {
     vi.useFakeTimers();
     vi.clearAllMocks();
     eventBus.clear();
-    mockGetOrCreateAiden.mockResolvedValue({ id: 'emp-1' });
+    mockGetOrCreateWorker.mockResolvedValue({ id: 'emp-1' });
     mockGetSchedules.mockResolvedValue([]);
     mockGetDueTasks.mockResolvedValue([]);
     mockGetSchedule.mockResolvedValue(null);
@@ -70,7 +70,7 @@ describe('aiEmployeeRuntimeService', () => {
 
     await startAiEmployeeRuntime({ userId: 'user-1', pollIntervalMs: 1000 });
 
-    expect(mockGetOrCreateAiden).toHaveBeenCalledWith('user-1');
+    expect(mockGetOrCreateWorker).toHaveBeenCalledWith('user-1');
     expect(mockActivateEventTrigger).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'sched-event' })
     );

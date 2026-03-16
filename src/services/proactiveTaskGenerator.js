@@ -14,6 +14,7 @@ import { listTasks } from './aiEmployee/queries.js';
 import { approvePlan, submitPlan } from './aiEmployee/index.js';
 import { buildPlanFromTaskTemplate } from './aiEmployee/templatePlanAdapter.js';
 import { EXECUTION_MODES, shouldAutoRun } from './aiEmployee/executionPolicy.js';
+import { processIntake, INTAKE_SOURCES } from './taskIntakeService.js';
 
 // ── Alert → Task mapping ─────────────────────────────────────────────────────
 
@@ -136,17 +137,45 @@ export async function evaluateAndCreateTasks(employeeId, userId, alerts) {
     }
 
     try {
+      // ── Unified intake normalization ──
+      let intakeWorkOrder = null;
+      try {
+        const intakeResult = await processIntake({
+          source: INTAKE_SOURCES.PROACTIVE_ALERT,
+          message: taskParams.description || taskParams.title,
+          employeeId,
+          userId,
+          metadata: {
+            alert_id: alert.alert_id,
+            alert_type: alert.alert_type,
+            material_code: alert.material_code,
+            severity: alert.severity,
+            priority: taskParams.priority,
+          },
+        });
+        intakeWorkOrder = intakeResult?.workOrder || null;
+        if (intakeResult?.status === 'duplicate') {
+          skipped++;
+          continue;
+        }
+      } catch (intakeErr) {
+        console.warn('[proactiveTaskGenerator] Intake normalization failed (non-blocking):', intakeErr?.message);
+      }
+
       const plan = await buildPlanFromTaskTemplate({
-        title: taskParams.title,
+        title: taskParams.title || intakeWorkOrder?.title,
         description: taskParams.description,
-        priority: taskParams.priority,
-        sourceType: taskParams.source_type,
+        priority: taskParams.priority || intakeWorkOrder?.priority,
+        sourceType: 'proactive_alert',
         executionMode: taskParams.execution_mode,
         templateId: taskParams.template_id,
         workflowType: taskParams.input_context?.workflow_type || null,
         datasetProfileId: taskParams.input_context?.dataset_profile_id || null,
         userId,
-        inputContext: taskParams.input_context,
+        inputContext: {
+          ...taskParams.input_context,
+          dedup_key: intakeWorkOrder?.dedup_key || null,
+        },
       });
       const { task } = await submitPlan(plan, employeeId, userId);
       if (shouldAutoRun(task.input_context?.execution_mode) && task.status === 'waiting_approval') {

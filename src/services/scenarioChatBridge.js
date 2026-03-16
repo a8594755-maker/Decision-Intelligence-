@@ -13,9 +13,12 @@
 
 import { parseScenarioFromText, validateScenarioOverrides, looksLikeScenario } from './scenarioIntentParser';
 import { createScenario } from './diScenariosService';
-import { executeScenarioPlan } from './scenarioEngine';
 import { buildScenarioDecisionBundle } from './decisionTaskService';
 import { assembleScenarioEvidence } from './evidenceAssembler';
+
+async function loadScenarioEngine() {
+  return import('./scenarioEngine');
+}
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -169,6 +172,7 @@ export async function runScenarioFromChat({
   try {
     onProgress?.({ step: 'execute', message: 'Executing scenario plan…' });
 
+    const { executeScenarioPlan } = await loadScenarioEngine();
     const result = await executeScenarioPlan({
       userId,
       scenario,

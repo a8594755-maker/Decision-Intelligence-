@@ -18,21 +18,10 @@
  * Typical compression: 513MB JSONL → ~30MB .cfr2.gz
  */
 
-// gunzipSync is lazy-loaded to avoid crashing in browser environments
-// where node:zlib is externalized by Vite.
-let _gunzipSync = null;
-function getGunzipSync() {
-  if (!_gunzipSync) {
-    try {
-      // Dynamic require — only works in Node.js (tests, SSR, build scripts)
-      // eslint-disable-next-line no-eval
-      _gunzipSync = eval('require')('zlib').gunzipSync;
-    } catch {
-      // Browser fallback: use DecompressionStream API
-      _gunzipSync = null;
-    }
-  }
-  return _gunzipSync;
+import { gunzipSync } from 'fflate';
+
+function normalizeBinaryBuffer(input) {
+  return Buffer.isBuffer(input) ? input : Buffer.from(input);
 }
 
 // ── Constants ───────────────────────────────────────────────────────────────
@@ -161,13 +150,9 @@ export class BinaryStrategyReader {
   constructor(input) {
     // Decompress if gzipped (magic bytes 0x1f 0x8b)
     if (input[0] === 0x1f && input[1] === 0x8b) {
-      const gunzip = getGunzipSync();
-      if (!gunzip) {
-        throw new Error('gzip decompression not available in this environment. Provide an uncompressed buffer.');
-      }
-      this._buffer = gunzip(input);
+      this._buffer = normalizeBinaryBuffer(gunzipSync(input));
     } else {
-      this._buffer = input;
+      this._buffer = normalizeBinaryBuffer(input);
     }
 
     // Validate magic

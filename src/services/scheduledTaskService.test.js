@@ -32,6 +32,11 @@ vi.mock('./aiEmployee/templatePlanAdapter.js', () => ({
   buildPlanFromTaskTemplate: (...args) => mockBuildPlan(...args),
 }));
 
+vi.mock('./taskIntakeService.js', () => ({
+  processIntake: vi.fn(async () => ({ workOrder: { title: 'test', priority: 'medium', sla: { due_at: new Date().toISOString() }, dedup_key: 'test' }, status: 'created' })),
+  INTAKE_SOURCES: { SCHEDULE: 'schedule' },
+}));
+
 import {
   SCHEDULE_TYPES,
   computeNextRun,

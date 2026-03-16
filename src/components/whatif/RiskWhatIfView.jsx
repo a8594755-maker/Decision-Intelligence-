@@ -9,6 +9,7 @@
 
 import React, { useState } from 'react';
 import { ShieldAlert, Play, Loader2, AlertTriangle, X, ArrowLeft } from 'lucide-react';
+import { runAutoBaseline } from '../../services/basePlanResolverService';
 import ScenarioOverridesForm, { getDefaultOverrides } from './ScenarioOverridesForm';
 
 // Pre-seed sensible risk-focused defaults for the form
@@ -40,8 +41,6 @@ export default function RiskWhatIfView({
     setProgress('Generating risk-adjusted plan…');
 
     try {
-      // Inline import to avoid circular deps at module load time
-      const { runAutoBaseline } = await import('../../services/basePlanResolverService');
       const result = await runAutoBaseline({
         userId: datasetProfileRow?.user_id ?? null,
         datasetProfileRow,

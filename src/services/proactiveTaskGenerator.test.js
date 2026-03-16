@@ -30,7 +30,7 @@ const mockApprovePlan = vi.fn(async () => undefined);
 
 const mockListTasks = vi.fn(async () => []);
 
-vi.mock('./aiEmployeeService', () => ({
+vi.mock('./aiEmployee/queries.js', () => ({
   listTasks: (...args) => mockListTasks(...args),
 }));
 
@@ -41,6 +41,11 @@ vi.mock('./aiEmployee/index.js', () => ({
 
 vi.mock('./aiEmployee/templatePlanAdapter.js', () => ({
   buildPlanFromTaskTemplate: (...args) => mockBuildPlan(...args),
+}));
+
+vi.mock('./taskIntakeService.js', () => ({
+  processIntake: vi.fn(async () => ({ workOrder: { title: 'test', priority: 'medium', dedup_key: 'test' }, status: 'created' })),
+  INTAKE_SOURCES: { PROACTIVE_ALERT: 'proactive_alert' },
 }));
 
 import { ALERT_TASK_MAP, alertToTask, evaluateAndCreateTasks } from './proactiveTaskGenerator';
@@ -221,7 +226,7 @@ describe('evaluateAndCreateTasks', () => {
       title: expect.stringContaining('Supplier delay'),
       priority: 'high',
       executionMode: 'auto_run',
-      sourceType: 'scheduled',
+      sourceType: 'proactive_alert',
       userId: 'user-1',
       inputContext: expect.objectContaining({
         alert_id: alert.alert_id,

@@ -1,7 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { AlertCircle, Loader2, TrendingUp, Calculator, RefreshCw } from 'lucide-react';
 import { Card, Badge } from '../ui';
-import { getRiskScoreForKey } from '../../services/riskScoreService';
+
+async function loadRiskScoreService() {
+  return import('../../services/riskScoreService');
+}
 
 /**
  * RiskScoreSection - Display risk score breakdown for a key in Risk Dashboard
@@ -33,6 +36,7 @@ const RiskScoreSection = ({
       setError(null);
       
       try {
+        const { getRiskScoreForKey } = await loadRiskScoreService();
         const result = await getRiskScoreForKey(
           userId, 
           forecastRunId, 

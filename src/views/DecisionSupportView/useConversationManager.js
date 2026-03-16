@@ -180,7 +180,7 @@ export default function useConversationManager({
     setShowNewChatConfirm(false);
 
     const welcomeMessage = mode === 'ai_employee'
-      ? 'Hi! I\'m your AI Employee. Tell me what you need — upload data, generate reports, run forecasts, or just describe a task and I\'ll handle it.'
+      ? 'Hi! I\'m your Digital Worker. Tell me what you need — upload data, generate reports, run forecasts, or just describe a task and I\'ll handle it.'
       : `Hello! I'm your **${ASSISTANT_NAME}**. Upload a CSV/XLSX (max 50MB) and ask for a plan or forecast.\n\nI will show deterministic execution artifacts in Canvas.`;
 
     const newConversation = {

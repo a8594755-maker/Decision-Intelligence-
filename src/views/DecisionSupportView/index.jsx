@@ -2257,7 +2257,7 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
     if (agentExecPanelOpen && agentExecLoopState?.steps?.length) {
       const runningStep = agentExecLoopState.steps.find((step) => step.status === 'running');
       return {
-        text: runningStep ? `Aiden is running: ${runningStep.name}` : 'Aiden is executing the current task',
+        text: runningStep ? `Worker is running: ${runningStep.name}` : 'Worker is executing the current task',
         tone: 'warning',
       };
     }
@@ -2274,7 +2274,7 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
       };
     }
     return {
-      text: 'Upload a workbook or describe the task you want Aiden to handle.',
+      text: 'Upload a dataset or describe the task you want the worker to handle.',
       tone: 'neutral',
     };
   }, [
@@ -2368,17 +2368,17 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
 
   const aiEmployeeTitle = currentConversation
     ? currentMessages.length <= 1 && currentConversation.title === 'New Conversation'
-      ? 'Chat with Aiden'
+      ? 'Chat with your worker'
       : currentConversation.title
-    : 'Aiden';
+    : 'Digital Worker';
 
   const aiEmployeeSubtitle = activeDatasetContext?.fileName
-    || (agentExecTaskTitle ? `Live task: ${agentExecTaskTitle}` : 'AI employee workspace');
+    || (agentExecTaskTitle ? `Live task: ${agentExecTaskTitle}` : 'Digital worker workspace');
 
   let aiEmployeeSecondaryPanel = null;
   if (isAIEmployeeMode && aiEmployeeDrawer === 'profile') {
     aiEmployeeSecondaryPanel = {
-      title: 'Aiden Profile',
+      title: 'Worker Profile',
       description: 'Skills, recent tasks, and current workload.',
       onClose: closeAIEmployeeProfile,
       content: (
@@ -2448,14 +2448,14 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
         <AIEmployeeChatShell
           title={aiEmployeeTitle}
           subtitle={aiEmployeeSubtitle}
-          badge="AI Employee"
+          badge="Digital Worker"
           sidebarOpen={!isSidebarCollapsed}
           onSidebarToggle={handleSidebarToggle}
           onDismissOverlays={dismissAIEmployeeOverlays}
           onNewConversation={() => (conversations.length > 0 ? setShowNewChatConfirm(true) : handleNewConversation())}
           sidebar={(
             <AIEmployeeConversationSidebar
-              title="Aiden"
+              title="Digital Worker"
               conversations={conversations}
               currentConversationId={currentConversationId}
               onSelectConversation={handleSelectAIConversation}
@@ -2516,10 +2516,10 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
                   <Bot className="h-8 w-8" />
                 </div>
                 <h2 className="text-3xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">
-                  Start a chat with Aiden
+                  Start a chat with your worker
                 </h2>
                 <p className="mt-3 text-sm leading-6 text-slate-500 dark:text-slate-400">
-                  Create a thread, upload a workbook, or assign a multi-step task and let the AI employee execute it transparently.
+                  Create a thread, upload a dataset, or assign a multi-step task and let the digital worker execute it transparently.
                 </p>
                 <button
                   type="button"

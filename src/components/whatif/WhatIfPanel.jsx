@@ -31,13 +31,16 @@ import BasePlanEmptyState from './BasePlanEmptyState';
 import StaleBaselineWarning from './StaleBaselineWarning';
 import RiskWhatIfView from './RiskWhatIfView';
 import { createScenario, listScenariosForBaseRun, getScenario } from '../../services/diScenariosService';
-import { runScenario } from '../../services/scenarioEngine';
 import { diRunsService } from '../../services/diRunsService';
 import { loadArtifact } from '../../utils/artifactStore';
 import { useBasePlanResolver } from '../../hooks/useBasePlanResolver';
 
 const POLL_INTERVAL_MS = 3000;
 const MAX_POLL_ATTEMPTS = 40;
+
+async function loadScenarioEngine() {
+  return import('../../services/scenarioEngine');
+}
 
 function StatusChip({ status }) {
   const configs = {
@@ -278,6 +281,7 @@ export default function WhatIfPanel({
       );
 
       // Run in the background — errors are caught and reflected in scenario status
+      const { runScenario } = await loadScenarioEngine();
       runScenario(userId, scenario, ({ _step, message }) => {
         setProgress(message);
       })

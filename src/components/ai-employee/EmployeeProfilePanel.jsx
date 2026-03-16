@@ -1,5 +1,5 @@
 // @product: ai-employee
-// EmployeeProfilePanel — Right-side panel showing Aiden's live status, current task, and daily KPIs.
+// EmployeeProfilePanel — Right-side panel showing the digital worker's live status, current task, and daily KPIs.
 
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -70,7 +70,7 @@ export default function EmployeeProfilePanel({ userId }) {
   if (!employee) {
     return (
       <div className="px-4 py-8 text-center text-sm" style={{ color: 'var(--text-muted)' }}>
-        No AI Employee found.
+        No digital worker found.
       </div>
     );
   }
@@ -88,7 +88,7 @@ export default function EmployeeProfilePanel({ userId }) {
         </div>
         <div className="flex-1 min-w-0">
           <p className="font-semibold text-sm" style={{ color: 'var(--text-primary)' }}>
-            {employee.name || 'Aiden'}
+            {employee.name || 'Digital Worker'}
           </p>
           <div className="flex items-center gap-1.5 mt-0.5">
             <span className={`w-2 h-2 rounded-full ${status.dot}`} />

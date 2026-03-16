@@ -239,9 +239,9 @@ export class NegotiationGameAdapter {
    * @param {Object} [params.details]   - { tone, draftIndex, wasEdited, ... }
    * @returns {Object|null} updated negotiation state
    */
-  processUserAction({ negotiationId, uiAction, details = {} }) {
+  async processUserAction({ negotiationId, uiAction, details = {} }) {
     const tracker = this._getTracker();
-    const { NegotiationStateTracker } = require('./negotiation-state-tracker.js');
+    const { NegotiationStateTracker } = await import('./negotiation-state-tracker.js');
 
     const cfrAction = NegotiationStateTracker.mapUiActionToCfr(uiAction, details);
     if (!cfrAction) return null; // 'copy' doesn't change state

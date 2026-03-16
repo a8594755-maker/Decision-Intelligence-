@@ -95,7 +95,7 @@ function ChatComposer({
             onChange={onInputChange}
             onKeyDown={onKeyDown}
             disabled={isTyping || isUploading}
-            placeholder={isDragOver ? 'Drop CSV/XLSX to upload...' : isAIEmployeeVariant ? 'Message Aiden' : 'Message Decision-Intelligence'}
+            placeholder={isDragOver ? 'Drop CSV/XLSX to upload...' : isAIEmployeeVariant ? 'Message your worker' : 'Message Decision-Intelligence'}
             className={`w-full resize-none overflow-hidden bg-transparent text-sm outline-none ${
               isAIEmployeeVariant
                 ? 'rounded-[26px] pl-12 pr-16 py-4 text-[15px] leading-6 text-slate-800 dark:text-slate-100 placeholder:text-slate-400'

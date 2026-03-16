@@ -8,7 +8,9 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { saveJsonArtifact } from '../utils/artifactStore';
-import { invokeAiProxy } from './aiProxyService';
+import { isOpenCloudConfigured } from '../config/opencloudConfig';
+import { toPowerBIDataset } from './externalToolBridgeService';
+import { distributeReport } from './opencloudArtifactSync';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -91,7 +93,7 @@ export async function fetchMonthlyReport(year, month) {
 
 function generateHtmlReport({ artifacts, taskMeta, narrative, revisionLog }) {
   const allRefs = flattenArtifacts(artifacts);
-  const title = taskMeta?.title || 'AI Employee Report';
+  const title = taskMeta?.title || 'Digital Worker Report';
 
   const revisionSection = revisionLog
     ? `<section class="revision-log">
@@ -207,7 +209,6 @@ export async function generateReport({ format = 'html', artifacts, taskMeta, nar
     }
 
     case 'powerbi': {
-      const { toPowerBIDataset } = await import('./externalToolBridgeService');
       const pbiResult = toPowerBIDataset(artifacts);
       return { blob: pbiResult.dataset, filename: pbiResult.filename, format: 'powerbi', artifact_ref: pbiResult.artifact_ref };
     }
@@ -230,9 +231,7 @@ export async function generateAndDistribute(opts) {
 
   let distribution = null;
   try {
-    const { isOpenCloudConfigured } = await import('../config/opencloudConfig');
     if (isOpenCloudConfigured() && opts.driveId) {
-      const { distributeReport } = await import('./opencloudArtifactSync');
       distribution = await distributeReport(report, opts.driveId, opts.taskMeta?.id, {
         recipients: opts.recipients,
         employeeName: opts.employeeName,

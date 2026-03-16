@@ -1,8 +1,10 @@
 // @product: ai-employee
 //
-// @deprecated — Use src/services/aiEmployee/orchestrator.js + executors/ instead.
-// All execution logic has been ported to the orchestrator's executor registry.
+// ★ ARCHIVED — This file has ZERO production imports. ★
+// All execution logic lives in orchestrator.js + executors/.
+// This stub is kept only for test verification; it may be deleted in a future cleanup.
 //
+// @deprecated — Use src/services/aiEmployee/orchestrator.js + executors/ instead.
 // This file is a thin stub. Both exported functions throw a deprecation error
 // directing callers to the new orchestrator API.
 // ─────────────────────────────────────────────────────────────────────────────

@@ -24,11 +24,13 @@
 - [phase1_runbook.md](phase1_runbook.md)
 - [telemetry_schema.md](telemetry_schema.md)
 - [training_pipeline.md](training_pipeline.md)
+- [WORKSPACES.md](WORKSPACES.md)
 
 ## 團隊協作
 
 - [../CONTRIBUTING.md](../CONTRIBUTING.md): PR、測試、文件與 ADR 工作方式
 - [adr/README.md](adr/README.md): 架構決策紀錄索引
+- [WORKSPACES.md](WORKSPACES.md): npm workspace 邊界與整合面維護方式
 - [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md): staging 到 production 的可執行流程
 - [QA_GO_LIVE_GATE.md](QA_GO_LIVE_GATE.md): 上線前回歸測試矩陣
 

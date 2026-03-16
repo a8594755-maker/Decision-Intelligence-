@@ -1,11 +1,13 @@
 // @product: ai-employee
 //
+// ★ ARCHIVED — This file has ZERO production imports. ★
+// All reads are served by queries.js; all mutations by orchestrator.js.
+// This stub is kept only for backward-compat re-exports; it may be deleted
+// in a future cleanup.
+//
 // @deprecated — This file is a thin re-export shim.
 // Use src/services/aiEmployee/queries.js for reads and
 // src/services/aiEmployee/orchestrator.js for mutations.
-//
-// All implementation has been moved to the new stack.
-// This file exists solely for backward compatibility with existing imports/tests.
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ── Read functions (from queries) ────────────────────────────────────────────

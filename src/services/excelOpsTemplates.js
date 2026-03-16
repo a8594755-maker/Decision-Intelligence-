@@ -39,7 +39,7 @@ function colLetter(idx) {
 }
 
 function safeSheet(name) {
-  return (name || 'Sheet').replace(/[\\\/\*\?\[\]:]/g, '_').slice(0, 31);
+  return (name || 'Sheet').replace(/[\\/*?[\]:]/g, '_').slice(0, 31);
 }
 
 // ── MBR (Monthly Business Review) Template ───────────────────────────────────

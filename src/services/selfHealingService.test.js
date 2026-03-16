@@ -115,9 +115,9 @@ describe('chooseHealingStrategy', () => {
     expect(result.healingStrategy).toBe('revise_prompt');
   });
 
-  it('returns escalate_model for unknown errors on second retry', () => {
+  it('returns revise_prompt for unknown errors on second retry', () => {
     const result = chooseHealingStrategy('Something weird', baseStep, 1);
-    expect(result.healingStrategy).toBe('escalate_model');
+    expect(result.healingStrategy).toBe('revise_prompt');
   });
 });
 

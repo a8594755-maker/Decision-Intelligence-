@@ -81,7 +81,7 @@ export default function LoginPage() {
             Welcome back
           </h1>
           <p className="text-sm mb-8" style={{ color: 'var(--text-secondary)' }}>
-            Sign in to continue your decision workflow
+            Sign in to continue your decision workspace
           </p>
 
           <form onSubmit={onSubmit} className="space-y-4">

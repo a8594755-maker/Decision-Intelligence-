@@ -154,17 +154,20 @@ export default function AIEmployeeHome() {
   const [perfDashboards, setPerfDashboards] = useState({});
   const [showAddWorker, setShowAddWorker] = useState(false);
   const [addingWorker, setAddingWorker] = useState(false);
+  const [availableTemplates, setAvailableTemplates] = useState([]);
 
   const loadData = useCallback(async () => {
     if (!user?.id) return;
     setLoading(true);
     try {
-      const [emps, summary, approvals, gStats] = await Promise.all([
+      const [emps, summary, approvals, gStats, templates] = await Promise.all([
         listEmployeesByManager(user.id).catch(() => []),
         getLatestSummary(user.id).catch(() => null),
         listPending(user.id, { limit: 10 }).catch(() => []),
         getGovernanceStats(user.id).catch(() => null),
+        listTemplates().catch(() => []),
       ]);
+      setAvailableTemplates(templates || []);
 
       setPendingApprovals(approvals || []);
       setGovStats(gStats);
@@ -258,7 +261,7 @@ export default function AIEmployeeHome() {
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
-            <p className="text-xs font-semibold tracking-widest uppercase text-indigo-500">AI WORKFORCE</p>
+            <p className="text-xs font-semibold tracking-widest uppercase text-indigo-500">DIGITAL WORKFORCE</p>
             <h1 className="text-2xl font-bold tracking-tight" style={{ color: 'var(--text-primary)' }}>
               Manager Console
             </h1>
@@ -529,7 +532,7 @@ export default function AIEmployeeHome() {
               <div className="p-3 rounded-lg border bg-slate-50 dark:bg-slate-800/50 space-y-2" style={{ borderColor: 'var(--border-default)' }}>
                 <p className="text-xs font-medium" style={{ color: 'var(--text-primary)' }}>Select worker template:</p>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                  {listTemplates().map((tmpl) => (
+                  {availableTemplates.map((tmpl) => (
                     <button
                       key={tmpl.id}
                       disabled={addingWorker}

@@ -131,7 +131,8 @@ describe('resolveModel', () => {
   });
 
   it('respects preferredProvider hint', async () => {
-    const { provider } = await resolveModel('forecast', { preferredProvider: 'anthropic' });
+    // anthropic has claude-sonnet-4-6 in tier_b; 'report' resolves to tier_b with no pinned model
+    const { provider } = await resolveModel('report', { preferredProvider: 'anthropic' });
     expect(provider).toBe('anthropic');
   });
 
@@ -203,18 +204,18 @@ describe('getTaskCostSummary', () => {
 
 describe('recordModelRun', () => {
   it('computes estimated cost from model registry pricing', async () => {
-    // deepseek-chat: input=0.00014/1k, output=0.00028/1k
+    // deepseek-chat: input=0.00007/1k, output=0.0011/1k
     const entry = await recordModelRun({
       taskId: 'task-cost',
       employeeId: 'emp-1',
       provider: 'deepseek',
       modelName: 'deepseek-chat',
       tier: 'tier_c',
-      inputTokens: 10000,  // 10 * 0.00014 = 0.0014
-      outputTokens: 5000,  // 5 * 0.00028 = 0.0014
+      inputTokens: 10000,  // 10 * 0.00007 = 0.0007
+      outputTokens: 5000,  // 5 * 0.0011  = 0.0055
     });
-    // Total should be ~0.0028
-    expect(entry.estimated_cost).toBeCloseTo(0.0028, 4);
+    // Total should be ~0.0062
+    expect(entry.estimated_cost).toBeCloseTo(0.0062, 4);
   });
 
   it('records escalation metadata', async () => {

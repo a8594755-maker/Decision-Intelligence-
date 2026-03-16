@@ -16,6 +16,7 @@ import { supabase } from './supabaseClient';
 import { submitPlan } from './aiEmployee/index.js';
 import { buildPlanFromTaskTemplate } from './aiEmployee/templatePlanAdapter.js';
 import { EXECUTION_MODES } from './aiEmployee/executionPolicy.js';
+import { processIntake, INTAKE_SOURCES } from './taskIntakeService.js';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -284,11 +285,38 @@ export async function instantiateScheduledTask(schedule, userId, { triggerPayloa
     throw new Error('Scheduled task template must define template_id or workflow_type.');
   }
 
+  // ── Unified intake normalization ──
+  let intakeWorkOrder = null;
+  try {
+    const intakeResult = await processIntake({
+      source: INTAKE_SOURCES.SCHEDULE,
+      message: taskTemplate.description || taskTemplate.title || `Scheduled ${templateId || workflowType} task`,
+      employeeId: schedule.employee_id,
+      userId,
+      metadata: {
+        schedule_id: schedule.id,
+        schedule_name: taskTemplate.title,
+        schedule_type: schedule.schedule_type,
+        priority: taskTemplate.priority,
+        trigger_payload: triggerPayload,
+      },
+    });
+    intakeWorkOrder = intakeResult?.workOrder || null;
+    if (intakeResult?.status === 'duplicate') {
+      console.info('[scheduledTaskService] Duplicate detected, skipping:', intakeResult.workOrder?.title);
+      return null;
+    }
+  } catch (intakeErr) {
+    console.warn('[scheduledTaskService] Intake normalization failed (non-blocking):', intakeErr?.message);
+  }
+
+  const effectivePriority = taskTemplate.priority || intakeWorkOrder?.priority || 'medium';
+
   const plan = await buildPlanFromTaskTemplate({
-    title: taskTemplate.title || `Scheduled ${templateId || workflowType} task`,
+    title: taskTemplate.title || intakeWorkOrder?.title || `Scheduled ${templateId || workflowType} task`,
     description: taskTemplate.description || '',
-    priority: taskTemplate.priority || 'medium',
-    dueAt: taskTemplate.due_at || null,
+    priority: effectivePriority,
+    dueAt: intakeWorkOrder?.sla?.due_at || taskTemplate.due_at || null,
     sourceType: 'scheduled',
     executionMode: taskTemplate.execution_mode || inputContext.execution_mode || null,
     templateId,
@@ -300,6 +328,7 @@ export async function instantiateScheduledTask(schedule, userId, { triggerPayloa
       schedule_id: schedule.id,
       schedule_type: schedule.schedule_type,
       trigger_payload: triggerPayload,
+      dedup_key: intakeWorkOrder?.dedup_key || null,
     },
   });
 
