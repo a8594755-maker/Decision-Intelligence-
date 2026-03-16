@@ -23,6 +23,11 @@ export const config = {
     .split(',')
     .map(s => s.trim())
     .filter(Boolean),
+  approvalChannelId: process.env.DISCORD_APPROVAL_CHANNEL_ID || '',
+
+  // Supabase (for approval queue)
+  supabaseUrl: process.env.SUPABASE_URL || '',
+  supabaseServiceKey: process.env.SUPABASE_SERVICE_ROLE_KEY || '',
 
   // Project
   projectRoot: process.env.DI_PROJECT_ROOT || resolve(__dirname, '..'),
@@ -34,4 +39,5 @@ export const config = {
   // Limits
   claudeTimeout: parseInt(process.env.CLAUDE_TIMEOUT || '300000', 10), // 5 min
   rateLimitPerUser: parseInt(process.env.RATE_LIMIT_SECONDS || '5', 10),
+  approvalPollInterval: parseInt(process.env.APPROVAL_POLL_INTERVAL || '10000', 10), // 10s
 };

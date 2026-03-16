@@ -5,6 +5,8 @@ import { fileURLToPath } from 'url';
 import { config } from './config.js';
 import { askClaude } from './claudeCode.js';
 import { formatForDiscord } from './messageFormatter.js';
+import { handleInteraction } from './interactionHandler.js';
+import { pollAndNotify, expireStaleApprovals } from './approvalService.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const HISTORY_FILE = resolve(__dirname, '.chat-history.json');
