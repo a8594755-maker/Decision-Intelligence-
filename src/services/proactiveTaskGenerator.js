@@ -10,7 +10,7 @@
 // Dedup: skips creating a task if one already exists for the same alert_id.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import * as aiEmployeeService from './aiEmployeeService';
+import { listTasks } from './aiEmployee/queries.js';
 import { approvePlan, submitPlan } from './aiEmployee/index.js';
 import { buildPlanFromTaskTemplate } from './aiEmployee/templatePlanAdapter.js';
 import { EXECUTION_MODES, shouldAutoRun } from './aiEmployee/executionPolicy.js';
@@ -108,7 +108,7 @@ export async function evaluateAndCreateTasks(employeeId, userId, alerts) {
   // ── Load existing tasks for dedup ──────────────────────────────────────
   let existingAlertIds = new Set();
   try {
-    const tasks = await aiEmployeeService.listTasks(employeeId);
+    const tasks = await listTasks(employeeId);
     for (const task of tasks) {
       const alertId = task.input_context?.alert_id;
       if (alertId && task.status !== 'done') {

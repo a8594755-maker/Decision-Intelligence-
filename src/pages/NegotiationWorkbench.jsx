@@ -26,6 +26,7 @@ import { Card } from '../components/ui';
 import { useAuth } from '../contexts/AuthContext';
 import NegotiationActionCard from '../components/chat/NegotiationActionCard';
 import * as persistence from '../services/negotiationPersistenceService';
+import { determineStrategy, generateCounterOffer, evaluateOutcome } from '../services/negotiationStrategyEngine';
 
 // ── Status config ───────────────────────────────────────────────────────────
 
@@ -99,6 +100,35 @@ function CaseDetail({ caseData, events, onAction, onRefresh }) {
   const cfg = STATUS_CONFIG[caseData.status] || STATUS_CONFIG.active;
   const StatusIcon = cfg.icon;
 
+  // ── Strategy Engine Integration ─────────────────────────────────────────
+  const strategyResult = determineStrategy({
+    buyerPosition: caseData.buyer_position || {},
+    supplierKpis: caseData.supplier_kpis || {},
+    alternativeCount: caseData.buyer_position?.alternative_count ?? 0,
+    urgency: caseData.buyer_position?.urgency ?? 50,
+  });
+
+  const counterOffer = caseData.status === 'active'
+    ? generateCounterOffer({
+        strategy: strategyResult.strategy,
+        currentRound: caseData.current_round ?? 0,
+        currentTerms: caseData.supplier_kpis || {},
+        targetTerms: caseData.buyer_position?.target_terms || {},
+        supplierLastOffer: (events || [])
+          .filter((e) => e.player === 'supplier')
+          .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0]?.details || null,
+      })
+    : null;
+
+  const outcomeScorecard = caseData.outcome?.agreed_terms
+    ? evaluateOutcome({
+        agreedTerms: caseData.outcome.agreed_terms,
+        targetTerms: caseData.buyer_position?.target_terms || {},
+        initialTerms: caseData.outcome.initial_terms || caseData.supplier_kpis || {},
+        batna: strategyResult.batna,
+      })
+    : null;
+
   // Build payload shape that NegotiationActionCard expects
   const actionCardPayload = {
     negotiation_id: caseData.id,
@@ -122,6 +152,8 @@ function CaseDetail({ caseData, events, onAction, onRefresh }) {
       market_events: [],
     },
     drafts: [],
+    strategy_engine: strategyResult,
+    counter_offer: counterOffer,
   };
 
   return (
@@ -198,14 +230,155 @@ function CaseDetail({ caseData, events, onAction, onRefresh }) {
         </Card>
       )}
 
+      {/* Strategy Insight */}
+      <Card variant="elevated" className="!p-4">
+        <div className="text-xs font-semibold text-slate-600 dark:text-slate-300 uppercase tracking-wide mb-3">
+          AI Strategy Recommendation
+        </div>
+        <div className="flex items-center gap-3 mb-3">
+          <span className={`text-sm font-bold px-2.5 py-1 rounded-full ${
+            strategyResult.strategy === 'COMPETITIVE'
+              ? 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300'
+              : strategyResult.strategy === 'ACCOMMODATING'
+                ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'
+                : 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300'
+          }`}>
+            {strategyResult.strategy}
+          </span>
+          <span className="text-xs text-slate-500 dark:text-slate-400">
+            Position: <strong>{strategyResult.positionStrength}</strong> (Power Score: {strategyResult.powerScore})
+          </span>
+        </div>
+        <ul className="text-xs text-slate-600 dark:text-slate-400 space-y-1">
+          {strategyResult.reasoning.map((r, i) => (
+            <li key={i} className="flex items-start gap-1.5">
+              <span className="text-slate-400 mt-0.5">•</span>
+              <span>{r}</span>
+            </li>
+          ))}
+        </ul>
+      </Card>
+
+      {/* BATNA Analysis */}
+      <Card variant="elevated" className="!p-4">
+        <div className="text-xs font-semibold text-slate-600 dark:text-slate-300 uppercase tracking-wide mb-3">
+          BATNA Analysis
+        </div>
+        <div className="grid grid-cols-2 gap-3 text-sm">
+          <div>
+            <span className="text-xs text-slate-500">Alternative Available</span>
+            <p className="font-medium text-slate-800 dark:text-slate-200">
+              {strategyResult.batna.hasAlternative ? 'Yes' : 'No'}
+            </p>
+          </div>
+          <div>
+            <span className="text-xs text-slate-500">Alt. Premium</span>
+            <p className="font-medium text-slate-800 dark:text-slate-200">
+              +{(strategyResult.batna.alternativePremiumPct * 100).toFixed(0)}%
+            </p>
+          </div>
+          <div>
+            <span className="text-xs text-slate-500">Switching Cost</span>
+            <p className="font-medium text-slate-800 dark:text-slate-200">
+              ${strategyResult.batna.switchingCostUsd.toLocaleString()}
+            </p>
+          </div>
+          <div>
+            <span className="text-xs text-slate-500">Walk-Away Risk</span>
+            <p className={`font-medium ${
+              strategyResult.batna.walkawayRisk === 'high'
+                ? 'text-red-600' : strategyResult.batna.walkawayRisk === 'medium'
+                  ? 'text-amber-600' : 'text-emerald-600'
+            }`}>
+              {strategyResult.batna.walkawayRisk.toUpperCase()}
+            </p>
+          </div>
+        </div>
+      </Card>
+
+      {/* Counter-Offer Recommendation (active negotiations only) */}
+      {counterOffer && caseData.status === 'active' && (
+        <Card variant="elevated" className="!p-4 border-l-4 border-indigo-400">
+          <div className="text-xs font-semibold text-indigo-600 dark:text-indigo-400 uppercase tracking-wide mb-2">
+            Counter-Offer Recommendation · {counterOffer.roundName}
+            {counterOffer.isLastRound && (
+              <span className="ml-2 text-red-500 text-[10px]">(FINAL ROUND)</span>
+            )}
+          </div>
+          <div className="text-sm text-slate-700 dark:text-slate-300 mb-2 italic">
+            {counterOffer.tactic}
+          </div>
+          {counterOffer.explanation.length > 0 && (
+            <ul className="text-xs text-slate-600 dark:text-slate-400 space-y-1 mb-2">
+              {counterOffer.explanation.map((e, i) => (
+                <li key={i} className="flex items-start gap-1.5">
+                  <span className="text-indigo-400 mt-0.5">→</span>
+                  <span>{e}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+          {counterOffer.walkawayThreshold?.explanation && (
+            <div className="text-[10px] text-red-500 dark:text-red-400 mt-1 font-medium">
+              ⚠ {counterOffer.walkawayThreshold.explanation}
+            </div>
+          )}
+        </Card>
+      )}
+
       {/* Event Timeline via NegotiationActionCard */}
       <NegotiationActionCard
         payload={actionCardPayload}
         onAction={onAction}
       />
 
-      {/* Outcome (if resolved) */}
-      {caseData.outcome && (
+      {/* Outcome Scorecard (resolved negotiations) */}
+      {outcomeScorecard && (
+        <Card variant="elevated" className="!p-4">
+          <div className="flex items-center justify-between mb-3">
+            <div className="text-xs font-semibold text-slate-600 dark:text-slate-300 uppercase tracking-wide">
+              Negotiation Scorecard
+            </div>
+            <div className={`text-2xl font-black ${
+              outcomeScorecard.grade === 'A' ? 'text-emerald-600'
+                : outcomeScorecard.grade === 'B' ? 'text-blue-600'
+                  : outcomeScorecard.grade === 'C' ? 'text-amber-600'
+                    : 'text-red-600'
+            }`}>
+              {outcomeScorecard.grade}
+            </div>
+          </div>
+          <div className="text-sm text-slate-700 dark:text-slate-300 mb-3">
+            Overall Score: <strong>{outcomeScorecard.score}</strong>/100
+            {outcomeScorecard.better_than_batna != null && (
+              <span className={`ml-3 text-xs font-medium ${
+                outcomeScorecard.better_than_batna ? 'text-emerald-600' : 'text-red-600'
+              }`}>
+                {outcomeScorecard.better_than_batna ? '✓ Better than BATNA' : '✗ Worse than BATNA'}
+              </span>
+            )}
+          </div>
+          <div className="space-y-2">
+            {outcomeScorecard.analysis.map((a, i) => (
+              <div key={i} className="flex items-center gap-3">
+                <span className="text-xs text-slate-500 w-20">{a.factor}</span>
+                <div className="flex-1 h-2 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden">
+                  <div
+                    className={`h-full rounded-full ${
+                      a.score >= 80 ? 'bg-emerald-500' : a.score >= 60 ? 'bg-blue-500' : a.score >= 40 ? 'bg-amber-500' : 'bg-red-500'
+                    }`}
+                    style={{ width: `${a.score}%` }}
+                  />
+                </div>
+                <span className="text-xs font-medium text-slate-600 dark:text-slate-400 w-8 text-right">{a.score}</span>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+
+      {/* Raw Outcome Data (if resolved and no scorecard) */}
+      {caseData.outcome && !outcomeScorecard && (
         <Card variant="elevated" className="!p-4">
           <div className="text-xs font-semibold text-slate-600 dark:text-slate-300 uppercase tracking-wide mb-2">
             Outcome

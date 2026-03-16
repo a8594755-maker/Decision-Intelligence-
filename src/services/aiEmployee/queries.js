@@ -77,6 +77,7 @@ export const getSteps = stepRepo.getSteps;
 // ── Worklog queries ──
 
 export const listWorklogs = worklogRepo.listWorklogs;
+export const appendWorklog = worklogRepo.appendWorklog;
 
 // ── Review queries ──
 

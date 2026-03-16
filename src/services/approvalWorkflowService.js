@@ -386,6 +386,29 @@ export function buildUnifiedApprovalCard(approval) {
   };
 }
 
+/**
+ * List pending approvals for a user from the session context.
+ * Returns approvals that are still in PENDING status and not yet expired.
+ *
+ * @param {Object} sessionCtx - session context from sessionContextService
+ * @returns {Object[]} Pending approval objects with deadline status
+ */
+export function listPendingApprovals(sessionCtx) {
+  const approvals = sessionCtx?.pending_approvals || [];
+  return approvals
+    .filter((a) => a.status === 'PENDING')
+    .map((a) => ({
+      ...a,
+      deadline_status: a.deadline ? getApprovalDeadlineStatus(a) : null,
+    }))
+    .sort((a, b) => {
+      // Expired/critical first, then by deadline ascending
+      const aRemaining = a.deadline ? new Date(a.deadline).getTime() - Date.now() : Infinity;
+      const bRemaining = b.deadline ? new Date(b.deadline).getTime() - Date.now() : Infinity;
+      return aRemaining - bRemaining;
+    });
+}
+
 export default {
   requestApprovalWithDeadline,
   getApprovalDeadlineStatus,
@@ -396,5 +419,6 @@ export default {
   requestClosedLoopApproval,
   requestRiskReplanApproval,
   buildUnifiedApprovalCard,
+  listPendingApprovals,
   APPROVAL_CONFIG,
 };

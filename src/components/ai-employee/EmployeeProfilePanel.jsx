@@ -7,7 +7,7 @@ import {
   Bot, CheckCircle2, Clock, AlertTriangle, Loader2,
   BarChart3, DollarSign, FileText, ArrowRight,
 } from 'lucide-react';
-import * as aiEmployeeService from '../../services/aiEmployeeService';
+import { getOrCreateWorker, listTasks } from '../../services/aiEmployee/queries.js';
 import { getLatestSummary } from '../../services/dailySummaryService';
 import { getEmployeeCostSummary } from '../../services/modelRoutingService';
 
@@ -33,12 +33,12 @@ export default function EmployeeProfilePanel({ userId }) {
     async function load() {
       setLoading(true);
       try {
-        const emp = await aiEmployeeService.getOrCreateAiden(userId);
+        const emp = await getOrCreateWorker(userId);
         if (cancelled) return;
         setEmployee(emp);
 
         const [taskList, summary, costData] = await Promise.allSettled([
-          aiEmployeeService.listTasks(emp.id, { limit: 5 }),
+          listTasks(emp.id, { limit: 5 }),
           getLatestSummary(emp.id),
           getEmployeeCostSummary(emp.id),
         ]);

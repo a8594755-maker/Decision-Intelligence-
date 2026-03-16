@@ -52,6 +52,7 @@ import AIReviewCard from '../../components/chat/AIReviewCard';
 import RevisionLogCard from '../../components/chat/RevisionLogCard';
 import ToolRegistryCard from '../../components/chat/ToolRegistryCard';
 import OpenCloudPublishCard from '../../components/chat/OpenCloudPublishCard';
+import UnifiedApprovalCard from '../../components/chat/UnifiedApprovalCard';
 import { toPositiveRunId } from './helpers.js';
 
 /**
@@ -480,6 +481,22 @@ export default function MessageCardRenderer({ message, handlers, state }) {
   }
   if (message.type === 'opencloud_file_ref' || message.type === 'opencloud_publish_card') {
     return <OpenCloudPublishCard artifact={message} />;
+  }
+  if (message.type === 'unified_approval_card') {
+    return (
+      <UnifiedApprovalCard
+        payload={message.payload}
+        onDecision={(approvalId, decision) => {
+          if (decision === 'approve' || decision === 'approve_conservative') {
+            handleApprovePlanApproval(approvalId);
+            sessionCtx.resolveApproval(approvalId, 'APPROVED');
+          } else {
+            handleRejectPlanApproval(approvalId);
+            sessionCtx.resolveApproval(approvalId, 'REJECTED');
+          }
+        }}
+      />
+    );
   }
   return null;
 }

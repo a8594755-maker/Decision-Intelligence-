@@ -53,7 +53,7 @@ import { createAlertMonitor, buildAlertChatMessage, isAlertMonitorEnabled } from
 import { batchApprove, batchReject } from '../../services/approvalWorkflowService';
 import { decomposeTask } from '../../services/chatTaskDecomposer';
 import { buildDynamicTemplate } from '../../services/dynamicTemplateBuilder';
-import { getOrCreateAiden } from '../../services/aiEmployeeService';
+import { getOrCreateWorker } from '../../services/aiEmployee/queries.js';
 // v2 orchestrator — single entry point for task lifecycle
 import { createPlan, submitPlan, approvePlan as orchestratorApprovePlan } from '../../services/aiEmployee/index.js';
 import { eventBus, EVENT_NAMES } from '../../services/eventBus.js';
@@ -1755,7 +1755,7 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
               _onApprove: async () => {
                 try {
                   // ── v2 Orchestrator path ──────────────────────────────────
-                  const aiden = await getOrCreateAiden(user?.id);
+                  const aiden = await getOrCreateWorker(user?.id);
 
                   // Build input data from uploaded dataset
                   const rawRows = _rawRowsCache.get(String(datasetProfileId)) || activeDatasetContext?.rawRowsForStorage;
@@ -1894,7 +1894,7 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
                 _onApprove: async () => {
                   try {
                     // ── v2 Orchestrator path ──
-                    const aiden = await getOrCreateAiden(user?.id);
+                    const aiden = await getOrCreateWorker(user?.id);
 
                     const rawRows = _rawRowsCache.get(String(datasetProfileId)) || activeDatasetContext?.rawRowsForStorage;
                     const inputData = { userId: user?.id, datasetProfileId };

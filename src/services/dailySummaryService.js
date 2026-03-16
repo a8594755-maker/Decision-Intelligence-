@@ -8,7 +8,7 @@
 // Writes the summary as a worklog entry with log_type = 'daily_summary'.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import * as aiEmployeeService from './aiEmployeeService';
+import { listTasks, getKpis, appendWorklog, listWorklogs } from './aiEmployee/queries.js';
 import { getEmployeeCostSummary } from './modelRoutingService';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -38,7 +38,7 @@ export async function generateDailySummary(employeeId, date = new Date()) {
   const dateStr = todayDateStr(date);
 
   // ── Gather tasks ────────────────────────────────────────────────────────
-  const allTasks = await aiEmployeeService.listTasks(employeeId);
+  const allTasks = await listTasks(employeeId);
   const todayTasks = allTasks.filter((t) => isToday(t.updated_at, date) || isToday(t.created_at, date));
 
   const completed = todayTasks.filter((t) => t.status === 'done');
@@ -55,7 +55,7 @@ export async function generateDailySummary(employeeId, date = new Date()) {
   // ── KPIs ────────────────────────────────────────────────────────────────
   let kpis = null;
   try {
-    kpis = await aiEmployeeService.getKpis(employeeId);
+    kpis = await getKpis(employeeId);
   } catch { /* kpis are best-effort */ }
 
   // ── Build highlights & issues ───────────────────────────────────────────
@@ -103,7 +103,7 @@ export async function generateDailySummary(employeeId, date = new Date()) {
 
   // ── Persist as worklog ─────────────────────────────────────────────────
   try {
-    await aiEmployeeService.appendWorklog(
+    await appendWorklog(
       employeeId,
       null,   // not tied to specific task
       null,   // not tied to specific run
@@ -125,7 +125,7 @@ export async function generateDailySummary(employeeId, date = new Date()) {
  */
 export async function getLatestSummary(employeeId) {
   try {
-    const worklogs = await aiEmployeeService.listWorklogs(employeeId, { limit: 20 });
+    const worklogs = await listWorklogs(employeeId, { limit: 20 });
     const summaryLog = worklogs.find((w) => w.log_type === 'daily_summary');
     return summaryLog?.content || null;
   } catch {

@@ -12,6 +12,8 @@ import { useAuth } from '../contexts/AuthContext';
 import { getRecentAuditTrail } from '../services/planAuditService';
 import { useSystemHealth } from '../hooks/useSystemHealth';
 import { useDecisionOverview } from '../hooks/useDecisionOverview';
+import { getApprovalDeadlineStatus } from '../services/approvalWorkflowService';
+import { supabase } from '../services/supabaseClient';
 import FirstRunGuide from '../components/onboarding/FirstRunGuide';
 
 /* ───── Uniform KPI Card ───── */
@@ -83,6 +85,7 @@ export default function CommandCenter() {
   const [recentActivity, setRecentActivity] = useState([]);
   const [loadingActivity, setLoadingActivity] = useState(true);
   const [overviewDismissed, setOverviewDismissed] = useState(false);
+  const [pendingApprovals, setPendingApprovals] = useState([]);
   const { health, refresh: refreshHealth } = useSystemHealth();
   const { overview } = useDecisionOverview(user?.id);
 
@@ -92,6 +95,17 @@ export default function CommandCenter() {
     getRecentAuditTrail(user.id, 8)
       .then(setRecentActivity)
       .finally(() => setLoadingActivity(false));
+
+    // Fetch pending approvals from di_approval_requests (best-effort)
+    supabase
+      .from('di_approval_requests')
+      .select('id, type, title, description, urgency, status, expires_at, created_at, payload')
+      .eq('user_id', user.id)
+      .eq('status', 'pending')
+      .order('created_at', { ascending: false })
+      .limit(10)
+      .then(({ data }) => setPendingApprovals(data || []))
+      .catch(() => {});
   }, [user?.id]);
 
   const { latest: latestKpi, previous: prevKpi, latestEvent } = useMemo(
@@ -297,6 +311,75 @@ export default function CommandCenter() {
             >
               <X className="w-3.5 h-3.5" />
             </button>
+          </div>
+        )}
+
+        {/* ── Pending Approvals ── */}
+        {pendingApprovals.length > 0 && (
+          <div className="space-y-3">
+            <h2
+              className="text-sm font-semibold tracking-wide uppercase"
+              style={{ color: 'var(--text-muted)' }}
+            >
+              Pending Approvals ({pendingApprovals.length})
+            </h2>
+            <div className="grid gap-2">
+              {pendingApprovals.map((approval) => {
+                const remaining = approval.expires_at
+                  ? new Date(approval.expires_at).getTime() - Date.now()
+                  : null;
+                const isExpired = remaining != null && remaining <= 0;
+                const isCritical = remaining != null && remaining > 0 && remaining <= 3600000;
+                const isUrgent = remaining != null && remaining > 0 && remaining <= 4 * 3600000;
+
+                return (
+                  <Card key={approval.id} variant="elevated" className="!p-3">
+                    <div className="flex items-center gap-3">
+                      <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${
+                        isExpired ? 'bg-slate-400'
+                          : isCritical ? 'bg-red-500 animate-pulse'
+                            : isUrgent ? 'bg-amber-500'
+                              : approval.urgency === 'critical' ? 'bg-red-500'
+                                : approval.urgency === 'high' ? 'bg-amber-500'
+                                  : 'bg-blue-500'
+                      }`} />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+                          {approval.title}
+                        </p>
+                        <div className="flex items-center gap-2 mt-0.5">
+                          <span className="text-[10px] uppercase font-medium text-slate-500">
+                            {approval.type?.replace(/_/g, ' ')}
+                          </span>
+                          {approval.expires_at && (
+                            <span className={`text-[10px] font-medium ${
+                              isExpired ? 'text-slate-400' : isCritical ? 'text-red-600' : isUrgent ? 'text-amber-600' : 'text-slate-500'
+                            }`}>
+                              {isExpired
+                                ? 'Expired'
+                                : remaining != null
+                                  ? `${Math.floor(remaining / 3600000)}h ${Math.floor((remaining % 3600000) / 60000)}m left`
+                                  : ''
+                              }
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => navigate('/chat')}
+                        className="text-xs px-2.5 py-1 rounded-md font-medium transition-colors"
+                        style={{
+                          backgroundColor: 'var(--brand-600)',
+                          color: 'white',
+                        }}
+                      >
+                        Review
+                      </button>
+                    </div>
+                  </Card>
+                );
+              })}
+            </div>
           </div>
         )}
 

@@ -1,4 +1,4 @@
-import * as aiEmployeeService from './aiEmployeeService.js';
+import { getOrCreateWorker } from './aiEmployee/queries.js';
 import { approvePlan } from './aiEmployee/index.js';
 import { eventBus, EVENT_NAMES } from './eventBus.js';
 import { shouldAutoRun } from './aiEmployee/executionPolicy.js';
@@ -81,7 +81,7 @@ export async function startAiEmployeeRuntime({
   };
   activeRuntime = runtime;
 
-  const employee = await aiEmployeeService.getOrCreateAiden(userId);
+  const employee = await getOrCreateWorker(userId);
   if (runtime.stopped) return null;
   runtime.employeeId = employee.id;
 
