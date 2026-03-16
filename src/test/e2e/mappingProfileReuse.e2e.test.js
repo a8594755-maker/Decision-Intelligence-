@@ -4,7 +4,7 @@
  * Verifies that mapping profiles are saved with deterministic fingerprints
  * and can be reused across imports with the same header structure.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 
 import {
   generateHeaderFingerprint,

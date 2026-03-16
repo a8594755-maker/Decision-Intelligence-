@@ -1,14 +1,13 @@
 /**
  * Style Learning Pipeline — Tests
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 
 // Mock supabase before any service imports
 vi.mock('../../supabaseClient', () => ({ supabase: null }));
 
 // ─── Style Extraction ────────────────────────────────────────
 import {
-  extractStyleFromExcel,
   enrichTextStyle,
   _testExports as extractionExports,
 } from './styleExtractionService.js';

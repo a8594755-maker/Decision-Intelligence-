@@ -12,7 +12,6 @@ import {
 } from 'lucide-react';
 import {
   runOnboarding,
-  learnFromNewFiles,
 } from '../../services/aiEmployee/styleLearning';
 
 const ACCEPTED_TYPES = [
@@ -108,7 +107,7 @@ export default function ExemplarUploadPanel({ onClose, onUploaded }) {
     setPhase(PHASE.LEARNING);
     setError(null);
 
-    const stages = ['Reading files', 'Extracting structure', 'Analyzing style', 'Building profile', 'Computing metrics'];
+    const _stages = ['Reading files', 'Extracting structure', 'Analyzing style', 'Building profile', 'Computing metrics'];
     let stageIdx = 0;
 
     try {

@@ -20,6 +20,12 @@ export const TASK_STATES = Object.freeze({
   DONE:             'done',
   FAILED:           'failed',
   CANCELLED:        'cancelled',
+
+  // ── v2 Decision Pipeline states ──
+  NEEDS_CLARIFICATION:        'needs_clarification',
+  AWAITING_APPROVAL:          'awaiting_approval',       // alias for review gate approval
+  PUBLISH_FAILED:             'publish_failed',
+  BLOCKED_EXTERNAL_DEPENDENCY:'blocked_external_dependency',
 });
 
 export const TASK_EVENTS = Object.freeze({
@@ -36,6 +42,13 @@ export const TASK_EVENTS = Object.freeze({
   FAIL:             'fail',
   CANCEL:           'cancel',
   RETRY:            'retry',
+
+  // ── v2 Decision Pipeline events ──
+  NEED_CLARIFICATION: 'need_clarification',
+  CLARIFICATION_RECEIVED: 'clarification_received',
+  PUBLISH_FAIL:       'publish_fail',
+  EXTERNAL_BLOCK:     'external_block',
+  EXTERNAL_RESOLVED:  'external_resolved',
 });
 
 /**
@@ -56,12 +69,16 @@ const TRANSITIONS = {
     [TASK_EVENTS.CANCEL]:      TASK_STATES.CANCELLED,
   },
   [TASK_STATES.IN_PROGRESS]: {
-    [TASK_EVENTS.STEP_COMPLETED]: TASK_STATES.IN_PROGRESS,
-    [TASK_EVENTS.ALL_STEPS_DONE]: TASK_STATES.DONE,
-    [TASK_EVENTS.REVIEW_NEEDED]:  TASK_STATES.REVIEW_HOLD,
-    [TASK_EVENTS.BLOCK]:          TASK_STATES.BLOCKED,
-    [TASK_EVENTS.FAIL]:           TASK_STATES.FAILED,
-    [TASK_EVENTS.CANCEL]:         TASK_STATES.CANCELLED,
+    [TASK_EVENTS.STEP_COMPLETED]:      TASK_STATES.IN_PROGRESS,
+    [TASK_EVENTS.ALL_STEPS_DONE]:      TASK_STATES.DONE,
+    [TASK_EVENTS.REVIEW_NEEDED]:       TASK_STATES.REVIEW_HOLD,
+    [TASK_EVENTS.BLOCK]:               TASK_STATES.BLOCKED,
+    [TASK_EVENTS.FAIL]:                TASK_STATES.FAILED,
+    [TASK_EVENTS.CANCEL]:              TASK_STATES.CANCELLED,
+    // v2 Decision Pipeline transitions from in_progress
+    [TASK_EVENTS.NEED_CLARIFICATION]:  TASK_STATES.NEEDS_CLARIFICATION,
+    [TASK_EVENTS.PUBLISH_FAIL]:        TASK_STATES.PUBLISH_FAILED,
+    [TASK_EVENTS.EXTERNAL_BLOCK]:      TASK_STATES.BLOCKED_EXTERNAL_DEPENDENCY,
   },
   [TASK_STATES.REVIEW_HOLD]: {
     [TASK_EVENTS.REVIEW_APPROVED]:  TASK_STATES.IN_PROGRESS,
@@ -79,6 +96,26 @@ const TRANSITIONS = {
   // Terminal states — no transitions out
   [TASK_STATES.DONE]:      {},
   [TASK_STATES.CANCELLED]: {},
+
+  // ── v2 Decision Pipeline transitions ──
+  [TASK_STATES.NEEDS_CLARIFICATION]: {
+    [TASK_EVENTS.CLARIFICATION_RECEIVED]: TASK_STATES.IN_PROGRESS,
+    [TASK_EVENTS.CANCEL]:                 TASK_STATES.CANCELLED,
+  },
+  [TASK_STATES.AWAITING_APPROVAL]: {
+    [TASK_EVENTS.APPROVE]:          TASK_STATES.IN_PROGRESS,  // continues to publish phase
+    [TASK_EVENTS.REVIEW_REJECTED]:  TASK_STATES.FAILED,
+    [TASK_EVENTS.CANCEL]:           TASK_STATES.CANCELLED,
+  },
+  [TASK_STATES.PUBLISH_FAILED]: {
+    [TASK_EVENTS.RETRY]:  TASK_STATES.IN_PROGRESS,
+    [TASK_EVENTS.CANCEL]: TASK_STATES.CANCELLED,
+  },
+  [TASK_STATES.BLOCKED_EXTERNAL_DEPENDENCY]: {
+    [TASK_EVENTS.EXTERNAL_RESOLVED]: TASK_STATES.IN_PROGRESS,
+    [TASK_EVENTS.FAIL]:              TASK_STATES.FAILED,
+    [TASK_EVENTS.CANCEL]:            TASK_STATES.CANCELLED,
+  },
 };
 
 /**
@@ -120,4 +157,20 @@ export function canTaskTransition(currentState, event) {
  */
 export function isTaskTerminal(state) {
   return state === TASK_STATES.DONE || state === TASK_STATES.CANCELLED;
+}
+
+/**
+ * Check if task is in a "waiting" state that blocks further execution
+ * until external input/resolution.
+ */
+export function isTaskWaiting(state) {
+  return [
+    TASK_STATES.WAITING_APPROVAL,
+    TASK_STATES.REVIEW_HOLD,
+    TASK_STATES.BLOCKED,
+    TASK_STATES.NEEDS_CLARIFICATION,
+    TASK_STATES.AWAITING_APPROVAL,
+    TASK_STATES.PUBLISH_FAILED,
+    TASK_STATES.BLOCKED_EXTERNAL_DEPENDENCY,
+  ].includes(state);
 }

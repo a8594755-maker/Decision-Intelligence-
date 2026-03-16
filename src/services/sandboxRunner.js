@@ -100,7 +100,7 @@ export async function runInSandbox(code, input, opts = {}) {
 // ── Worker-based execution ───────────────────────────────────────────────────
 
 function _runInWorker(code, input, timeoutMs, maxOutputBytes) {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve, _reject) => {
     const blob = new Blob([buildWorkerSource()], { type: 'application/javascript' });
     const url = URL.createObjectURL(blob);
     const worker = new Worker(url);
@@ -179,7 +179,7 @@ function _runInWorker(code, input, timeoutMs, maxOutputBytes) {
 
 // ── Direct execution fallback (non-browser / test) ───────────────────────────
 
-function _runDirect(code, input, timeoutMs) {
+function _runDirect(code, input, _timeoutMs) {
   const start = Date.now();
   const stdout = [];
   const stderr = [];

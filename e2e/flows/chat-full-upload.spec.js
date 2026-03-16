@@ -13,7 +13,7 @@
 import { test, expect } from '@playwright/test';
 import path from 'path';
 import { setupSupabaseMock } from './global-setup.js';
-import { openChatPage, dismissModals } from '../helpers/crawl-utils.js';
+import { openChatPage } from '../helpers/crawl-utils.js';
 
 test.beforeEach(async ({ page }) => { await setupSupabaseMock(page); });
 
@@ -85,7 +85,7 @@ test.describe('Full Chat Upload → Plan Workflow', () => {
     // These render as card components in the chat thread
 
     // Wait for the profiling to finish (spinner disappears OR cards appear)
-    let uploadDone = false;
+    let _uploadDone = false;
     for (let i = 0; i < 12; i++) { // up to 60s
       await page.waitForTimeout(5000);
       const elapsed = Date.now() - t0;
@@ -109,7 +109,7 @@ test.describe('Full Chat Upload → Plan Workflow', () => {
 
       if (hasSavedProfile || hasUploadComplete || hasSummaryCard) {
         timings.uploadParse = elapsed;
-        uploadDone = true;
+        _uploadDone = true;
         console.log(`[Step 2] Upload + profiling completed in ${elapsed}ms`);
         break;
       }
@@ -119,7 +119,7 @@ test.describe('Full Chat Upload → Plan Workflow', () => {
       if (!stillUploading && elapsed > 10000) {
         // Spinner gone after 10s — upload likely done
         timings.uploadParse = elapsed;
-        uploadDone = true;
+        _uploadDone = true;
         console.log(`[Step 2] Upload spinner gone at ${elapsed}ms — assuming complete`);
         break;
       }

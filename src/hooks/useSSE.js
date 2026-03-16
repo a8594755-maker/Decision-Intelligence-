@@ -35,6 +35,7 @@ export default function useSSE(url, options = {}) {
   const [reconnectCount, setReconnectCount] = useState(0);
 
   const eventSourceRef = useRef(null);
+  const connectRef = useRef(null);
   const reconnectTimerRef = useRef(null);
   const attemptRef = useRef(0);
   const onEventRef = useRef(onEvent);
@@ -128,19 +129,32 @@ export default function useSSE(url, options = {}) {
       setReconnectCount(attempt + 1);
 
       reconnectTimerRef.current = setTimeout(() => {
-        connect();
+        connectRef.current?.();
       }, totalDelay);
     };
   }, [url, enabled, close, reconnectBaseMs, reconnectMaxMs]);
 
+  useEffect(() => {
+    connectRef.current = connect;
+  }, [connect]);
+
   // Connect/disconnect on url or enabled change
   useEffect(() => {
-    if (enabled && url) {
-      connect();
-    } else {
+    let active = true;
+
+    queueMicrotask(() => {
+      if (!active) return;
+      if (enabled && url) {
+        connectRef.current?.();
+      } else {
+        close();
+      }
+    });
+
+    return () => {
+      active = false;
       close();
-    }
-    return close;
+    };
   }, [url, enabled, connect, close]);
 
   return { connected, error, reconnectCount };

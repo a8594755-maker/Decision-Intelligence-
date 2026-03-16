@@ -38,18 +38,28 @@ function isColumnMissing(error) {
 
 export function useDecisionOverview(userId) {
   const [overview, setOverview] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => Boolean(userId));
 
   useEffect(() => {
-    if (!userId) {
-      setLoading(false);
-      return;
-    }
-
     let cancelled = false;
 
+    if (!userId) {
+      queueMicrotask(() => {
+        if (!cancelled) {
+          setOverview(null);
+          setLoading(false);
+        }
+      });
+      return () => { cancelled = true; };
+    }
+
+    queueMicrotask(() => {
+      if (!cancelled) {
+        setLoading(true);
+      }
+    });
+
     async function fetchOverview() {
-      setLoading(true);
       const result = {
         coverage_level: null,
         missing_datasets: [],
@@ -97,7 +107,7 @@ export function useDecisionOverview(userId) {
       // 2. Latest plan run to get risk context
       if (!_unavailableTables.has('di_runs')) {
         try {
-          const { data: planRuns, error } = await supabase
+          const { error } = await supabase
             .from('di_runs')
             .select('id')
             .eq('user_id', userId)
@@ -107,7 +117,6 @@ export function useDecisionOverview(userId) {
           if (error && (isTableMissing(error) || isColumnMissing(error))) {
             _unavailableTables.add('di_runs');
           }
-          // planRuns data used for future risk context expansion
         } catch {
           _unavailableTables.add('di_runs');
         }

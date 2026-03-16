@@ -61,6 +61,28 @@ function trendLabel(current, previous, fmt = v => v) {
   return `${arrow} ${fmt(Math.abs(diff))} vs previous`;
 }
 
+function getPendingApprovalTiming(approval) {
+  const deadlineStatus = getApprovalDeadlineStatus({
+    deadline: approval?.expires_at,
+    status: 'PENDING',
+  });
+
+  if (deadlineStatus.is_expired) {
+    return { ...deadlineStatus, label: 'Expired' };
+  }
+
+  if (deadlineStatus.minutes_remaining == null) {
+    return { ...deadlineStatus, label: '' };
+  }
+
+  const hours = Math.floor(deadlineStatus.minutes_remaining / 60);
+  const minutes = deadlineStatus.minutes_remaining % 60;
+  return {
+    ...deadlineStatus,
+    label: `${hours}h ${minutes}m left`,
+  };
+}
+
 /* ───── Action map for audit events ───── */
 const ACTION_LABELS = {
   plan_generated: 'Plan generated',
@@ -325,12 +347,10 @@ export default function CommandCenter() {
             </h2>
             <div className="grid gap-2">
               {pendingApprovals.map((approval) => {
-                const remaining = approval.expires_at
-                  ? new Date(approval.expires_at).getTime() - Date.now()
-                  : null;
-                const isExpired = remaining != null && remaining <= 0;
-                const isCritical = remaining != null && remaining > 0 && remaining <= 3600000;
-                const isUrgent = remaining != null && remaining > 0 && remaining <= 4 * 3600000;
+                const deadlineStatus = getPendingApprovalTiming(approval);
+                const isExpired = deadlineStatus.is_expired;
+                const isCritical = deadlineStatus.is_critical;
+                const isUrgent = deadlineStatus.is_urgent;
 
                 return (
                   <Card key={approval.id} variant="elevated" className="!p-3">
@@ -355,12 +375,7 @@ export default function CommandCenter() {
                             <span className={`text-[10px] font-medium ${
                               isExpired ? 'text-slate-400' : isCritical ? 'text-red-600' : isUrgent ? 'text-amber-600' : 'text-slate-500'
                             }`}>
-                              {isExpired
-                                ? 'Expired'
-                                : remaining != null
-                                  ? `${Math.floor(remaining / 3600000)}h ${Math.floor((remaining % 3600000) / 60000)}m left`
-                                  : ''
-                              }
+                              {deadlineStatus.label}
                             </span>
                           )}
                         </div>

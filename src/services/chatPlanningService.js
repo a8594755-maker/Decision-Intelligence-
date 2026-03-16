@@ -2014,17 +2014,17 @@ export async function runPlanFromDatasetProfile({
 
     // Enrich row lineage map with optional dataset presence
     if (openPoDataset) {
-      for (const [key, lineage] of rowLineageMap) {
+      for (const [, lineage] of rowLineageMap) {
         lineage.datasets_used.push('po_open_lines');
       }
     }
     if (financialsDataset) {
-      for (const [key, lineage] of rowLineageMap) {
+      for (const [, lineage] of rowLineageMap) {
         lineage.datasets_used.push('fg_financials');
       }
     }
     if (bomDataset && bomRequiredMappingMissing.length === 0) {
-      for (const [key, lineage] of rowLineageMap) {
+      for (const [, lineage] of rowLineageMap) {
         lineage.datasets_used.push('bom_edge');
       }
     }

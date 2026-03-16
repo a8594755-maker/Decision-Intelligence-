@@ -76,7 +76,7 @@ export default function Sidebar() {
   const isAI = activeWorkspace === 'ai_employee';
   const navItems = isAI ? AI_NAV_ITEMS : DI_NAV_ITEMS;
   const advancedItems = isAI ? AI_ADVANCED_ITEMS : DI_ADVANCED_ITEMS;
-  const currentWs = WS_META[activeWorkspace] || WS_META.ai_employee;
+  const _currentWs = WS_META[activeWorkspace] || WS_META.ai_employee;
   const otherWs = isAI ? WS_META.di : WS_META.ai_employee;
 
   function switchWorkspace() {

@@ -13,7 +13,7 @@
  */
 
 import { buildDecisionBundle } from './decisionTaskService';
-import { assembleNegotiationEvidence, mergeEvidenceRefs } from './evidenceAssembler';
+import { assembleNegotiationEvidence } from './evidenceAssembler';
 
 // ── Approval payload builder ────────────────────────────────────────────────
 

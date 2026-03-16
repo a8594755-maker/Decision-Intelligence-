@@ -20,7 +20,7 @@
  */
 
 import { taskTransition, TASK_STATES, TASK_EVENTS, isTaskTerminal } from './taskStateMachine.js';
-import { stepTransition, STEP_STATES, STEP_EVENTS, isStepTerminal, isStepFailed, isStepWaitingInput } from './stepStateMachine.js';
+import { stepTransition, STEP_STATES, STEP_EVENTS, isStepTerminal, isStepWaitingInput } from './stepStateMachine.js';
 import { employeeTransition, EMPLOYEE_STATES, EMPLOYEE_EVENTS } from './employeeStateMachine.js';
 
 import * as taskRepo from './persistence/taskRepo.js';
@@ -30,7 +30,7 @@ import { appendWorklog } from './persistence/worklogRepo.js';
 
 import { getExecutor } from './executors/executorRegistry.js';
 import { resolveContext, detectMissingContext } from './lazyContextService.js';
-import { chooseHealingStrategy, analyzeStepFailure, getAlternativeModel } from '../selfHealingService.js';
+import { analyzeStepFailure, getAlternativeModel } from '../selfHealingService.js';
 import { eventBus, EVENT_NAMES } from '../eventBus.js';
 import { composeOutputProfileContext } from './styleLearning/outputProfileService.js';
 import { extractFromSingleRevision } from './styleLearning/feedbackStyleExtractor.js';
@@ -39,6 +39,13 @@ import { recall, summarizeMemories } from '../aiEmployeeMemoryService.js';
 import { reviewStepOutput, shouldReview } from '../aiReviewerService.js';
 import { getLatestMetrics, recordReviewOutcome } from './styleLearning/trustMetricsService.js';
 import { resolveCapabilityClass, getCapabilityPolicyFromDB } from '../capabilityModelService.js';
+import { annotateStepsWithPhases, getPipelineProgress, classifyStepPhase, PIPELINE_PHASES } from './decisionPipelineService.js';
+import { WORKLOG_EVENTS, buildWorklogEntry } from './worklogTaxonomy.js';
+import { buildDecisionBrief } from '../artifacts/decisionArtifactBuilder.js';
+import { buildEvidencePack } from '../artifacts/evidencePackBuilder.js';
+import { buildWritebackPayload } from '../artifacts/writebackPayloadBuilder.js';
+import { enforceApprovalGate } from '../approvalGateService.js';
+import { recordTaskValue } from '../roi/valueTrackingService.js';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -150,8 +157,9 @@ export async function submitPlan(plan, employeeId, userId) {
     },
   });
 
-  // 2. Create step rows
-  await stepRepo.createSteps(task.id, employeeId, plan.steps);
+  // 2. Annotate steps with pipeline phases + create step rows
+  const annotatedSteps = annotateStepsWithPhases(plan.steps);
+  await stepRepo.createSteps(task.id, employeeId, annotatedSteps);
 
   // 3. Transition to waiting_approval
   const nextStatus = taskTransition(TASK_STATES.DRAFT_PLAN, TASK_EVENTS.PLAN_READY);
@@ -241,7 +249,7 @@ export async function approvePlan(taskId, userId) {
 /**
  * Cancel a task.
  */
-export async function cancelTask(taskId, userId) {
+export async function cancelTask(taskId, _userId) {
   const task = await taskRepo.getTask(taskId);
   const nextStatus = taskTransition(task.status, TASK_EVENTS.CANCEL);
   await taskRepo.updateTaskStatus(taskId, nextStatus, task.version);
@@ -258,7 +266,7 @@ export async function cancelTask(taskId, userId) {
 /**
  * Retry a failed task (re-queue it).
  */
-export async function retryTask(taskId, userId) {
+export async function retryTask(taskId, _userId) {
   const task = await taskRepo.getTask(taskId);
   const nextStatus = taskTransition(task.status, TASK_EVENTS.RETRY);
   const queued = await taskRepo.updateTaskStatus(taskId, nextStatus, task.version);
@@ -557,6 +565,40 @@ async function _executeStep(task, step) {
   } catch (capErr) {
     // Capability policy check is best-effort — log and proceed
     console.warn('[Orchestrator] Capability policy check failed (non-blocking):', capErr.message);
+  }
+
+  // ── Approval gate: block publish-phase steps until approved ──
+  try {
+    const stepPhase = classifyStepPhase(stepDef);
+    if (stepPhase === PIPELINE_PHASES.PUBLISH) {
+      const actionType = _inferActionType(stepDef);
+      const autonomyLevel = await _getAutonomyLevel(task.employee_id);
+      const gate = enforceApprovalGate({
+        taskId: task.id,
+        actionType,
+        workerTemplateId: task.input_context?.worker_template_id,
+        autonomyLevel,
+      });
+
+      if (!gate.allowed) {
+        // Transition task to awaiting_approval
+        try {
+          const awaitingStatus = taskTransition(task.status, TASK_EVENTS.REVIEW_NEEDED);
+          await taskRepo.updateTaskStatus(task.id, awaitingStatus, task.version);
+        } catch { /* may already be in awaiting_approval */ }
+
+        _publishSSE(task.id, {
+          event_type: 'approval_required',
+          step_name: step.step_name,
+          action_type: actionType,
+          reason: gate.reason,
+        });
+
+        return { ok: false, error: `Approval required: ${gate.reason}`, needs_approval: true };
+      }
+    }
+  } catch (gateErr) {
+    console.warn('[Orchestrator] Approval gate check failed (non-blocking):', gateErr.message);
   }
 
   // Transition step: pending/retrying → running
@@ -965,11 +1007,60 @@ async function _completeTask(task) {
   eventBus.emit(EVENT_NAMES.TASK_COMPLETED, donePayload);
   _publishSSE(task.id, { event_type: 'loop_done', ...donePayload });
 
-  // Write completion worklog
-  appendWorklog(task.employee_id, task.id, null, 'task_update', {
-    status: 'done',
-    title: task.title,
-  }).catch(() => { /* best-effort */ });
+  // Build decision artifacts (best-effort)
+  try {
+    const allSteps = await stepRepo.getSteps(task.id);
+    const priorArtifacts = {};
+    const priorStepResults = [];
+    for (const s of allSteps) {
+      if (s.status === 'succeeded') {
+        const arts = s.artifact_refs || [];
+        priorArtifacts[s.step_name] = arts;
+        priorStepResults.push({ step_name: s.step_name, status: s.status, artifacts: arts, started_at: s.started_at });
+      }
+    }
+    const taskMeta = { id: task.id, title: task.title, workflowType: task.input_context?.workflow_type };
+    const inputData = task.input_context?.inputData || {};
+
+    const decisionBrief = buildDecisionBrief({ planArtifacts: priorArtifacts, taskMeta });
+    const evidencePack = buildEvidencePack({ priorArtifacts, taskMeta, inputData, priorStepResults });
+    const writebackPayload = buildWritebackPayload({ planArtifacts: priorArtifacts, taskMeta });
+
+    // Emit decision artifacts for UI rendering
+    _publishSSE(task.id, {
+      event_type: 'decision_artifacts',
+      decision_brief: decisionBrief,
+      evidence_pack: evidencePack,
+      writeback_payload: writebackPayload,
+    });
+
+    // Record ROI value events (best-effort)
+    try {
+      await recordTaskValue({
+        decisionBrief,
+        writebackPayload,
+        taskMeta,
+        workerId: task.employee_id,
+      });
+    } catch (roiErr) {
+      console.warn('[Orchestrator] ROI value tracking failed (non-blocking):', roiErr.message);
+    }
+
+    // Write completion worklog with pipeline progress
+    const pipelineProgress = getPipelineProgress(allSteps);
+    await appendWorklog(task.employee_id, task.id, null, 'task_lifecycle',
+      buildWorklogEntry(WORKLOG_EVENTS.TASK_COMPLETED, {
+        title: task.title,
+        pipeline_progress: pipelineProgress,
+        completed_phases: pipelineProgress.completedPhases,
+        has_decision_brief: true,
+        has_evidence_pack: true,
+        has_writeback_payload: writebackPayload.intended_mutations.length > 0,
+      })
+    );
+  } catch (err) {
+    console.warn('[Orchestrator] Decision artifact generation failed (non-blocking):', err.message);
+  }
 }
 
 async function _resetEmployee(employeeId) {
@@ -981,6 +1072,18 @@ async function _resetEmployee(employeeId) {
     // Force reset to idle if transition fails
     await employeeRepo.updateEmployeeStatus(employeeId, EMPLOYEE_STATES.IDLE);
   }
+}
+
+// ── Approval gate helper ──────────────────────────────────────────────────────
+
+function _inferActionType(stepDef) {
+  const name = (stepDef.name || stepDef.step_name || '').toLowerCase();
+  const toolType = (stepDef.tool_type || stepDef.builtin_tool_id || '').toLowerCase();
+  const combined = `${name} ${toolType}`;
+
+  if (combined.includes('writeback') || combined.includes('erp') || combined.includes('sap')) return 'writeback';
+  if (combined.includes('notify') || combined.includes('email') || combined.includes('send') || combined.includes('slack')) return 'notify';
+  return 'export'; // default for publish-phase steps
 }
 
 // ── Query API (read-only) ─────────────────────────────────────────────────────

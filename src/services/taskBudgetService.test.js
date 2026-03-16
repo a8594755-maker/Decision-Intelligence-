@@ -1,5 +1,5 @@
 // @product: ai-employee
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 
 // Mock supabaseClient
 vi.mock('./supabaseClient', () => ({ supabase: null }));
@@ -8,9 +8,7 @@ import {
   DEFAULT_LIMITS,
   BudgetExceededError,
   createBudget,
-  getBudget,
   checkBudget,
-  consumeBudget,
 } from './taskBudgetService';
 
 // ── Constants ───────────────────────────────────────────────────────────────

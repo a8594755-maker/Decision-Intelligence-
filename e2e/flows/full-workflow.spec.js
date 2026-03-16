@@ -132,7 +132,7 @@ test.describe('Full Workflow: Upload → Plan → Results', () => {
 
     // ── Step 5: Wait for response ───────────────────────────────────────
     // Look for any new content: AI message, card, error, or loading indicator
-    const responseIndicators = [
+    const _responseIndicators = [
       '[class*="card"]',
       '[class*="bubble"]',
       '[class*="message"]',

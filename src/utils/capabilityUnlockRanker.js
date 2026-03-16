@@ -35,7 +35,7 @@ const IMPACT_HINTS = {
  *   Optional lineage summary from plan_table artifact
  * @returns {Array<{ dataset, label, unlocks, estimated_impact, hint, priority_score }>}
  */
-export function rankCapabilityUnlocks(capabilities, lineageSummary = {}) {
+export function rankCapabilityUnlocks(capabilities, _lineageSummary = {}) {
   // Collect all missing datasets across all capabilities
   const datasetImpact = {};
 

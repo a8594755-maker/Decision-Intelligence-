@@ -326,7 +326,7 @@ export function evaluateOutcome({
 
 // ── BATNA Analysis ──────────────────────────────────────────────────────────
 
-function computeBATNA({ alternativeCount, supplierKpis, urgency }) {
+function computeBATNA({ alternativeCount, supplierKpis: _supplierKpis, urgency }) {
   const defaults = STRATEGY_CONFIG.batna_defaults;
 
   const hasAlternative = alternativeCount > 0;

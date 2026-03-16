@@ -148,7 +148,7 @@ export function startWatchingSSE(driveId, folderId = null, opts = {}) {
     sseController: null,
   };
 
-  let reconnectTimer = null;
+  let _reconnectTimer = null;
   let reconnectAttempts = 0;
   const MAX_RECONNECT_ATTEMPTS = 10;
   const RECONNECT_BASE_MS = 2000;
@@ -196,7 +196,7 @@ export function startWatchingSSE(driveId, folderId = null, opts = {}) {
             const backoff = RECONNECT_BASE_MS * Math.pow(2, reconnectAttempts);
             reconnectAttempts++;
             console.log(`[opencloudFileWatcher] SSE reconnecting in ${backoff}ms (attempt ${reconnectAttempts})`);
-            reconnectTimer = setTimeout(connectWithReconnect, backoff);
+            _reconnectTimer = setTimeout(connectWithReconnect, backoff);
           } else {
             // Max reconnect attempts exceeded — fall back to polling
             console.warn(`[opencloudFileWatcher] SSE max reconnects reached for ${watcherId}, falling back to polling`);

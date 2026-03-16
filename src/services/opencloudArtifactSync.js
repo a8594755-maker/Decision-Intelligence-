@@ -35,6 +35,7 @@ import {
   getDriveItems,
   getMyDrives,
   addTags,
+  searchByTag,
 } from './opencloudClientService';
 import { saveJsonArtifact } from '../utils/artifactStore';
 import { eventBus, EVENT_NAMES } from './eventBus';
@@ -431,7 +432,6 @@ export async function distributeReport(reportResult, driveId, taskId, opts = {})
  * @returns {Promise<object[]>} Matching DriveItems
  */
 export async function findArtifactsByType(driveId, artifactType) {
-  const { searchByTag } = await import('./opencloudClientService');
   const tags = getTagsForArtifact(artifactType);
   // Search by the most specific tag
   const searchTag = tags[tags.length - 1] || 'di:artifact';
@@ -446,7 +446,6 @@ export async function findArtifactsByType(driveId, artifactType) {
  * @returns {Promise<object[]>}
  */
 export async function findArtifactsByTask(driveId, taskId) {
-  const { searchByTag } = await import('./opencloudClientService');
   return searchByTag(driveId, `di:task:${taskId}`);
 }
 

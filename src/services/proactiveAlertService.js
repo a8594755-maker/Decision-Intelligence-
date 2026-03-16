@@ -167,7 +167,7 @@ export function generateAlerts({
 /**
  * Enrich an alert with root cause analysis and prescriptive actions.
  */
-function enrichAlertWithRootCause(alert, riskScores, stockoutData) {
+function enrichAlertWithRootCause(alert, riskScores, _stockoutData) {
   const rootCauses = [];
   const prescriptiveActions = [];
 

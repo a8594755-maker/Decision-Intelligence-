@@ -11,7 +11,7 @@
  * AI computes strategies and drafts, but the human makes the final call.
  */
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import {
   Shield,
   Target,
@@ -465,10 +465,13 @@ export default function NegotiationActionCard({ payload = {}, onAction }) {
     setEditedDrafts((prev) => ({ ...prev, [index]: newDraft }));
   }, []);
 
-  const getCurrentDraft = () => editedDrafts[selectedDraftIndex] || drafts[selectedDraftIndex];
+  const currentDraft = useMemo(
+    () => editedDrafts[selectedDraftIndex] || drafts[selectedDraftIndex],
+    [editedDrafts, selectedDraftIndex, drafts]
+  );
 
   const handleAction = useCallback((action) => {
-    const draft = getCurrentDraft();
+    const draft = currentDraft;
     setActionTaken(action);
     onAction?.(action, {
       negotiation_id,
@@ -479,7 +482,7 @@ export default function NegotiationActionCard({ payload = {}, onAction }) {
       planRunId,
       trigger,
     });
-  }, [negotiation_id, selectedDraftIndex, editedDrafts, drafts, planRunId, trigger, onAction]);
+  }, [currentDraft, negotiation_id, selectedDraftIndex, editedDrafts, planRunId, trigger, onAction]);
 
   const triggerLabel = trigger === 'infeasible'
     ? 'Solver INFEASIBLE'
@@ -553,7 +556,7 @@ export default function NegotiationActionCard({ payload = {}, onAction }) {
               </div>
             ) : (
               <DecisionSection
-                currentDraft={getCurrentDraft()}
+                currentDraft={currentDraft}
                 onCopy={() => handleAction('copy')}
                 onMarkSent={() => handleAction('sent')}
                 onSkip={() => handleAction('skip')}

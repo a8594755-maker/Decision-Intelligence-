@@ -19,9 +19,9 @@ if (typeof globalThis.localStorage === 'undefined') {
   };
 }
 
-import { decomposeTask, validateDecomposition, topologicalSort } from '../../services/chatTaskDecomposer';
+import { decomposeTask, validateDecomposition } from '../../services/chatTaskDecomposer';
 import { buildDynamicTemplate, isDynamicTemplate, initDynamicLoopState } from '../../services/dynamicTemplateBuilder';
-import { getBuiltinTool, findToolsByQuery, resolveDependencies } from '../../services/builtinToolCatalog';
+import { getBuiltinTool, resolveDependencies } from '../../services/builtinToolCatalog';
 import { PERMISSION_REGISTRY, checkPermission } from '../../services/toolPermissionGuard';
 
 // ── Full pipeline: decompose → validate → template → loop state ─────────────

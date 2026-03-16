@@ -18,8 +18,6 @@ import {
   approveOutputProfileProposal,
   rejectOutputProfileProposal,
   rollbackOutputProfile,
-  getOnboardingStatus,
-  runOnboarding,
   ONBOARDING_STAGES,
 } from '../services/aiEmployee/styleLearning';
 import ProfileCard from '../components/output-profile/ProfileCard';
@@ -552,7 +550,8 @@ function ProposalRow({ proposal, profile, docTypeLabels, onView, onApprove, onRe
   );
 }
 
-function EmptyState({ icon: Icon, title, description, actionLabel, onAction }) {
+function EmptyState({ icon, title, description, actionLabel, onAction }) {
+  const Icon = icon;
   return (
     <div style={{ textAlign: 'center', padding: '60px 20px' }}>
       <div style={{
@@ -560,7 +559,7 @@ function EmptyState({ icon: Icon, title, description, actionLabel, onAction }) {
         background: '#eef2ff', display: 'flex', alignItems: 'center', justifyContent: 'center',
         margin: '0 auto 16px',
       }}>
-        <Icon size={24} style={{ color: '#6366f1' }} />
+        {Icon ? <Icon size={24} style={{ color: '#6366f1' }} /> : null}
       </div>
       <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 6 }}>{title}</div>
       <div style={{ fontSize: 13, color: 'var(--text-secondary)', maxWidth: 400, margin: '0 auto 16px' }}>{description}</div>

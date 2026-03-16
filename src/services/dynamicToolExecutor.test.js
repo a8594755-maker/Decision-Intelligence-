@@ -19,7 +19,7 @@ import {
   generateAndExecuteTool,
   executeRegisteredTool,
 } from './dynamicToolExecutor';
-import { registerTool, approveTool, updateQualityScore, getToolById } from './toolRegistryService';
+import { registerTool, updateQualityScore, getToolById } from './toolRegistryService';
 
 beforeEach(() => {
   localStorage.clear();

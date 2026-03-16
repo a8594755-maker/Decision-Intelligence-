@@ -1,5 +1,6 @@
 // @product: ai-employee
 import { useState, useEffect, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   Plus, RefreshCw, Play, ChevronRight, Clock, CheckCircle2,
   AlertTriangle, Loader2, FileText, CalendarDays, Tag, Bell,
@@ -8,7 +9,7 @@ import {
 } from 'lucide-react';
 import { Modal } from '../components/ui';
 import { useAuth } from '../contexts/AuthContext';
-import { getOrCreateWorker, listTasksByUser, listWorklogs } from '../services/aiEmployee/queries.js';
+import { getOrCreateWorker, listEmployeesByManager, listTasks, listTasksByUser, listWorklogs } from '../services/aiEmployee/queries.js';
 import { TEMPLATE_OPTIONS } from '../services/agentLoopTemplates';
 import { getNotifications, getUnreadCount, markAllRead } from '../services/notificationService';
 import {
@@ -123,6 +124,7 @@ const DAY_OF_MONTH_OPTIONS = Array.from({ length: 31 }, (_, index) => ({
 const ORCHESTRATOR_ACTIVE_STATUSES = ['queued', 'in_progress'];
 
 const VIEW_MODES = { LIST: 'list', KANBAN: 'kanban' };
+const ALL_WORKERS_VALUE = '__all_workers__';
 
 const KANBAN_COLUMNS = [
   { key: 'candidate',       label: 'Candidate',       statuses: ['todo', 'waiting_approval'], color: 'slate' },
@@ -1067,7 +1069,10 @@ function KanbanBoard({ tasks, selectedTaskId, onSelect, onRun, runningId }) {
 
 export default function EmployeeTasksPage() {
   const { user } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requestedWorkerId = searchParams.get('worker');
 
+  const [workers, setWorkers] = useState([]);
   const [employee, setEmployee] = useState(null);
   const [tasks, setTasks] = useState([]);
   const [selectedTaskId, setSelectedTaskId] = useState(null);
@@ -1088,6 +1093,21 @@ export default function EmployeeTasksPage() {
   const [viewMode, setViewMode] = useState(VIEW_MODES.KANBAN);
 
   const selectedTask = tasks.find((t) => t.id === selectedTaskId) || null;
+  const workerFilterValue = requestedWorkerId && workers.some((worker) => worker.id === requestedWorkerId)
+    ? requestedWorkerId
+    : (workers.length === 1 ? workers[0].id : ALL_WORKERS_VALUE);
+
+  const handleWorkerFilterChange = useCallback((nextWorkerId) => {
+    const nextSearchParams = new URLSearchParams(searchParams);
+    if (!nextWorkerId || nextWorkerId === ALL_WORKERS_VALUE) {
+      nextSearchParams.delete('worker');
+    } else {
+      nextSearchParams.set('worker', nextWorkerId);
+    }
+    setSearchParams(nextSearchParams);
+    setSelectedTaskId(null);
+    setShowSchedules(false);
+  }, [searchParams, setSearchParams]);
 
   const refreshTaskRuntime = useCallback(async (taskId) => {
     if (!taskId) return;
@@ -1106,21 +1126,41 @@ export default function EmployeeTasksPage() {
     if (!user?.id) return;
     setLoading(true);
     try {
-      const emp = await getOrCreateWorker(user.id);
-      setEmployee(emp);
-      const rawTasks = await listTasksByUser(user.id, { status: statusFilter || undefined });
+      let emps = await listEmployeesByManager(user.id);
+
+      if (emps.length === 0) {
+        await getOrCreateWorker(user.id);
+        emps = await listEmployeesByManager(user.id);
+      }
+
+      setWorkers(emps);
+
+      const activeEmployee = requestedWorkerId
+        ? emps.find((emp) => emp.id === requestedWorkerId) || null
+        : (emps.length === 1 ? emps[0] : null);
+
+      setEmployee(activeEmployee);
+
+      const rawTasks = activeEmployee
+        ? await listTasks(activeEmployee.id, { status: statusFilter || undefined })
+        : await listTasksByUser(user.id, { status: statusFilter || undefined });
       const ts = rawTasks.map((task) => hydrateTaskForBoard(task));
       setTasks(ts);
-      if (ts.length > 0 && !selectedTaskId) setSelectedTaskId(ts[0].id);
+      setSelectedTaskId((prev) => {
+        if (ts.length === 0) return null;
+        return ts.some((task) => task.id === prev) ? prev : ts[0].id;
+      });
       // Load notifications + schedules (best-effort)
       try { setUnreadCount(await getUnreadCount(user.id)); } catch { /* */ }
-      if (emp?.id) {
-        try { setSchedules(await getSchedules(emp.id)); } catch { /* */ }
+      if (activeEmployee?.id) {
+        try { setSchedules(await getSchedules(activeEmployee.id)); } catch { /* */ }
+      } else {
+        setSchedules([]);
       }
     } finally {
       setLoading(false);
     }
-  }, [user?.id, statusFilter]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [user?.id, statusFilter, requestedWorkerId]);
 
   useEffect(() => { loadTasks(); }, [loadTasks]);
 
@@ -1179,10 +1219,10 @@ export default function EmployeeTasksPage() {
   // Load logs for selected task — use userId to query across all worker instances
   useEffect(() => {
     if (!selectedTask || !user?.id) { setLogs([]); return; }
-    listWorklogs(employee?.id, { taskId: selectedTask.id, limit: 10, userId: user.id })
+    listWorklogs(selectedTask.employee_id || employee?.id, { taskId: selectedTask.id, limit: 10, userId: user.id })
       .then(setLogs)
       .catch(() => setLogs([]));
-  }, [selectedTask?.id, user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [selectedTask, employee?.id, user?.id]);
 
   async function handleRun(task) {
     if (!user?.id || runningId) return;
@@ -1246,12 +1286,28 @@ export default function EmployeeTasksPage() {
         className="h-14 flex items-center justify-between px-4 flex-shrink-0 border-b gap-3"
         style={{ backgroundColor: 'var(--surface-card)', borderColor: 'var(--border-default)' }}
       >
-        <span className="font-semibold text-sm" style={{ color: 'var(--text-primary)' }}>Task Board</span>
+        <div className="flex items-center gap-3 min-w-0">
+          <span className="font-semibold text-sm whitespace-nowrap" style={{ color: 'var(--text-primary)' }}>Task Board</span>
+          <select
+            className="min-w-[180px] max-w-[280px] px-2.5 py-1.5 rounded-lg border text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            style={{ borderColor: 'var(--border-default)', backgroundColor: 'var(--surface-bg)', color: 'var(--text-secondary)' }}
+            value={workerFilterValue}
+            onChange={(event) => handleWorkerFilterChange(event.target.value)}
+          >
+            <option value={ALL_WORKERS_VALUE}>All workers</option>
+            {workers.map((worker) => (
+              <option key={worker.id} value={worker.id}>
+                {worker.name} ({(worker.role || '').replace(/_/g, ' ')})
+              </option>
+            ))}
+          </select>
+        </div>
         <div className="flex items-center gap-2">
           {/* Schedules toggle */}
           <button
             onClick={() => setShowSchedules((v) => !v)}
-            className={`p-1.5 rounded-lg transition-colors hover:bg-[var(--surface-subtle)] ${showSchedules ? 'bg-indigo-50 dark:bg-indigo-900/20' : ''}`}
+            disabled={!employee?.id}
+            className={`p-1.5 rounded-lg transition-colors hover:bg-[var(--surface-subtle)] disabled:opacity-50 disabled:cursor-not-allowed ${showSchedules ? 'bg-indigo-50 dark:bg-indigo-900/20' : ''}`}
             title="Scheduled Tasks"
           >
             <Calendar className="w-4 h-4" style={{ color: showSchedules ? 'var(--accent-primary, #6366f1)' : 'var(--text-muted)' }} />
@@ -1302,8 +1358,9 @@ export default function EmployeeTasksPage() {
           </div>
           <button
             onClick={() => setShowNewTask(true)}
-            className="p-1.5 rounded-lg transition-colors hover:bg-[var(--surface-subtle)]"
-            title="Advanced: Create task from template"
+            disabled={!employee?.id}
+            className="p-1.5 rounded-lg transition-colors hover:bg-[var(--surface-subtle)] disabled:opacity-50 disabled:cursor-not-allowed"
+            title={employee?.id ? 'Advanced: Create task from template' : 'Select a worker to create a task'}
           >
             <Settings2 className="w-4 h-4" style={{ color: 'var(--text-muted)' }} />
           </button>
@@ -1320,7 +1377,9 @@ export default function EmployeeTasksPage() {
           type="text"
           value={quickTaskInput}
           onChange={(e) => setQuickTaskInput(e.target.value)}
-          placeholder="Describe a task in plain language, e.g. &quot;Analyze last month's data and generate a summary report&quot;"
+          placeholder={employee?.id
+            ? 'Describe a task in plain language, e.g. "Analyze last month\'s data and generate a summary report"'
+            : 'Select a worker to create and run a task'}
           className="flex-1 px-3 py-1.5 rounded-lg border text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
           style={{ borderColor: 'var(--border-default)', backgroundColor: 'var(--surface-bg)', color: 'var(--text-primary)' }}
           disabled={quickTaskLoading || !employee?.id}

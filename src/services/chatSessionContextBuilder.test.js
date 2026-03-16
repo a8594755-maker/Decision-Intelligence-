@@ -130,7 +130,7 @@ describe('suggestNextActions', () => {
 
   it('suggests upload for awaiting_dataset', () => {
     const ctx = buildChatSessionContext();
-    const actions = suggestNextActions(ctx);
+    const _actions = suggestNextActions(ctx);
     // no_session stage won't match awaiting_dataset, but test with explicit
     const awaitingCtx = buildChatSessionContext({ sessionCtx: { dataset: {} } });
     const awaitingActions = suggestNextActions(awaitingCtx);

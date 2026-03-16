@@ -23,7 +23,7 @@ const MAX_SAMPLE_ROWS = 50;
  * @param {Function} [opts.llmFn] - async (prompt) => string, for text style analysis
  * @returns {StyleFingerprint}
  */
-export function extractStyleFromExcel(fileBuffer, filename, opts = {}) {
+export function extractStyleFromExcel(fileBuffer, filename, _opts = {}) {
   const wb = XLSX.read(fileBuffer, { type: 'array', cellStyles: true, cellDates: true });
 
   const structure = extractStructure(wb);

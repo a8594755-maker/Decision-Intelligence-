@@ -8,7 +8,7 @@
 
 import { describe, it, expect, beforeAll } from 'vitest';
 import { tmpdir } from 'node:os';
-import { mkdtempSync, existsSync, readFileSync, readdirSync } from 'node:fs';
+import { mkdtempSync, existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   InfoSetStore,
@@ -115,7 +115,7 @@ describe('solveParallel', () => {
     expect(result.totalElapsedMs).toBeGreaterThan(0);
 
     // Verify each result has expected fields
-    for (const [key, res] of result.results) {
+    for (const [_key, res] of result.results) {
       expect(res.scenarioId).toBe('test_coop');
       expect(res.stats.iterations).toBe(200);
       expect(res.stats.exploitability).toBeGreaterThanOrEqual(0);
@@ -125,7 +125,7 @@ describe('solveParallel', () => {
   it('should export JSONL files when outputDir is specified', async () => {
     const tmpDir = mkdtempSync(join(tmpdir(), 'cfr-parallel-'));
 
-    const result = await solveParallel({
+    await solveParallel({
       scenarios: MINI_SCENARIOS,
       iterations: 100,
       numBuckets: 2,

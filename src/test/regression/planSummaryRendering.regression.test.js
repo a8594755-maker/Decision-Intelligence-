@@ -7,7 +7,7 @@
  */
 import { describe, it, expect } from 'vitest';
 
-import { evaluateCapabilities, summarizeCapabilities } from '../../config/capabilityMatrix';
+import { evaluateCapabilities } from '../../config/capabilityMatrix';
 import { buildDataQualityReport } from '../../utils/dataQualityReport';
 import { rankCapabilityUnlocks, getTopUnlockHint } from '../../utils/capabilityUnlockRanker';
 import { runWhatIfScenario, applyExpediteAction, normalizeWhatIfKey, runWhatIfBatch } from '../../domains/risk/whatIfEngine';

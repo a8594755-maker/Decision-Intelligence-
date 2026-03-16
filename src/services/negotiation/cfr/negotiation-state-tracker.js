@@ -304,7 +304,7 @@ export class NegotiationStateTracker {
     const now = Date.now();
     let count = 0;
 
-    for (const [id, state] of this._negotiations) {
+    for (const [_id, state] of this._negotiations) {
       if (state.status !== NEGOTIATION_STATUS.ACTIVE) continue;
       const age = now - new Date(state.updated_at).getTime();
       if (age > maxAgeMs) {

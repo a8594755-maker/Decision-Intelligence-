@@ -7,7 +7,7 @@ import {
   Bot, CheckCircle2, Clock, AlertTriangle, Loader2,
   BarChart3, DollarSign, FileText, ArrowRight,
 } from 'lucide-react';
-import { getOrCreateWorker, listTasks } from '../../services/aiEmployee/queries.js';
+import { getEmployee, getOrCreateWorker, listTasks } from '../../services/aiEmployee/queries.js';
 import { getLatestSummary } from '../../services/dailySummaryService';
 import { getEmployeeCostSummary } from '../../services/modelRoutingService';
 
@@ -18,7 +18,7 @@ const STATUS_STYLE = {
   blocked:        { label: 'Blocked',         dot: 'bg-red-500',   text: 'text-red-600 dark:text-red-400' },
 };
 
-export default function EmployeeProfilePanel({ userId }) {
+export default function EmployeeProfilePanel({ userId, employeeId = null }) {
   const navigate = useNavigate();
   const [employee, setEmployee] = useState(null);
   const [tasks, setTasks] = useState([]);
@@ -27,13 +27,16 @@ export default function EmployeeProfilePanel({ userId }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!userId) return;
+    if (!userId && !employeeId) return;
     let cancelled = false;
 
     async function load() {
       setLoading(true);
       try {
-        const emp = await getOrCreateWorker(userId);
+        const emp = employeeId
+          ? await getEmployee(employeeId).catch(() => (userId ? getOrCreateWorker(userId) : null))
+          : await getOrCreateWorker(userId);
+        if (!emp) return;
         if (cancelled) return;
         setEmployee(emp);
 
@@ -57,7 +60,7 @@ export default function EmployeeProfilePanel({ userId }) {
     load();
     const interval = setInterval(load, 30000); // refresh every 30s
     return () => { cancelled = true; clearInterval(interval); };
-  }, [userId]);
+  }, [userId, employeeId]);
 
   if (loading) {
     return (
@@ -135,7 +138,7 @@ export default function EmployeeProfilePanel({ userId }) {
             {activeTasks.slice(0, 3).map((task) => (
               <button
                 key={task.id}
-                onClick={() => navigate('/employees/tasks')}
+                onClick={() => navigate(employee ? `/employees/tasks?worker=${employee.id}` : '/employees/tasks')}
                 className="flex items-center gap-2 px-3 py-2 rounded-lg text-left transition-colors hover:bg-[var(--surface-subtle)]"
               >
                 {task.status === 'in_progress'
@@ -175,14 +178,15 @@ export default function EmployeeProfilePanel({ userId }) {
 
       {/* ── Quick links ── */}
       <div className="flex flex-col gap-1 mt-2 pt-3 border-t" style={{ borderColor: 'var(--border-default)' }}>
-        <QuickLink icon={FileText} label="View all tasks" onClick={() => navigate('/employees/tasks')} />
+        <QuickLink icon={FileText} label="View all tasks" onClick={() => navigate(employee ? `/employees/tasks?worker=${employee.id}` : '/employees/tasks')} />
         <QuickLink icon={BarChart3} label="Performance" onClick={() => navigate('/employees')} />
       </div>
     </div>
   );
 }
 
-function KpiTile({ icon: Icon, label, value, color }) {
+function KpiTile(props) {
+  const { icon: Icon, label, value, color } = props;
   return (
     <div
       className="flex flex-col gap-0.5 p-2.5 rounded-lg"
@@ -199,7 +203,8 @@ function KpiTile({ icon: Icon, label, value, color }) {
   );
 }
 
-function QuickLink({ icon: Icon, label, onClick }) {
+function QuickLink(props) {
+  const { icon: Icon, label, onClick } = props;
   return (
     <button
       onClick={onClick}

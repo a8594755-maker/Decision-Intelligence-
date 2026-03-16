@@ -162,7 +162,7 @@ export async function listExemplars(employeeId, { docType, limit = 50 } = {}) {
  * Record that an exemplar was used in generation.
  */
 export async function recordUsage(exemplarId) {
-  const { error } = await supabase.rpc('increment_exemplar_usage', { exemplar_id: exemplarId }).catch(() => {
+  await supabase.rpc('increment_exemplar_usage', { exemplar_id: exemplarId }).catch(() => {
     // Fallback: manual increment
     return supabase
       .from(TABLE)

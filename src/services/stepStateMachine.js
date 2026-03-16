@@ -63,13 +63,13 @@ export const EFFECT = Object.freeze({
  */
 const TRANSITIONS = {
   [STEP_STATE.INIT]: {
-    [STEP_EVENT.START]:   (step) => ({ state: STEP_STATE.PENDING }),
-    [STEP_EVENT.SKIP]:    (step) => ({ state: STEP_STATE.SKIPPED }),
+    [STEP_EVENT.START]:   (_step) => ({ state: STEP_STATE.PENDING }),
+    [STEP_EVENT.SKIP]:    (_step) => ({ state: STEP_STATE.SKIPPED }),
   },
 
   [STEP_STATE.PENDING]: {
-    [STEP_EVENT.EXECUTE]: (step) => ({ state: STEP_STATE.RUNNING }),
-    [STEP_EVENT.SKIP]:    (step) => ({ state: STEP_STATE.SKIPPED }),
+    [STEP_EVENT.EXECUTE]: (_step) => ({ state: STEP_STATE.RUNNING }),
+    [STEP_EVENT.SKIP]:    (_step) => ({ state: STEP_STATE.SKIPPED }),
   },
 
   [STEP_STATE.RUNNING]: {
@@ -118,12 +118,12 @@ const TRANSITIONS = {
   },
 
   [STEP_STATE.REVISION]: {
-    [STEP_EVENT.EXECUTE]: (step) => ({ state: STEP_STATE.RUNNING }),
+    [STEP_EVENT.EXECUTE]: (_step) => ({ state: STEP_STATE.RUNNING }),
   },
 
   [STEP_STATE.RETRY_WAIT]: {
-    [STEP_EVENT.RETRY]:  (step) => ({ state: STEP_STATE.RUNNING }),
-    [STEP_EVENT.SKIP]:   (step) => ({ state: STEP_STATE.SKIPPED }),
+    [STEP_EVENT.RETRY]:  (_step) => ({ state: STEP_STATE.RUNNING }),
+    [STEP_EVENT.SKIP]:   (_step) => ({ state: STEP_STATE.SKIPPED }),
   },
 
   // Terminal states — no transitions out

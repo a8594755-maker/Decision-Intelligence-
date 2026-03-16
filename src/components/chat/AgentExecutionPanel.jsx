@@ -85,7 +85,7 @@ function CopyButton({ text }) {
 
 // ── Code block ─────────────────────────────────────────────────────────────
 
-function CodeBlock({ code, language = 'python', maxHeight = 300 }) {
+function CodeBlock({ code, language: _language = 'python', maxHeight = 300 }) {
   const [expanded, setExpanded] = useState(false);
   if (!code) return null;
 
@@ -145,14 +145,12 @@ function StepDetailCard({ step, stepEvent, index, isActive }) {
   // Auto-open when step becomes active
   useEffect(() => {
     if (step.status === 'running' || step.status === 'succeeded') {
-      setIsOpen(true);
+      queueMicrotask(() => setIsOpen(true));
     }
   }, [step.status]);
 
   const durationMs = step.started_at && step.finished_at
     ? new Date(step.finished_at) - new Date(step.started_at)
-    : step.started_at && step.status === 'running'
-    ? Date.now() - new Date(step.started_at)
     : null;
 
   // Gather rich details from step event
@@ -447,7 +445,7 @@ function SummaryBar({ steps, events }) {
 
 export default function AgentExecutionPanel({ loopState, stepEvents = [], taskTitle, onClose, sseConnected = false }) {
   const scrollRef = useRef(null);
-  const steps = loopState?.steps || [];
+  const steps = useMemo(() => loopState?.steps || [], [loopState?.steps]);
 
   // Collect events from EventBus (supplements props-based events)
   const [busEvents, setBusEvents] = useState([]);

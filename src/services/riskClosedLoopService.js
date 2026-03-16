@@ -251,7 +251,7 @@ export function evaluateRiskReplanRecommendation({
 
 const _cooldowns = new Map();
 
-function isCooldownActive(key, cooldownMs) {
+function isCooldownActive(key, _cooldownMs) {
   const expiresAt = _cooldowns.get(key);
   if (!expiresAt) return false;
   return Date.now() < expiresAt;

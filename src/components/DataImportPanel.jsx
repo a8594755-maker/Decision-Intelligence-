@@ -28,8 +28,6 @@ import {
   generateHeaderFingerprint,
   findMappingProfile,
   validateProfileAgainstHeaders,
-  listMappingProfiles,
-  deleteMappingProfileById,
 } from '../services/mappingProfileService';
 
 const UPLOAD_TYPE_OPTIONS = Object.keys(UPLOAD_SCHEMAS);

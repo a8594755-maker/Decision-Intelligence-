@@ -14,7 +14,7 @@
  * @param {Function} [options.onLoopDone] - Called when loop completes
  */
 
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import useSSE from './useSSE';
 import { eventBus, EVENT_NAMES } from '../services/eventBus';
 
@@ -28,8 +28,14 @@ export default function useAgentSSE(taskId, options = {}) {
 
   const onStepEventRef = useRef(onStepEvent);
   const onLoopDoneRef = useRef(onLoopDone);
-  onStepEventRef.current = onStepEvent;
-  onLoopDoneRef.current = onLoopDone;
+
+  useEffect(() => {
+    onStepEventRef.current = onStepEvent;
+  }, [onStepEvent]);
+
+  useEffect(() => {
+    onLoopDoneRef.current = onLoopDone;
+  }, [onLoopDone]);
 
   const url = taskId ? `${ML_API_BASE}/sse/agent/${taskId}/events` : null;
 

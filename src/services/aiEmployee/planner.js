@@ -6,7 +6,7 @@
  */
 
 import { decomposeTask } from '../chatTaskDecomposer.js';
-import { findToolsByQuery, BUILTIN_TOOLS } from '../builtinToolCatalog.js';
+import { BUILTIN_TOOLS } from '../builtinToolCatalog.js';
 
 // Tool types that require a dataset to execute
 const DATASET_REQUIRED_TOOL_IDS = new Set([

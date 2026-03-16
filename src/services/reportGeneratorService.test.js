@@ -1,5 +1,5 @@
 // @product: ai-employee
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 
 vi.mock('./supabaseClient', () => ({ supabase: null }));
 vi.mock('../utils/artifactStore', () => ({

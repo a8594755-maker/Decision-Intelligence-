@@ -4,11 +4,11 @@ import {
   TASK_STATES, TASK_EVENTS,
 } from './taskStateMachine.js';
 import {
-  stepTransition, canStepTransition, isStepTerminal, isStepFailed, isStepWaitingInput,
+  stepTransition, isStepTerminal, isStepFailed, isStepWaitingInput,
   STEP_STATES, STEP_EVENTS,
 } from './stepStateMachine.js';
 import {
-  employeeTransition, canEmployeeTransition,
+  employeeTransition,
   EMPLOYEE_STATES, EMPLOYEE_EVENTS,
   EMPLOYEE_STATE_TO_DB, DB_TO_EMPLOYEE_STATE,
 } from './employeeStateMachine.js';

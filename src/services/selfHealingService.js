@@ -196,7 +196,7 @@ export function chooseHealingStrategy(errorMessage, step, retryCount) {
  * @param {string} taskType – For policy lookup
  * @returns {Promise<{ provider: string, model_name: string } | null>}
  */
-export async function getAlternativeModel(failedProvider, failedModel, taskType) {
+export async function getAlternativeModel(failedProvider, failedModel, _taskType) {
   // 1. Try different provider in same tier
   try {
     const allModels = await listModels({});

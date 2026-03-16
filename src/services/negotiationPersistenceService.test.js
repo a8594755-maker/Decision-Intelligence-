@@ -5,7 +5,7 @@
  * Uses mocked Supabase to test both happy path and localStorage fallback.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ── Mock Supabase ───────────────────────────────────────────────────────────
 
@@ -62,7 +62,6 @@ vi.mock('./supabaseClient', () => ({
 import {
   createCase,
   recordEvent,
-  listCases,
   resolveCase,
   getCaseStats,
 } from './negotiationPersistenceService';

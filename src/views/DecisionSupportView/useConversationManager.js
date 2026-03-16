@@ -47,7 +47,11 @@ export default function useConversationManager({
   useEffect(() => {
     if (!user?.id) return;
     let active = true;
-    setIsConversationsLoading(true);
+    queueMicrotask(() => {
+      if (active) {
+        setIsConversationsLoading(true);
+      }
+    });
 
     // Filter conversations by workspace — untagged ones belong to 'di'
     const filterByWorkspace = (list) =>

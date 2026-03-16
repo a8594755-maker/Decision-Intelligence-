@@ -13,7 +13,6 @@ import {
 import {
   runOnboarding,
   ONBOARDING_STAGES,
-  getOnboardingStatus,
 } from '../../services/aiEmployee/styleLearning';
 
 const STAGE_META = {
@@ -63,7 +62,7 @@ export default function OnboardingWizard({ asModal = false, onClose, onComplete 
           const meta = STAGE_META[stage] || {};
           addLog(`Starting: ${meta.label || stage}`, 'info');
         },
-        onStageComplete: (stage, stageResult) => {
+        onStageComplete: (stage, _stageResult) => {
           setCompletedStages(prev => [...prev, stage]);
           setCurrentStage(null);
           const meta = STAGE_META[stage] || {};

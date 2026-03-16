@@ -59,15 +59,15 @@ function DriverChip({ driver }) {
 
 // ── Evidence chip ────────────────────────────────────────────────────────────
 
-function EvidenceChip({ ref: evidenceRef }) {
+function EvidenceChip({ evidence }) {
   return (
     <span
       className="inline-flex items-center gap-1 text-[10px] font-mono bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800 rounded px-1.5 py-0.5 text-indigo-600 dark:text-indigo-400 cursor-default"
-      title={evidenceRef.summary || evidenceRef.label}
+      title={evidence.summary || evidence.label}
     >
       <FileSearch className="w-2.5 h-2.5" />
-      {evidenceRef.label}
-      {evidenceRef.run_id ? <span className="opacity-60">#{evidenceRef.run_id}</span> : null}
+      {evidence.label}
+      {evidence.run_id ? <span className="opacity-60">#{evidence.run_id}</span> : null}
     </span>
   );
 }
@@ -225,7 +225,7 @@ export default function DecisionBundleCard({ payload, onActionClick }) {
           </button>
           {showEvidence && (
             <div className="mt-1.5 flex flex-wrap gap-1.5">
-              {evidence_refs.map((ref, i) => <EvidenceChip key={i} ref={ref} />)}
+              {evidence_refs.map((evidence, i) => <EvidenceChip key={i} evidence={evidence} />)}
             </div>
           )}
         </div>

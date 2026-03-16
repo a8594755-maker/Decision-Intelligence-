@@ -192,13 +192,13 @@ export async function logOutboundAction({
   draft,
   action,
   sendResult = null,
-  userId = null,
+  userId: _userId = null,
   supplierId = null,
   metadata = {},
 }) {
   const eventId = `outbound_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
-  const eventRecord = {
+  const _eventRecord = {
     event_id: eventId,
     case_id: caseId,
     action,

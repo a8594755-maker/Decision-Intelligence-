@@ -221,7 +221,7 @@ export function runRiskAgent({ riskScores = [], riskAdjustments = null, proactiv
 
   // Risk adjustments summary
   if (riskAdjustments?.summary) {
-    const adjusted = riskAdjustments.adjusted_params || {};
+    const _adjusted = riskAdjustments.adjusted_params || {};
     const rulesApplied = (riskAdjustments.rules || []).filter(r => r.applied);
     if (rulesApplied.length > 0) {
       findings.push({

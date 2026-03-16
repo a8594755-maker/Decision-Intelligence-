@@ -9,7 +9,7 @@
 // Each chain proves: task has trace, step has artifact, review can revise/approve,
 // replay completeness computable, failure can retry/resume.
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 
 // ── Mock Supabase ──────────────────────────────────────────────────────────
 
@@ -17,7 +17,7 @@ const _mockStore = { tasks: [], steps: [], worklogs: [], reviews: [] };
 
 vi.mock('../../services/supabaseClient', () => ({
   supabase: {
-    from: (table) => ({
+    from: (_table) => ({
       select: () => ({
         eq: () => ({
           eq: () => ({ maybeSingle: async () => ({ data: null, error: null }), data: [], error: null }),
@@ -55,7 +55,7 @@ import { stepTransition, STEP_STATES, STEP_EVENTS, isStepTerminal, isStepFailed 
 import { employeeTransition, EMPLOYEE_STATES, EMPLOYEE_EVENTS } from '../../services/aiEmployee/employeeStateMachine.js';
 import { decomposeTask, validateDecomposition } from '../../services/chatTaskDecomposer';
 import { buildDynamicTemplate, initDynamicLoopState } from '../../services/dynamicTemplateBuilder';
-import { normalizeIntake, processIntake, INTAKE_SOURCES, checkDuplicate } from '../../services/taskIntakeService';
+import { normalizeIntake, INTAKE_SOURCES } from '../../services/taskIntakeService';
 import { computeReplayCompleteness } from '../../services/taskTimelineService';
 import { TIMELINE_EVENT, TIMELINE_PHASE } from '../../services/taskTimelineService';
 
@@ -230,7 +230,7 @@ describe('Chain 1: chat → intake → plan → execute → review → approve',
     expect(loopState.steps.every(s => s.status === 'pending')).toBe(true);
 
     // Simulate step transitions using state machine
-    for (const step of loopState.steps) {
+    for (const _step of loopState.steps) {
       let ss = STEP_STATES.PENDING;
       ss = stepTransition(ss, STEP_EVENTS.START);
       expect(ss).toBe(STEP_STATES.RUNNING);

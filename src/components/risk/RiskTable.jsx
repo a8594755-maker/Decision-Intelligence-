@@ -73,6 +73,7 @@ const RiskTable = ({
 
   const shouldVirtualize = sortedRisks.length >= VIRTUALIZE_THRESHOLD;
 
+  // eslint-disable-next-line react-hooks/incompatible-library -- TanStack Virtual is required here for large risk tables
   const virtualizer = useVirtualizer({
     count: shouldVirtualize ? sortedRisks.length : 0,
     getScrollElement: () => parentRef.current,

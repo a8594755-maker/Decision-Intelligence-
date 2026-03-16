@@ -284,7 +284,7 @@ export class NegotiationLookupService {
     infoKey,
     options,
     kpis,
-    cfrInfluence = DEFAULT_CFR_INFLUENCE,
+    cfrInfluence: _cfrInfluence = DEFAULT_CFR_INFLUENCE,
   }) {
     // Auto-detect scenario if not specified
     let sid = scenarioId;

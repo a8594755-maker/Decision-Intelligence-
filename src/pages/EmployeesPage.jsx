@@ -52,7 +52,8 @@ function AutonomyBadge({ level }) {
 
 // ── KPI tile ──────────────────────────────────────────────────────────────
 
-function KpiTile({ label, value, icon: Icon, color = 'text-slate-700 dark:text-slate-300' }) {
+function KpiTile(props) {
+  const { label, value, icon: Icon, color = 'text-slate-700 dark:text-slate-300' } = props;
   return (
     <div className="flex flex-col gap-0.5">
       <div className="flex items-center gap-1.5">
@@ -505,7 +506,7 @@ export default function EmployeesPage() {
                 kpis={kpisMap[emp.id]}
                 cost={costsMap[emp.id]}
                 trust={trustMap[emp.id]}
-                onViewTasks={() => navigate('/employees/tasks')}
+                onViewTasks={() => navigate(`/employees/tasks?worker=${emp.id}`)}
               />
             ))}
 

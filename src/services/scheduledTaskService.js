@@ -17,6 +17,7 @@ import { submitPlan } from './aiEmployee/index.js';
 import { buildPlanFromTaskTemplate } from './aiEmployee/templatePlanAdapter.js';
 import { EXECUTION_MODES } from './aiEmployee/executionPolicy.js';
 import { processIntake, INTAKE_SOURCES } from './taskIntakeService.js';
+import { eventBus, EVENT_NAMES } from './eventBus.js';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -469,56 +470,42 @@ export function activateEventTrigger(schedule) {
 
   deactivateEventTrigger(schedule.id);
 
-  // Lazy import to avoid circular dependencies
-  const doActivate = async () => {
-    const { eventBus, EVENT_NAMES } = await import('./eventBus');
-
-    const eventMap = {
-      on_file_uploaded: EVENT_NAMES.OPENCLOUD_FILE_UPLOADED,
-      on_file_modified: EVENT_NAMES.OPENCLOUD_FILE_MODIFIED,
-      on_file_detected: EVENT_NAMES.OPENCLOUD_FILE_DETECTED,
-    };
-
-    const eventName = eventMap[type];
-    if (!eventName) return;
-
-    const config = schedule.trigger_config || schedule.task_template?.trigger_config || {};
-    let debounceTimer = null;
-
-    const handler = (payload) => {
-      // Filter by drive
-      if (config.driveId && payload.driveId !== config.driveId) return;
-
-      // Filter by folder
-      if (config.folderId && payload.item?.parentReference?.id !== config.folderId) return;
-
-      // Filter by file extension
-      if (config.filter?.length) {
-        const name = payload.item?.name || '';
-        if (!config.filter.some((ext) => name.toLowerCase().endsWith(ext))) return;
-      }
-
-      // Debounce rapid events
-      const debounceMs = config.debounceMs || 5000;
-      if (debounceTimer) clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(() => {
-        eventBus.emit(EVENT_NAMES.TRIGGER_FIRED, {
-          scheduleId: schedule.id,
-          triggerType: type,
-          taskTemplate: schedule.task_template,
-          triggerPayload: payload,
-          firedAt: new Date().toISOString(),
-        });
-      }, debounceMs);
-    };
-
-    const unsub = eventBus.on(eventName, handler);
-    _eventUnsubscribers.set(schedule.id, unsub);
+  const eventMap = {
+    on_file_uploaded: EVENT_NAMES.OPENCLOUD_FILE_UPLOADED,
+    on_file_modified: EVENT_NAMES.OPENCLOUD_FILE_MODIFIED,
+    on_file_detected: EVENT_NAMES.OPENCLOUD_FILE_DETECTED,
   };
 
-  doActivate().catch((err) => {
-    console.warn('[scheduledTaskService] Failed to activate event trigger:', err?.message);
-  });
+  const eventName = eventMap[type];
+  if (!eventName) return;
+
+  const config = schedule.trigger_config || schedule.task_template?.trigger_config || {};
+  let debounceTimer = null;
+
+  const handler = (payload) => {
+    if (config.driveId && payload.driveId !== config.driveId) return;
+    if (config.folderId && payload.item?.parentReference?.id !== config.folderId) return;
+
+    if (config.filter?.length) {
+      const name = payload.item?.name || '';
+      if (!config.filter.some((ext) => name.toLowerCase().endsWith(ext))) return;
+    }
+
+    const debounceMs = config.debounceMs || 5000;
+    if (debounceTimer) clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => {
+      eventBus.emit(EVENT_NAMES.TRIGGER_FIRED, {
+        scheduleId: schedule.id,
+        triggerType: type,
+        taskTemplate: schedule.task_template,
+        triggerPayload: payload,
+        firedAt: new Date().toISOString(),
+      });
+    }, debounceMs);
+  };
+
+  const unsub = eventBus.on(eventName, handler);
+  _eventUnsubscribers.set(schedule.id, unsub);
 }
 
 /**

@@ -5,7 +5,7 @@
  * the pipeline handles it gracefully — either errors clearly
  * or produces a minimal/empty plan with appropriate messaging.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 
 // ── Imports for pure function tests ───────────────────────────────────────
 

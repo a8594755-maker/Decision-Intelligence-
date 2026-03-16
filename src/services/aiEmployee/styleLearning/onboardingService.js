@@ -14,8 +14,8 @@
  * and can be resumed if interrupted.
  */
 import { supabase } from '../../supabaseClient.js';
-import { extractStyleBatch, enrichTextStyle } from './styleExtractionService.js';
-import { compileProfile, saveProfile } from './styleProfileService.js';
+import { extractStyleBatch } from './styleExtractionService.js';
+import { compileProfile, saveProfile, updateProfileIncremental } from './styleProfileService.js';
 import { extractPoliciesFromText, importPoliciesBatch } from './policyIngestionService.js';
 import { createExemplarFromFile } from './exemplarService.js';
 import { extractRulesFromFeedback } from './feedbackStyleExtractor.js';
@@ -205,7 +205,6 @@ export async function learnFromNewFiles(employeeId, teamId, files, docType, opts
     });
 
     if (fingerprints.length) {
-      const { updateProfileIncremental } = await import('./styleProfileService.js');
       await updateProfileIncremental(employeeId, docType, fingerprints, teamId);
     }
 

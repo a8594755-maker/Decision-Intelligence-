@@ -145,7 +145,7 @@ export async function getLatestMetrics(employeeId) {
  * Record a single review outcome for incremental trust tracking.
  * Called after each manager review decision.
  */
-export async function recordReviewOutcome(employeeId, { taskId, decision, hasFeedback, hasRevision }) {
+export async function recordReviewOutcome(employeeId, { taskId: _taskId, decision, hasFeedback: _hasFeedback, hasRevision }) {
   try {
     // Update the latest trust metrics incrementally
     const latest = await getLatestMetrics(employeeId);

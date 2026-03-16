@@ -311,6 +311,23 @@ async def _start_embedded_job_worker():
     logger.info("[di-job-worker] started (embedded, poll every %ss)", config.worker_poll_seconds)
 
 
+@app.on_event("startup")
+async def _start_event_loop_processor():
+    """Start the event-driven backbone background processor."""
+    if os.getenv("DI_EVENT_LOOP_ENABLED", "true").lower() != "true":
+        logger.info("[EventLoop] Disabled via DI_EVENT_LOOP_ENABLED=false")
+        return
+    try:
+        from ml.utils.supabase_rest_client import SupabaseRESTClient as _SBClient
+        sb = _SBClient()
+        from ml.api.event_loop import get_event_processor
+        processor = get_event_processor(sb.client)
+        asyncio.create_task(processor.start())
+        logger.info("[EventLoop] Background processor started")
+    except Exception as e:
+        logger.warning("[EventLoop] Failed to start: %s (non-blocking)", e)
+
+
 @app.on_event("shutdown")
 async def _shutdown_rate_limiter():
     await _rate_limiter.close()
@@ -502,6 +519,63 @@ async def health_readiness():
         status_code=200 if all_ok else 503,
         content={"status": "ready" if all_ok else "not_ready", "checks": checks},
     )
+
+
+# ── Event-Driven Backbone (Phase 2) ────────────────────────────────────────
+
+class EventIngestRequest(BaseModel):
+    event_type: str
+    source_system: str = "external"
+    payload: Dict[str, Any] = {}
+    signature: Optional[str] = None
+
+
+@app.post("/api/v1/events/ingest")
+async def ingest_event(req: EventIngestRequest):
+    """Ingest an external event into the event_queue."""
+    # Optional HMAC validation (when signature is provided)
+    if req.signature:
+        import hmac as _hmac
+        secret = os.getenv("DI_EVENT_HMAC_SECRET", "")
+        if secret:
+            expected = _hmac.new(
+                secret.encode(), json.dumps(req.payload, sort_keys=True).encode(), hashlib.sha256
+            ).hexdigest()
+            if not _hmac.compare_digest(req.signature, expected):
+                raise HTTPException(status_code=401, detail="Invalid HMAC signature")
+
+    # Insert into event_queue
+    try:
+        from ml.utils.supabase_rest_client import SupabaseRESTClient as _SB
+        sb = _SB()
+        result = sb.client.table("event_queue").insert({
+            "event_type": req.event_type,
+            "source_system": req.source_system,
+            "payload": req.payload,
+            "status": "pending",
+            "signature": req.signature,
+        }).execute()
+        event_id = result.data[0]["id"] if result.data else None
+        return {"event_id": event_id, "status": "accepted"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Event ingest failed: {str(e)}")
+
+
+@app.get("/api/v1/events/status")
+async def event_processor_status():
+    """Return event processor status and queue stats."""
+    try:
+        from ml.api.event_loop import get_event_processor
+        processor = get_event_processor()
+        return processor.get_status()
+    except RuntimeError:
+        # Processor not initialized yet
+        return {
+            "running": False,
+            "last_poll_at": None,
+            "poll_interval_seconds": 30,
+            "stats": {"polls": 0, "events_processed": 0, "last_error": "Processor not started"},
+        }
 
 
 @app.post("/jobs", response_model=AsyncRunSubmitResponse)

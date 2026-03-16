@@ -76,6 +76,10 @@ const V1_VALIDATORS = {
   optimization_results: validateObjectPayloadOnly,
   reoptimization_results: validateObjectPayloadOnly,
   simulation_comparison: validateObjectPayloadOnly,
+  // Decision Artifact Contract v2 — core decision loop artifacts
+  decision_brief: validateDecisionBriefV2,
+  evidence_pack_v2: validateEvidencePackV2Artifact,
+  writeback_payload: validateWritebackPayloadV2,
 };
 
 const MAX_ISSUES = 50;
@@ -1038,6 +1042,48 @@ export function validateArtifactOrThrow({ artifact_type, payload }) {
   }
 
   return payload;
+}
+
+// ── Decision Artifact v2 validators (inline, matching existing pattern) ──────
+
+function validateDecisionBriefV2(payload, issues) {
+  if (!isObject(payload)) { addIssue(issues, { kind: 'type', path: '', expected: 'object', got: typeOfValue(payload) }); return; }
+  for (const f of ['summary', 'recommended_action', 'confidence']) {
+    if (!hasOwn(payload, f)) addMissingIssue(issues, f);
+  }
+  if (hasOwn(payload, 'confidence') && (typeof payload.confidence !== 'number' || payload.confidence < 0 || payload.confidence > 1)) {
+    addIssue(issues, { kind: 'value', path: 'confidence', message: 'must be a number between 0 and 1' });
+  }
+  if (hasOwn(payload, 'risk_flags') && !Array.isArray(payload.risk_flags)) {
+    addIssue(issues, { kind: 'type', path: 'risk_flags', expected: 'array', got: typeOfValue(payload.risk_flags) });
+  }
+}
+
+function validateEvidencePackV2Artifact(payload, issues) {
+  if (!isObject(payload)) { addIssue(issues, { kind: 'type', path: '', expected: 'object', got: typeOfValue(payload) }); return; }
+  for (const f of ['source_datasets', 'timestamps', 'engine_versions', 'calculation_logic']) {
+    if (!hasOwn(payload, f)) addMissingIssue(issues, f);
+  }
+  if (hasOwn(payload, 'source_datasets') && !Array.isArray(payload.source_datasets)) {
+    addIssue(issues, { kind: 'type', path: 'source_datasets', expected: 'array', got: typeOfValue(payload.source_datasets) });
+  }
+}
+
+function validateWritebackPayloadV2(payload, issues) {
+  if (!isObject(payload)) { addIssue(issues, { kind: 'type', path: '', expected: 'object', got: typeOfValue(payload) }); return; }
+  for (const f of ['target_system', 'intended_mutations', 'affected_records', 'idempotency_key', 'status']) {
+    if (!hasOwn(payload, f)) addMissingIssue(issues, f);
+  }
+  if (hasOwn(payload, 'intended_mutations') && !Array.isArray(payload.intended_mutations)) {
+    addIssue(issues, { kind: 'type', path: 'intended_mutations', expected: 'array', got: typeOfValue(payload.intended_mutations) });
+  }
+  if (hasOwn(payload, 'affected_records') && !Array.isArray(payload.affected_records)) {
+    addIssue(issues, { kind: 'type', path: 'affected_records', expected: 'array', got: typeOfValue(payload.affected_records) });
+  }
+  const validStatuses = ['pending_approval', 'approved', 'applied', 'failed', 'rolled_back'];
+  if (hasOwn(payload, 'status') && !validStatuses.includes(payload.status)) {
+    addIssue(issues, { kind: 'value', path: 'status', message: `must be one of: ${validStatuses.join(', ')}` });
+  }
 }
 
 export default {

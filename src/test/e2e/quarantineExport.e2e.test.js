@@ -50,7 +50,7 @@ describe('Quarantine Export E2E', () => {
     });
 
     it('each code has code, label, and fixable properties', () => {
-      for (const [key, val] of Object.entries(REASON_CODES)) {
+      for (const [_key, val] of Object.entries(REASON_CODES)) {
         expect(val).toHaveProperty('code');
         expect(val).toHaveProperty('label');
         expect(typeof val.fixable).toBe('boolean');

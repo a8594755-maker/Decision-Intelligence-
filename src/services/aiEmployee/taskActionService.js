@@ -1,4 +1,4 @@
-import { approvePlan, approveReview, retryTask, cancelTask } from './orchestrator.js';
+import { approvePlan, approveReview, retryTask } from './orchestrator.js';
 import * as taskRepo from './persistence/taskRepo.js';
 import * as employeeRepo from './persistence/employeeRepo.js';
 import { callLLM } from '../aiEmployeeLLMService.js';

@@ -1,14 +1,24 @@
 // HomePage — Thin wrapper that renders the correct home based on active workspace.
+import { lazy, Suspense } from 'react';
 import { useApp } from '../contexts/AppContext';
-import CommandCenter from './CommandCenter';
-import AIEmployeeHome from './AIEmployeeHome';
+
+const CommandCenter = lazy(() => import('./CommandCenter'));
+const AIEmployeeHome = lazy(() => import('./AIEmployeeHome'));
 
 export default function HomePage() {
   const { activeWorkspace } = useApp();
 
   if (activeWorkspace === 'di') {
-    return <CommandCenter />;
+    return (
+      <Suspense fallback={null}>
+        <CommandCenter />
+      </Suspense>
+    );
   }
 
-  return <AIEmployeeHome />;
+  return (
+    <Suspense fallback={null}>
+      <AIEmployeeHome />
+    </Suspense>
+  );
 }

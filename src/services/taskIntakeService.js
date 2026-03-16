@@ -19,6 +19,7 @@
  */
 
 import { listTasks } from './aiEmployee/queries.js';
+import { fromLegacyWorkOrder, validateDecisionWorkOrder } from '../contracts/decisionWorkOrderContract.js';
 
 // ── Intake Source Types ──────────────────────────────────────────────────────
 
@@ -340,6 +341,26 @@ export async function batchProcessIntake(items) {
   }
 
   return { created, duplicates, clarifications };
+}
+
+// ── Decision Work Order Conversion ────────────────────────────────────────────
+
+/**
+ * Process intake and convert to a Decision Work Order (v2).
+ * Extends processIntake() with DWO conversion.
+ *
+ * @param {Object} params - Same as normalizeIntake params
+ * @param {Object} [dwoOverrides] - Additional DWO fields (intent_type, business_domain, entity_refs, etc.)
+ * @returns {Promise<{workOrder: Object, dwo: Object, dwoValidation: Object, status: string}>}
+ */
+export async function processIntakeAsDWO(params, dwoOverrides = {}) {
+  const { workOrder, status } = await processIntake(params);
+
+  // Convert to Decision Work Order regardless of status
+  const dwo = fromLegacyWorkOrder(workOrder, dwoOverrides);
+  const dwoValidation = validateDecisionWorkOrder(dwo);
+
+  return { workOrder, dwo, dwoValidation, status };
 }
 
 // ── SLA Utilities ────────────────────────────────────────────────────────────

@@ -271,7 +271,7 @@ describe('Planning Pipeline E2E', () => {
   });
 
   it('data quality report reflects missing datasets correctly', async () => {
-    const result = await runPlanFromDatasetProfile({
+    await runPlanFromDatasetProfile({
       userId: 'user-e2e-1',
       datasetProfileRow: mockDatasetProfileRow,
       settings: {},

@@ -6,22 +6,22 @@
  * Admin-only page for system maintenance and troubleshooting.
  */
 
-import React, { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   Activity, Upload, Calculator, AlertTriangle, Clock, TrendingUp,
   RefreshCw, BarChart3, Database, Shield, Zap, CheckCircle2,
-  XCircle, GitBranch, HardDrive, Cpu
+  XCircle
 } from 'lucide-react';
 import { Card } from '../components/ui';
-import { useAuth } from '../contexts/AuthContext';
 import { getOperationalHealthSummary as getOperationalSummary } from '../services/observability/operationalMetrics';
 
-function MetricCard({ icon: Icon, label, value, sub, accent = 'text-indigo-600' }) {
+function MetricCard({ icon, label, value, sub, accent = 'text-indigo-600' }) {
+  const Icon = icon;
   return (
     <Card className="!p-4">
       <div className="flex items-start gap-3">
         <div className="p-2 rounded-lg bg-slate-100 dark:bg-slate-800">
-          <Icon className={`w-5 h-5 ${accent}`} />
+          {Icon ? <Icon className={`w-5 h-5 ${accent}`} /> : null}
         </div>
         <div>
           <p className="text-xs text-slate-500">{label}</p>
@@ -217,12 +217,11 @@ function LatencySection({ summary }) {
 }
 
 export default function OpsDashboard() {
-  const { user } = useAuth();
   const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(true);
   const [lastRefresh, setLastRefresh] = useState(null);
 
-  const refresh = () => {
+  const refresh = useCallback(() => {
     setLoading(true);
     try {
       const data = getOperationalSummary();
@@ -232,9 +231,11 @@ export default function OpsDashboard() {
       setSummary(null);
     }
     setLoading(false);
-  };
+  }, []);
 
-  useEffect(() => { refresh(); }, []);
+  useEffect(() => {
+    queueMicrotask(refresh);
+  }, [refresh]);
 
   const importMetrics = useMemo(() => {
     if (!summary) return [];

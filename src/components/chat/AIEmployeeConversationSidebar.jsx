@@ -98,7 +98,7 @@ function AIEmployeeConversationSidebar({
               </span>
               <div>
                 <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">{title}</p>
-                <p className="text-xs text-slate-500 dark:text-slate-400">AI employee workspace</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400">Digital Worker workspace</p>
               </div>
             </div>
           </div>

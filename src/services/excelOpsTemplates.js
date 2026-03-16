@@ -14,10 +14,8 @@ import {
   batchEnd,
   createSheet,
   writeValues,
-  writeFormula,
   formatCells,
   createTable,
-  createChart,
   autofitColumns,
   mergeCells,
   conditionalFormat,
@@ -36,10 +34,6 @@ function colLetter(idx) {
     i = Math.floor(i / 26) - 1;
   }
   return s;
-}
-
-function safeSheet(name) {
-  return (name || 'Sheet').replace(/[\\/*?[\]:]/g, '_').slice(0, 31);
 }
 
 // ── MBR (Monthly Business Review) Template ───────────────────────────────────

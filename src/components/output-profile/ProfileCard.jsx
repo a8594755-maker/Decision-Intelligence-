@@ -26,7 +26,7 @@ export default function ProfileCard({ profile, statusConfig, docTypeLabels, onCl
 
   // Count populated layers
   const layers = ['canonical_structure', 'canonical_formatting', 'canonical_charts', 'canonical_kpi_layout', 'canonical_text_style'];
-  const populatedLayers = layers.filter(l => p[l] && Object.keys(p[l]).length > 0);
+  const _populatedLayers = layers.filter(l => p[l] && Object.keys(p[l]).length > 0);
 
   return (
     <div

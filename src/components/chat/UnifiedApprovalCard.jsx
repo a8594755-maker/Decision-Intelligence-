@@ -10,7 +10,7 @@
  *   onDecision: (approvalId, decision) => void
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import {
   ShieldCheck, Clock, AlertTriangle, CheckCircle2,
   XCircle, ChevronDown, ChevronUp, Zap, Shield,
@@ -25,39 +25,40 @@ const TYPE_CONFIG = {
   model_promotion: { label: 'Model Promotion',      icon: ShieldCheck, color: 'text-indigo-600 dark:text-indigo-400', bg: 'bg-indigo-100 dark:bg-indigo-900/40' },
 };
 
-function formatTimeRemaining(deadline) {
+function getDeadlineCountdown(deadline, _refreshToken = 0) {
   if (!deadline) return null;
-  const remaining = new Date(deadline).getTime() - Date.now();
-  if (remaining <= 0) return 'Expired';
-  const hours = Math.floor(remaining / 3600000);
-  const minutes = Math.floor((remaining % 3600000) / 60000);
-  if (hours > 0) return `${hours}h ${minutes}m remaining`;
-  return `${minutes}m remaining`;
+  const remainingMs = new Date(deadline).getTime() - Date.now();
+  if (remainingMs <= 0) return { label: 'Expired', remainingMs: 0 };
+  const hours = Math.floor(remainingMs / 3600000);
+  const minutes = Math.floor((remainingMs % 3600000) / 60000);
+  const label = hours > 0 ? `${hours}h ${minutes}m remaining` : `${minutes}m remaining`;
+  return { label, remainingMs };
 }
 
 function DeadlineCountdown({ deadline }) {
-  const [timeStr, setTimeStr] = useState(() => formatTimeRemaining(deadline));
+  const [tick, setTick] = useState(0);
 
   useEffect(() => {
+    if (!deadline) return undefined;
     const interval = setInterval(() => {
-      setTimeStr(formatTimeRemaining(deadline));
+      setTick((value) => value + 1);
     }, 60000);
     return () => clearInterval(interval);
   }, [deadline]);
 
-  if (!timeStr) return null;
+  const countdown = useMemo(() => getDeadlineCountdown(deadline, tick), [deadline, tick]);
+  if (!countdown) return null;
 
-  const isExpired = timeStr === 'Expired';
-  const remaining = deadline ? new Date(deadline).getTime() - Date.now() : 0;
-  const isUrgent = remaining > 0 && remaining <= 4 * 3600000;
-  const isCritical = remaining > 0 && remaining <= 3600000;
+  const isExpired = countdown.label === 'Expired';
+  const isUrgent = countdown.remainingMs > 0 && countdown.remainingMs <= 4 * 3600000;
+  const isCritical = countdown.remainingMs > 0 && countdown.remainingMs <= 3600000;
 
   return (
     <div className={`flex items-center gap-1.5 text-xs font-medium ${
       isExpired ? 'text-slate-400' : isCritical ? 'text-red-600 animate-pulse' : isUrgent ? 'text-amber-600' : 'text-slate-500'
     }`}>
       <Clock className="w-3 h-3" />
-      <span>{timeStr}</span>
+      <span>{countdown.label}</span>
     </div>
   );
 }

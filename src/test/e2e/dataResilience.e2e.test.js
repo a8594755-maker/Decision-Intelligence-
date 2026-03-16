@@ -123,12 +123,9 @@ import { buildDataQualityReport } from '../../utils/dataQualityReport';
 import { evaluateCapabilities } from '../../config/capabilityMatrix';
 
 // Pure function imports for mapping/inference tests
-import { normalizeHeader, buildHeaderIndex } from '../../utils/headerNormalize';
-import { batchMapHeadersWithInference } from '../../config/headerSynonyms';
-import { inferFieldFromValues } from '../../utils/fieldPatternInference';
-import { setInferenceFn } from '../../config/headerSynonyms';
-import { generateHeaderFingerprint, saveMappingProfile, findMappingProfile } from '../../services/mappingProfileService';
-import { REASON_CODES, buildQuarantineReport, validateAndCleanRows } from '../../utils/dataValidation';
+import { normalizeHeader } from '../../utils/headerNormalize';
+import { generateHeaderFingerprint } from '../../services/mappingProfileService';
+import { REASON_CODES, buildQuarantineReport } from '../../utils/dataValidation';
 
 // ── Test data ─────────────────────────────────────────────────────────────
 
@@ -257,7 +254,7 @@ describe('Data Resilience E2E', () => {
   describe('precise rowStats in data_quality_report', () => {
     it('clean + with_fallback = total (row-level, not field-level)', async () => {
       // Row A2 has no SafetyStock or LeadTime → will trigger fallbacks on that row
-      const result = await runPlanFromDatasetProfile({
+      await runPlanFromDatasetProfile({
         userId: 'user-dr-1',
         datasetProfileRow: mockProfileRow,
         settings: {},

@@ -51,10 +51,11 @@ const DATASET_LABELS = {
 };
 
 export default function DataQualityCard({ payload }) {
+  const payloadCapabilities = payload?.capabilities;
   const unlockRanking = useMemo(() => {
-    if (!payload?.capabilities) return [];
-    return rankCapabilityUnlocks(payload.capabilities);
-  }, [payload?.capabilities]);
+    if (!payloadCapabilities) return [];
+    return rankCapabilityUnlocks(payloadCapabilities);
+  }, [payloadCapabilities]);
 
   if (!payload) return null;
 
@@ -64,7 +65,7 @@ export default function DataQualityCard({ payload }) {
     missing_datasets = [],
     fallbacks_used = [],
     dataset_fallbacks = [],
-    capabilities,
+    capabilities = payloadCapabilities,
     row_stats,
     import_quality,
   } = payload;

@@ -9,7 +9,6 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
 import {
   Handshake,
   RefreshCw,
@@ -396,7 +395,6 @@ function CaseDetail({ caseData, events, onAction, onRefresh }) {
 
 export default function NegotiationWorkbench() {
   const { user } = useAuth();
-  const navigate = useNavigate();
 
   const [cases, setCases] = useState([]);
   const [selectedCaseId, setSelectedCaseId] = useState(null);

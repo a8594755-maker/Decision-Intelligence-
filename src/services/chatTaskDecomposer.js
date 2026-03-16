@@ -120,7 +120,7 @@ function _isGeneralAnalysisRequest(msgLower) {
  * Build python_tool steps for a general data analysis request.
  * Creates a multi-step pipeline: clean → KPI → analysis → dashboard/report.
  */
-function _buildGeneralAnalysisSteps(userMessage) {
+function _buildGeneralAnalysisSteps(_userMessage) {
   return [
     {
       name: 'clean_data',
@@ -267,7 +267,7 @@ Respond with ONLY a JSON object (no markdown, no explanation):
 /**
  * Try LLM-based decomposition. Returns null if LLM is unavailable.
  */
-async function _tryLLMDecompose(userMessage, { employeeId, userId } = {}) {
+async function _tryLLMDecompose(userMessage, { employeeId } = {}) {
   if (!hasStoredSupabaseAccessToken()) {
     return null;
   }
@@ -346,13 +346,13 @@ async function _tryLLMDecompose(userMessage, { employeeId, userId } = {}) {
  * @param {string} [opts.userId]
  * @returns {Promise<TaskDecomposition>}
  */
-export async function decomposeTask({ userMessage, sessionContext = null, employeeId = null, userId = null }) {
+export async function decomposeTask({ userMessage, sessionContext: _sessionContext = null, employeeId = null, userId: _userId = null }) {
   if (!userMessage || typeof userMessage !== 'string') {
     return _emptyDecomposition(userMessage);
   }
 
   // ── Try LLM-based decomposition first ──────────────────────────────────
-  const llmResult = await _tryLLMDecompose(userMessage, { employeeId, userId });
+  const llmResult = await _tryLLMDecompose(userMessage, { employeeId });
   if (llmResult) {
     return _finalize(llmResult.subtasks, userMessage, llmResult.report_format, llmResult.confidence, {
       needs_clarification: llmResult.needs_clarification,
@@ -377,8 +377,6 @@ export async function decomposeTask({ userMessage, sessionContext = null, employ
 
     // Check if report/export is also needed
     const isReportRequest = LEGACY_KEYWORD_WORKFLOWS[0].keywords.some(kw => msgLower.includes(kw));
-    const isExportRequest = LEGACY_KEYWORD_WORKFLOWS[1].keywords.some(kw => msgLower.includes(kw));
-
     // Add python_report step for dashboard generation
     if (isReportRequest || msgLower.includes('dashboard') || msgLower.includes('圖表') || msgLower.includes('視覺化')) {
       subtasks.push({
@@ -433,8 +431,6 @@ export async function decomposeTask({ userMessage, sessionContext = null, employ
 
   // ── Phase 1b: Check for report/export (not in builtin catalog) ──────────
   const isReportRequest = LEGACY_KEYWORD_WORKFLOWS[0].keywords.some(kw => msgLower.includes(kw));
-  const isExportRequest = LEGACY_KEYWORD_WORKFLOWS[1].keywords.some(kw => msgLower.includes(kw));
-
   // If "report" is requested but no analysis steps exist yet, auto-inject
   // a data analysis step so the report has real content.
   if (isReportRequest && subtasks.length === 0) {

@@ -19,7 +19,6 @@
  */
 
 import { BUILTIN_TOOLS, TOOL_CATEGORY } from './builtinToolCatalog.js';
-import { listToolTypes } from './aiEmployee/executors/executorRegistry.js';
 import { supabase } from './supabaseClient';
 import { getWorkerTemplateFromDB, listTemplatesFromDB } from './aiEmployee/persistence/employeeRepo.js';
 

@@ -5,7 +5,7 @@
  * 1. Upload data → 2. Review mapping → 3. Run plan → 4. Interpret results
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Upload, CheckCircle, Calculator, BarChart3, ArrowRight, X } from 'lucide-react';
 import { Button } from '../ui';
 
@@ -43,19 +43,14 @@ const STEPS = [
 ];
 
 export default function FirstRunGuide() {
-  const [visible, setVisible] = useState(false);
-  const [step, setStep] = useState(0);
-
-  useEffect(() => {
+  const [visible, setVisible] = useState(() => {
     try {
-      if (!localStorage.getItem(STORAGE_KEY)) {
-        setVisible(true);
-      }
+      return !localStorage.getItem(STORAGE_KEY);
     } catch {
-      // Private browsing — show anyway
-      setVisible(true);
+      return true;
     }
-  }, []);
+  });
+  const [step, setStep] = useState(0);
 
   const dismiss = () => {
     setVisible(false);

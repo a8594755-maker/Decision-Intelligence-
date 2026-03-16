@@ -893,7 +893,7 @@ export const BUILTIN_TOOLS = [
   {
     id: 'generate_daily_summary',
     name: 'Daily Work Summary',
-    description: 'Generate a daily summary of AI employee activity: tasks completed, failed, cost, KPIs.',
+    description: 'Generate a daily summary of digital worker activity: tasks completed, failed, cost, KPIs.',
     category: TOOL_CATEGORY.MONITORING,
     keywords_en: ['daily summary', 'daily report', 'today summary', 'work summary', 'status report'],
     keywords_zh: ['每日摘要', '每日報告', '今日摘要', '工作摘要', '狀態報告'],

@@ -1,5 +1,5 @@
 /**
- * AI Employee Home — Manager Console Dashboard
+ * Digital Worker Home — Manager Console Dashboard
  *
  * Unified dashboard for managers to:
  *   - View all workers and their statuses
@@ -8,7 +8,7 @@
  *   - Quick-access to chat interface
  */
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { lazy, Suspense, useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Bot, MessageSquare, CheckCircle2, Clock, AlertTriangle, BarChart3,
@@ -21,10 +21,12 @@ import { listEmployeesByManager, getKpis, createWorkerFromTemplate, listTemplate
 import { getLatestSummary } from '../services/dailySummaryService';
 import { listPending, getGovernanceStats } from '../services/governanceService';
 import { buildPerformanceDashboard, AUTONOMY_LABELS } from '../services/workerPerformanceService';
-import DecisionSupportView from '../views/DecisionSupportView';
+
+const DecisionSupportView = lazy(() => import('../views/DecisionSupportView'));
 
 // ── Quick Stats Card ────────────────────────────────────────────────────────
 
+// eslint-disable-next-line no-unused-vars -- Icon is rendered in JSX below
 function QuickStat({ icon: Icon, label, value, trend, accent = 'text-indigo-600' }) {
   return (
     <div className="flex items-center gap-3 p-3 rounded-lg bg-white dark:bg-slate-800/50 border" style={{ borderColor: 'var(--border-default)' }}>
@@ -155,6 +157,31 @@ export default function AIEmployeeHome() {
   const [showAddWorker, setShowAddWorker] = useState(false);
   const [addingWorker, setAddingWorker] = useState(false);
   const [availableTemplates, setAvailableTemplates] = useState([]);
+  const selectedWorkerStorageKey = useMemo(
+    () => (user?.id ? `ai-employee.active-worker.${user.id}` : null),
+    [user?.id]
+  );
+  const [selectedWorkerId, setSelectedWorkerId] = useState(() => {
+    try {
+      return localStorage.getItem('ai-employee.active-worker') || '';
+    } catch {
+      return '';
+    }
+  });
+
+  const persistSelectedWorker = useCallback((workerId) => {
+    setSelectedWorkerId(workerId || '');
+    try {
+      if (selectedWorkerStorageKey) {
+        if (workerId) localStorage.setItem(selectedWorkerStorageKey, workerId);
+        else localStorage.removeItem(selectedWorkerStorageKey);
+      }
+      if (workerId) localStorage.setItem('ai-employee.active-worker', workerId);
+      else localStorage.removeItem('ai-employee.active-worker');
+    } catch {
+      // best-effort local preference persistence
+    }
+  }, [selectedWorkerStorageKey]);
 
   const loadData = useCallback(async () => {
     if (!user?.id) return;
@@ -212,6 +239,39 @@ export default function AIEmployeeHome() {
 
   useEffect(() => { loadData(); }, [loadData]);
 
+  useEffect(() => {
+    if (!selectedWorkerStorageKey) return;
+    try {
+      const stored = localStorage.getItem(selectedWorkerStorageKey) || '';
+      if (stored && stored !== selectedWorkerId) {
+        setSelectedWorkerId(stored);
+      }
+    } catch {
+      // best-effort preference restore
+    }
+  }, [selectedWorkerStorageKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (workers.length === 0) {
+      if (selectedWorkerId) persistSelectedWorker('');
+      return;
+    }
+    const hasSelectedWorker = workers.some((worker) => worker.id === selectedWorkerId);
+    if (!hasSelectedWorker) {
+      persistSelectedWorker(workers[0].id);
+    }
+  }, [workers, selectedWorkerId, persistSelectedWorker]);
+
+  const selectedWorker = useMemo(
+    () => workers.find((worker) => worker.id === selectedWorkerId) || workers[0] || null,
+    [workers, selectedWorkerId]
+  );
+
+  const openWorkerChat = useCallback((workerId) => {
+    persistSelectedWorker(workerId);
+    setView('chat');
+  }, [persistSelectedWorker]);
+
   // Aggregate stats
   const stats = useMemo(() => {
     let totalCompleted = 0;
@@ -238,17 +298,53 @@ export default function AIEmployeeHome() {
   if (view === 'chat') {
     return (
       <div className="h-full min-w-0 overflow-hidden flex flex-col">
-        <div className="h-10 flex items-center px-4 border-b flex-shrink-0" style={{ borderColor: 'var(--border-default)', backgroundColor: 'var(--surface-card)' }}>
+        <div className="h-10 flex items-center justify-between gap-3 px-4 border-b flex-shrink-0" style={{ borderColor: 'var(--border-default)', backgroundColor: 'var(--surface-card)' }}>
+          <div className="flex items-center gap-2 min-w-0">
+            <button
+              onClick={() => setView('dashboard')}
+              className="text-xs font-medium px-2 py-1 rounded hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+              style={{ color: 'var(--text-secondary)' }}
+            >
+              &larr; Dashboard
+            </button>
+            {workers.length > 0 ? (
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="text-[11px] uppercase tracking-wide whitespace-nowrap" style={{ color: 'var(--text-muted)' }}>
+                  Delegating to
+                </span>
+                <select
+                  value={selectedWorker?.id || ''}
+                  onChange={(event) => persistSelectedWorker(event.target.value)}
+                  className="min-w-[180px] max-w-[260px] px-2.5 py-1 rounded-lg border text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  style={{ borderColor: 'var(--border-default)', backgroundColor: 'var(--surface-bg)', color: 'var(--text-primary)' }}
+                >
+                  {workers.map((worker) => (
+                    <option key={worker.id} value={worker.id}>
+                      {worker.name} ({(worker.role || '').replace(/_/g, ' ')})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : null}
+          </div>
           <button
-            onClick={() => setView('dashboard')}
-            className="text-xs font-medium px-2 py-1 rounded hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+            onClick={() => navigate(selectedWorker ? `/employees/tasks?worker=${selectedWorker.id}` : '/employees/tasks')}
+            className="text-xs font-medium px-2 py-1 rounded hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors whitespace-nowrap"
             style={{ color: 'var(--text-secondary)' }}
           >
-            &larr; Dashboard
+            Task Board &rarr;
           </button>
         </div>
         <div className="flex-1 min-w-0 min-h-0">
-          <DecisionSupportView user={user} addNotification={addNotification} mode="ai_employee" />
+          <Suspense fallback={null}>
+            <DecisionSupportView
+              user={user}
+              addNotification={addNotification}
+              mode="ai_employee"
+              activeWorkerId={selectedWorker?.id || null}
+              activeWorkerLabel={selectedWorker?.name || null}
+            />
+          </Suspense>
         </div>
       </div>
     );
@@ -267,11 +363,14 @@ export default function AIEmployeeHome() {
             </h1>
           </div>
           <button
-            onClick={() => setView('chat')}
+            onClick={() => {
+              if (selectedWorker?.id) persistSelectedWorker(selectedWorker.id);
+              setView('chat');
+            }}
             className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700 transition-colors"
           >
             <MessageSquare className="w-4 h-4" />
-            Open Chat
+            {selectedWorker ? `Chat with ${selectedWorker.name}` : 'Open Chat'}
           </button>
         </div>
 
@@ -577,7 +676,7 @@ export default function AIEmployeeHome() {
                     key={w.id}
                     worker={w}
                     kpis={kpisMap[w.id]}
-                    onClick={() => navigate('/employees/tasks')}
+                    onClick={() => openWorkerChat(w.id)}
                   />
                 ))}
               </div>

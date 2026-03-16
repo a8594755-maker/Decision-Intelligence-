@@ -51,12 +51,13 @@ const TOOLTIP_STYLE = {
 //  Shared sub-components
 // ══════════════════════════════════════════════
 
-function MetricTile({ icon: Icon, label, value, sub, accent = 'text-indigo-600' }) {
+function MetricTile({ icon, label, value, sub, accent = 'text-indigo-600' }) {
+  const Icon = icon;
   return (
     <Card className="!p-4">
       <div className="flex items-start gap-3">
         <div className="p-2 rounded-lg bg-slate-100 dark:bg-slate-800">
-          <Icon className={`w-5 h-5 ${accent}`} />
+          {Icon ? <Icon className={`w-5 h-5 ${accent}`} /> : null}
         </div>
         <div className="min-w-0">
           <p className="text-xs text-slate-500 truncate">{label}</p>
@@ -68,11 +69,12 @@ function MetricTile({ icon: Icon, label, value, sub, accent = 'text-indigo-600' 
   );
 }
 
-function SectionHeader({ icon: Icon, title, count, children }) {
+function SectionHeader({ icon, title, count, children }) {
+  const Icon = icon;
   return (
     <div className="flex items-center justify-between mb-3">
       <div className="flex items-center gap-2">
-        <Icon className="w-4 h-4 text-indigo-600" />
+        {Icon ? <Icon className="w-4 h-4 text-indigo-600" /> : null}
         <h3 className="text-sm font-semibold uppercase tracking-wide" style={{ color: 'var(--text-secondary)' }}>
           {title}
         </h3>
@@ -143,13 +145,14 @@ function DataTable({ rows, columns, maxRows = 20 }) {
   );
 }
 
-function CollapsibleSection({ icon: Icon, title, count, defaultOpen = false, children }) {
+function CollapsibleSection({ icon, title, count, defaultOpen = false, children }) {
   const [open, setOpen] = useState(defaultOpen);
+  const Icon = icon;
   return (
     <Card>
       <button onClick={() => setOpen(!open)} className="w-full flex items-center gap-2 text-left">
         {open ? <ChevronDown className="w-4 h-4 text-slate-400" /> : <ChevronRight className="w-4 h-4 text-slate-400" />}
-        <Icon className="w-4 h-4 text-indigo-600" />
+        {Icon ? <Icon className="w-4 h-4 text-indigo-600" /> : null}
         <span className="text-sm font-semibold flex-1" style={{ color: 'var(--text-primary)' }}>{title}</span>
         {count != null && <Badge type="info">{count}</Badge>}
       </button>
@@ -513,7 +516,7 @@ const FORECAST_MODELS = [
   { value: 'linear', label: 'Linear' },
 ];
 
-function ForecastLab({ datasetId, skus, salesLoader }) {
+function ForecastLab({ datasetId, skus, salesLoader: _salesLoader }) {
   const [sku, setSku] = useState(skus[0] || '');
   const [horizon, setHorizon] = useState(30);
   const [modelType, setModelType] = useState('');
@@ -758,7 +761,8 @@ function ForecastLab({ datasetId, skus, salesLoader }) {
 //  Compare Mode
 // ══════════════════════════════════════════════
 
-function CompareMetricTile({ icon: Icon, label, leftVal, rightVal, format = v => v, lowerIsBetter = false }) {
+function CompareMetricTile({ icon, label, leftVal, rightVal, format = v => v, lowerIsBetter = false }) {
+  const Icon = icon;
   const delta = rightVal - leftVal;
   const pct = leftVal !== 0 ? ((delta / Math.abs(leftVal)) * 100).toFixed(1) : '--';
   const isImprovement = lowerIsBetter ? delta < 0 : delta > 0;
@@ -768,7 +772,7 @@ function CompareMetricTile({ icon: Icon, label, leftVal, rightVal, format = v =>
   return (
     <Card className="!p-4">
       <div className="flex items-center gap-2 mb-2">
-        <Icon className="w-4 h-4 text-indigo-600" />
+        {Icon ? <Icon className="w-4 h-4 text-indigo-600" /> : null}
         <span className="text-xs text-slate-500">{label}</span>
       </div>
       <div className="flex items-baseline gap-3">
@@ -1002,7 +1006,7 @@ function CompareView({ leftDataset, rightDataset, templateInfo }) {
 //  Handoff Panel
 // ══════════════════════════════════════════════
 
-function HandoffPanel({ datasetId, descriptor, navigate, onHandoff, onExportExcel }) {
+function HandoffPanel({ datasetId, descriptor: _descriptor, navigate: _navigate, onHandoff, onExportExcel }) {
   const cards = [
     {
       icon: Upload,
@@ -1065,7 +1069,7 @@ const EXPLORER_TABS = [
   { key: 'handoff', label: 'Handoff', icon: ExternalLink, group: 'tools' },
 ];
 
-function DatasetExplorer({ dataset, onDelete, onRefresh, onHandoff, onExportExcel, navigate }) {
+function DatasetExplorer({ dataset, onDelete, onRefresh: _onRefresh, onHandoff, onExportExcel, navigate }) {
   const { descriptor, kpis, summary } = dataset;
   const [activeTab, setActiveTab] = useState('overview');
   // Overview state
@@ -1783,6 +1787,31 @@ export default function SyntheticERPSandbox() {
     }
   }, []);
 
+  // ── Event trigger (Phase 2: Event-Driven Backbone) ──────────────────────
+  const [eventStatus, setEventStatus] = useState(null);
+
+  const handleTriggerEvent = useCallback(async (eventType, payload = {}) => {
+    setError('');
+    try {
+      const result = await api('/api/v1/events/ingest', {
+        method: 'POST',
+        body: JSON.stringify({
+          event_type: eventType,
+          source_system: 'synthetic_sandbox',
+          payload: {
+            ...payload,
+            triggered_at: new Date().toISOString(),
+            sandbox: true,
+          },
+        }),
+      });
+      setEventStatus({ type: eventType, id: result.event_id, ok: true });
+      setTimeout(() => setEventStatus(null), 4000);
+    } catch (err) {
+      setEventStatus({ type: eventType, ok: false, error: err.message });
+    }
+  }, []);
+
   const leftDataset = datasets.find(d => d.descriptor.dataset_id === compareLeft);
   const rightDataset = datasets.find(d => d.descriptor.dataset_id === compareRight);
 
@@ -1852,6 +1881,47 @@ export default function SyntheticERPSandbox() {
             <CompareView leftDataset={leftDataset} rightDataset={rightDataset} templateInfo={templateInfo} />
           )}
         </div>
+      )}
+
+      {/* Event Trigger Panel (Phase 2) */}
+      {!compareMode && (
+        <Card className="!p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <Zap className="w-4 h-4 text-amber-500" />
+            <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Trigger Event</h3>
+            <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300">Event-Driven</span>
+          </div>
+          <p className="text-xs mb-3" style={{ color: 'var(--text-secondary)' }}>
+            Inject synthetic supply chain events into the event queue. Matched events auto-create worker tasks.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {[
+              { type: 'supplier_delay', label: 'Supplier Delay', payload: { supplier_id: 'S-DEMO-01', material_code: 'MAT-001', delay_days: 7, severity: 'high' } },
+              { type: 'inventory_below_threshold', label: 'Low Inventory', payload: { material_code: 'MAT-002', plant_id: 'P001', current_doh: 3, threshold_doh: 7, severity: 'critical' } },
+              { type: 'demand_spike', label: 'Demand Spike', payload: { material_code: 'MAT-003', plant_id: 'P001', spike_pct: 45, severity: 'medium' } },
+              { type: 'po_overdue', label: 'PO Overdue', payload: { po_number: 'PO-DEMO-100', supplier_id: 'S-DEMO-02', overdue_days: 5, severity: 'high' } },
+              { type: 'forecast_accuracy_drift', label: 'Forecast Drift', payload: { material_code: 'MAT-001', mape_current: 0.32, mape_baseline: 0.15, severity: 'medium' } },
+            ].map(({ type, label, payload }) => (
+              <button
+                key={type}
+                onClick={() => handleTriggerEvent(type, payload)}
+                className="px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors hover:bg-slate-50 dark:hover:bg-slate-800"
+                style={{ borderColor: 'var(--border-default)', color: 'var(--text-primary)' }}
+              >
+                <ShieldAlert className="w-3 h-3 inline mr-1 opacity-60" />
+                {label}
+              </button>
+            ))}
+          </div>
+          {eventStatus && (
+            <div className={`mt-2 text-xs px-3 py-1.5 rounded ${eventStatus.ok ? 'bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-300' : 'bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-300'}`}>
+              {eventStatus.ok
+                ? <><CheckCircle className="w-3 h-3 inline mr-1" />Event "{eventStatus.type}" queued (ID: {eventStatus.id})</>
+                : <><XCircle className="w-3 h-3 inline mr-1" />Failed: {eventStatus.error}</>
+              }
+            </div>
+          )}
+        </Card>
       )}
 
       {/* Generator */}

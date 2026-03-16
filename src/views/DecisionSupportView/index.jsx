@@ -37,6 +37,9 @@ import AIEmployeeChatShell from '../../components/chat/AIEmployeeChatShell';
 import AIEmployeeConversationSidebar from '../../components/chat/AIEmployeeConversationSidebar';
 import { useAgentSSE } from '../../hooks/useAgentSSE';
 import { checkNegotiationTrigger, runNegotiation } from '../../services/negotiation/negotiationOrchestrator';
+import { computePositionBucket } from '../../services/negotiation/cfr/negotiation-position-buckets.js';
+import { computeSupplierTypePriors } from '../../services/negotiation/cfr/negotiation-types.js';
+import { deriveSolverParamsFromStrategy } from '../../services/negotiation/cfr/cfr-solver-bridge.js';
 import SplitShell from '../../components/chat/SplitShell';
 import ConversationSidebar from '../../components/chat/ConversationSidebar';
 import ChatThread from '../../components/chat/ChatThread';
@@ -44,19 +47,18 @@ import ChatComposer from '../../components/chat/ChatComposer';
 import EmployeeProfilePanel from '../../components/ai-employee/EmployeeProfilePanel';
 import useSessionContext from '../../hooks/useSessionContext';
 import { parseIntent, routeIntent } from '../../services/chatIntentService';
-import { buildChatSessionContext, buildContextSummaryForPrompt, suggestNextActions } from '../../services/chatSessionContextBuilder';
-import { looksLikeScenario, parseScenarioFromText, validateScenarioOverrides } from '../../services/scenarioIntentParser';
+import { buildChatSessionContext, buildContextSummaryForPrompt } from '../../services/chatSessionContextBuilder';
+import { looksLikeScenario } from '../../services/scenarioIntentParser';
 import { runScenarioFromChat } from '../../services/scenarioChatBridge';
-import { getAvailableActions, resolveActionToIntent } from '../../services/chatActionRegistry';
+import { resolveActionToIntent } from '../../services/chatActionRegistry';
 import { handleParameterChange, handlePlanComparison, buildComparisonSummaryText } from '../../services/chatRefinementService';
 import { createAlertMonitor, buildAlertChatMessage, isAlertMonitorEnabled } from '../../services/alertMonitorService';
 import { batchApprove, batchReject } from '../../services/approvalWorkflowService';
 import { decomposeTask } from '../../services/chatTaskDecomposer';
 import { draftWorkOrder, isTaskIntent } from '../../services/aiEmployee/workOrderDraftService';
-import { buildDynamicTemplate } from '../../services/dynamicTemplateBuilder';
-import { getOrCreateWorker } from '../../services/aiEmployee/queries.js';
+import { getEmployee, getOrCreateWorker } from '../../services/aiEmployee/queries.js';
 // v2 orchestrator — single entry point for task lifecycle
-import { createPlan, submitPlan, approvePlan as orchestratorApprovePlan } from '../../services/aiEmployee/index.js';
+import { submitPlan, approvePlan as orchestratorApprovePlan } from '../../services/aiEmployee/index.js';
 import { eventBus, EVENT_NAMES } from '../../services/eventBus.js';
 import { processEmailIntake } from '../../services/emailIntakeService.js';
 import { processTranscriptIntake } from '../../services/transcriptIntakeService.js';
@@ -102,7 +104,7 @@ const conversationsDb = tableAvailable ? supabase : null;
 // Module-level cache for inline raw rows — survives HMR state resets
 const _rawRowsCache = new Map();
 
-export default function DecisionSupportView({ user, addNotification, mode = 'di' }) {
+export default function DecisionSupportView({ user, addNotification, mode = 'di', activeWorkerId = null, activeWorkerLabel = null }) {
   const isAIEmployeeMode = mode === 'ai_employee';
   const userStorageSuffix = user?.id || 'anon';
   const [input, setInput] = useState('');
@@ -138,6 +140,7 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
   const [agentExecPanelOpen, setAgentExecPanelOpen] = useState(false);
   const [agentExecSSETaskId, setAgentExecSSETaskId] = useState(null);
   const [aiEmployeeDrawer, setAiEmployeeDrawer] = useState(null);
+  const [delegatedWorker, setDelegatedWorker] = useState(null);
 
   // SSE connection for real-time agent step events (supplements onStepComplete callbacks)
   const agentSSE = useAgentSSE(agentExecSSETaskId, {
@@ -206,6 +209,24 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
     [user?.id]
   );
 
+  const resolveDelegatedWorker = useCallback(async () => {
+    if (!user?.id) return null;
+    if (activeWorkerId) {
+      const selectedWorker = await getEmployee(activeWorkerId).catch(() => null);
+      if (selectedWorker) return selectedWorker;
+    }
+    return getOrCreateWorker(user.id);
+  }, [activeWorkerId, user?.id]);
+
+  const getAssignedWorker = useCallback(async () => {
+    if (delegatedWorker && (!activeWorkerId || delegatedWorker.id === activeWorkerId)) {
+      return delegatedWorker;
+    }
+    const resolved = await resolveDelegatedWorker();
+    if (resolved) setDelegatedWorker(resolved);
+    return resolved;
+  }, [delegatedWorker, activeWorkerId, resolveDelegatedWorker]);
+
   // ── Canvas state updater ────────────────────────────────────────────────
   const updateCanvasState = useCallback((conversationId, updater) => {
     if (!conversationId) return;
@@ -220,6 +241,25 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
       };
     });
   }, []);
+
+  useEffect(() => {
+    if (!isAIEmployeeMode || !user?.id) {
+      setDelegatedWorker(null);
+      return undefined;
+    }
+
+    let cancelled = false;
+
+    resolveDelegatedWorker()
+      .then((worker) => {
+        if (!cancelled) setDelegatedWorker(worker);
+      })
+      .catch(() => {
+        if (!cancelled) setDelegatedWorker(null);
+      });
+
+    return () => { cancelled = true; };
+  }, [isAIEmployeeMode, user?.id, resolveDelegatedWorker]);
 
   // ── Conversation manager hook ──────────────────────────────────────────
   const convManager = useConversationManager({
@@ -256,7 +296,7 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
   // ── v2 Orchestrator event listeners → UI state updates ──────────────────
   useEffect(() => {
     const unsubs = [
-      eventBus.on(EVENT_NAMES.AGENT_STEP_STARTED, ({ taskId, stepIndex, stepName }) => {
+      eventBus.on(EVENT_NAMES.AGENT_STEP_STARTED, ({ stepIndex, stepName }) => {
         setAgentExecEvents(prev => [...prev, { step_name: stepName, status: 'running', step_index: stepIndex }]);
         setAgentExecLoopState(prev => {
           if (!prev?.steps) return prev;
@@ -264,7 +304,7 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
           return { ...prev, steps };
         });
       }),
-      eventBus.on(EVENT_NAMES.AGENT_STEP_COMPLETED, ({ taskId, stepIndex, stepName, artifacts }) => {
+      eventBus.on(EVENT_NAMES.AGENT_STEP_COMPLETED, ({ stepIndex, stepName, artifacts }) => {
         setAgentExecEvents(prev => [...prev, { step_name: stepName, status: 'succeeded', step_index: stepIndex, artifacts }]);
         setAgentExecLoopState(prev => {
           if (!prev?.steps) return prev;
@@ -273,7 +313,7 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
         });
         appendMessagesToCurrentConversation([{ role: 'ai', content: `Step "${stepName}": completed`, timestamp: new Date().toISOString() }]);
       }),
-      eventBus.on(EVENT_NAMES.AGENT_STEP_FAILED, ({ taskId, stepIndex, error, healing, willRetry }) => {
+      eventBus.on(EVENT_NAMES.AGENT_STEP_FAILED, ({ stepIndex, error, healing, willRetry }) => {
         const note = willRetry ? ` [retrying: ${healing?.healingStrategy}]` : '';
         setAgentExecLoopState(prev => {
           if (!prev?.steps) return prev;
@@ -282,15 +322,15 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
         });
         appendMessagesToCurrentConversation([{ role: 'ai', content: `Step ${stepIndex} failed: ${error?.slice(0, 200)}${note}`, timestamp: new Date().toISOString() }]);
       }),
-      eventBus.on(EVENT_NAMES.TASK_COMPLETED, ({ taskId }) => {
+      eventBus.on(EVENT_NAMES.TASK_COMPLETED, () => {
         appendMessagesToCurrentConversation([{ role: 'ai', content: 'All steps completed. Head to Review to check the results.', timestamp: new Date().toISOString() }]);
       }),
-      eventBus.on(EVENT_NAMES.TASK_FAILED, ({ taskId, error }) => {
+      eventBus.on(EVENT_NAMES.TASK_FAILED, ({ error }) => {
         appendMessagesToCurrentConversation([{ role: 'ai', content: `Task failed: ${error || 'Unknown error'}`, timestamp: new Date().toISOString() }]);
       }),
     ];
     return () => unsubs.forEach(unsub => unsub());
-  }, []);
+  }, [appendMessagesToCurrentConversation]);
 
   // ── Synthetic ERP Sandbox → Planning bridge ────────────────────────────
   const location = useLocation();
@@ -1123,9 +1163,6 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
     try {
       const { fetchAllSignals } = await import('../../services/externalSignalAdapters.js');
       const { processExternalSignals } = await import('../../services/macroSignalService.js');
-      const { computePositionBucket } = await import('../../services/negotiation/cfr/negotiation-position-buckets.js');
-      const { computeSupplierTypePriors } = await import('../../services/negotiation/cfr/negotiation-types.js');
-      const { deriveSolverParamsFromStrategy } = await import('../../services/negotiation/cfr/cfr-solver-bridge.js');
 
       const isLive = !demoScenario || demoScenario === 'live';
       const externalData = await fetchAllSignals({
@@ -1487,7 +1524,7 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
       setUploadStatusText('');
       if (fileInputRef.current) { fileInputRef.current.value = ''; }
     }
-  }, [user?.id, currentConversationId, conversationDatasetContext, appendMessagesToCurrentConversation, addNotification, setConversationDatasetContext]);
+  }, [user?.id, currentConversationId, conversationDatasetContext, appendMessagesToCurrentConversation, addNotification, setConversationDatasetContext, isAIEmployeeMode]);
 
   const handleFileInputChange = useCallback((e) => { const file = e.target.files?.[0]; if (file) handleDatasetUpload(file); }, [handleDatasetUpload]);
 
@@ -1685,14 +1722,15 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
         setIsTyping(false); setStreamingContent(''); return;
       }
       try {
-        const aiden = await getOrCreateWorker(user?.id);
+        const assignedWorker = await getAssignedWorker();
+        if (!assignedWorker?.id) throw new Error('No worker available for email intake.');
         const lines = emailContent.split('\n');
         const subject = lines[0];
         const body = lines.slice(1).join('\n');
         const result = await processEmailIntake({
           rawHeaders: { subject, from: 'chat-paste', date: new Date().toISOString() },
           body,
-          employeeId: aiden.id,
+          employeeId: assignedWorker.id,
           userId: user?.id,
         });
         const workOrders = result.work_orders || [];
@@ -1716,14 +1754,15 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
         setIsTyping(false); setStreamingContent(''); return;
       }
       try {
-        const aiden = await getOrCreateWorker(user?.id);
+        const assignedWorker = await getAssignedWorker();
+        if (!assignedWorker?.id) throw new Error('No worker available for transcript intake.');
         const lines = transcriptContent.split('\n');
         const meetingTitle = lines[0];
         const transcript = lines.slice(1).join('\n') || lines[0];
         const result = await processTranscriptIntake({
           transcript,
           meetingTitle,
-          employeeId: aiden.id,
+          employeeId: assignedWorker.id,
           userId: user?.id,
         });
         const workOrders = result.work_orders || [];
@@ -1736,7 +1775,7 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
           summary += `\n\nDetected ${actions.length} action item(s):\n${actions.map((a, i) => `${i + 1}. ${a.text}${a.owner ? ` (owner: ${a.owner})` : ''}${a.deadline ? ` [due: ${a.deadline}]` : ''}`).join('\n')}`;
         }
         if (decisions.length > 0) {
-          summary += `\n\nDecisions:\n${decisions.map((d, i) => `- ${d.text}`).join('\n')}`;
+          summary += `\n\nDecisions:\n${decisions.map((d) => `- ${d.text}`).join('\n')}`;
         }
         summary += `\n\nCreated ${workOrders.length} work order(s). Check the Task Board for details.`;
         appendMessagesToCurrentConversation([{ role: 'ai', content: summary, timestamp: new Date().toISOString() }]);
@@ -1832,7 +1871,8 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
               _onApprove: async () => {
                 try {
                   // ── v2 Orchestrator path ──────────────────────────────────
-                  const aiden = await getOrCreateWorker(user?.id);
+                  const assignedWorker = await getAssignedWorker();
+                  if (!assignedWorker?.id) throw new Error('No worker available for this task.');
 
                   // Build input data from uploaded dataset
                   const rawRows = _rawRowsCache.get(String(datasetProfileId)) || activeDatasetContext?.rawRowsForStorage;
@@ -1872,7 +1912,7 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
                   };
 
                   // Submit plan → creates task in draft_plan → waiting_approval
-                  const { taskId } = await submitPlan(plan, aiden.id, user?.id);
+                  const { taskId } = await submitPlan(plan, assignedWorker.id, user?.id);
 
                   // Open execution dashboard
                   setAgentExecEvents([]);
@@ -1921,11 +1961,12 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
 
               // Persist work order via unified intake pipeline
               try {
-                const aiden = await getOrCreateWorker(user?.id);
+                const assignedWorker = await getAssignedWorker();
+                if (!assignedWorker?.id) throw new Error('No worker available for intake.');
                 await processIntake({
                   source: INTAKE_SOURCES.CHAT,
                   message: enriched,
-                  employeeId: aiden.id,
+                  employeeId: assignedWorker.id,
                   userId: user?.id,
                   metadata: {
                     workflow_type: confirmedDraft.workflow_type,
@@ -2006,13 +2047,14 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
               const datasetProfileId = Number.isFinite(Number(activeDatasetContext?.dataset_profile_id)) ? Number(activeDatasetContext.dataset_profile_id) : null;
 
               // ── Gate 1: Unified intake normalization ──
-              const aiden = await getOrCreateWorker(user?.id);
+              const assignedWorker = await getAssignedWorker();
+              if (!assignedWorker?.id) throw new Error('No worker available for task assignment.');
               let intakeWorkOrder = null;
               try {
                 const intakeResult = await processIntake({
                   source: INTAKE_SOURCES.CHAT,
                   message: effectiveMessage,
-                  employeeId: aiden.id,
+                  employeeId: assignedWorker.id,
                   userId: user?.id,
                   metadata: { source_ref: 'assign_task_intent' },
                 });
@@ -2082,7 +2124,12 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
                       llmConfig: { provider: 'anthropic', model: 'claude-sonnet-4-6', temperature: 0.15, max_tokens: 4096 },
                     };
 
-                    const { taskId } = await submitPlan(plan, aiden.id, user?.id);
+                    const assignedWorker = await getAssignedWorker();
+                    if (!assignedWorker?.id) {
+                      throw new Error('No digital worker is available for this task.');
+                    }
+
+                    const { taskId } = await submitPlan(plan, assignedWorker.id, user?.id);
 
                     setAgentExecEvents([]);
                     setAgentExecTaskTitle(effectiveMessage.slice(0, 80));
@@ -2200,7 +2247,7 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
       setIsTyping(false); setStreamingContent('');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [input, currentConversationId, currentMessages, currentConversation, systemPrompt, user?.id, activeDatasetContext, handleCanvasRun, appendMessagesToCurrentConversation, executeForecastFlow, executePlanFlow, executeWorkflowFlow, executeWorkflowAFlow, executeWorkflowBFlow, executeDigitalTwinFlow, handleRunTopology, topologyRunId, setConversations, setConversationDatasetContext, setLatestPlanRunId]);
+  }, [input, currentConversationId, currentMessages, currentConversation, systemPrompt, user?.id, activeDatasetContext, handleCanvasRun, appendMessagesToCurrentConversation, executeForecastFlow, executePlanFlow, executeWorkflowFlow, executeWorkflowAFlow, executeWorkflowBFlow, executeDigitalTwinFlow, handleRunTopology, topologyRunId, setConversations, setConversationDatasetContext, setLatestPlanRunId, getAssignedWorker]);
 
   const handleKeyDown = useCallback((e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(e); } }, [handleSend]);
 
@@ -2372,8 +2419,13 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
       : currentConversation.title
     : 'Digital Worker';
 
+  const delegatedWorkerName = delegatedWorker?.name || activeWorkerLabel || (activeWorkerId ? 'Selected Worker' : 'Digital Worker');
+
   const aiEmployeeSubtitle = activeDatasetContext?.fileName
-    || (agentExecTaskTitle ? `Live task: ${agentExecTaskTitle}` : 'Digital worker workspace');
+    ? `Delegating to ${delegatedWorkerName} · Dataset: ${activeDatasetContext.fileName}`
+    : agentExecTaskTitle
+      ? `Delegating to ${delegatedWorkerName} · Live task: ${agentExecTaskTitle}`
+      : `Delegating to ${delegatedWorkerName}`;
 
   let aiEmployeeSecondaryPanel = null;
   if (isAIEmployeeMode && aiEmployeeDrawer === 'profile') {
@@ -2383,7 +2435,7 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
       onClose: closeAIEmployeeProfile,
       content: (
         <div className="h-full overflow-y-auto">
-          <EmployeeProfilePanel userId={user?.id} />
+          <EmployeeProfilePanel userId={user?.id} employeeId={delegatedWorker?.id || activeWorkerId || null} />
         </div>
       ),
     };

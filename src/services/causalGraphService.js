@@ -94,7 +94,7 @@ export function linkCause(parent, child) {
  */
 export function buildStockoutCausalGraph({
   stockoutItems = [],
-  replayMetrics = null,
+  replayMetrics: _replayMetrics = null,
   solverResult = null,
   riskScores = [],
   forecastMetrics = null,
@@ -264,7 +264,7 @@ export function buildStockoutCausalGraph({
 export function buildInfeasibilityCausalGraph({
   solverResult,
   constraintCheck = null,
-  riskScores = [],
+  riskScores: _riskScores = [],
   planRunId = null,
 }) {
   const nodes = {};

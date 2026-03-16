@@ -101,7 +101,7 @@ export function buildChatSessionContext({
   pathname,
   sessionCtx,
   canvasState,
-  activeDataset,
+  activeDataset: _activeDataset,
   baselineRunId,
   scenarioState,
   userRole,

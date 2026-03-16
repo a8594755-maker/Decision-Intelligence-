@@ -40,7 +40,7 @@ test.describe('Chat Planning Workflow', () => {
     await page.waitForTimeout(1000);
 
     // Input should be cleared after sending
-    const inputValue = await chatInput.inputValue();
+    const _inputValue = await chatInput.inputValue();
     // May or may not be cleared depending on implementation
 
     // No crash

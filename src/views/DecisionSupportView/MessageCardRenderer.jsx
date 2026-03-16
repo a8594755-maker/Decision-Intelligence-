@@ -55,6 +55,7 @@ import OpenCloudPublishCard from '../../components/chat/OpenCloudPublishCard';
 import UnifiedApprovalCard from '../../components/chat/UnifiedApprovalCard';
 import WorkOrderDraftCard from '../../components/chat/WorkOrderDraftCard';
 import AuditTimelineCard from '../../components/chat/AuditTimelineCard';
+import DecisionReviewPanel from '../../components/review/DecisionReviewPanel';
 import { toPositiveRunId } from './helpers.js';
 
 /**
@@ -502,6 +503,17 @@ export default function MessageCardRenderer({ message, handlers, state }) {
         taskTitle={message.payload.task_title}
         taskId={message.payload.task_id}
         compact={message.payload.compact}
+      />
+    );
+  }
+  if (message.type === 'decision_review_card') {
+    return (
+      <DecisionReviewPanel
+        decisionBrief={message.payload?.decision_brief}
+        evidencePack={message.payload?.evidence_pack}
+        writebackPayload={message.payload?.writeback_payload}
+        taskMeta={message.payload?.task_meta}
+        onResolve={(resolution) => handlers.handleDecisionReviewResolution?.(resolution)}
       />
     );
   }
