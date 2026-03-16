@@ -1,8 +1,9 @@
 /**
  * Header Synonym Dictionary
  * 定義欄位名稱的同義字映射（可擴充）
- * 
- * TODO: 未來可改為從資料庫載入，允許使用者自訂 synonyms
+ *
+ * Custom synonyms can be loaded from DB via setSynonymLoader() / loadCustomSynonyms().
+ * See getEffectiveSynonyms() for the merged system + custom synonym map.
  */
 
 // Lazy reference to inferFieldFromValues — set via setInferenceFn() to avoid circular imports

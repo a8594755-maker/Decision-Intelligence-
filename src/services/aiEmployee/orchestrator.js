@@ -36,11 +36,33 @@ import { extractFromSingleRevision } from './styleLearning/feedbackStyleExtracto
 import { checkBudget } from '../taskBudgetService.js';
 import { recall, summarizeMemories } from '../aiEmployeeMemoryService.js';
 import { reviewStepOutput, shouldReview } from '../aiReviewerService.js';
+import { getLatestMetrics } from './styleLearning/trustMetricsService.js';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const MAX_RETRIES = 3;
 const TICK_DELAY_MS = 500; // Delay between steps to avoid overloading
+
+// ── Autonomy Level Helpers ────────────────────────────────────────────────────
+
+const AUTONOMY_RANK = { A0: 0, A1: 1, A2: 2, A3: 3, A4: 4 };
+
+/**
+ * Get the effective autonomy level for a worker.
+ * Falls back to 'A1' if metrics unavailable.
+ */
+async function _getAutonomyLevel(employeeId) {
+  try {
+    const metrics = await getLatestMetrics(employeeId);
+    return metrics?.autonomy_level || 'A1';
+  } catch {
+    return 'A1';
+  }
+}
+
+function _autonomyAtLeast(level, threshold) {
+  return (AUTONOMY_RANK[level] || 0) >= (AUTONOMY_RANK[threshold] || 0);
+}
 
 // ML API base for SSE publishing
 const ML_API_URL = typeof import.meta !== 'undefined' && import.meta.env?.VITE_ML_API_URL
@@ -113,6 +135,19 @@ export async function submitPlan(plan, employeeId, userId) {
   const updated = await taskRepo.updateTaskStatus(task.id, nextStatus, task.version);
 
   eventBus.emit(EVENT_NAMES.TASK_CREATED, { taskId: task.id, title: plan.title, steps: plan.steps });
+
+  // ── Autonomy gate: auto-approve for A3+ workers ──
+  const autonomyLevel = await _getAutonomyLevel(employeeId);
+  if (_autonomyAtLeast(autonomyLevel, 'A3')) {
+    try {
+      await approvePlan(task.id, userId);
+      const autoApproved = await taskRepo.getTask(task.id);
+      eventBus.emit(EVENT_NAMES.TASK_STARTED, { taskId: task.id, userId, autoApproved: true, autonomyLevel });
+      return { taskId: task.id, task: autoApproved, autoApproved: true, autonomyLevel };
+    } catch (err) {
+      console.warn('[Orchestrator] Auto-approve failed, falling back to manual:', err.message);
+    }
+  }
 
   return { taskId: task.id, task: updated };
 }
@@ -502,7 +537,9 @@ async function _executeStep(task, step) {
 
     if (result.ok) {
       // ── AI Review gate (ported from agentLoopService) ──
-      if (stepDef.ai_review && shouldReview(stepDef.tool_type || step.step_name)) {
+      // A4 (Trusted) workers skip AI review entirely
+      const _reviewAutonomy = await _getAutonomyLevel(task.employee_id);
+      if (stepDef.ai_review && shouldReview(stepDef.tool_type || step.step_name) && !_autonomyAtLeast(_reviewAutonomy, 'A4')) {
         try {
           const review = await reviewStepOutput({
             taskId: task.id,
@@ -582,19 +619,42 @@ async function _handleStepSuccess(task, step, result, stepDef) {
 
   // Check if this step requires review
   if (stepDef.review_checkpoint) {
-    const nextTaskStatus = taskTransition(task.status, TASK_EVENTS.REVIEW_NEEDED);
-    await taskRepo.updateTaskStatus(task.id, nextTaskStatus, task.version);
+    // ── Autonomy gate: A3+ workers auto-pass review checkpoints ──
+    const autonomyLevel = await _getAutonomyLevel(task.employee_id);
+    if (_autonomyAtLeast(autonomyLevel, 'A3')) {
+      // Auto-approve checkpoint — log but don't pause
+      try {
+        await appendWorklog(task.employee_id, task.id, step.id, 'step_progress', {
+          step_name: step.step_name,
+          step_index: step.step_index,
+          status: 'review_auto_approved',
+          autonomy_level: autonomyLevel,
+          note: `Review checkpoint auto-approved (autonomy ${autonomyLevel})`,
+        });
+      } catch { /* worklog is best-effort */ }
 
-    const employee = await employeeRepo.getEmployee(task.employee_id);
-    try {
-      const empState = employeeTransition(employee._logicalState, EMPLOYEE_EVENTS.REVIEW_NEEDED);
-      await employeeRepo.updateEmployeeStatus(task.employee_id, empState);
-    } catch { /* ignore */ }
+      eventBus.emit(EVENT_NAMES.REVIEW_REQUESTED, {
+        taskId: task.id,
+        stepIndex: step.step_index,
+        autoApproved: true,
+        autonomyLevel,
+      });
+    } else {
+      // Standard review pause
+      const nextTaskStatus = taskTransition(task.status, TASK_EVENTS.REVIEW_NEEDED);
+      await taskRepo.updateTaskStatus(task.id, nextTaskStatus, task.version);
 
-    eventBus.emit(EVENT_NAMES.REVIEW_REQUESTED, {
-      taskId: task.id,
-      stepIndex: step.step_index,
-    });
+      const employee = await employeeRepo.getEmployee(task.employee_id);
+      try {
+        const empState = employeeTransition(employee._logicalState, EMPLOYEE_EVENTS.REVIEW_NEEDED);
+        await employeeRepo.updateEmployeeStatus(task.employee_id, empState);
+      } catch { /* ignore */ }
+
+      eventBus.emit(EVENT_NAMES.REVIEW_REQUESTED, {
+        taskId: task.id,
+        stepIndex: step.step_index,
+      });
+    }
   }
 }
 

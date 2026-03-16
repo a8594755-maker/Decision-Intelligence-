@@ -251,6 +251,164 @@ export function buildEnhancedApprovalCardPayload({
   };
 }
 
+// ── Closed-Loop Approval Integration ─────────────────────────────────────────
+
+/**
+ * Request approval for a closed-loop rerun.
+ *
+ * @param {Object} params
+ * @param {string} params.userId
+ * @param {string} params.conversationId
+ * @param {Object} params.closedLoopRun      - run record from closedLoopStore
+ * @param {Object} params.paramPatch         - proposed parameter changes
+ * @param {string} params.triggerType        - what triggered the rerun
+ * @param {number} [params.estimatedBenefit] - estimated net benefit USD
+ * @returns {Object} EnhancedApproval with closed-loop context
+ */
+export async function requestClosedLoopApproval({
+  userId,
+  conversationId,
+  closedLoopRun,
+  paramPatch,
+  triggerType,
+  estimatedBenefit = 0,
+}) {
+  const narrative = `Closed-loop trigger: ${triggerType}. Proposed parameter changes: ${JSON.stringify(paramPatch)}. Estimated net benefit: $${estimatedBenefit.toLocaleString()}.`;
+
+  const approval = await requestApprovalWithDeadline({
+    runId: closedLoopRun?.planning_run_id || closedLoopRun?.id || 0,
+    userId,
+    conversationId,
+    deadlineHours: estimatedBenefit > 10000 ? 4 : APPROVAL_CONFIG.default_deadline_hours,
+    narrative,
+    kpiSnapshot: {
+      trigger_type: triggerType,
+      param_patch: paramPatch,
+      estimated_benefit_usd: estimatedBenefit,
+      closed_loop_run_id: closedLoopRun?.id,
+    },
+  });
+
+  return {
+    ...approval,
+    approval_type: 'closed_loop',
+    closed_loop_run_id: closedLoopRun?.id,
+    trigger_type: triggerType,
+    param_patch: paramPatch,
+    estimated_benefit_usd: estimatedBenefit,
+  };
+}
+
+/**
+ * Request approval for a risk-driven replan.
+ *
+ * @param {Object} params
+ * @param {string} params.userId
+ * @param {string} params.conversationId
+ * @param {Object} params.recommendationCard - from riskClosedLoopService
+ * @returns {Object} EnhancedApproval with risk context
+ */
+export async function requestRiskReplanApproval({
+  userId,
+  conversationId,
+  recommendationCard,
+}) {
+  const payload = recommendationCard?.payload || {};
+  const trigger = payload.trigger || {};
+  const params = payload.recommended_params || {};
+  const benefit = payload.benefit || {};
+
+  const narrative = `Risk replan: ${trigger.high_risk_sku_count || 0} high-risk SKU(s), max score ${trigger.max_risk_score || 0}. ${params.reason || ''}`;
+
+  const approval = await requestApprovalWithDeadline({
+    runId: trigger.base_plan_run_id || 0,
+    userId,
+    conversationId,
+    deadlineHours: (trigger.critical_risk_sku_count || 0) > 0 ? 2 : 8,
+    narrative,
+    kpiSnapshot: {
+      high_risk_skus: trigger.high_risk_sku_count,
+      critical_risk_skus: trigger.critical_risk_sku_count,
+      max_risk_score: trigger.max_risk_score,
+      safety_stock_alpha: params.safety_stock_alpha,
+      estimated_net_benefit: benefit.estimated_net_benefit_usd,
+    },
+  });
+
+  return {
+    ...approval,
+    approval_type: 'risk_replan',
+    risk_run_id: trigger.source_risk_run_id,
+    plan_run_id: trigger.base_plan_run_id,
+    recommended_params: params,
+    benefit,
+  };
+}
+
+/**
+ * Build a unified approval card payload for any approval type.
+ */
+export function buildUnifiedApprovalCard(approval) {
+  const deadlineStatus = getApprovalDeadlineStatus(approval);
+
+  return {
+    type: 'unified_approval_card',
+    payload: {
+      approval_id: approval.approval_id,
+      approval_type: approval.approval_type || 'plan_commit',
+      run_id: approval.run_id,
+      status: approval.status,
+      title: approval.narrative_summary || `Approval for Run #${approval.run_id}`,
+      deadline: approval.deadline,
+      deadline_status: deadlineStatus,
+      kpi_snapshot: approval.kpi_snapshot || {},
+      decision_options: [
+        {
+          id: 'approve',
+          label: 'Approve',
+          variant: 'primary',
+          action: 'approve',
+        },
+        {
+          id: 'reject',
+          label: 'Reject',
+          variant: 'danger',
+          action: 'reject',
+        },
+        ...(approval.approval_type === 'risk_replan' ? [{
+          id: 'approve_conservative',
+          label: 'Approve (Conservative)',
+          variant: 'warning',
+          action: 'approve_conservative',
+        }] : []),
+      ],
+    },
+  };
+}
+
+/**
+ * List pending approvals for a user from the session context.
+ * Returns approvals that are still in PENDING status and not yet expired.
+ *
+ * @param {Object} sessionCtx - session context from sessionContextService
+ * @returns {Object[]} Pending approval objects with deadline status
+ */
+export function listPendingApprovals(sessionCtx) {
+  const approvals = sessionCtx?.pending_approvals || [];
+  return approvals
+    .filter((a) => a.status === 'PENDING')
+    .map((a) => ({
+      ...a,
+      deadline_status: a.deadline ? getApprovalDeadlineStatus(a) : null,
+    }))
+    .sort((a, b) => {
+      // Expired/critical first, then by deadline ascending
+      const aRemaining = a.deadline ? new Date(a.deadline).getTime() - Date.now() : Infinity;
+      const bRemaining = b.deadline ? new Date(b.deadline).getTime() - Date.now() : Infinity;
+      return aRemaining - bRemaining;
+    });
+}
+
 export default {
   requestApprovalWithDeadline,
   getApprovalDeadlineStatus,
@@ -258,5 +416,9 @@ export default {
   batchReject,
   scheduleApprovalReminders,
   buildEnhancedApprovalCardPayload,
+  requestClosedLoopApproval,
+  requestRiskReplanApproval,
+  buildUnifiedApprovalCard,
+  listPendingApprovals,
   APPROVAL_CONFIG,
 };

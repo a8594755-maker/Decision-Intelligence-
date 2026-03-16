@@ -69,12 +69,21 @@ export async function computeMetrics(employeeId, periodStart, periodEnd) {
   const autoApprovedRate = computeAutoApprovedRate(reviews, completedTasks);
   const escalationRate = computeEscalationRate(reviews);
 
+  // Compute policy violation rate from AI review results
+  const policyViolationRate = computePolicyViolationRate(aiReviews);
+
+  // Compute manager edit distance from revisions
+  const managerEditDistance = computeManagerEditDistance(reviews, memories);
+
+  // Compute style compliance score from AI review results
+  const styleComplianceScore = computeStyleComplianceScore(aiReviews, memories);
+
   // Determine autonomy level
   const autonomyLevel = determineAutonomyLevel({
     firstPassAcceptanceRate,
     revisionRate,
     tasksCompleted: completedTasks.length,
-    policyViolationRate: 0, // TODO: integrate with style compliance check
+    policyViolationRate,
   });
 
   const metrics = {
@@ -82,14 +91,14 @@ export async function computeMetrics(employeeId, periodStart, periodEnd) {
     period_start: periodStart.toISOString().split('T')[0],
     period_end: periodEnd.toISOString().split('T')[0],
     first_pass_acceptance_rate: firstPassAcceptanceRate,
-    manager_edit_distance: 0, // TODO: implement edit distance tracking
+    manager_edit_distance: managerEditDistance,
     revision_rate: revisionRate,
-    policy_violation_rate: 0, // TODO: integrate with style compliance
+    policy_violation_rate: policyViolationRate,
     autonomy_level: autonomyLevel,
     auto_approved_rate: autoApprovedRate,
     escalation_rate: escalationRate,
     avg_review_score: avgReviewScore,
-    style_compliance_score: 0, // TODO: aggregate from per-task checks
+    style_compliance_score: styleComplianceScore,
     artifact_completeness_rate: artifactCompletenessRate,
     tasks_completed: completedTasks.length,
     tasks_failed: failedTasks.length,
@@ -214,6 +223,76 @@ function computeEscalationRate(reviews) {
   const aiRejectedTaskIds = new Set(aiRejected.map(r => r.task_id));
   const escalated = reviews.filter(r => r.reviewer_type === 'human_manager' && aiRejectedTaskIds.has(r.task_id));
   return aiRejected.length ? escalated.length / aiRejected.length : 0;
+}
+
+/**
+ * Compute policy violation rate from AI review results.
+ * A policy violation is when an AI review flagged a violation (passed=false with low score).
+ */
+function computePolicyViolationRate(aiReviews) {
+  if (!aiReviews.length) return 0;
+  const violations = aiReviews.filter(r => r.passed === false && (r.score ?? 100) < 50);
+  return violations.length / aiReviews.length;
+}
+
+/**
+ * Compute normalized edit distance from manager revisions.
+ * Uses the ratio of revision comments/feedback length vs original output length as a proxy.
+ * Higher distance = more manager edits needed = lower trust.
+ */
+function computeManagerEditDistance(reviews, memories) {
+  const revisionReviews = reviews.filter(r => r.decision === 'needs_revision');
+  if (!revisionReviews.length) return 0;
+
+  let totalDistance = 0;
+  let count = 0;
+
+  for (const review of revisionReviews) {
+    const mem = memories.find(m => m.task_id === review.task_id);
+    if (!mem) continue;
+
+    // Use revision count as a proxy for edit distance (0-1 scale)
+    // Each revision implies ~0.3 normalized distance
+    const taskRevisions = reviews.filter(
+      r => r.task_id === review.task_id && r.decision === 'needs_revision'
+    ).length;
+    totalDistance += Math.min(taskRevisions * 0.3, 1.0);
+    count++;
+  }
+
+  return count > 0 ? totalDistance / count : 0;
+}
+
+/**
+ * Compute style compliance score from AI review scores and memory outcomes.
+ * Aggregates per-task style compliance into a 0-1 score.
+ */
+function computeStyleComplianceScore(aiReviews, memories) {
+  if (!aiReviews.length && !memories.length) return 0;
+
+  let totalScore = 0;
+  let count = 0;
+
+  // From AI reviews: use score as compliance indicator (0-100 → 0-1)
+  for (const review of aiReviews) {
+    if (typeof review.score === 'number') {
+      totalScore += review.score / 100;
+      count++;
+    }
+  }
+
+  // From memories: successful tasks with artifacts contribute positively
+  for (const mem of memories) {
+    if (mem.success && mem.artifacts_generated > 0) {
+      totalScore += 0.85; // baseline compliance for successful tasks
+      count++;
+    } else if (mem.success) {
+      totalScore += 0.70;
+      count++;
+    }
+  }
+
+  return count > 0 ? Math.min(totalScore / count, 1.0) : 0;
 }
 
 function computeByDocType(memories, reviews) {

@@ -193,5 +193,87 @@ export async function getKpis(employeeId) {
   return data;
 }
 
+/**
+ * Create a new worker from a template (explicit creation, not get-or-create).
+ * Allows multiple workers of the same template type with custom names.
+ *
+ * @param {string} userId - Manager user ID
+ * @param {string} templateId - Template to use
+ * @param {Object} [overrides] - Override template defaults
+ * @param {string} [overrides.name] - Custom worker name
+ * @param {string} [overrides.description] - Custom description
+ * @returns {Promise<object>} Created employee row
+ */
+export async function createWorkerFromTemplate(userId, templateId, overrides = {}) {
+  const template = WORKER_TEMPLATES[templateId];
+  if (!template) {
+    throw new Error(`[EmployeeRepo] Unknown worker template: '${templateId}'. Known: ${Object.keys(WORKER_TEMPLATES).join(', ')}`);
+  }
+
+  const { data: created, error } = await supabase
+    .from('ai_employees')
+    .insert({
+      name: overrides.name || template.name,
+      role: template.role,
+      status: 'idle',
+      manager_user_id: userId,
+      description: overrides.description || template.description,
+      permissions: template.permissions,
+    })
+    .select()
+    .single();
+
+  if (error) throw new Error(`[EmployeeRepo] createWorkerFromTemplate failed: ${error.message}`);
+  created._logicalState = DB_TO_EMPLOYEE_STATE[created.status] || created.status;
+  return created;
+}
+
+/**
+ * Delete a worker (soft or hard).
+ * @param {string} employeeId
+ */
+export async function deleteWorker(employeeId) {
+  const { error } = await supabase
+    .from('ai_employees')
+    .delete()
+    .eq('id', employeeId);
+  if (error) throw new Error(`[EmployeeRepo] deleteWorker failed: ${error.message}`);
+}
+
+/**
+ * Update a worker's name or description.
+ */
+export async function updateWorker(employeeId, updates) {
+  const allowed = {};
+  if (updates.name) allowed.name = updates.name;
+  if (updates.description) allowed.description = updates.description;
+  if (updates.permissions) allowed.permissions = updates.permissions;
+
+  const { data, error } = await supabase
+    .from('ai_employees')
+    .update(allowed)
+    .eq('id', employeeId)
+    .select()
+    .single();
+
+  if (error) throw new Error(`[EmployeeRepo] updateWorker failed: ${error.message}`);
+  data._logicalState = DB_TO_EMPLOYEE_STATE[data.status] || data.status;
+  return data;
+}
+
+/**
+ * List all available templates.
+ */
+export function listTemplates() {
+  return Object.values(WORKER_TEMPLATES).map(t => ({
+    id: t.id,
+    name: t.name,
+    role: t.role,
+    icon: t.icon,
+    description: t.description,
+    capabilities: t.capabilities,
+  }));
+}
+
 /** Expose template catalog for UI. */
 export { WORKER_TEMPLATES };
