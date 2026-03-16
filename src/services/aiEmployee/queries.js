@@ -27,6 +27,10 @@ export const getOrCreateWorker = employeeRepo.getOrCreateWorker;
 export const getEmployee = employeeRepo.getEmployee;
 export const listEmployeesByManager = employeeRepo.listEmployeesByManager;
 export const getKpis = employeeRepo.getKpis;
+export const createWorkerFromTemplate = employeeRepo.createWorkerFromTemplate;
+export const deleteWorker = employeeRepo.deleteWorker;
+export const updateWorker = employeeRepo.updateWorker;
+export const listTemplates = employeeRepo.listTemplates;
 
 // ── Task queries ──
 

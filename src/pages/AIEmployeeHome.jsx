@@ -13,13 +13,14 @@ import { useNavigate } from 'react-router-dom';
 import {
   Bot, MessageSquare, CheckCircle2, Clock, AlertTriangle, BarChart3,
   ChevronRight, Users, Zap, TrendingUp, FileText, ArrowUpRight,
-  Shield, Activity
+  Shield, Activity, Target, Eye, Sparkles
 } from 'lucide-react';
 import { Card } from '../components/ui';
 import { useAuth } from '../contexts/AuthContext';
-import { listEmployeesByManager, getKpis } from '../services/aiEmployee/queries.js';
+import { listEmployeesByManager, getKpis, createWorkerFromTemplate, listTemplates } from '../services/aiEmployee/queries.js';
 import { getLatestSummary } from '../services/dailySummaryService';
 import { listPending, getGovernanceStats } from '../services/governanceService';
+import { buildPerformanceDashboard, AUTONOMY_LABELS } from '../services/workerPerformanceService';
 import DecisionSupportView from '../views/DecisionSupportView';
 
 // ── Quick Stats Card ────────────────────────────────────────────────────────
@@ -150,6 +151,9 @@ export default function AIEmployeeHome() {
   const [loading, setLoading] = useState(true);
   const [pendingApprovals, setPendingApprovals] = useState([]);
   const [govStats, setGovStats] = useState(null);
+  const [perfDashboards, setPerfDashboards] = useState({});
+  const [showAddWorker, setShowAddWorker] = useState(false);
+  const [addingWorker, setAddingWorker] = useState(false);
 
   const loadData = useCallback(async () => {
     if (!user?.id) return;
@@ -182,6 +186,21 @@ export default function AIEmployeeHome() {
         const kMap = {};
         for (const r of kpiResults) kMap[r.id] = r.kpis;
         setKpisMap(kMap);
+
+        // Load performance dashboards (best-effort, non-blocking)
+        Promise.all(
+          emps.map(async (emp) => {
+            try {
+              return { id: emp.id, dashboard: await buildPerformanceDashboard(emp.id, { historyPeriods: 4, recentTaskLimit: 5 }) };
+            } catch {
+              return { id: emp.id, dashboard: null };
+            }
+          })
+        ).then(perfResults => {
+          const pMap = {};
+          for (const r of perfResults) if (r.dashboard) pMap[r.id] = r.dashboard;
+          setPerfDashboards(pMap);
+        });
       }
     } finally {
       setLoading(false);
@@ -386,18 +405,163 @@ export default function AIEmployeeHome() {
           </div>
         )}
 
+        {/* Performance Dashboard */}
+        {Object.keys(perfDashboards).length > 0 && (
+          <div className="space-y-2">
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">Performance Dashboard</h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {workers.map((w) => {
+                const perf = perfDashboards[w.id];
+                if (!perf) return null;
+                const m = perf.metrics;
+                const trend = perf.trends;
+                const trendIcon = trend?.direction === 'improving' ? '↑' : trend?.direction === 'declining' ? '↓' : '→';
+                const trendColor = trend?.direction === 'improving' ? 'text-emerald-600' : trend?.direction === 'declining' ? 'text-red-500' : 'text-slate-400';
+
+                return (
+                  <Card key={w.id} className="!p-4">
+                    {/* Header */}
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-2">
+                        <Bot className="w-4 h-4 text-indigo-500" />
+                        <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{w.name}</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                          perf.autonomy_level === 'A4' ? 'bg-blue-100 text-blue-700'
+                            : perf.autonomy_level === 'A3' ? 'bg-emerald-100 text-emerald-700'
+                              : perf.autonomy_level === 'A2' ? 'bg-amber-100 text-amber-700'
+                                : 'bg-slate-100 text-slate-600'
+                        }`}>
+                          {perf.autonomy_level} {perf.autonomy_label?.label || ''}
+                        </span>
+                        <span className={`text-xs font-medium ${trendColor}`}>{trendIcon}</span>
+                      </div>
+                    </div>
+
+                    {/* Health Score */}
+                    <div className="flex items-end gap-2 mb-3">
+                      <div>
+                        <p className="text-[10px] uppercase tracking-wide text-slate-500">Health Score</p>
+                        <span className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>{perf.health_score}</span>
+                        <span className="text-xs text-slate-400">/100</span>
+                      </div>
+                      <div className="flex-1 ml-3">
+                        <div className="w-full h-2 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden">
+                          <div
+                            className={`h-full rounded-full transition-all ${
+                              perf.health_score >= 80 ? 'bg-emerald-500' : perf.health_score >= 60 ? 'bg-blue-500' : perf.health_score >= 40 ? 'bg-amber-500' : 'bg-red-500'
+                            }`}
+                            style={{ width: `${perf.health_score}%` }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Key Metrics Grid */}
+                    {m && (
+                      <div className="grid grid-cols-3 gap-2 text-center">
+                        <div className="p-1.5 rounded bg-slate-50 dark:bg-slate-800/50">
+                          <p className="text-[9px] text-slate-500">1st Pass</p>
+                          <p className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>
+                            {m.first_pass_acceptance_rate != null ? `${Math.round(m.first_pass_acceptance_rate * 100)}%` : '--'}
+                          </p>
+                        </div>
+                        <div className="p-1.5 rounded bg-slate-50 dark:bg-slate-800/50">
+                          <p className="text-[9px] text-slate-500">Avg Review</p>
+                          <p className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>
+                            {m.avg_review_score != null ? Math.round(m.avg_review_score) : '--'}
+                          </p>
+                        </div>
+                        <div className="p-1.5 rounded bg-slate-50 dark:bg-slate-800/50">
+                          <p className="text-[9px] text-slate-500">Replay</p>
+                          <p className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>
+                            {perf.replay_completeness?.avg_score ?? '--'}%
+                          </p>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Autonomy by Task Type */}
+                    {perf.autonomy_by_task_type && Object.keys(perf.autonomy_by_task_type).length > 0 && (
+                      <div className="mt-3 pt-2 border-t" style={{ borderColor: 'var(--border-default)' }}>
+                        <p className="text-[9px] text-slate-500 uppercase tracking-wide mb-1">Autonomy by Task Type</p>
+                        <div className="flex flex-wrap gap-1">
+                          {Object.entries(perf.autonomy_by_task_type).slice(0, 4).map(([wf, data]) => (
+                            <span key={wf} className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800">
+                              <span className="text-slate-500">{wf}:</span>{' '}
+                              <span className="font-medium" style={{ color: 'var(--text-primary)' }}>{data.recommended_level}</span>
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </Card>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           {/* Workers List */}
           <div className="md:col-span-2 space-y-3">
             <div className="flex items-center justify-between">
               <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">Workers</h2>
-              <button
-                onClick={() => navigate('/employees')}
-                className="text-xs text-indigo-600 hover:text-indigo-700 font-medium"
-              >
-                Manage &rarr;
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setShowAddWorker(!showAddWorker)}
+                  className="text-xs px-2 py-1 rounded-md font-medium bg-indigo-50 text-indigo-600 hover:bg-indigo-100 dark:bg-indigo-900/30 dark:text-indigo-400 transition-colors"
+                >
+                  + Add Worker
+                </button>
+                <button
+                  onClick={() => navigate('/employees')}
+                  className="text-xs text-indigo-600 hover:text-indigo-700 font-medium"
+                >
+                  Manage &rarr;
+                </button>
+              </div>
             </div>
+
+            {/* Add Worker Panel */}
+            {showAddWorker && (
+              <div className="p-3 rounded-lg border bg-slate-50 dark:bg-slate-800/50 space-y-2" style={{ borderColor: 'var(--border-default)' }}>
+                <p className="text-xs font-medium" style={{ color: 'var(--text-primary)' }}>Select worker template:</p>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  {listTemplates().map((tmpl) => (
+                    <button
+                      key={tmpl.id}
+                      disabled={addingWorker}
+                      onClick={async () => {
+                        setAddingWorker(true);
+                        try {
+                          await createWorkerFromTemplate(user.id, tmpl.id);
+                          setShowAddWorker(false);
+                          loadData();
+                        } catch (err) {
+                          addNotification?.({ type: 'error', message: `Failed to create worker: ${err.message}` });
+                        } finally {
+                          setAddingWorker(false);
+                        }
+                      }}
+                      className="flex items-center gap-2 p-2 rounded-lg border text-left transition-colors hover:bg-white dark:hover:bg-slate-700 disabled:opacity-50"
+                      style={{ borderColor: 'var(--border-default)' }}
+                    >
+                      <div className="w-8 h-8 rounded-full bg-indigo-100 dark:bg-indigo-900/30 flex items-center justify-center flex-shrink-0">
+                        <Sparkles className="w-4 h-4 text-indigo-500" />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-xs font-medium truncate" style={{ color: 'var(--text-primary)' }}>{tmpl.name}</p>
+                        <p className="text-[10px] truncate" style={{ color: 'var(--text-muted)' }}>
+                          {(tmpl.role || '').replace(/_/g, ' ')}
+                        </p>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {loading ? (
               <div className="flex items-center justify-center h-32">
