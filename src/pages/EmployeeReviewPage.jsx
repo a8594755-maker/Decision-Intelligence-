@@ -11,6 +11,7 @@ import {
   RefreshCw, CheckCircle2, XCircle, RotateCcw, AlertTriangle,
   Clock, Loader2, FileText, Eye, Bot,
   BarChart3, Table2, Shield, Zap, Paperclip, GitCompare,
+  Activity,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { listPendingReviews, createReview } from '../services/aiEmployee/queries.js';
@@ -18,6 +19,8 @@ import { appendWorklog } from '../services/aiEmployee/persistence/worklogRepo.js
 import { attachFeedback } from '../services/aiEmployeeMemoryService';
 import { resolveReviewDecision } from '../services/aiEmployee/index.js';
 import { buildDeliverablePreview } from '../services/aiEmployee/deliverableProfile.js';
+import { buildTaskTimeline, computeReplayCompleteness } from '../services/taskTimelineService';
+import AuditTimelineCard from '../components/chat/AuditTimelineCard';
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -83,6 +86,21 @@ function truncatePreview(value, limit = 1800) {
   const normalized = safePreviewText(value);
   if (normalized.length <= limit) return normalized;
   return `${normalized.slice(0, limit).trim()}…`;
+}
+
+function computeSlaStatus(item) {
+  const sla = item.input_context?.sla;
+  if (!sla?.deadline) return null;
+  const now = Date.now();
+  const deadline = new Date(sla.deadline).getTime();
+  const remaining = deadline - now;
+  if (remaining <= 0) return { label: 'SLA Exceeded', color: 'bg-red-50 text-red-600 dark:bg-red-900/20 dark:text-red-400' };
+  // "approaching" = within 25% of total duration or less than 1 hour
+  const created = new Date(item.created_at).getTime();
+  const totalWindow = deadline - created;
+  const threshold = Math.min(totalWindow * 0.25, 3600000); // 25% or 1h
+  if (remaining <= threshold) return { label: 'SLA Soon', color: 'bg-amber-50 text-amber-600 dark:bg-amber-900/20 dark:text-amber-400' };
+  return { label: 'Within SLA', color: 'bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-400' };
 }
 
 function StatusBanner({ latestRun }) {
@@ -265,6 +283,26 @@ function RevisionDiffView({ runs }) {
 
 function DeliverableViewer({ item }) {
   const [activeTab, setActiveTab] = useState('deliverable');
+  const [taskTimeline, setTaskTimeline] = useState(null);
+  const [traceCompleteness, setTraceCompleteness] = useState(null);
+  const [timelineLoading, setTimelineLoading] = useState(false);
+
+  const loadTimeline = useCallback((taskId) => {
+    if (!taskId) return;
+    setTimelineLoading(true);
+    buildTaskTimeline(taskId).then(timeline => {
+      setTaskTimeline(timeline);
+      setTraceCompleteness(computeReplayCompleteness(timeline));
+    }).catch(() => {
+      setTaskTimeline(null);
+      setTraceCompleteness(null);
+    }).finally(() => setTimelineLoading(false));
+  }, []);
+
+  const itemId = item?.id;
+  useEffect(() => {
+    loadTimeline(itemId); // eslint-disable-line react-hooks/set-state-in-effect -- async fetch pattern
+  }, [itemId, loadTimeline]);
 
   const workflowType = item.input_context?.workflow_type || 'task';
   const deliverable = buildDeliverablePreview(item);
@@ -333,6 +371,7 @@ function DeliverableViewer({ item }) {
         {[
           { key: 'deliverable', label: 'Deliverable' },
           { key: 'evidence', label: `Evidence${deliverable.evidenceArtifacts.length ? ` (${deliverable.evidenceArtifacts.length})` : ''}` },
+          { key: 'timeline', label: `Timeline${taskTimeline?.length ? ` (${taskTimeline.length})` : ''}` },
         ].map((tab) => (
           <button
             key={tab.key}
@@ -448,9 +487,97 @@ function DeliverableViewer({ item }) {
               </div>
             </section>
           </div>
-        ) : (
+        ) : activeTab === 'evidence' ? (
           <EvidenceArtifactGrid artifactRefs={deliverable.evidenceArtifacts} />
-        )}
+        ) : activeTab === 'timeline' ? (
+          <div className="space-y-4">
+            {/* Trace Completeness + SLA Status */}
+            <div className="flex items-center flex-wrap gap-2">
+              <div className="flex items-center gap-2">
+                <Activity className="w-4 h-4 text-indigo-500" />
+                <span className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>Audit Trail</span>
+              </div>
+              {traceCompleteness && (
+                <span className={`px-2 py-0.5 rounded-full text-[11px] font-medium ${
+                  traceCompleteness.score >= 80 ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-400' :
+                  traceCompleteness.score >= 50 ? 'bg-amber-50 text-amber-600 dark:bg-amber-900/20 dark:text-amber-400' :
+                  'bg-red-50 text-red-600 dark:bg-red-900/20 dark:text-red-400'
+                }`}>
+                  {traceCompleteness.score}% traced
+                </span>
+              )}
+              {traceCompleteness?.missing?.length > 0 && (
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800" style={{ color: 'var(--text-muted)' }}>
+                  {traceCompleteness.missing.length} gap{traceCompleteness.missing.length > 1 ? 's' : ''}
+                </span>
+              )}
+            </div>
+
+            {/* SLA info from task intake */}
+            {item.input_context?.sla?.deadline && (() => {
+              const sla = computeSlaStatus(item);
+              return sla ? (
+                <div className="p-3 rounded-xl border" style={{ borderColor: 'var(--border-default)', backgroundColor: 'var(--surface-card)' }}>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Clock className="w-3.5 h-3.5" style={{ color: 'var(--text-muted)' }} />
+                      <span className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>SLA Target</span>
+                    </div>
+                    <span className={`px-2 py-0.5 rounded-full text-[11px] font-medium ${sla.color}`}>
+                      {sla.label}
+                    </span>
+                  </div>
+                  <p className="text-xs mt-1.5" style={{ color: 'var(--text-secondary)' }}>
+                    Deadline: {fmtTime(item.input_context.sla.deadline)}
+                    {item.input_context.sla.tier && <> &middot; Tier: <span className="capitalize">{item.input_context.sla.tier}</span></>}
+                  </p>
+                </div>
+              ) : null;
+            })()}
+
+            {/* Capability policy display */}
+            {item.input_context?.capability_policy && (
+              <div className="p-3 rounded-xl border" style={{ borderColor: 'var(--border-default)', backgroundColor: 'var(--surface-card)' }}>
+                <div className="flex items-center gap-2 mb-2">
+                  <Shield className="w-3.5 h-3.5 text-indigo-500" />
+                  <span className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>Capability Policy</span>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {Object.entries(item.input_context.capability_policy).map(([key, val]) => (
+                    <span key={key} className="text-[10px] px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800" style={{ color: 'var(--text-secondary)' }}>
+                      {key}: {typeof val === 'boolean' ? (val ? 'yes' : 'no') : String(val)}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Timeline card */}
+            {timelineLoading ? (
+              <div className="flex items-center justify-center py-14">
+                <Loader2 className="w-5 h-5 animate-spin text-indigo-400" />
+              </div>
+            ) : taskTimeline && taskTimeline.length > 0 ? (
+              <AuditTimelineCard
+                events={taskTimeline.map(e => ({
+                  type: e.event_type,
+                  timestamp: e.timestamp,
+                  step_name: e.detail?.step_name,
+                  message: e.detail?.error || e.detail?.feedback || e.detail?.decision,
+                  details: e.detail,
+                  artifacts: e.detail?.artifact_id ? [e.detail.artifact_id] : undefined,
+                }))}
+                taskTitle={item.title}
+                taskId={item.id}
+              />
+            ) : (
+              <div className="flex flex-col items-center justify-center py-14 gap-2">
+                <Activity className="w-10 h-10" style={{ color: 'var(--text-muted)' }} />
+                <p className="text-sm" style={{ color: 'var(--text-muted)' }}>No timeline events recorded yet.</p>
+              </div>
+            )}
+          </div>
+        ) : null}
       </div>
     </div>
   );
@@ -646,6 +773,7 @@ function QueueItem({ item, isSelected, onClick }) {
   const retries = steps.reduce((n, s) => n + (s.retry_count || 0), 0);
   const workerName = item.ai_employees?.name || null;
   const revisionCount = runs.length > 1 ? runs.length - 1 : 0;
+  const slaStatus = computeSlaStatus(item);
 
   return (
     <button
@@ -665,10 +793,15 @@ function QueueItem({ item, isSelected, onClick }) {
           <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{workerName}</span>
         </div>
       )}
-      <div className="flex items-center gap-1.5 mt-1.5">
+      <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
         <span className="text-xs px-1.5 py-0.5 rounded-full text-indigo-600 bg-indigo-50 dark:bg-indigo-900/20 capitalize font-medium">
           {item.input_context?.workflow_type || 'task'}
         </span>
+        {slaStatus && (
+          <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${slaStatus.color}`}>
+            {slaStatus.label}
+          </span>
+        )}
         {retries > 0 && (
           <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">
             {retries} self-fix

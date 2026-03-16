@@ -20,6 +20,7 @@ import { loadArtifact } from '../../utils/artifactStore.js';
 
 // ── Re-export worker template catalog ──
 export { WORKER_TEMPLATES } from './persistence/employeeRepo.js';
+export { listTemplatesFromDB, getWorkerTemplateFromDB } from './persistence/employeeRepo.js';
 
 // ── Employee queries ──
 

@@ -247,9 +247,25 @@ export async function composeOutputProfileContext({
   step = {},
   mode = 'minimal',
   overrides = {},
+  deliverableType = null,
+  audience = null,
 }) {
-  const scope = resolveOutputProfileScope({ inputContext, step });
-  const outputProfile = await getActiveOutputProfile({ employeeId, inputContext, step });
+  // Enrich inputContext with caller-provided deliverable metadata as fallbacks
+  const enrichedInputContext = { ...inputContext };
+  if (deliverableType && !enrichedInputContext.deliverable_type) {
+    enrichedInputContext.deliverable_type = deliverableType;
+  }
+  if (audience && !enrichedInputContext.deliverable_audience) {
+    enrichedInputContext.deliverable_audience = audience;
+  }
+
+  const scope = resolveOutputProfileScope({ inputContext: enrichedInputContext, step });
+  const outputProfile = await getActiveOutputProfile({ employeeId, inputContext: enrichedInputContext, step });
+
+  // Attach audience to outputProfile so downstream consumers can use it
+  if (audience && outputProfile && !outputProfile.audience) {
+    outputProfile.audience = audience;
+  }
 
   const compose = mode === 'full' ? composeStyleContext : composeMinimalStyleContext;
   const params = {

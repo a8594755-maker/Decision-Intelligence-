@@ -52,11 +52,15 @@ import { handleParameterChange, handlePlanComparison, buildComparisonSummaryText
 import { createAlertMonitor, buildAlertChatMessage, isAlertMonitorEnabled } from '../../services/alertMonitorService';
 import { batchApprove, batchReject } from '../../services/approvalWorkflowService';
 import { decomposeTask } from '../../services/chatTaskDecomposer';
+import { draftWorkOrder, isTaskIntent } from '../../services/aiEmployee/workOrderDraftService';
 import { buildDynamicTemplate } from '../../services/dynamicTemplateBuilder';
 import { getOrCreateWorker } from '../../services/aiEmployee/queries.js';
 // v2 orchestrator — single entry point for task lifecycle
 import { createPlan, submitPlan, approvePlan as orchestratorApprovePlan } from '../../services/aiEmployee/index.js';
 import { eventBus, EVENT_NAMES } from '../../services/eventBus.js';
+import { processEmailIntake } from '../../services/emailIntakeService.js';
+import { processTranscriptIntake } from '../../services/transcriptIntakeService.js';
+import { processIntake, INTAKE_SOURCES } from '../../services/taskIntakeService.js';
 import {
   SIDEBAR_COLLAPSED_KEY_PREFIX,
   CANVAS_SPLIT_RATIO_KEY_PREFIX,
@@ -1674,6 +1678,74 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
       setIsTyping(false); setStreamingContent(''); return;
     }
 
+    if (command === '/email') {
+      const emailContent = trimmed.slice('/email'.length).trim();
+      if (!emailContent) {
+        appendMessagesToCurrentConversation([{ role: 'ai', content: 'Usage: `/email <paste email content>` — I will extract action items and create work orders.', timestamp: new Date().toISOString() }]);
+        setIsTyping(false); setStreamingContent(''); return;
+      }
+      try {
+        const aiden = await getOrCreateWorker(user?.id);
+        const lines = emailContent.split('\n');
+        const subject = lines[0];
+        const body = lines.slice(1).join('\n');
+        const result = await processEmailIntake({
+          rawHeaders: { subject, from: 'chat-paste', date: new Date().toISOString() },
+          body,
+          employeeId: aiden.id,
+          userId: user?.id,
+        });
+        const workOrders = result.work_orders || [];
+        const actionItems = result.action_items || [];
+        let summary = `Processed email intake: **${subject}**\n`;
+        if (actionItems.length > 0) {
+          summary += `\nDetected ${actionItems.length} action item(s):\n${actionItems.map((a, i) => `${i + 1}. ${a}`).join('\n')}`;
+        }
+        summary += `\n\nCreated ${workOrders.length} work order(s). Check the Task Board for details.`;
+        appendMessagesToCurrentConversation([{ role: 'ai', content: summary, timestamp: new Date().toISOString() }]);
+      } catch (err) {
+        appendMessagesToCurrentConversation([{ role: 'ai', content: `Email intake failed: ${err?.message || 'Unknown error'}`, timestamp: new Date().toISOString() }]);
+      }
+      setIsTyping(false); setStreamingContent(''); return;
+    }
+
+    if (command === '/transcript') {
+      const transcriptContent = trimmed.slice('/transcript'.length).trim();
+      if (!transcriptContent) {
+        appendMessagesToCurrentConversation([{ role: 'ai', content: 'Usage: `/transcript <paste meeting transcript>` — I will extract action items and create work orders.', timestamp: new Date().toISOString() }]);
+        setIsTyping(false); setStreamingContent(''); return;
+      }
+      try {
+        const aiden = await getOrCreateWorker(user?.id);
+        const lines = transcriptContent.split('\n');
+        const meetingTitle = lines[0];
+        const transcript = lines.slice(1).join('\n') || lines[0];
+        const result = await processTranscriptIntake({
+          transcript,
+          meetingTitle,
+          employeeId: aiden.id,
+          userId: user?.id,
+        });
+        const workOrders = result.work_orders || [];
+        const analysis = result.analysis || {};
+        const actions = analysis.actions || [];
+        const decisions = analysis.decisions || [];
+        let summary = `Processed transcript: **${analysis.meeting_title || meetingTitle}**\n`;
+        summary += `\nSpeakers: ${(analysis.speakers || []).join(', ') || 'Unknown'}`;
+        if (actions.length > 0) {
+          summary += `\n\nDetected ${actions.length} action item(s):\n${actions.map((a, i) => `${i + 1}. ${a.text}${a.owner ? ` (owner: ${a.owner})` : ''}${a.deadline ? ` [due: ${a.deadline}]` : ''}`).join('\n')}`;
+        }
+        if (decisions.length > 0) {
+          summary += `\n\nDecisions:\n${decisions.map((d, i) => `- ${d.text}`).join('\n')}`;
+        }
+        summary += `\n\nCreated ${workOrders.length} work order(s). Check the Task Board for details.`;
+        appendMessagesToCurrentConversation([{ role: 'ai', content: summary, timestamp: new Date().toISOString() }]);
+      } catch (err) {
+        appendMessagesToCurrentConversation([{ role: 'ai', content: `Transcript intake failed: ${err?.message || 'Unknown error'}`, timestamp: new Date().toISOString() }]);
+      }
+      setIsTyping(false); setStreamingContent(''); return;
+    }
+
     // ── Build chat session context for copilot awareness ──
     const chatContext = buildChatSessionContext({
       pathname: location.pathname,
@@ -1717,41 +1789,46 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
     if (isAIEmployeeMode && !lower.startsWith('/')) {
       const GREETING_RE = /^(hi|hello|hey|thanks|thank you|ok|okay|你好|謝謝|好的|嗨|哈囉|了解|明白|沒問題|good|great|nice|got it|sure|yes|no|是|不是|對|沒有)\s*[!.。！]*$/i;
 
-      if (!GREETING_RE.test(trimmed)) {
+      if (!GREETING_RE.test(trimmed) && isTaskIntent(trimmed)) {
         try {
           const datasetProfileId = Number.isFinite(Number(activeDatasetContext?.dataset_profile_id)) ? Number(activeDatasetContext.dataset_profile_id) : null;
-          const decomposition = await decomposeTask({ userMessage: messageText, sessionContext: sessionCtx.context, userId: user?.id });
 
-          if (decomposition?.subtasks?.length) {
-            // ── Pre-execution clarification (vague requests) ────────────
-            if (decomposition.needs_clarification && decomposition.clarification_questions?.length > 0) {
-              appendMessagesToCurrentConversation([{
-                role: 'ai', type: 'clarification_card',
-                payload: { questions: decomposition.clarification_questions, original_instruction: messageText },
-                content: 'Before I start, let me ask a few questions to make sure I deliver exactly what you need.',
-                timestamp: new Date().toISOString(),
-                _onSubmit: async (answers) => {
-                  const enrichedMessage = `${messageText}\n\nUser preferences:\n${
-                    answers.map((a, i) => `- ${decomposition.clarification_questions[i]}: ${a || '(no preference)'}`).join('\n')
-                  }`;
-                  setIsTyping(true);
-                  try {
-                    handleSend(enrichedMessage);
-                  } finally {
-                    setIsTyping(false);
-                  }
-                },
-                _onSkip: () => {
-                  handleSend(messageText + ' [proceed with defaults, no clarification needed]');
-                },
-              }]);
-              setIsTyping(false); setStreamingContent(''); return;
-            }
+          // ── Phase 0: Work Order Draft (quick confirmation before expensive decompose) ──
+          const draft = draftWorkOrder(messageText, {
+            hasAttachment: Boolean(activeDatasetContext?.dataset_profile_id),
+          });
 
-            appendMessagesToCurrentConversation([{
-              role: 'ai', type: 'task_plan_card', payload: decomposition,
-              content: `I've broken this into ${decomposition.subtasks.length} step(s). Review and approve to let me start working.`,
-              timestamp: new Date().toISOString(),
+          // Helper: run full decomposition + orchestrator after user confirms draft
+          const _runDecomposeAndExecute = async (userMessage) => {
+            setIsTyping(true);
+            try {
+              const decomposition = await decomposeTask({ userMessage, sessionContext: sessionCtx.context, userId: user?.id });
+
+              if (decomposition?.subtasks?.length) {
+                // ── Pre-execution clarification (vague requests) ────────────
+                if (decomposition.needs_clarification && decomposition.clarification_questions?.length > 0) {
+                  appendMessagesToCurrentConversation([{
+                    role: 'ai', type: 'clarification_card',
+                    payload: { questions: decomposition.clarification_questions, original_instruction: userMessage },
+                    content: 'Before I start, let me ask a few questions to make sure I deliver exactly what you need.',
+                    timestamp: new Date().toISOString(),
+                    _onSubmit: async (answers) => {
+                      const enrichedMessage = `${userMessage}\n\nUser preferences:\n${
+                        answers.map((a, i) => `- ${decomposition.clarification_questions[i]}: ${a || '(no preference)'}`).join('\n')
+                      }`;
+                      _runDecomposeAndExecute(enrichedMessage);
+                    },
+                    _onSkip: () => {
+                      _runDecomposeAndExecute(userMessage + ' [proceed with defaults, no clarification needed]');
+                    },
+                  }]);
+                  setIsTyping(false); setStreamingContent(''); return;
+                }
+
+                appendMessagesToCurrentConversation([{
+                  role: 'ai', type: 'task_plan_card', payload: decomposition,
+                  content: `I've broken this into ${decomposition.subtasks.length} step(s). Review and approve to let me start working.`,
+                  timestamp: new Date().toISOString(),
               _onApprove: async () => {
                 try {
                   // ── v2 Orchestrator path ──────────────────────────────────
@@ -1824,7 +1901,57 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
               },
             }]);
             setIsTyping(false); setStreamingContent(''); return;
-          }
+              }
+            } catch (decompInnerErr) {
+              appendMessagesToCurrentConversation([{ role: 'ai', content: `Task planning failed: ${decompInnerErr?.message || 'Unknown error'}`, timestamp: new Date().toISOString() }]);
+            } finally {
+              setIsTyping(false); setStreamingContent('');
+            }
+          };
+
+          // Show Phase 0 work order draft card
+          appendMessagesToCurrentConversation([{
+            role: 'ai', type: 'work_order_draft_card', payload: draft,
+            content: `I'll set up a **${draft.workflow_label}** work order. Confirm to proceed with planning.`,
+            timestamp: new Date().toISOString(),
+            _onConfirm: async (confirmedDraft, answers) => {
+              // Enrich message with clarification answers if any
+              let enriched = messageText;
+              if (answers?.data_source) enriched += ` [data source: ${answers.data_source}]`;
+
+              // Persist work order via unified intake pipeline
+              try {
+                const aiden = await getOrCreateWorker(user?.id);
+                await processIntake({
+                  source: INTAKE_SOURCES.CHAT,
+                  message: enriched,
+                  employeeId: aiden.id,
+                  userId: user?.id,
+                  metadata: {
+                    workflow_type: confirmedDraft.workflow_type,
+                    matched_tools: confirmedDraft.matched_tools,
+                    data_hints: confirmedDraft.data_hints,
+                    clarification_answers: answers,
+                  },
+                });
+              } catch (intakeErr) {
+                console.warn('[DSV] Work order persistence failed (non-blocking):', intakeErr?.message);
+              }
+
+              _runDecomposeAndExecute(enriched);
+            },
+            _onCancel: () => {
+              appendMessagesToCurrentConversation([{
+                role: 'ai', content: 'Work order dismissed. Let me know if you need something else.',
+                timestamp: new Date().toISOString(),
+              }]);
+            },
+            _onAttach: () => {
+              // Trigger file picker — the ChatComposer's attach button
+              document.querySelector('[data-testid="attach-button"]')?.click();
+            },
+          }]);
+          setIsTyping(false); setStreamingContent(''); return;
         } catch (decompErr) {
           console.warn('[DSV] AI Employee decomposition failed, falling through to chat:', decompErr?.message);
         }
@@ -1875,9 +2002,31 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
           },
           assignTask: async ({ userMessage }) => {
             try {
-              // 1. Decompose user instruction into structured subtasks
+              const effectiveMessage = userMessage || messageText;
               const datasetProfileId = Number.isFinite(Number(activeDatasetContext?.dataset_profile_id)) ? Number(activeDatasetContext.dataset_profile_id) : null;
-              const decomposition = await decomposeTask({ userMessage: userMessage || messageText, sessionContext: sessionCtx.context, userId: user?.id });
+
+              // ── Gate 1: Unified intake normalization ──
+              const aiden = await getOrCreateWorker(user?.id);
+              let intakeWorkOrder = null;
+              try {
+                const intakeResult = await processIntake({
+                  source: INTAKE_SOURCES.CHAT,
+                  message: effectiveMessage,
+                  employeeId: aiden.id,
+                  userId: user?.id,
+                  metadata: { source_ref: 'assign_task_intent' },
+                });
+                intakeWorkOrder = intakeResult?.workOrder || null;
+                if (intakeResult?.status === 'duplicate') {
+                  appendMessagesToCurrentConversation([{ role: 'ai', content: `A similar task already exists (${intakeResult.workOrder?.title || 'duplicate'}). Check the Task Board for details.`, timestamp: new Date().toISOString() }]);
+                  return;
+                }
+              } catch (intakeErr) {
+                console.warn('[DSV] assignTask intake normalization failed (non-blocking):', intakeErr?.message);
+              }
+
+              // 1. Decompose user instruction into structured subtasks
+              const decomposition = await decomposeTask({ userMessage: effectiveMessage, sessionContext: sessionCtx.context, userId: user?.id });
 
               if (!decomposition?.subtasks?.length) {
                 appendMessagesToCurrentConversation([{ role: 'ai', content: 'Could not decompose this instruction into actionable tasks. Please try rephrasing.', timestamp: new Date().toISOString() }]);
@@ -1893,9 +2042,6 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
                 timestamp: new Date().toISOString(),
                 _onApprove: async () => {
                   try {
-                    // ── v2 Orchestrator path ──
-                    const aiden = await getOrCreateWorker(user?.id);
-
                     const rawRows = _rawRowsCache.get(String(datasetProfileId)) || activeDatasetContext?.rawRowsForStorage;
                     const inputData = { userId: user?.id, datasetProfileId };
                     if (Array.isArray(rawRows) && rawRows.length > 0) {
@@ -1922,17 +2068,24 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
                     }));
 
                     const plan = {
-                      title: (userMessage || messageText).slice(0, 120),
-                      description: decomposition.original_instruction || userMessage || messageText,
+                      title: intakeWorkOrder?.title || effectiveMessage.slice(0, 120),
+                      description: decomposition.original_instruction || effectiveMessage,
                       steps,
                       inputData,
+                      taskMeta: intakeWorkOrder ? {
+                        source_type: intakeWorkOrder.source,
+                        priority: intakeWorkOrder.priority,
+                        due_at: intakeWorkOrder.sla?.due_at,
+                        owner_hint: intakeWorkOrder.owner_hint,
+                        dedup_key: intakeWorkOrder.dedup_key,
+                      } : { source_type: 'chat' },
                       llmConfig: { provider: 'anthropic', model: 'claude-sonnet-4-6', temperature: 0.15, max_tokens: 4096 },
                     };
 
                     const { taskId } = await submitPlan(plan, aiden.id, user?.id);
 
                     setAgentExecEvents([]);
-                    setAgentExecTaskTitle((userMessage || messageText).slice(0, 80));
+                    setAgentExecTaskTitle(effectiveMessage.slice(0, 80));
                     setAgentExecPanelOpen(true);
                     setAgentExecSSETaskId(taskId);
 

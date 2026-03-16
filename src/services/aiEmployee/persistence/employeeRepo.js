@@ -132,7 +132,9 @@ const WORKER_TEMPLATES = {
  * @returns {Promise<object>} employee row
  */
 export async function getOrCreateWorker(userId, templateId = 'analytics_worker') {
-  const template = WORKER_TEMPLATES[templateId] || WORKER_TEMPLATES.analytics_worker;
+  // Try DB-backed template first, fall back to hardcoded
+  const dbTemplate = await getWorkerTemplateFromDB(templateId).catch(() => null);
+  const template = dbTemplate || WORKER_TEMPLATES[templateId] || WORKER_TEMPLATES.analytics_worker;
 
   // Try to find an existing worker with matching role for this user
   const { data: rows, error: selErr } = await supabase
@@ -205,7 +207,9 @@ export async function getKpis(employeeId) {
  * @returns {Promise<object>} Created employee row
  */
 export async function createWorkerFromTemplate(userId, templateId, overrides = {}) {
-  const template = WORKER_TEMPLATES[templateId];
+  // Try DB-backed template first, fall back to hardcoded
+  const dbTemplate = await getWorkerTemplateFromDB(templateId).catch(() => null);
+  const template = dbTemplate || WORKER_TEMPLATES[templateId];
   if (!template) {
     throw new Error(`[EmployeeRepo] Unknown worker template: '${templateId}'. Known: ${Object.keys(WORKER_TEMPLATES).join(', ')}`);
   }
@@ -273,6 +277,91 @@ export function listTemplates() {
     description: t.description,
     capabilities: t.capabilities,
   }));
+}
+
+// ── DB-backed template lookup ──
+
+/**
+ * Fetch a single worker template from the `worker_templates` DB table.
+ * Falls back to the hardcoded WORKER_TEMPLATES constant on failure.
+ *
+ * @param {string} templateId
+ * @returns {Promise<object>} Template in the same shape as WORKER_TEMPLATES entries
+ */
+export async function getWorkerTemplateFromDB(templateId) {
+  try {
+    const { data, error } = await supabase
+      .from('worker_templates')
+      .select('*')
+      .eq('id', templateId)
+      .eq('is_active', true)
+      .maybeSingle();
+
+    if (error || !data) {
+      return WORKER_TEMPLATES[templateId] || null;
+    }
+
+    return _dbTemplateToLocal(data);
+  } catch {
+    // DB unavailable — fall back to hardcoded
+    return WORKER_TEMPLATES[templateId] || null;
+  }
+}
+
+/**
+ * List all active worker templates from the DB.
+ * Falls back to Object.values(WORKER_TEMPLATES) on failure.
+ * DB templates take precedence over hardcoded ones (merged by id).
+ *
+ * @returns {Promise<object[]>} Array of template objects
+ */
+export async function listTemplatesFromDB() {
+  try {
+    const { data, error } = await supabase
+      .from('worker_templates')
+      .select('*')
+      .eq('is_active', true)
+      .order('created_at', { ascending: true });
+
+    if (error || !data || data.length === 0) {
+      return Object.values(WORKER_TEMPLATES);
+    }
+
+    // Merge: DB templates take precedence, hardcoded ones fill gaps
+    const merged = new Map();
+    for (const tmpl of Object.values(WORKER_TEMPLATES)) {
+      merged.set(tmpl.id, tmpl);
+    }
+    for (const row of data) {
+      merged.set(row.id, _dbTemplateToLocal(row));
+    }
+
+    return Array.from(merged.values());
+  } catch {
+    return Object.values(WORKER_TEMPLATES);
+  }
+}
+
+/**
+ * Convert a DB worker_templates row to the local template shape.
+ * @param {object} row - DB row from worker_templates
+ * @returns {object} Template in WORKER_TEMPLATES shape
+ */
+function _dbTemplateToLocal(row) {
+  return {
+    id: row.id,
+    name: row.name,
+    role: row.id, // DB templates use id as role
+    icon: 'bar-chart', // default icon; DB doesn't store icons yet
+    description: row.description || '',
+    capabilities: row.allowed_capabilities || [],
+    allowed_capabilities: row.allowed_capabilities || [],
+    defaultTemplates: [],
+    permissions: DEFAULT_PERMISSIONS,
+    default_autonomy: row.default_autonomy || 'A1',
+    max_autonomy: row.max_autonomy || 'A4',
+    _source: 'db',
+  };
 }
 
 /** Expose template catalog for UI. */

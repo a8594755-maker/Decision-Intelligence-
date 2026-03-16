@@ -142,6 +142,36 @@ export async function getLatestMetrics(employeeId) {
 }
 
 /**
+ * Record a single review outcome for incremental trust tracking.
+ * Called after each manager review decision.
+ */
+export async function recordReviewOutcome(employeeId, { taskId, decision, hasFeedback, hasRevision }) {
+  try {
+    // Update the latest trust metrics incrementally
+    const latest = await getLatestMetrics(employeeId);
+    if (!latest) return; // No metrics yet — will be computed on next full evaluation
+
+    const updates = {};
+    if (decision === 'approve' && !hasRevision) {
+      // First-pass approval — positive signal
+      updates.first_pass_count = (latest.first_pass_count || 0) + 1;
+    }
+    if (hasRevision) {
+      updates.revision_count = (latest.revision_count || 0) + 1;
+    }
+    updates.total_reviews = (latest.total_reviews || 0) + 1;
+    updates.updated_at = new Date().toISOString();
+
+    await supabase
+      .from(TABLE)
+      .update(updates)
+      .eq('id', latest.id);
+  } catch (err) {
+    console.warn('[TrustMetrics] recordReviewOutcome failed:', err.message);
+  }
+}
+
+/**
  * Get metrics history for trend analysis.
  */
 export async function getMetricsHistory(employeeId, { limit = 12 } = {}) {

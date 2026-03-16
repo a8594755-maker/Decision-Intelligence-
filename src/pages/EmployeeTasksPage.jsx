@@ -4,6 +4,7 @@ import {
   Plus, RefreshCw, Play, ChevronRight, Clock, CheckCircle2,
   AlertTriangle, Loader2, FileText, CalendarDays, Tag, Bell,
   Calendar, Pause, PlayCircle, Trash2, Send,
+  LayoutList, Columns, Settings2,
 } from 'lucide-react';
 import { Modal } from '../components/ui';
 import { useAuth } from '../contexts/AuthContext';
@@ -120,6 +121,16 @@ const DAY_OF_MONTH_OPTIONS = Array.from({ length: 31 }, (_, index) => ({
 }));
 
 const ORCHESTRATOR_ACTIVE_STATUSES = ['queued', 'in_progress'];
+
+const VIEW_MODES = { LIST: 'list', KANBAN: 'kanban' };
+
+const KANBAN_COLUMNS = [
+  { key: 'candidate',       label: 'Candidate',       statuses: ['todo', 'waiting_approval'], color: 'slate' },
+  { key: 'delegated',       label: 'Delegated',       statuses: ['queued', 'in_progress'],    color: 'blue' },
+  { key: 'needs_input',     label: 'Needs Input',     statuses: ['blocked'],                  color: 'red' },
+  { key: 'awaiting_review', label: 'Awaiting Review',  statuses: ['waiting_review', 'review_hold'], color: 'amber' },
+  { key: 'done',            label: 'Done',             statuses: ['done', 'failed'],           color: 'emerald' },
+];
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -980,6 +991,80 @@ function TaskDetail({ task, logs, onRun, running }) {
 
 // ── Page ──────────────────────────────────────────────────────────────────
 
+// ── Kanban Board ─────────────────────────────────────────────────────────
+
+function KanbanBoard({ tasks, selectedTaskId, onSelect, onRun, runningId }) {
+  return (
+    <div className="flex gap-3 p-4 overflow-x-auto h-full">
+      {KANBAN_COLUMNS.map((col) => {
+        const colTasks = tasks.filter((t) => col.statuses.includes(t.status));
+        return (
+          <div
+            key={col.key}
+            className="flex flex-col w-64 min-w-[240px] flex-shrink-0 rounded-xl border"
+            style={{ borderColor: 'var(--border-default)', backgroundColor: 'var(--surface-bg)' }}
+          >
+            {/* Column header */}
+            <div className="flex items-center gap-2 px-3 py-2.5 border-b" style={{ borderColor: 'var(--border-default)' }}>
+              <span className={`w-2 h-2 rounded-full bg-${col.color}-500`} />
+              <span className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>{col.label}</span>
+              <span className="ml-auto text-[11px] font-medium rounded-full px-1.5 py-0.5" style={{ color: 'var(--text-muted)', backgroundColor: 'var(--surface-subtle)' }}>
+                {colTasks.length}
+              </span>
+            </div>
+
+            {/* Cards */}
+            <div className="flex-1 overflow-y-auto p-2 space-y-2">
+              {colTasks.length === 0 ? (
+                <p className="text-center text-[11px] py-4" style={{ color: 'var(--text-muted)' }}>No tasks</p>
+              ) : (
+                colTasks.map((task) => (
+                  <button
+                    key={task.id}
+                    type="button"
+                    onClick={() => onSelect(task.id)}
+                    className={`w-full text-left rounded-lg border p-3 transition hover:shadow-sm ${
+                      task.id === selectedTaskId ? 'ring-2 ring-indigo-500' : ''
+                    }`}
+                    style={{ borderColor: 'var(--border-default)', backgroundColor: 'var(--surface-card)' }}
+                  >
+                    <p className="text-xs font-medium line-clamp-2" style={{ color: 'var(--text-primary)' }}>
+                      {task.title || 'Untitled task'}
+                    </p>
+                    <div className="mt-2 flex items-center gap-1.5 flex-wrap">
+                      <Badge label={STATUS_LABEL[task.status] || task.status} className={STATUS_STYLE[task.status] || ''} />
+                      {task.priority && (
+                        <Badge label={task.priority} className={PRIORITY_STYLE[task.priority] || ''} />
+                      )}
+                    </div>
+                    {task.updated_at && (
+                      <p className="mt-1.5 text-[10px]" style={{ color: 'var(--text-muted)' }}>{fmtDate(task.updated_at)}</p>
+                    )}
+                    {/* Quick-run for candidate tasks */}
+                    {col.key === 'candidate' && task.status === 'waiting_approval' && (
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); onRun(task); }}
+                        disabled={runningId === task.id}
+                        className="mt-2 flex items-center gap-1 text-[11px] font-medium text-indigo-600 hover:text-indigo-800 disabled:opacity-50"
+                      >
+                        {runningId === task.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
+                        Run
+                      </button>
+                    )}
+                  </button>
+                ))
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Page ──────────────────────────────────────────────────────────────────
+
 export default function EmployeeTasksPage() {
   const { user } = useAuth();
 
@@ -1000,6 +1085,7 @@ export default function EmployeeTasksPage() {
   const [showNewSchedule, setShowNewSchedule] = useState(false);
   const [quickTaskInput, setQuickTaskInput] = useState('');
   const [quickTaskLoading, setQuickTaskLoading] = useState(false);
+  const [viewMode, setViewMode] = useState(VIEW_MODES.KANBAN);
 
   const selectedTask = tasks.find((t) => t.id === selectedTaskId) || null;
 
@@ -1197,12 +1283,29 @@ export default function EmployeeTasksPage() {
           >
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} style={{ color: 'var(--text-muted)' }} />
           </button>
+          {/* View toggle */}
+          <div className="flex items-center rounded-lg border" style={{ borderColor: 'var(--border-default)' }}>
+            <button
+              onClick={() => setViewMode(VIEW_MODES.KANBAN)}
+              className={`p-1.5 rounded-l-lg transition-colors ${viewMode === VIEW_MODES.KANBAN ? 'bg-indigo-50 dark:bg-indigo-900/20' : 'hover:bg-[var(--surface-subtle)]'}`}
+              title="Board view"
+            >
+              <Columns className="w-4 h-4" style={{ color: viewMode === VIEW_MODES.KANBAN ? 'var(--accent-primary, #6366f1)' : 'var(--text-muted)' }} />
+            </button>
+            <button
+              onClick={() => setViewMode(VIEW_MODES.LIST)}
+              className={`p-1.5 rounded-r-lg transition-colors ${viewMode === VIEW_MODES.LIST ? 'bg-indigo-50 dark:bg-indigo-900/20' : 'hover:bg-[var(--surface-subtle)]'}`}
+              title="List view"
+            >
+              <LayoutList className="w-4 h-4" style={{ color: viewMode === VIEW_MODES.LIST ? 'var(--accent-primary, #6366f1)' : 'var(--text-muted)' }} />
+            </button>
+          </div>
           <button
             onClick={() => setShowNewTask(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-indigo-600 text-white hover:bg-indigo-700 transition-colors"
+            className="p-1.5 rounded-lg transition-colors hover:bg-[var(--surface-subtle)]"
+            title="Advanced: Create task from template"
           >
-            <Plus className="w-3.5 h-3.5" />
-            New Task
+            <Settings2 className="w-4 h-4" style={{ color: 'var(--text-muted)' }} />
           </button>
         </div>
       </div>
@@ -1232,76 +1335,95 @@ export default function EmployeeTasksPage() {
         </button>
       </form>
 
-      <div className="flex flex-1 overflow-hidden">
-        {/* ── Left: task list ── */}
-        <aside
-          className="w-72 flex-shrink-0 flex flex-col border-r"
-          style={{ borderColor: 'var(--border-default)' }}
-        >
-          {/* Status filter */}
-          <div className="p-2 border-b" style={{ borderColor: 'var(--border-default)' }}>
-            <select
-              className="w-full px-2.5 py-1.5 rounded-lg border text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              style={{ borderColor: 'var(--border-default)', backgroundColor: 'var(--surface-bg)', color: 'var(--text-secondary)' }}
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-            >
-              {STATUS_FILTERS.map((f) => (
-                <option key={f.value} value={f.value}>{f.label}</option>
-              ))}
-            </select>
-          </div>
-
-          {/* List */}
-          <div className="flex-1 overflow-y-auto p-1.5 space-y-0.5">
-            {loading ? (
-              <div className="flex items-center justify-center py-8">
-                <Loader2 className="w-5 h-5 animate-spin text-indigo-400" />
-              </div>
-            ) : tasks.length === 0 ? (
-              <div className="px-3 py-8 text-center">
-                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>No tasks yet.</p>
-                <button
-                  onClick={() => setShowNewTask(true)}
-                  className="mt-2 text-xs text-indigo-600 hover:underline"
-                >
-                  Create the first one
-                </button>
-              </div>
-            ) : (
-              <GroupedTaskList
-                tasks={tasks}
-                selectedTaskId={selectedTaskId}
-                onSelect={setSelectedTaskId}
-                statusFilter={statusFilter}
-              />
-            )}
-          </div>
-        </aside>
-
-        {/* ── Right: task detail ── */}
-        <main className="flex-1 overflow-hidden">
+      {viewMode === VIEW_MODES.KANBAN ? (
+        /* ── Kanban view ── */
+        <div className="flex-1 overflow-hidden flex flex-col">
           {runError && (
-            <div className="mx-6 mt-4 flex items-center gap-2 px-3 py-2.5 rounded-lg bg-red-50 text-red-700 text-sm">
+            <div className="mx-4 mt-2 flex items-center gap-2 px-3 py-2 rounded-lg bg-red-50 text-red-700 text-sm">
               <AlertTriangle className="w-4 h-4 flex-shrink-0" />
               <span>{runError}</span>
               <button onClick={() => setRunError(null)} className="ml-auto text-xs underline">Dismiss</button>
             </div>
           )}
-          {selectedTask ? (
-            <TaskDetail
-              task={selectedTask}
-              logs={logs}
-              onRun={handleRun}
-              running={runningId === selectedTask.id}
-            />
-          ) : (
-            <div className="flex items-center justify-center h-full">
-              <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Select a task to view details</p>
+          {loading ? (
+            <div className="flex items-center justify-center flex-1">
+              <Loader2 className="w-5 h-5 animate-spin text-indigo-400" />
             </div>
+          ) : tasks.length === 0 ? (
+            <div className="flex flex-col items-center justify-center flex-1">
+              <p className="text-sm" style={{ color: 'var(--text-muted)' }}>No tasks yet. Describe what you need in the box above.</p>
+            </div>
+          ) : (
+            <KanbanBoard
+              tasks={tasks}
+              selectedTaskId={selectedTaskId}
+              onSelect={setSelectedTaskId}
+              onRun={handleRun}
+              runningId={runningId}
+            />
           )}
-        </main>
-      </div>
+        </div>
+      ) : (
+        /* ── List view (original) ── */
+        <div className="flex flex-1 overflow-hidden">
+          <aside
+            className="w-72 flex-shrink-0 flex flex-col border-r"
+            style={{ borderColor: 'var(--border-default)' }}
+          >
+            <div className="p-2 border-b" style={{ borderColor: 'var(--border-default)' }}>
+              <select
+                className="w-full px-2.5 py-1.5 rounded-lg border text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                style={{ borderColor: 'var(--border-default)', backgroundColor: 'var(--surface-bg)', color: 'var(--text-secondary)' }}
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
+              >
+                {STATUS_FILTERS.map((f) => (
+                  <option key={f.value} value={f.value}>{f.label}</option>
+                ))}
+              </select>
+            </div>
+            <div className="flex-1 overflow-y-auto p-1.5 space-y-0.5">
+              {loading ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="w-5 h-5 animate-spin text-indigo-400" />
+                </div>
+              ) : tasks.length === 0 ? (
+                <div className="px-3 py-8 text-center">
+                  <p className="text-xs" style={{ color: 'var(--text-muted)' }}>No tasks yet.</p>
+                </div>
+              ) : (
+                <GroupedTaskList
+                  tasks={tasks}
+                  selectedTaskId={selectedTaskId}
+                  onSelect={setSelectedTaskId}
+                  statusFilter={statusFilter}
+                />
+              )}
+            </div>
+          </aside>
+          <main className="flex-1 overflow-hidden">
+            {runError && (
+              <div className="mx-6 mt-4 flex items-center gap-2 px-3 py-2.5 rounded-lg bg-red-50 text-red-700 text-sm">
+                <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+                <span>{runError}</span>
+                <button onClick={() => setRunError(null)} className="ml-auto text-xs underline">Dismiss</button>
+              </div>
+            )}
+            {selectedTask ? (
+              <TaskDetail
+                task={selectedTask}
+                logs={logs}
+                onRun={handleRun}
+                running={runningId === selectedTask.id}
+              />
+            ) : (
+              <div className="flex items-center justify-center h-full">
+                <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Select a task to view details</p>
+              </div>
+            )}
+          </main>
+        </div>
+      )}
 
       {/* ── Notification dropdown ── */}
       {showNotifs && (

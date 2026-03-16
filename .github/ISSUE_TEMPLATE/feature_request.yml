@@ -1,0 +1,46 @@
+name: Feature Request
+description: Propose a bounded feature, workflow improvement, or technical capability.
+title: "[Feature] "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem Statement
+      description: What user or operational problem should this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed Change
+      description: Describe the smallest viable version of the change.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Primary Area
+      options:
+        - Planning / Forecast UX
+        - AI employee workflow
+        - Data import / Supabase
+        - ML / Solver runtime
+        - Observability / Release
+        - Docs / Enablement
+    validations:
+      required: true
+  - type: textarea
+    id: success
+    attributes:
+      label: Success Criteria
+      description: What would make this done or demonstrably useful?
+    validations:
+      required: true
+  - type: textarea
+    id: risks
+    attributes:
+      label: Risks or Open Questions
+      description: Note rollout concerns, dependencies, or unresolved design questions.
+

@@ -1,0 +1,30 @@
+# Default owner. Replace with real GitHub teams as the repository grows.
+* @a8594755-maker
+
+# Frontend shell and user-facing workflows
+/src/components/ @a8594755-maker
+/src/contexts/ @a8594755-maker
+/src/hooks/ @a8594755-maker
+/src/layouts/ @a8594755-maker
+/src/pages/ @a8594755-maker
+/src/router.jsx @a8594755-maker
+/src/views/ @a8594755-maker
+
+# Shared client and platform integrations
+/src/config/ @a8594755-maker
+/src/contracts/ @a8594755-maker
+/src/services/ @a8594755-maker
+/supabase/ @a8594755-maker
+/sql/ @a8594755-maker
+
+# ML and solver runtime
+/src/ml/ @a8594755-maker
+/tests/ @a8594755-maker
+/scripts/ @a8594755-maker
+
+# Repo operations
+/.github/ @a8594755-maker
+/docs/ @a8594755-maker
+/README.md @a8594755-maker
+/CHANGELOG.md @a8594755-maker
+

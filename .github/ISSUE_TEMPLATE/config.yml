@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Architecture Decision Records
+    url: https://github.com/a8594755-maker/Decision-Intelligence-/blob/main/docs/adr/README.md
+    about: Check existing ADRs before opening design-heavy feature requests.

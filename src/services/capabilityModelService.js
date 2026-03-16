@@ -20,6 +20,7 @@
 
 import { BUILTIN_TOOLS, TOOL_CATEGORY } from './builtinToolCatalog.js';
 import { listToolTypes } from './aiEmployee/executors/executorRegistry.js';
+import { supabase } from './supabaseClient';
 
 // ── Capability Classes ──────────────────────────────────────────────────────
 
@@ -155,6 +156,71 @@ export const CAPABILITY_POLICIES = {
   },
 };
 
+// ── DB-First Policy Resolution ──────────────────────────────────────────────
+
+/**
+ * Resolve a capability policy from DB first, falling back to hardcoded.
+ * This is the primary entry point for policy lookups at runtime.
+ *
+ * @param {string} capabilityClass - CAPABILITY_CLASS value
+ * @param {string} [capabilityId]  - Specific capability ID for overrides
+ * @returns {Promise<Object>} policy object
+ */
+export async function getCapabilityPolicyFromDB(capabilityClass, capabilityId = null) {
+  try {
+    // Try specific capability override first
+    if (capabilityId) {
+      const { data } = await supabase
+        .from('capability_policies')
+        .select('*')
+        .eq('capability_class', capabilityClass)
+        .eq('capability_id', capabilityId)
+        .eq('is_active', true)
+        .maybeSingle();
+      if (data) return data;
+    }
+
+    // Try class-level DB policy
+    const { data } = await supabase
+      .from('capability_policies')
+      .select('*')
+      .eq('capability_class', capabilityClass)
+      .is('capability_id', null)
+      .eq('is_active', true)
+      .maybeSingle();
+    if (data) return data;
+  } catch {
+    // DB unavailable — fall through to hardcoded
+  }
+
+  return CAPABILITY_POLICIES[capabilityClass] || null;
+}
+
+/**
+ * Load all capability policies from DB, merging with hardcoded defaults.
+ * Returns a map of capabilityClass → policy.
+ *
+ * @returns {Promise<Object>} Map of capability class → policy
+ */
+export async function loadAllPoliciesFromDB() {
+  const merged = { ...CAPABILITY_POLICIES };
+  try {
+    const { data } = await supabase
+      .from('capability_policies')
+      .select('*')
+      .eq('is_active', true)
+      .is('capability_id', null);
+    if (data?.length) {
+      for (const row of data) {
+        merged[row.capability_class] = row;
+      }
+    }
+  } catch {
+    // DB unavailable — return hardcoded
+  }
+  return merged;
+}
+
 // ── Data Access Policies ────────────────────────────────────────────────────
 
 /**
@@ -279,10 +345,13 @@ export const WORKER_TEMPLATES = {
 
 /**
  * Build the unified capability catalog from all sources.
+ * Synchronous version uses hardcoded policies (for backward compat).
+ * Prefer buildCapabilityCatalogAsync() for runtime use.
  *
+ * @param {Object} [policyMap] - Pre-fetched policy map (optional, defaults to hardcoded)
  * @returns {Object[]} Array of capability entries
  */
-export function buildCapabilityCatalog() {
+export function buildCapabilityCatalog(policyMap = CAPABILITY_POLICIES) {
   const catalog = [];
 
   // 1. Map builtin tools to capabilities
@@ -300,7 +369,7 @@ export function buildCapabilityCatalog() {
       tier: tool.tier,
       required_datasets: tool.required_datasets,
       output_artifacts: tool.output_artifacts,
-      policy: CAPABILITY_POLICIES[capClass],
+      policy: policyMap[capClass] || CAPABILITY_POLICIES[capClass],
       data_access: DATA_ACCESS_POLICIES[capClass],
     });
   }
@@ -359,19 +428,31 @@ export function buildCapabilityCatalog() {
   ];
 
   for (const cap of platformCapabilities) {
+    const effectivePolicy = policyMap[cap.capability_class] || CAPABILITY_POLICIES[cap.capability_class];
     catalog.push({
       ...cap,
       source: 'platform',
       category: null,
-      tier: CAPABILITY_POLICIES[cap.capability_class]?.budget_tier || 'tier_b',
+      tier: effectivePolicy?.budget_tier || 'tier_b',
       required_datasets: [],
       output_artifacts: [],
-      policy: CAPABILITY_POLICIES[cap.capability_class],
+      policy: effectivePolicy,
       data_access: DATA_ACCESS_POLICIES[cap.capability_class],
     });
   }
 
   return catalog;
+}
+
+/**
+ * Async version of buildCapabilityCatalog that loads policies from DB first.
+ * This is the preferred entry point for runtime use.
+ *
+ * @returns {Promise<Object[]>} Array of capability entries with DB-sourced policies
+ */
+export async function buildCapabilityCatalogAsync() {
+  const policies = await loadAllPoliciesFromDB();
+  return buildCapabilityCatalog(policies);
 }
 
 // ── Policy Resolution ───────────────────────────────────────────────────────
@@ -384,8 +465,8 @@ export function buildCapabilityCatalog() {
  * @param {string} [workerTemplate] - Worker template ID
  * @returns {{ allowed, approval_needed, review_needed, reason }}
  */
-export function resolvePolicy(capabilityId, autonomyLevel, workerTemplate = null) {
-  const catalog = buildCapabilityCatalog();
+export async function resolvePolicy(capabilityId, autonomyLevel, workerTemplate = null) {
+  const catalog = await buildCapabilityCatalogAsync();
   const capability = catalog.find(c => c.id === capabilityId);
 
   if (!capability) {

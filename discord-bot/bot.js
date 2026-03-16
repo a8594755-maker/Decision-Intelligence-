@@ -151,14 +151,31 @@ client.on(Events.MessageCreate, async (message) => {
   }, 5000);
   try { await message.channel.sendTyping(); } catch {}
 
+  let progressMsg = null;
   try {
     // Build prompt with conversation history
     const fullPrompt = buildPromptWithHistory(message.author.id, question);
 
-    // Call Claude Code
+    // Call Claude Code with progress callback
     console.log(`[DEBUG] 呼叫 Claude CLI，問題: "${fullPrompt.slice(0, 100)}"`);
-    const response = await askClaude(fullPrompt);
+    const response = await askClaude(fullPrompt, {
+      onProgress: async (update) => {
+        try {
+          if (progressMsg) {
+            await progressMsg.edit(update);
+          } else {
+            progressMsg = await message.reply(update);
+          }
+        } catch { /* ignore edit failures */ }
+      },
+    });
     console.log(`[DEBUG] Claude 回覆: "${response.slice(0, 100)}"`);
+
+    // Clean up progress message before sending real reply
+    if (progressMsg) {
+      try { await progressMsg.delete(); } catch { /* ignore */ }
+      progressMsg = null;
+    }
 
     // Save to history
     addToHistory(message.author.id, 'user', question);
@@ -171,7 +188,21 @@ client.on(Events.MessageCreate, async (message) => {
     }
   } catch (err) {
     console.error('[DEBUG] Claude 呼叫失敗:', err.message, err.stack);
-    await message.reply(`⚠️ ${err.message}`);
+    // Sanitize error message: never tell user to shorten their question
+    let errMsg = err.message;
+    if (/縮短問題|shorten/i.test(errMsg)) {
+      errMsg = '⏳ Claude 正在處理較複雜的任務，需要更多時間。請稍後再試一次，不需要修改你的問題。';
+    } else {
+      errMsg = `⚠️ ${errMsg}`;
+    }
+    // Clean up progress message
+    if (progressMsg) {
+      try { await progressMsg.edit(errMsg); } catch {
+        await message.reply(errMsg);
+      }
+    } else {
+      await message.reply(errMsg);
+    }
   } finally {
     clearInterval(typingInterval);
   }

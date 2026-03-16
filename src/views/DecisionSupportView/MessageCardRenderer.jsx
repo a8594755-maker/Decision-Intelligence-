@@ -53,6 +53,8 @@ import RevisionLogCard from '../../components/chat/RevisionLogCard';
 import ToolRegistryCard from '../../components/chat/ToolRegistryCard';
 import OpenCloudPublishCard from '../../components/chat/OpenCloudPublishCard';
 import UnifiedApprovalCard from '../../components/chat/UnifiedApprovalCard';
+import WorkOrderDraftCard from '../../components/chat/WorkOrderDraftCard';
+import AuditTimelineCard from '../../components/chat/AuditTimelineCard';
 import { toPositiveRunId } from './helpers.js';
 
 /**
@@ -461,6 +463,17 @@ export default function MessageCardRenderer({ message, handlers, state }) {
       />
     );
   }
+  if (message.type === 'work_order_draft_card') {
+    return (
+      <WorkOrderDraftCard
+        draft={message.payload}
+        onConfirm={message._onConfirm}
+        onCancel={message._onCancel}
+        onAttach={message._onAttach}
+        disabled={message._disabled}
+      />
+    );
+  }
   if (message.type === 'task_plan_card') {
     return (
       <TaskPlanCard
@@ -481,6 +494,16 @@ export default function MessageCardRenderer({ message, handlers, state }) {
   }
   if (message.type === 'opencloud_file_ref' || message.type === 'opencloud_publish_card') {
     return <OpenCloudPublishCard artifact={message} />;
+  }
+  if (message.type === 'audit_timeline_card') {
+    return (
+      <AuditTimelineCard
+        events={message.payload.events}
+        taskTitle={message.payload.task_title}
+        taskId={message.payload.task_id}
+        compact={message.payload.compact}
+      />
+    );
   }
   if (message.type === 'unified_approval_card') {
     return (

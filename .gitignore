@@ -63,6 +63,7 @@ BUGFIX_*.md
 *_FIX.md
 *_CHECKLIST.md
 backtest_report.json
+pytest_report.json
 
 # Test scratch files in root
 PHASE*_CONSOLE_TEST.js
@@ -71,6 +72,8 @@ PHASE*_CONSOLE_TEST.js
 test-results/
 reports/
 playwright-report/
+coverage/
+.pytest_cache/
 
 # E2E auto-crawler output
 e2e/screenshots/

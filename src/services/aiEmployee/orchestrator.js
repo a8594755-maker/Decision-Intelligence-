@@ -29,6 +29,7 @@ import * as employeeRepo from './persistence/employeeRepo.js';
 import { appendWorklog } from './persistence/worklogRepo.js';
 
 import { getExecutor } from './executors/executorRegistry.js';
+import { resolveContext, detectMissingContext } from './lazyContextService.js';
 import { chooseHealingStrategy, analyzeStepFailure, getAlternativeModel } from '../selfHealingService.js';
 import { eventBus, EVENT_NAMES } from '../eventBus.js';
 import { composeOutputProfileContext } from './styleLearning/outputProfileService.js';
@@ -36,7 +37,8 @@ import { extractFromSingleRevision } from './styleLearning/feedbackStyleExtracto
 import { checkBudget } from '../taskBudgetService.js';
 import { recall, summarizeMemories } from '../aiEmployeeMemoryService.js';
 import { reviewStepOutput, shouldReview } from '../aiReviewerService.js';
-import { getLatestMetrics } from './styleLearning/trustMetricsService.js';
+import { getLatestMetrics, recordReviewOutcome } from './styleLearning/trustMetricsService.js';
+import { resolveCapabilityClass, CAPABILITY_POLICIES, getCapabilityPolicyFromDB } from '../capabilityModelService.js';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -62,6 +64,27 @@ async function _getAutonomyLevel(employeeId) {
 
 function _autonomyAtLeast(level, threshold) {
   return (AUTONOMY_RANK[level] || 0) >= (AUTONOMY_RANK[threshold] || 0);
+}
+
+// ── Capability Policy Helpers ─────────────────────────────────────────────────
+
+/**
+ * Fetch a capability policy — delegates to capabilityModelService.getCapabilityPolicyFromDB().
+ * DB-first, hardcoded fallback.
+ */
+async function _getCapabilityPolicy(capabilityClass, capabilityId = null) {
+  return getCapabilityPolicyFromDB(capabilityClass, capabilityId);
+}
+
+/**
+ * Check if inputData contains sensitive data markers.
+ * @param {object} inputData
+ * @returns {boolean}
+ */
+function _hasSensitiveData(inputData) {
+  const sensitiveMarkers = ['unit_cost', 'unit_margin', 'salary', 'ssn', 'credit_card'];
+  const str = JSON.stringify(inputData || {}).toLowerCase();
+  return sensitiveMarkers.some(m => str.includes(m));
 }
 
 // ML API base for SSE publishing
@@ -136,16 +159,47 @@ export async function submitPlan(plan, employeeId, userId) {
 
   eventBus.emit(EVENT_NAMES.TASK_CREATED, { taskId: task.id, title: plan.title, steps: plan.steps });
 
+  // ── Worklog: task created (audit trail completeness) ──
+  try {
+    await appendWorklog(task.employee_id, task.id, null, 'task_lifecycle', {
+      event: 'task_created', title: plan.title, step_count: plan.steps.length,
+      source: plan.taskMeta?.source_type || 'question_to_task',
+      priority: plan.priority || 'medium',
+    });
+  } catch { /* worklog is best-effort */ }
+
   // ── Autonomy gate: auto-approve for A3+ workers ──
+  // Also check capability-level policies: if ANY step requires approval per its
+  // capability policy and the worker hasn't reached that policy's auto_approve_at,
+  // skip auto-approve so the plan goes through manual approval.
   const autonomyLevel = await _getAutonomyLevel(employeeId);
   if (_autonomyAtLeast(autonomyLevel, 'A3')) {
+    let capabilityBlocksAutoApprove = false;
     try {
-      await approvePlan(task.id, userId);
-      const autoApproved = await taskRepo.getTask(task.id);
-      eventBus.emit(EVENT_NAMES.TASK_STARTED, { taskId: task.id, userId, autoApproved: true, autonomyLevel });
-      return { taskId: task.id, task: autoApproved, autoApproved: true, autonomyLevel };
-    } catch (err) {
-      console.warn('[Orchestrator] Auto-approve failed, falling back to manual:', err.message);
+      for (const stepDef of plan.steps || []) {
+        const capClass = resolveCapabilityClass({
+          tool_type: stepDef.tool_type || 'python_tool',
+          builtin_tool_id: stepDef.builtin_tool_id,
+        });
+        const policy = await _getCapabilityPolicy(capClass, stepDef.builtin_tool_id);
+        if (policy?.approval_required && !_autonomyAtLeast(autonomyLevel, policy.auto_approve_at || 'A3')) {
+          capabilityBlocksAutoApprove = true;
+          break;
+        }
+      }
+    } catch {
+      // Capability check failure should not block auto-approve
+    }
+
+    if (!capabilityBlocksAutoApprove) {
+      try {
+        await approvePlan(task.id, userId);
+        const autoApproved = await taskRepo.getTask(task.id);
+        eventBus.emit(EVENT_NAMES.TASK_STARTED, { taskId: task.id, userId, autoApproved: true, autonomyLevel });
+        return { taskId: task.id, task: autoApproved, autoApproved: true, autonomyLevel };
+      } catch (err) {
+        console.warn('[Orchestrator] Auto-approve failed, falling back to manual:', err.message);
+      }
     }
   }
 
@@ -230,6 +284,7 @@ export async function retryTask(taskId, userId) {
  * @param {string} userId
  * @param {object} [opts]
  * @param {string} [opts.feedback] - manager feedback text
+ * @param {string} [opts.decision] - review decision ('approve', 'needs_revision', etc.)
  * @param {object} [opts.revision] - { original, revised } for style learning
  * @param {Function} [opts.llmFn] - for feedback extraction
  */
@@ -246,16 +301,28 @@ export async function approveReview(taskId, userId, opts = {}) {
     // Best-effort only — task execution should still resume.
   }
 
-  // Learn from manager feedback (best-effort, non-blocking)
-  if (opts.feedback && opts.llmFn) {
-    extractFromSingleRevision(active.employee_id, taskId, {
-      original: opts.revision?.original,
-      revised: opts.revision?.revised,
-      feedback: opts.feedback,
-      workflowType: task.input_context?.workflow_type,
-    }, opts.llmFn).catch(err =>
-      console.warn('[Orchestrator] Style learning from feedback failed (non-blocking):', err.message)
-    );
+  const { feedback, decision } = opts;
+
+  // ── Feed review outcome into style/trust learning (best-effort) ──
+  try {
+    // Extract style rules from revision feedback (requires feedback text)
+    if (feedback && decision !== 'approve') {
+      await extractFromSingleRevision(active.employee_id, taskId, {
+        original: opts.revision?.original,
+        revised: opts.revision?.revised,
+        feedback,
+        workflowType: task.input_context?.workflow_type,
+      }, opts.llmFn || null);
+    }
+    // Record outcome for trust metrics (regardless of decision)
+    await recordReviewOutcome(active.employee_id, {
+      taskId,
+      decision: decision || 'approve',
+      hasFeedback: Boolean(feedback),
+      hasRevision: decision === 'needs_revision',
+    });
+  } catch (learnErr) {
+    console.warn('[Orchestrator] Style/trust learning failed (non-blocking):', learnErr.message);
   }
 
   // Continue tick loop
@@ -384,30 +451,43 @@ async function _executeStep(task, step) {
   const planSteps = planSnapshot.steps || [];
   const stepDef = planSteps[step.step_index] || {};
 
-  // ── Dataset gate: pause step if it requires data but none attached ──
+  // ── Dataset gate: skip or warn if step requires data but none attached ──
+  // Steps with `data_optional: true` or without `requires_dataset` proceed freely.
+  // Steps with `requires_dataset` but no data: try lazy context first, only block
+  // if the step truly cannot run without data (i.e. executor reports dependency error).
   const hasDataset = Boolean(
     task.input_context?.inputData?.datasetProfileId ||
     task.input_context?.dataset_profile_id
   );
-  if (stepDef.requires_dataset && !hasDataset) {
-    const waitingStatus = stepTransition(step.status, STEP_EVENTS.NEED_INPUT);
-    await stepRepo.updateStep(step.id, {
-      status: waitingStatus,
-      error_message: 'Waiting for dataset — attach a data source to continue.',
-    });
+  if (stepDef.requires_dataset && !hasDataset && !stepDef.data_optional) {
+    // Attempt lazy dataset acquisition before blocking
+    let lazyDatasetResolved = false;
+    if (stepDef.context_hints?.dataset) {
+      try {
+        const resolved = await resolveContext(
+          { source: stepDef.context_hints.dataset.source, params: stepDef.context_hints.dataset.params || {} },
+          { taskId: task.id, employeeId: task.employee_id, inputData: task.input_context?.inputData || {} }
+        );
+        if (resolved.ok && resolved.data) {
+          // Patch inputData with lazily resolved dataset
+          if (!task.input_context.inputData) task.input_context.inputData = {};
+          task.input_context.inputData.datasetProfileId = resolved.data.datasetProfileId || resolved.data.id;
+          lazyDatasetResolved = true;
+          await appendWorklog(task.employee_id, task.id, step.id, 'step_progress', {
+            action: 'lazy_dataset_acquired',
+            detail: `Resolved dataset via lazy context for step "${step.step_name}"`,
+          });
+        }
+      } catch (lazyErr) {
+        console.warn(`[Orchestrator] Lazy dataset resolution failed for step "${step.step_name}":`, lazyErr.message);
+      }
+    }
 
-    // Block the task so the tick loop pauses
-    const blockedStatus = taskTransition(task.status, TASK_EVENTS.BLOCK);
-    await taskRepo.updateTaskStatus(task.id, blockedStatus, task.version);
-
-    const blockPayload = {
-      taskId: task.id, stepIndex: step.step_index, stepName: step.step_name,
-      reason: 'waiting_input', message: 'Step requires a dataset. Attach one to continue.',
-    };
-    eventBus.emit(EVENT_NAMES.AGENT_STEP_BLOCKED, blockPayload);
-    _publishSSE(task.id, { event_type: 'step_blocked', ...blockPayload });
-
-    return { ok: false, waiting_input: true, error: 'Step requires dataset input.' };
+    // If lazy context didn't resolve dataset, let the step try anyway — the executor
+    // will report a data dependency error if the tool truly cannot proceed.
+    if (!lazyDatasetResolved) {
+      console.warn(`[Orchestrator] Step "${step.step_name}" requires dataset but none attached — proceeding optimistically. Executor will block if data is truly needed.`);
+    }
   }
 
   // ── Budget gate (ported from agentLoopService) ──
@@ -423,6 +503,62 @@ async function _executeStep(task, step) {
     }
   } catch { /* budget check is best-effort — proceed if service unavailable */ }
 
+  // ── Capability policy gate ──
+  try {
+    const capClass = resolveCapabilityClass({
+      tool_type: stepDef.tool_type || 'python_tool',
+      builtin_tool_id: stepDef.builtin_tool_id,
+    });
+    const policy = await _getCapabilityPolicy(capClass, stepDef.builtin_tool_id);
+
+    if (policy) {
+      const stepAutonomy = await _getAutonomyLevel(task.employee_id);
+
+      // Check approval requirement: hold step if policy requires approval
+      // and worker autonomy is below the auto-approve threshold
+      if (policy.approval_required && !_autonomyAtLeast(stepAutonomy, policy.auto_approve_at || 'A3') && !step._capability_approved) {
+        const holdMsg = `Capability "${capClass}" requires approval (worker autonomy ${stepAutonomy} < auto-approve threshold ${policy.auto_approve_at})`;
+        const holdPayload = {
+          taskId: task.id, stepIndex: step.step_index, stepName: step.step_name,
+          reason: 'capability_policy_hold', message: holdMsg,
+        };
+
+        await stepRepo.updateStep(step.id, {
+          status: 'review_hold',
+          error_message: holdMsg,
+        });
+
+        // Transition task to review state so tick loop pauses
+        try {
+          const nextTaskStatus = taskTransition(task.status, TASK_EVENTS.REVIEW_NEEDED);
+          await taskRepo.updateTaskStatus(task.id, nextTaskStatus, task.version);
+        } catch { /* task may already be in review */ }
+
+        eventBus.emit(EVENT_NAMES.AGENT_STEP_BLOCKED, holdPayload);
+        _publishSSE(task.id, { event_type: 'step_blocked', ...holdPayload });
+
+        return { ok: false, review_hold: true, error: holdMsg };
+      }
+
+      // Check sensitive data access: block if policy disallows and data has sensitive markers
+      if (policy.sensitive_data_allowed === false) {
+        const inputDataForCheck = task.input_context?.inputData || {};
+        if (_hasSensitiveData(inputDataForCheck)) {
+          const sensitiveMsg = `Capability "${capClass}" does not allow sensitive data access. Remove sensitive fields or use a capability with sensitive_data_allowed=true.`;
+          await stepRepo.updateStep(step.id, {
+            status: 'failed',
+            error_message: sensitiveMsg,
+            ended_at: new Date().toISOString(),
+          });
+          return { ok: false, error: sensitiveMsg };
+        }
+      }
+    }
+  } catch (capErr) {
+    // Capability policy check is best-effort — log and proceed
+    console.warn('[Orchestrator] Capability policy check failed (non-blocking):', capErr.message);
+  }
+
   // Transition step: pending/retrying → running
   const runningStatus = stepTransition(step.status, STEP_EVENTS.START);
   await stepRepo.updateStep(step.id, { status: runningStatus, started_at: new Date().toISOString() });
@@ -435,6 +571,14 @@ async function _executeStep(task, step) {
   };
   eventBus.emit(EVENT_NAMES.AGENT_STEP_STARTED, startPayload);
   _publishSSE(task.id, { event_type: 'step_started', ...startPayload });
+
+  // ── Worklog: step started (audit trail completeness) ──
+  try {
+    await appendWorklog(task.employee_id, task.id, null, 'step_progress', {
+      event: 'step_started', step_name: step.step_name, step_index: step.step_index,
+      tool_type: stepDef.tool_type || 'unknown',
+    });
+  } catch { /* worklog is best-effort */ }
 
   // Gather prior artifacts from completed steps — keyed by step name for /execute-tool
   const allSteps = await stepRepo.getSteps(task.id);
@@ -459,7 +603,9 @@ async function _executeStep(task, step) {
         ...stepDef,
         name: step.step_name,
       },
-      mode: 'minimal',
+      mode: 'full',  // Use full mode for richer style context that affects execution
+      deliverableType: task.input_context?.deliverable_type || stepDef.tool_type,
+      audience: task.input_context?.deliverable_audience || null,
     });
     if (resolved.styleContext) styleContext = resolved.styleContext;
     if (resolved.outputProfile) outputProfile = resolved.outputProfile;
@@ -497,6 +643,31 @@ async function _executeStep(task, step) {
     priorStepResults,
     _memory_context: memoryContext,
   };
+
+  // ── Lazy context acquisition: resolve missing data on-demand ──
+  if (stepDef.required_context?.length > 0) {
+    const missing = detectMissingContext({ inputData }, stepDef.required_context);
+    for (const key of missing) {
+      const contextHint = stepDef.context_hints?.[key];
+      if (contextHint) {
+        try {
+          const resolved = await resolveContext(
+            { source: contextHint.source, params: contextHint.params || {} },
+            { taskId: task.id, employeeId: task.employee_id, inputData }
+          );
+          if (resolved.ok) {
+            inputData[key] = resolved.data;
+            await appendWorklog(task.employee_id, task.id, step.id, 'step_progress', {
+              action: 'lazy_context_acquired',
+              detail: `Resolved "${key}" from ${contextHint.source}`,
+            });
+          }
+        } catch (err) {
+          console.warn(`[Orchestrator] Lazy context "${key}" failed:`, err.message);
+        }
+      }
+    }
+  }
 
   const stepInput = {
     step: {

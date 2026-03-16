@@ -4,7 +4,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // Mock dependencies
 vi.mock('./supabaseClient', () => ({ supabase: null }));
 
-vi.mock('./aiEmployeeService', () => ({
+vi.mock('./aiEmployee/queries.js', () => ({
   listTasks: vi.fn(async () => []),
   getKpis: vi.fn(async () => ({
     employee_id: 'emp-1',
@@ -29,7 +29,7 @@ vi.mock('./modelRoutingService', () => ({
 }));
 
 import { generateDailySummary, getLatestSummary } from './dailySummaryService';
-import * as aiEmployeeService from './aiEmployeeService';
+import * as queries from './aiEmployee/queries.js';
 import { getEmployeeCostSummary } from './modelRoutingService';
 
 const TODAY = new Date();
@@ -64,7 +64,7 @@ describe('generateDailySummary', () => {
   });
 
   it('counts tasks by status', async () => {
-    aiEmployeeService.listTasks.mockResolvedValueOnce([
+    queries.listTasks.mockResolvedValueOnce([
       makeTask({ status: 'done' }),
       makeTask({ status: 'done' }),
       makeTask({ status: 'blocked' }),
@@ -99,7 +99,7 @@ describe('generateDailySummary', () => {
   });
 
   it('generates highlights for completed tasks', async () => {
-    aiEmployeeService.listTasks.mockResolvedValueOnce([
+    queries.listTasks.mockResolvedValueOnce([
       makeTask({ status: 'done' }),
       makeTask({ status: 'done' }),
     ]);
@@ -109,7 +109,7 @@ describe('generateDailySummary', () => {
   });
 
   it('generates issues for failed tasks', async () => {
-    aiEmployeeService.listTasks.mockResolvedValueOnce([
+    queries.listTasks.mockResolvedValueOnce([
       makeTask({ status: 'blocked' }),
       makeTask({ status: 'blocked' }),
     ]);
@@ -130,7 +130,7 @@ describe('generateDailySummary', () => {
   });
 
   it('flags low review pass rate', async () => {
-    aiEmployeeService.getKpis.mockResolvedValueOnce({
+    queries.getKpis.mockResolvedValueOnce({
       employee_id: 'emp-1',
       tasks_completed: 5,
       tasks_open: 2,
@@ -146,7 +146,7 @@ describe('generateDailySummary', () => {
 
   it('writes worklog entry', async () => {
     await generateDailySummary('emp-1');
-    expect(aiEmployeeService.appendWorklog).toHaveBeenCalledWith(
+    expect(queries.appendWorklog).toHaveBeenCalledWith(
       'emp-1',
       null,
       null,
@@ -162,14 +162,14 @@ describe('generateDailySummary', () => {
   });
 
   it('survives KPI service failure', async () => {
-    aiEmployeeService.getKpis.mockRejectedValueOnce(new Error('fail'));
+    queries.getKpis.mockRejectedValueOnce(new Error('fail'));
     const summary = await generateDailySummary('emp-1');
     expect(summary.kpi_snapshot).toBeNull();
   });
 
   it('filters tasks by reference date', async () => {
     const yesterday = new Date(Date.now() - 86400000);
-    aiEmployeeService.listTasks.mockResolvedValueOnce([
+    queries.listTasks.mockResolvedValueOnce([
       makeTask({ status: 'done', updated_at: yesterday.toISOString(), created_at: yesterday.toISOString() }),
       makeTask({ status: 'done' }), // today
     ]);
@@ -189,7 +189,7 @@ describe('getLatestSummary', () => {
   });
 
   it('returns the latest daily_summary worklog content', async () => {
-    aiEmployeeService.listWorklogs.mockResolvedValueOnce([
+    queries.listWorklogs.mockResolvedValueOnce([
       { log_type: 'task_update', content: { note: 'task done' } },
       { log_type: 'daily_summary', content: { date: '2026-03-13', tasks_completed: 5 } },
     ]);

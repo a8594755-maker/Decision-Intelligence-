@@ -1,12 +1,12 @@
 // @product: ai-employee
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Bot, CheckCircle2, Clock, AlertTriangle, BarChart3, ChevronRight, Plus, FileText, DollarSign, ShieldCheck } from 'lucide-react';
+import { Bot, CheckCircle2, Clock, AlertTriangle, BarChart3, ChevronRight, Plus, FileText, DollarSign, ShieldCheck, Shield } from 'lucide-react';
 import { Card, Modal } from '../components/ui';
 import { useAuth } from '../contexts/AuthContext';
-import { getOrCreateWorker, listEmployeesByManager, getKpis, WORKER_TEMPLATES } from '../services/aiEmployee/queries.js';
-import { getLatestSummary } from '../services/dailySummaryService';
+import { getOrCreateWorker, listEmployeesByManager, getKpis, WORKER_TEMPLATES, listTemplatesFromDB } from '../services/aiEmployee/queries.js';
 import { getEmployeeCostSummary } from '../services/modelRoutingService';
+import { getLatestMetrics } from '../services/aiEmployee/styleLearning/trustMetricsService';
 
 const TEMPLATE_ICON = {
   'bar-chart': BarChart3,
@@ -32,6 +32,24 @@ function StatusBadge({ status }) {
   );
 }
 
+// ── Autonomy badge ───────────────────────────────────────────────────────
+
+const AUTONOMY_CONFIG = {
+  A1: { label: 'A1 · Learning',    color: 'text-slate-500 bg-slate-100' },
+  A2: { label: 'A2 · Guided',      color: 'text-blue-600 bg-blue-50' },
+  A3: { label: 'A3 · Autonomous',  color: 'text-emerald-600 bg-emerald-50' },
+  A4: { label: 'A4 · Trusted',     color: 'text-purple-600 bg-purple-50' },
+};
+
+function AutonomyBadge({ level }) {
+  const cfg = AUTONOMY_CONFIG[level] || AUTONOMY_CONFIG.A1;
+  return (
+    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${cfg.color}`}>
+      {cfg.label}
+    </span>
+  );
+}
+
 // ── KPI tile ──────────────────────────────────────────────────────────────
 
 function KpiTile({ label, value, icon: Icon, color = 'text-slate-700 dark:text-slate-300' }) {
@@ -50,10 +68,10 @@ function KpiTile({ label, value, icon: Icon, color = 'text-slate-700 dark:text-s
 
 // ── Employee card ─────────────────────────────────────────────────────────
 
-function EmployeeCard({ employee, kpis, cost, onViewTasks }) {
-  // Resolve icon from template
+function EmployeeCard({ employee, kpis, cost, trust, onViewTasks }) {
   const templateEntry = Object.values(WORKER_TEMPLATES).find((t) => t.role === employee.role);
-  const IconComp = (templateEntry && TEMPLATE_ICON[templateEntry.icon]) || Bot;
+  const iconKey = templateEntry?.icon;
+  const iconClassName = "w-5 h-5 text-indigo-600 dark:text-indigo-400";
 
   return (
     <Card variant="elevated" className="p-6 flex flex-col gap-5">
@@ -61,7 +79,10 @@ function EmployeeCard({ employee, kpis, cost, onViewTasks }) {
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-full bg-indigo-100 dark:bg-indigo-900/30 flex items-center justify-center flex-shrink-0">
-            <IconComp className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
+            {iconKey === 'bar-chart' ? <BarChart3 className={iconClassName} />
+              : iconKey === 'file-text' ? <FileText className={iconClassName} />
+              : iconKey === 'shield-check' ? <ShieldCheck className={iconClassName} />
+              : <Bot className={iconClassName} />}
           </div>
           <div>
             <p className="font-semibold text-sm" style={{ color: 'var(--text-primary)' }}>
@@ -72,7 +93,10 @@ function EmployeeCard({ employee, kpis, cost, onViewTasks }) {
             </p>
           </div>
         </div>
-        <StatusBadge status={employee.status} />
+        <div className="flex items-center gap-1.5">
+          <StatusBadge status={employee.status} />
+          <AutonomyBadge level={trust?.autonomy_level} />
+        </div>
       </div>
 
       {/* Description */}
@@ -83,7 +107,7 @@ function EmployeeCard({ employee, kpis, cost, onViewTasks }) {
       )}
 
       {/* KPI grid */}
-      <div className="grid grid-cols-3 sm:grid-cols-5 gap-4 pt-2 border-t" style={{ borderColor: 'var(--border-default)' }}>
+      <div className="grid grid-cols-3 sm:grid-cols-6 gap-4 pt-2 border-t" style={{ borderColor: 'var(--border-default)' }}>
         <KpiTile
           label="Tasks Done"
           value={kpis?.tasks_completed ?? 0}
@@ -114,6 +138,12 @@ function EmployeeCard({ employee, kpis, cost, onViewTasks }) {
           icon={DollarSign}
           color="text-slate-600"
         />
+        <KpiTile
+          label="Autonomy"
+          value={trust?.autonomy_level ?? '—'}
+          icon={Shield}
+          color="text-purple-600"
+        />
       </div>
 
       {/* Footer actions */}
@@ -133,11 +163,57 @@ function EmployeeCard({ employee, kpis, cost, onViewTasks }) {
 // ── Create Worker Modal ───────────────────────────────────────────────────
 
 function CreateWorkerModal({ onClose, onCreated, existingRoles }) {
-  const templateEntries = Object.entries(WORKER_TEMPLATES).filter(
-    ([, tmpl]) => !existingRoles.includes(tmpl.role)
+  const [templates, setTemplates] = useState([]);
+  const [loadingTemplates, setLoadingTemplates] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoadingTemplates(true);
+      try {
+        // Fetch DB-backed templates, merged with hardcoded ones
+        const dbTemplates = await listTemplatesFromDB();
+        if (cancelled) return;
+
+        // Merge: DB templates keyed by id take precedence over hardcoded
+        const merged = new Map();
+        for (const [id, tmpl] of Object.entries(WORKER_TEMPLATES)) {
+          merged.set(id, { ...tmpl, id });
+        }
+        for (const tmpl of dbTemplates) {
+          merged.set(tmpl.id, {
+            ...merged.get(tmpl.id),
+            ...tmpl,
+            // Prefer allowed_capabilities from DB, fall back to capabilities
+            capabilities: tmpl.allowed_capabilities || tmpl.capabilities || [],
+          });
+        }
+        setTemplates(Array.from(merged.values()));
+      } catch {
+        // Fallback to hardcoded templates
+        setTemplates(Object.entries(WORKER_TEMPLATES).map(([id, t]) => ({ ...t, id })));
+      } finally {
+        if (!cancelled) setLoadingTemplates(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const filteredTemplates = templates.filter(
+    (tmpl) => !existingRoles.includes(tmpl.role || tmpl.id)
   );
 
-  if (templateEntries.length === 0) {
+  if (loadingTemplates) {
+    return (
+      <Modal isOpen onClose={onClose} title="Create Worker">
+        <div className="p-6 flex items-center justify-center">
+          <div className="w-5 h-5 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
+        </div>
+      </Modal>
+    );
+  }
+
+  if (filteredTemplates.length === 0) {
     return (
       <Modal isOpen onClose={onClose} title="Create Worker">
         <div className="p-6 text-center">
@@ -162,30 +238,40 @@ function CreateWorkerModal({ onClose, onCreated, existingRoles }) {
         <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
           Choose a worker template. Each worker type can only be created once.
         </p>
-        {templateEntries.map(([templateId, tmpl]) => {
-          const IconComp = TEMPLATE_ICON[tmpl.icon] || Bot;
+        {filteredTemplates.map((tmpl) => {
+          const tmplIconKey = tmpl.icon;
+          const tmplIconCls = "w-5 h-5 text-indigo-600 dark:text-indigo-400";
+          const caps = tmpl.allowed_capabilities || tmpl.capabilities || [];
           return (
             <button
-              key={templateId}
-              onClick={() => onCreated(templateId)}
+              key={tmpl.id}
+              onClick={() => onCreated(tmpl.id)}
               className="w-full flex items-start gap-3 p-4 rounded-lg border text-left transition-colors hover:bg-[var(--surface-subtle)]"
               style={{ borderColor: 'var(--border-default)' }}
             >
               <div className="w-10 h-10 rounded-full bg-indigo-100 dark:bg-indigo-900/30 flex items-center justify-center flex-shrink-0">
-                <IconComp className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
+                {tmplIconKey === 'bar-chart' ? <BarChart3 className={tmplIconCls} />
+                  : tmplIconKey === 'file-text' ? <FileText className={tmplIconCls} />
+                  : tmplIconKey === 'shield-check' ? <ShieldCheck className={tmplIconCls} />
+                  : <Bot className={tmplIconCls} />}
               </div>
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
                   {tmpl.name}
+                  {tmpl._source === 'db' && (
+                    <span className="ml-1.5 px-1 py-0.5 text-[9px] rounded bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20">
+                      DB
+                    </span>
+                  )}
                 </p>
                 <p className="text-xs capitalize" style={{ color: 'var(--text-muted)' }}>
-                  {tmpl.role.replace(/_/g, ' ')}
+                  {(tmpl.role || tmpl.id).replace(/_/g, ' ')}
                 </p>
                 <p className="text-xs mt-1" style={{ color: 'var(--text-secondary)' }}>
                   {tmpl.description}
                 </p>
                 <div className="flex flex-wrap gap-1 mt-2">
-                  {tmpl.capabilities.map((cap) => (
+                  {caps.map((cap) => (
                     <span
                       key={cap}
                       className="px-1.5 py-0.5 text-[10px] rounded bg-indigo-50 text-indigo-600 dark:bg-indigo-900/20"
@@ -206,7 +292,7 @@ function CreateWorkerModal({ onClose, onCreated, existingRoles }) {
 
 // ── Team Performance Summary ─────────────────────────────────────────────
 
-function TeamPerformanceSummary({ workers, kpisMap, costsMap }) {
+function TeamPerformanceSummary({ workers, kpisMap, costsMap, trustMap = {} }) {
   if (workers.length === 0) return null;
 
   // Aggregate KPIs across all workers
@@ -234,6 +320,21 @@ function TeamPerformanceSummary({ workers, kpisMap, costsMap }) {
   const avgReviewPass = reviewPassCount ? Math.round(reviewPassSum / reviewPassCount) : null;
   const costPerTask = totalCompleted > 0 ? (totalCost / totalCompleted).toFixed(2) : null;
 
+  // Compute average autonomy level
+  const autonomyNumeric = { A1: 1, A2: 2, A3: 3, A4: 4 };
+  let autonomySum = 0;
+  let autonomyCount = 0;
+  for (const w of workers) {
+    const t = trustMap[w.id];
+    if (t?.autonomy_level && autonomyNumeric[t.autonomy_level] != null) {
+      autonomySum += autonomyNumeric[t.autonomy_level];
+      autonomyCount++;
+    }
+  }
+  const avgAutonomy = autonomyCount > 0
+    ? `A${Math.round(autonomySum / autonomyCount)}`
+    : '—';
+
   const tiles = [
     { label: 'Total Completed', value: totalCompleted, icon: CheckCircle2, color: 'text-emerald-600' },
     { label: 'Open Tasks', value: totalOpen, icon: Clock, color: 'text-blue-600' },
@@ -241,6 +342,7 @@ function TeamPerformanceSummary({ workers, kpisMap, costsMap }) {
     { label: 'Avg Review Pass %', value: avgReviewPass != null ? `${avgReviewPass}%` : '—', icon: AlertTriangle, color: 'text-amber-600' },
     { label: 'Total Cost', value: totalCost > 0 ? `$${totalCost.toFixed(2)}` : '—', icon: DollarSign, color: 'text-slate-600' },
     { label: 'Cost / Task', value: costPerTask ? `$${costPerTask}` : '—', icon: DollarSign, color: 'text-slate-600' },
+    { label: 'Avg Autonomy', value: avgAutonomy, icon: Shield, color: 'text-purple-600' },
   ];
 
   return (
@@ -248,7 +350,7 @@ function TeamPerformanceSummary({ workers, kpisMap, costsMap }) {
       <p className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: 'var(--text-muted)' }}>
         Team Performance
       </p>
-      <div className="grid grid-cols-3 sm:grid-cols-6 gap-4">
+      <div className="grid grid-cols-3 sm:grid-cols-7 gap-4">
         {tiles.map((t) => (
           <KpiTile key={t.label} label={t.label} value={t.value} icon={t.icon} color={t.color} />
         ))}
@@ -266,6 +368,7 @@ export default function EmployeesPage() {
   const [workers, setWorkers] = useState([]);
   const [kpisMap, setKpisMap] = useState({});
   const [costsMap, setCostsMap] = useState({});
+  const [trustMap, setTrustMap] = useState({});
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -284,8 +387,8 @@ export default function EmployeesPage() {
 
       setWorkers(emps);
 
-      // Load KPIs + costs for each worker (best-effort, parallel)
-      const [kpiResults, costResults] = await Promise.all([
+      // Load KPIs + costs + trust metrics for each worker (best-effort, parallel)
+      const [kpiResults, costResults, trustResults] = await Promise.all([
         Promise.all(
           emps.map(async (emp) => {
             try {
@@ -304,6 +407,15 @@ export default function EmployeesPage() {
             }
           })
         ),
+        Promise.all(
+          emps.map(async (emp) => {
+            try {
+              return { id: emp.id, trust: await getLatestMetrics(emp.id) };
+            } catch {
+              return { id: emp.id, trust: null };
+            }
+          })
+        ),
       ]);
 
       const kMap = {};
@@ -313,6 +425,10 @@ export default function EmployeesPage() {
       const cMap = {};
       for (const r of costResults) cMap[r.id] = r.cost;
       setCostsMap(cMap);
+
+      const tMap = {};
+      for (const r of trustResults) tMap[r.id] = r.trust;
+      setTrustMap(tMap);
     } finally {
       setLoading(false);
     }
@@ -380,7 +496,7 @@ export default function EmployeesPage() {
         ) : workers.length > 0 ? (
           <div className="max-w-3xl space-y-4">
             {/* Team-level performance summary */}
-            <TeamPerformanceSummary workers={workers} kpisMap={kpisMap} costsMap={costsMap} />
+            <TeamPerformanceSummary workers={workers} kpisMap={kpisMap} costsMap={costsMap} trustMap={trustMap} />
 
             {workers.map((emp) => (
               <EmployeeCard
@@ -388,6 +504,7 @@ export default function EmployeesPage() {
                 employee={emp}
                 kpis={kpisMap[emp.id]}
                 cost={costsMap[emp.id]}
+                trust={trustMap[emp.id]}
                 onViewTasks={() => navigate('/employees/tasks')}
               />
             ))}

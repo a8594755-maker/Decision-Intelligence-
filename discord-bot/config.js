@@ -37,7 +37,7 @@ export const config = {
     resolve(process.env.HOME, '.windsurf/extensions/anthropic.claude-code-2.1.74-darwin-arm64/resources/native-binary/claude'),
 
   // Limits
-  claudeTimeout: parseInt(process.env.CLAUDE_TIMEOUT || '300000', 10), // 5 min
+  claudeTimeout: parseInt(process.env.CLAUDE_TIMEOUT || '600000', 10), // 10 min (complex tasks need time)
   rateLimitPerUser: parseInt(process.env.RATE_LIMIT_SECONDS || '5', 10),
   approvalPollInterval: parseInt(process.env.APPROVAL_POLL_INTERVAL || '10000', 10), // 10s
 };
