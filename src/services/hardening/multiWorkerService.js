@@ -7,9 +7,31 @@
  *   3. Escalation:         Worker detects low confidence → escalate to coordinator
  *
  * All patterns produce delegation records for audit trail.
+ * Supports optional Supabase persistence via delegationPersistence.js.
  *
  * @module services/hardening/multiWorkerService
  */
+
+// ── Persistence (lazy-loaded, non-blocking) ─────────────────────────────────
+
+let _persistence = null;
+
+/**
+ * Enable Supabase persistence for delegations.
+ * Call once at startup; all subsequent operations will be persisted.
+ */
+export function enablePersistence(persistenceModule) {
+  _persistence = persistenceModule;
+}
+
+async function _persist(fn) {
+  if (!_persistence) return;
+  try {
+    await fn(_persistence);
+  } catch (err) {
+    console.warn('[multiWorkerService] persistence error (non-blocking):', err.message);
+  }
+}
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
@@ -83,6 +105,9 @@ export function createHandoffChain({ parentTaskId, parentWorkerId, workerChain, 
     delegations.push(delegation);
   }
 
+  // Persist to Supabase (non-blocking)
+  _persist(p => p.insertDelegations(delegations));
+
   return { ok: true, delegations, chainId };
 }
 
@@ -113,6 +138,9 @@ export function advanceHandoff(delegationId, result = {}) {
   const nextIdx = current.sequence_order + 1;
   const next = chainDelegations[nextIdx];
 
+  // Persist current completion
+  _persist(p => p.updateDelegation(current.id, { status: current.status, result_json: current.result_json, completed_at: current.completed_at }));
+
   if (!next) {
     return { ok: true, chainComplete: true, chainId: current.chain_id };
   }
@@ -125,6 +153,9 @@ export function advanceHandoff(delegationId, result = {}) {
     previous_result: result,
     accumulated_artifacts: _gatherChainArtifacts(chainDelegations, nextIdx),
   };
+
+  // Persist next activation
+  _persist(p => p.updateDelegation(next.id, { status: next.status, started_at: next.started_at, context_json: next.context_json }));
 
   return { ok: true, next, chainComplete: false };
 }
@@ -179,6 +210,8 @@ export function createFanOut({ parentTaskId, parentWorkerId, workerIds, context 
     delegations.push(delegation);
   }
 
+  _persist(p => p.insertDelegations(delegations));
+
   return { ok: true, delegations, fanOutId, mergeStrategy };
 }
 
@@ -199,6 +232,8 @@ export function completeFanOutWorker(delegationId, result = {}) {
   current.status = DELEGATION_STATUS.COMPLETED;
   current.result_json = result;
   current.completed_at = new Date().toISOString();
+
+  _persist(p => p.updateDelegation(current.id, { status: current.status, result_json: current.result_json, completed_at: current.completed_at }));
 
   // Check if all fan-out workers are done
   const fanOutDelegations = Array.from(_delegations.values())
@@ -256,6 +291,7 @@ export function createEscalation({ parentTaskId, parentWorkerId, coordinatorId, 
   };
 
   _delegations.set(delegation.id, delegation);
+  _persist(p => p.insertDelegation(delegation));
   return { ok: true, delegation };
 }
 
@@ -276,6 +312,8 @@ export function resolveEscalation(delegationId, resolution = {}) {
   delegation.status = DELEGATION_STATUS.COMPLETED;
   delegation.result_json = resolution;
   delegation.completed_at = new Date().toISOString();
+
+  _persist(p => p.updateDelegation(delegation.id, { status: delegation.status, result_json: delegation.result_json, completed_at: delegation.completed_at }));
 
   return { ok: true, delegation };
 }

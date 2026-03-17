@@ -418,6 +418,8 @@ Response: { processor_state, last_poll_at, queue_stats: { pending, processed, fa
 - `src/services/hardening/replayTestingService.js`
 - `src/services/hardening/demoScriptRunner.js`
 - `src/services/hardening/index.js`
+- `src/services/hardening/hardening.test.js` — 45 unit tests covering all 7 services
+- `src/services/hardening/e2e.integration.test.js` — 6 E2E test suites
 
 ### 修改檔案
 - `src/services/publishService.js` — 整合 stable export + ERP payload builder
@@ -462,6 +464,9 @@ Response: { processor_state, last_poll_at, queue_stats: { pending, processed, fa
 ### 新增檔案
 - `supabase/migrations/20260402_task_delegations.sql`
 - `src/services/hardening/multiWorkerService.js`
+- `src/services/hardening/delegationPersistence.js` — Supabase CRUD for delegations
+- `src/services/hardening/multiWorker.test.js` — 30+ unit tests (3 patterns + templates + queries)
+- `src/components/collaboration/DelegationPanel.jsx` — Delegation UI (handoff chain + fan-out grid + escalation card)
 
 ---
 

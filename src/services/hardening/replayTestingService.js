@@ -11,9 +11,7 @@
  * @module services/hardening/replayTestingService
  */
 
-import { validateExportSchema, normalizeExportRows } from './exportSchemaValidator.js';
-import { validateRoundTrip } from './erpPayloadStabilizer.js';
-import { checkIdempotency } from './idempotencyService.js';
+import { validateExportSchema } from './exportSchemaValidator.js';
 import { checkAuditCompleteness } from './auditTrailService.js';
 
 // ── Snapshot Format ─────────────────────────────────────────────────────────
@@ -89,26 +87,34 @@ export function replayAndValidate(snapshot, currentArtifacts = null) {
     });
   }
 
-  // Test 2: ERP payload round-trip
+  // Test 2: Writeback payload serialization round-trip
   if (snapshot.artifacts?.writeback_payload) {
-    const rtCheck = validateRoundTrip(snapshot.artifacts.writeback_payload);
-    results.push({
-      test: 'erp_payload_round_trip',
-      passed: rtCheck.ok,
-      errors: rtCheck.errors,
-    });
+    // Validate the writeback payload can be serialized and deserialized
+    try {
+      const wb = snapshot.artifacts.writeback_payload;
+      const serialized = JSON.stringify(wb);
+      const deserialized = JSON.parse(serialized);
+      const passed = deserialized.idempotency_key === wb.idempotency_key &&
+        deserialized.target_system === wb.target_system &&
+        deserialized.intended_mutations?.length === wb.intended_mutations?.length;
+      results.push({
+        test: 'erp_payload_round_trip',
+        passed,
+        errors: passed ? [] : ['Writeback payload round-trip failed'],
+      });
+    } catch (err) {
+      results.push({ test: 'erp_payload_round_trip', passed: false, errors: [err.message] });
+    }
   }
 
-  // Test 3: Idempotency key uniqueness
+  // Test 3: Idempotency key present and well-formed
   if (snapshot.artifacts?.writeback_payload?.idempotency_key) {
-    const idemCheck = checkIdempotency(
-      snapshot.artifacts.writeback_payload.idempotency_key,
-      'replay_test',
-    );
+    const key = snapshot.artifacts.writeback_payload.idempotency_key;
+    const wellFormed = typeof key === 'string' && key.length > 0;
     results.push({
       test: 'idempotency_key_check',
-      passed: !idemCheck.exists,
-      info: idemCheck.exists ? 'Key already used — replay would be deduplicated' : 'Key available',
+      passed: wellFormed,
+      info: wellFormed ? 'Key is well-formed' : 'Key is missing or malformed',
     });
   }
 

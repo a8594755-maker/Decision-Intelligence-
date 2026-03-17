@@ -86,6 +86,20 @@ export {
   getFanOutStatus,
   registerTemplate,
   executeTemplate,
+  enablePersistence,
   DELEGATION_TYPES,
   DELEGATION_STATUS,
 } from './multiWorkerService.js';
+
+// Phase 8 — Supabase Persistence
+export {
+  insertDelegation,
+  insertDelegations,
+  updateDelegation,
+  fetchDelegationsForTask,
+  fetchDelegationsForWorker,
+  fetchDelegationsByTypeAndStatus,
+  fetchDelegation,
+  fetchDelegationTemplates,
+  fetchDelegationStats,
+} from './delegationPersistence.js';
