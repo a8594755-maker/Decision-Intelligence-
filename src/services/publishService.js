@@ -16,6 +16,11 @@
 
 import { applyApproval, markWritebackFailed } from './artifacts/writebackPayloadBuilder.js';
 import { enforceApprovalGate, validateIdempotencyKey } from './approvalGateService.js';
+import { buildStableExport } from './hardening/exportSchemaStabilizer.js';
+import { buildStableErpPayload } from './hardening/erpPayloadStabilizer.js';
+import { executeWithRecovery, buildPublishAuditEntry } from './hardening/publishRecoveryService.js';
+import { buildAuditEntry, AUDIT_EVENTS } from './hardening/auditTrailService.js';
+import { authorizeAction, PERMISSIONS } from './hardening/signatureService.js';
 
 // ── Publish Status ──────────────────────────────────────────────────────────
 
@@ -85,23 +90,25 @@ export async function publishSpreadsheetExport({
     entity_type: m.entity || '',
   }));
 
-  // 4. Generate export artifact
-  const exportArtifact = {
-    artifact_type: 'spreadsheet_export',
+  // 4. Generate stable, versioned export artifact
+  const stableResult = buildStableExport({
+    rows,
+    taskId,
     format,
-    row_count: rows.length,
-    columns: rows.length > 0 ? Object.keys(rows[0]) : [],
-    data: rows,
-    task_id: taskId,
-    idempotency_key: idemKey,
-    approved_by: gate.resolution?.reviewer_id || null,
-    exported_at: new Date().toISOString(),
-  };
+    approvalMeta: gate.resolution ? {
+      approved_by: gate.resolution.reviewer_id,
+      approved_at: gate.resolution.resolved_at,
+    } : null,
+  });
+
+  if (!stableResult.ok) {
+    return { ok: false, error: `Export schema validation failed: ${stableResult.errors?.join(', ')}` };
+  }
 
   // Mark idempotency
   if (idemKey) _publishedKeys.add(`export:${idemKey}`);
 
-  return { ok: true, artifact: exportArtifact, row_count: rows.length };
+  return { ok: true, artifact: stableResult.artifact, row_count: rows.length };
 }
 
 /**
@@ -159,14 +166,17 @@ export async function publishWriteback({
     policy_ref: approval.policy_ref || null,
   });
 
-  // 5. In v1, we don't actually connect to ERP — just produce the approved payload
+  // 5. Build stable ERP payload with versioned schema
+  const erpResult = buildStableErpPayload(approvedPayload);
+
+  // 6. In v1, we don't actually connect to ERP — just produce the approved payload
   // Future: send to ERP adapter service here
   try {
-    // Simulate writeback (v1: no-op, just validate and mark as applied)
     const publishedPayload = {
       ...approvedPayload,
       status: 'applied',
       applied_at: new Date().toISOString(),
+      erp_payload: erpResult.ok ? erpResult.payload : null,
     };
 
     // Mark idempotency
