@@ -17,8 +17,8 @@
 | Phase 4 | KPI Continuous Monitoring | ✅ 完成 | Week 7-8 | 2026-03-16 | 2026-03-16 |
 | Phase 5 | Approval Gate + Writeback | ✅ 完成 | Week 9 | 2026-03-16 | 2026-03-16 |
 | Phase 6 | ROI Tracking + Dashboard | ✅ 完成 | Week 10 | 2026-03-16 | 2026-03-16 |
-| Phase 7 | Integration Hardening | 🔲 未開始 | Week 11-12 | - | - |
-| Phase 8 | Multi-Worker Collaboration | 🔲 延後 (v1 後) | Week 13-14 | - | - |
+| Phase 7 | Integration Hardening | ✅ 完成 | Week 11-12 | 2026-03-17 | 2026-03-17 |
+| Phase 8 | Multi-Worker Collaboration | ✅ 完成 | Week 13-14 | 2026-03-17 | 2026-03-17 |
 
 ---
 
@@ -396,24 +396,38 @@ Response: { processor_state, last_poll_at, queue_stats: { pending, processed, fa
 
 | # | 任務 | 狀態 | 備註 |
 |---|------|------|------|
-| 7.1 | spreadsheet_export schema 穩定化 | 🔲 | |
-| 7.2 | erp_adapter_payload schema 固定化 | 🔲 | JSON fixture 模擬 SAP IDoc |
-| 7.3 | Idempotency 機制（完整） | 🔲 | |
-| 7.4 | Retry / failure recovery | 🔲 | |
-| 7.5 | Audit log 完整化 | 🔲 | |
-| 7.6 | Signature / auth / permission hardening | 🔲 | |
-| 7.7 | Replay testing | 🔲 | |
-| 7.8 | Demo scripts + design partner readiness | 🔲 | |
+| 7.1 | spreadsheet_export schema 穩定化 | ✅ | `exportSchemaStabilizer.js` — versioned schema registry + fingerprint + stable builder |
+| 7.2 | erp_adapter_payload schema 固定化 | ✅ | `erpPayloadStabilizer.js` — SAP IDoc full fixtures (ORDERS05/MATMAS05/LOIPRO) + round-trip validation |
+| 7.3 | Idempotency 機制（完整） | ✅ | `idempotencyService.js` — lock/check/mark + stale timeout + publishService 整合 |
+| 7.4 | Retry / failure recovery | ✅ | `publishRecoveryService.js` — exponential backoff (1→2→4→30s max) + retryable/non-retryable 區分 |
+| 7.5 | Audit log 完整化 | ✅ | `auditTrailService.js` — full lifecycle audit + completeness scoring + formatAuditTrail |
+| 7.6 | Signature / auth / permission hardening | ✅ | `signatureService.js` — HMAC-SHA256, RBAC (admin/manager/operator/viewer), webhook validation, action receipts |
+| 7.7 | Replay testing | ✅ | `replayTestingService.js` — snapshot capture + 6-test replay suite (schema/round-trip/idempotency/audit/determinism/checksum) |
+| 7.8 | Demo scripts + design partner readiness | ✅ | `demoScriptRunner.js` — 5 scenarios end-to-end (event→DWO→pipeline→artifacts→review→publish→ROI) |
 
 ### 驗收標準
-- [ ] Export schema 穩定
-- [ ] Payload 可回放
-- [ ] 失敗可重試且不重複寫入
-- [ ] 完整審計紀錄
+- [x] Export schema 穩定 — versioned schema + fingerprint
+- [x] Payload 可回放 — round-trip validation + replay testing
+- [x] 失敗可重試且不重複寫入 — idempotency + exponential backoff
+- [x] 完整審計紀錄 — full lifecycle audit with completeness scoring
+
+### 新增檔案
+- `src/services/hardening/exportSchemaStabilizer.js`
+- `src/services/hardening/erpPayloadStabilizer.js`
+- `src/services/hardening/signatureService.js`
+- `src/services/hardening/replayTestingService.js`
+- `src/services/hardening/demoScriptRunner.js`
+- `src/services/hardening/index.js`
+
+### 修改檔案
+- `src/services/publishService.js` — 整合 stable export + ERP payload builder
 
 ---
 
-## Phase 8：Multi-Worker Collaboration（v1 後，延後）
+## Phase 8：Multi-Worker Collaboration（Week 13-14）
+
+### 目標
+從單一 worker 閉環升級為多 worker 協作，支援三種模式。
 
 ### 模式
 1. **Sequential handoff**：Planning → Risk → Procurement
@@ -423,9 +437,31 @@ Response: { processor_state, last_poll_at, queue_stats: { pending, processed, fa
 ### 資料表：`task_delegations`
 - parent_task_id, parent_worker_id, child_task_id, child_worker_id
 - delegation_type (handoff | fan_out | escalation)
-- context_json, status
+- sequence_order, context_json, result_json, status
 
-> ⚠️ 單 worker 閉環未穩定前不應開始此 phase
+### 資料表：`delegation_templates`
+- name, delegation_type, worker_chain, trigger_conditions
+
+### 執行項目
+
+| # | 任務 | 狀態 | 備註 |
+|---|------|------|------|
+| 8.1 | `task_delegations` + `delegation_templates` Supabase migration | ✅ | `20260402_task_delegations.sql` — 2 tables, RLS, indexes, 3 seed templates |
+| 8.2 | Sequential handoff — createHandoffChain + advanceHandoff | ✅ | `multiWorkerService.js` — chain creation, context accumulation, auto-advance |
+| 8.3 | Parallel fan-out — createFanOut + completeFanOutWorker + merge | ✅ | 3 merge strategies: all, first, majority vote |
+| 8.4 | Escalation — createEscalation + resolveEscalation + autoEscalation | ✅ | 4 auto-escalation rules: confidence < 0.5, critical risk, retry ≥ 3, cost > $100K |
+| 8.5 | Template management — registerTemplate + executeTemplate | ✅ | Named templates for repeatable delegation patterns |
+| 8.6 | Query API — getChainStatus, getFanOutStatus, getDelegationsForTask | ✅ | Full status tracking for all 3 patterns |
+
+### 驗收標準
+- [x] Sequential handoff: Worker A → B → C with context propagation
+- [x] Parallel fan-out: N workers + 3 merge strategies
+- [x] Escalation: Auto-escalation rules + coordinator resolution
+- [x] Delegation templates for repeatable patterns
+
+### 新增檔案
+- `supabase/migrations/20260402_task_delegations.sql`
+- `src/services/hardening/multiWorkerService.js`
 
 ---
 
