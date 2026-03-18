@@ -46,6 +46,10 @@ import { buildEvidencePack } from '../artifacts/evidencePackBuilder.js';
 import { buildWritebackPayload } from '../artifacts/writebackPayloadBuilder.js';
 import { enforceApprovalGate } from '../approvalGateService.js';
 import { recordTaskValue } from '../roi/valueTrackingService.js';
+import { buildFullAuditTrail } from '../hardening/auditTrailService.js';
+import { isRalphLoopEnabled, runRalphLoop } from './ralphLoopAdapter.js';
+import { evaluateRules } from '../policyRuleService.js';
+import { canExecuteTool } from '../toolPermissionGuard.js';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -424,6 +428,32 @@ export async function tick(taskId) {
 // ── Internal: Tick Loop ───────────────────────────────────────────────────────
 
 async function _runTickLoop(taskId) {
+  // ── Ralph Loop mode: autonomous LLM-driven execution ──
+  // Activates if globally enabled OR if the task was submitted with ralph_loop: true
+  const task0 = await taskRepo.getTask(taskId);
+  const perTaskRalph = task0?.input_context?.ralph_loop === true || task0?.plan_snapshot?.ralph_loop === true;
+  if (isRalphLoopEnabled() || perTaskRalph) {
+    try {
+      const task = task0;
+      const taskTitle = task.plan_snapshot?.title || task.title || taskId;
+      const result = await runRalphLoop(taskId, tick, getTaskStatus, { taskTitle });
+      console.log(`[Orchestrator] Ralph loop completed: ${result.completionReason} (${result.iterations} iterations, ${result.totalUsage?.totalTokens || 0} tokens)`);
+    } catch (err) {
+      console.error(`[Orchestrator] Ralph loop error for task ${taskId}:`, err);
+      try {
+        const task = await taskRepo.getTask(taskId);
+        if (!isTaskTerminal(task.status)) {
+          const nextStatus = taskTransition(task.status, TASK_EVENTS.FAIL);
+          await taskRepo.updateTaskStatus(taskId, nextStatus, task.version);
+          await _resetEmployee(task.employee_id);
+          eventBus.emit(EVENT_NAMES.TASK_FAILED, { taskId, error: `Ralph loop failed: ${err.message}` });
+        }
+      } catch { /* last resort */ }
+    }
+    return;
+  }
+
+  // ── Classic mode: synchronous tick loop ──
   let running = true;
   while (running) {
     try {
@@ -565,6 +595,83 @@ async function _executeStep(task, step) {
   } catch (capErr) {
     // Capability policy check is best-effort — log and proceed
     console.warn('[Orchestrator] Capability policy check failed (non-blocking):', capErr.message);
+  }
+
+  // ── Tool permission + tier gate ──
+  try {
+    const employee = await employeeRepo.getEmployee(task.employee_id);
+    const toolType = stepDef.tool_type || 'builtin_tool';
+    const toolTier = stepDef.tier || null;
+    const tierCheck = canExecuteTool(employee, toolType, toolTier);
+
+    if (!tierCheck.allowed) {
+      const reason = tierCheck.tierBlocked
+        ? `Tool tier restricted: ${tierCheck.reason}`
+        : `Permission denied: missing ${tierCheck.missing.join(', ')}`;
+      await stepRepo.updateStep(step.id, {
+        status: 'failed',
+        error_message: reason,
+        ended_at: new Date().toISOString(),
+      });
+      await appendWorklog(task.employee_id, task.id, step.id, 'step_progress', {
+        event: 'permission_denied', reason, tool_type: toolType, tool_tier: toolTier,
+      });
+      return { ok: false, error: reason };
+    }
+  } catch (permErr) {
+    // Permission check is best-effort — log and proceed
+    console.warn('[Orchestrator] Permission/tier check failed (non-blocking):', permErr.message);
+  }
+
+  // ── User-configurable governance rules gate ──
+  try {
+    const capClass = resolveCapabilityClass({
+      tool_type: stepDef.tool_type || 'python_tool',
+      builtin_tool_id: stepDef.builtin_tool_id,
+    });
+    const autonomyLevel = await _getAutonomyLevel(task.employee_id);
+    const ruleResult = await evaluateRules({
+      capability_class: capClass,
+      worker_template_id: task.input_context?.worker_template_id || null,
+      autonomy_level: autonomyLevel,
+      action_type: stepDef.tool_type || 'builtin_tool',
+      cost_delta: task.input_context?.estimated_cost || 0,
+    });
+
+    if (!ruleResult.allowed) {
+      const blockMsg = `Blocked by governance rule: ${ruleResult.reasons.join('; ')}`;
+      await stepRepo.updateStep(step.id, {
+        status: 'failed',
+        error_message: blockMsg,
+        ended_at: new Date().toISOString(),
+      });
+      await appendWorklog(task.employee_id, task.id, step.id, 'step_progress', {
+        event: 'governance_blocked', reasons: ruleResult.reasons, triggered_rules: ruleResult.triggered_rules,
+      });
+      return { ok: false, error: blockMsg };
+    }
+
+    if (ruleResult.require_approval && !step._governance_approved) {
+      const holdMsg = `Governance rule requires approval: ${ruleResult.reasons.join('; ')}`;
+      await stepRepo.updateStep(step.id, { status: 'review_hold', error_message: holdMsg });
+      try {
+        const nextTaskStatus = taskTransition(task.status, TASK_EVENTS.REVIEW_NEEDED);
+        await taskRepo.updateTaskStatus(task.id, nextTaskStatus, task.version);
+      } catch { /* may already be in review */ }
+
+      eventBus.emit(EVENT_NAMES.AGENT_STEP_BLOCKED, {
+        taskId: task.id, stepIndex: step.step_index, stepName: step.step_name,
+        reason: 'governance_rule_hold', message: holdMsg,
+      });
+      return { ok: false, review_hold: true, error: holdMsg };
+    }
+
+    if (ruleResult.require_review) {
+      step._governance_require_review = true;
+    }
+  } catch (ruleErr) {
+    // Governance rules are best-effort — log and proceed
+    console.warn('[Orchestrator] Governance rule evaluation failed (non-blocking):', ruleErr.message);
   }
 
   // ── Approval gate: block publish-phase steps until approved ──
@@ -1044,6 +1151,27 @@ async function _completeTask(task) {
       });
     } catch (roiErr) {
       console.warn('[Orchestrator] ROI value tracking failed (non-blocking):', roiErr.message);
+    }
+
+    // Build full audit trail (best-effort)
+    try {
+      const worklogs = await import('./persistence/worklogRepo.js')
+        .then(m => m.listWorklogs?.(task.employee_id, { taskId: task.id }))
+        .catch(() => []);
+      const { entries: auditEntries, completeness: auditCompleteness } = buildFullAuditTrail({
+        worklogs: worklogs || [],
+        steps: allSteps,
+        resolution: null, // populated when review exists
+        publishAttempts: [],
+        valueEvents: [],
+      });
+      _publishSSE(task.id, {
+        event_type: 'audit_trail',
+        audit_entries: auditEntries,
+        audit_completeness: auditCompleteness,
+      });
+    } catch (auditErr) {
+      console.warn('[Orchestrator] Audit trail build failed (non-blocking):', auditErr.message);
     }
 
     // Write completion worklog with pipeline progress

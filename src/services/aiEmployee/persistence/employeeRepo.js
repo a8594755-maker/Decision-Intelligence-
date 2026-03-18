@@ -148,11 +148,17 @@ export async function getOrCreateWorker(userId, templateId = 'data_analyst') {
   const template = dbTemplate || WORKER_TEMPLATES[templateId] || WORKER_TEMPLATES.data_analyst;
 
   // Try to find an existing worker with matching role for this user
+  // Also check for legacy role in case migration hasn't been applied yet
+  const LEGACY_ROLE = 'supply_chain_reporting_employee';
+  const rolesToCheck = template.role === LEGACY_ROLE
+    ? [LEGACY_ROLE]
+    : [template.role, LEGACY_ROLE];
+
   const { data: rows, error: selErr } = await supabase
     .from('ai_employees')
     .select('*')
     .eq('manager_user_id', userId)
-    .eq('role', template.role)
+    .in('role', rolesToCheck)
     .order('created_at', { ascending: true })
     .limit(1);
 
@@ -173,18 +179,30 @@ export async function getOrCreateWorker(userId, templateId = 'data_analyst') {
   }
 
   // Create new worker from template
-  const { data: created, error: insErr } = await supabase
+  const insertPayload = {
+    name: template.name,
+    role: template.role,
+    status: 'idle',
+    manager_user_id: userId,
+    description: template.description,
+    permissions: template.permissions,
+  };
+
+  let { data: created, error: insErr } = await supabase
     .from('ai_employees')
-    .insert({
-      name: template.name,
-      role: template.role,
-      status: 'idle',
-      manager_user_id: userId,
-      description: template.description,
-      permissions: template.permissions,
-    })
+    .insert(insertPayload)
     .select()
     .single();
+
+  // Fallback: if role CHECK constraint rejects the new role (migration not yet applied),
+  // retry with the legacy role that the original migration allows.
+  if (insErr && insErr.message?.includes('ai_employees_role_check')) {
+    ({ data: created, error: insErr } = await supabase
+      .from('ai_employees')
+      .insert({ ...insertPayload, role: LEGACY_ROLE })
+      .select()
+      .single());
+  }
 
   if (insErr) throw new Error(`[EmployeeRepo] getOrCreateWorker insert failed: ${insErr.message}`);
   created._logicalState = DB_TO_EMPLOYEE_STATE[created.status] || created.status;
@@ -225,18 +243,29 @@ export async function createWorkerFromTemplate(userId, templateId, overrides = {
     throw new Error(`[EmployeeRepo] Unknown worker template: '${templateId}'. Known: ${Object.keys(WORKER_TEMPLATES).join(', ')}`);
   }
 
-  const { data: created, error } = await supabase
+  const payload = {
+    name: overrides.name || template.name,
+    role: template.role,
+    status: 'idle',
+    manager_user_id: userId,
+    description: overrides.description || template.description,
+    permissions: template.permissions,
+  };
+
+  let { data: created, error } = await supabase
     .from('ai_employees')
-    .insert({
-      name: overrides.name || template.name,
-      role: template.role,
-      status: 'idle',
-      manager_user_id: userId,
-      description: overrides.description || template.description,
-      permissions: template.permissions,
-    })
+    .insert(payload)
     .select()
     .single();
+
+  // Fallback to legacy role if CHECK constraint rejects the new role
+  if (error && error.message?.includes('ai_employees_role_check')) {
+    ({ data: created, error } = await supabase
+      .from('ai_employees')
+      .insert({ ...payload, role: 'supply_chain_reporting_employee' })
+      .select()
+      .single());
+  }
 
   if (error) throw new Error(`[EmployeeRepo] createWorkerFromTemplate failed: ${error.message}`);
   created._logicalState = DB_TO_EMPLOYEE_STATE[created.status] || created.status;

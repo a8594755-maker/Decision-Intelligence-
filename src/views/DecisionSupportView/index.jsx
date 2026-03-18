@@ -58,11 +58,12 @@ import { decomposeTask } from '../../services/chatTaskDecomposer';
 import { draftWorkOrder, isTaskIntent } from '../../services/aiEmployee/workOrderDraftService';
 import { getEmployee, getOrCreateWorker } from '../../services/aiEmployee/queries.js';
 // v2 orchestrator — single entry point for task lifecycle
-import { submitPlan, approvePlan as orchestratorApprovePlan } from '../../services/aiEmployee/index.js';
+import { submitPlan, approvePlan as orchestratorApprovePlan, isRalphLoopEnabled, abortAllRalphLoops } from '../../services/aiEmployee/index.js';
 import { eventBus, EVENT_NAMES } from '../../services/eventBus.js';
 import { processEmailIntake } from '../../services/emailIntakeService.js';
 import { processTranscriptIntake } from '../../services/transcriptIntakeService.js';
 import { processIntake, INTAKE_SOURCES } from '../../services/taskIntakeService.js';
+import { createClarification, submitAnswers, resolveClarification } from '../../services/clarificationService.js';
 import {
   SIDEBAR_COLLAPSED_KEY_PREFIX,
   CANVAS_SPLIT_RATIO_KEY_PREFIX,
@@ -139,6 +140,7 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
   const [agentExecTaskTitle, setAgentExecTaskTitle] = useState('');
   const [agentExecPanelOpen, setAgentExecPanelOpen] = useState(false);
   const [agentExecSSETaskId, setAgentExecSSETaskId] = useState(null);
+  const ralphAbortRef = useRef(null); // AbortController for Ralph Loop cancellation
   const [aiEmployeeDrawer, setAiEmployeeDrawer] = useState(null);
   const [delegatedWorker, setDelegatedWorker] = useState(null);
 
@@ -1715,6 +1717,141 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
       setIsTyping(false); setStreamingContent(''); return;
     }
 
+    if (command === '/ralph-stop' || command === '/ralph-cancel') {
+      const aborted = abortAllRalphLoops();
+      if (aborted > 0) {
+        ralphAbortRef.current = null;
+        appendMessagesToCurrentConversation([{
+          role: 'ai',
+          content: `Ralph Loop **stopped** (${aborted} loop(s) cancelled). Partial results may be available in the Task Board.`,
+          timestamp: new Date().toISOString(),
+        }]);
+      } else {
+        appendMessagesToCurrentConversation([{
+          role: 'ai',
+          content: 'No Ralph Loop is currently running.',
+          timestamp: new Date().toISOString(),
+        }]);
+      }
+      setIsTyping(false); setStreamingContent(''); return;
+    }
+
+    if (command === '/ralph-loop' || command === '/ralph') {
+      const taskDescription = trimmed.replace(/^\/ralph(-loop)?\s*/i, '').trim();
+      if (!taskDescription) {
+        appendMessagesToCurrentConversation([{
+          role: 'ai',
+          content: [
+            '**Ralph Loop — 自主 AI 代理迴圈**',
+            '',
+            'Usage: `/ralph-loop <任務描述>`',
+            '',
+            'Examples:',
+            '- `/ralph-loop 幫我做一份本月補貨計畫`',
+            '- `/ralph 分析最近三個月的預測準確率`',
+            '- `/ralph run forecast and plan for dataset 42`',
+            '',
+            `Status: Ralph Loop is currently **${isRalphLoopEnabled() ? 'ON' : 'OFF'}**`,
+            '',
+            isRalphLoopEnabled()
+              ? 'Ralph Loop 已啟用，所有任務都會自動使用 Ralph Loop 驅動。'
+              : '要啟用全域 Ralph Loop，請在 `.env.local` 設定 `VITE_RALPH_LOOP_ENABLED=true`。\n使用 `/ralph-loop <任務>` 可以單次啟用。',
+          ].join('\n'),
+          timestamp: new Date().toISOString(),
+        }]);
+        setIsTyping(false); setStreamingContent(''); return;
+      }
+
+      try {
+        const assignedWorker = await getAssignedWorker();
+        if (!assignedWorker?.id) throw new Error('No digital worker available.');
+
+        const datasetProfileId = Number.isFinite(Number(activeDatasetContext?.dataset_profile_id))
+          ? Number(activeDatasetContext.dataset_profile_id) : null;
+
+        // Decompose the task
+        const decomposition = await decomposeTask({
+          userMessage: taskDescription,
+          sessionContext: sessionCtx.context,
+          userId: user?.id,
+        });
+
+        if (!decomposition?.subtasks?.length) {
+          appendMessagesToCurrentConversation([{
+            role: 'ai',
+            content: 'Could not decompose this instruction into actionable tasks. Please try rephrasing.',
+            timestamp: new Date().toISOString(),
+          }]);
+          setIsTyping(false); setStreamingContent(''); return;
+        }
+
+        // Build plan
+        const rawRows = _rawRowsCache.get(String(datasetProfileId)) || activeDatasetContext?.rawRowsForStorage;
+        const inputData = { userId: user?.id, datasetProfileId };
+        if (Array.isArray(rawRows) && rawRows.length > 0) {
+          const sheetMap = {};
+          rawRows.forEach(row => {
+            const sheetName = row.__sheet_name || 'Sheet1';
+            if (!sheetMap[sheetName]) sheetMap[sheetName] = [];
+            const clean = {};
+            Object.entries(row).forEach(([k, v]) => {
+              if (k !== '__rowNum' && k !== '__sheet_name') clean[k] = v;
+            });
+            sheetMap[sheetName].push(clean);
+          });
+          inputData.sheets = sheetMap;
+          inputData.totalRows = rawRows.length;
+        }
+
+        const steps = (decomposition.subtasks || []).map((s, i) => ({
+          name: s.name || s.step_name || `step_${i}`,
+          tool_hint: s.tool_hint || s.description || s.name,
+          tool_type: s.workflow_type || s.tool_type || 'python_tool',
+          builtin_tool_id: s.builtin_tool_id || null,
+          review_checkpoint: s.review_checkpoint || false,
+        }));
+
+        const plan = {
+          title: taskDescription.slice(0, 120),
+          description: decomposition.original_instruction || taskDescription,
+          steps,
+          inputData,
+          taskMeta: { source_type: 'chat', ralph_loop: true },
+          llmConfig: { provider: 'anthropic', model: 'claude-sonnet-4-6', temperature: 0.15, max_tokens: 4096 },
+        };
+
+        // Submit and start
+        const { taskId } = await submitPlan(plan, assignedWorker.id, user?.id);
+
+        setAgentExecEvents([]);
+        setAgentExecTaskTitle(`[Ralph] ${taskDescription.slice(0, 60)}`);
+        setAgentExecPanelOpen(true);
+        setAgentExecSSETaskId(taskId);
+
+        const initLoopSteps = steps.map((s, i) => ({
+          name: s.name, index: i, status: 'pending',
+          workflow_type: s.tool_type, retry_count: 0,
+        }));
+        setAgentExecLoopState({ steps: initLoopSteps, started_at: new Date().toISOString() });
+
+        appendMessagesToCurrentConversation([{
+          role: 'ai',
+          content: `**Ralph Loop** activated for: "${taskDescription}"\n\n${steps.length} step(s) planned. Running autonomously...\n\nType \`/ralph-stop\` to cancel.`,
+          timestamp: new Date().toISOString(),
+        }]);
+
+        // Approve task — orchestrator detects ralph_loop flag and uses Ralph Loop
+        await orchestratorApprovePlan(taskId, user?.id);
+      } catch (err) {
+        appendMessagesToCurrentConversation([{
+          role: 'ai',
+          content: `Ralph Loop failed: ${err?.message || 'Unknown error'}`,
+          timestamp: new Date().toISOString(),
+        }]);
+      }
+      setIsTyping(false); setStreamingContent(''); return;
+    }
+
     if (command === '/email') {
       const emailContent = trimmed.slice('/email'.length).trim();
       if (!emailContent) {
@@ -2062,6 +2199,35 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
                 if (intakeResult?.status === 'duplicate') {
                   appendMessagesToCurrentConversation([{ role: 'ai', content: `A similar task already exists (${intakeResult.workOrder?.title || 'duplicate'}). Check the Task Board for details.`, timestamp: new Date().toISOString() }]);
                   return;
+                }
+                // Handle clarification flow: if intake flags ambiguity, ask user
+                if (intakeResult?.status === 'needs_clarification' && intakeResult?.workOrder) {
+                  try {
+                    const clar = await createClarification(intakeResult.workOrder);
+                    if (clar.questions?.length > 0) {
+                      appendMessagesToCurrentConversation([{
+                        role: 'ai',
+                        type: 'clarification_card',
+                        payload: { clarificationId: clar.id, questions: clar.questions, workOrder: intakeResult.workOrder },
+                        content: `I need a bit more information before proceeding:\n${clar.questions.map((q, i) => `${i + 1}. ${q.question}`).join('\n')}`,
+                        timestamp: new Date().toISOString(),
+                        _onSubmitAnswers: async (answers) => {
+                          const submitResult = await submitAnswers(clar.id, answers);
+                          if (!submitResult.ok) {
+                            appendMessagesToCurrentConversation([{ role: 'ai', content: `Clarification error: ${submitResult.error}`, timestamp: new Date().toISOString() }]);
+                            return;
+                          }
+                          const resolved = await resolveClarification(clar.id);
+                          if (resolved.ok && resolved.workOrder) {
+                            appendMessagesToCurrentConversation([{ role: 'ai', content: 'Thanks! Re-submitting the task with your clarifications...', timestamp: new Date().toISOString() }]);
+                          }
+                        },
+                      }]);
+                      return; // Pause — user must answer questions before task proceeds
+                    }
+                  } catch (clarErr) {
+                    console.warn('[DSV] Clarification flow failed (non-blocking):', clarErr?.message);
+                  }
                 }
               } catch (intakeErr) {
                 console.warn('[DSV] assignTask intake normalization failed (non-blocking):', intakeErr?.message);

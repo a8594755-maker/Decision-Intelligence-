@@ -53,3 +53,6 @@ export {
 export { TASK_STATES, TASK_EVENTS, taskTransition, canTaskTransition, isTaskTerminal } from './taskStateMachine.js';
 export { STEP_STATES, STEP_EVENTS, stepTransition, isStepTerminal, isStepWaitingInput } from './stepStateMachine.js';
 export { EMPLOYEE_STATES, EMPLOYEE_EVENTS, employeeTransition } from './employeeStateMachine.js';
+
+// ── Ralph Loop (autonomous agent loop) ──
+export { isRalphLoopEnabled, runRalphLoop, abortRalphLoop, abortAllRalphLoops } from './ralphLoopAdapter.js';

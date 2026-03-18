@@ -80,6 +80,8 @@ e2e/screenshots/
 e2e/debug-report.json
 e2e/crawler-report.json
 e2e/crawler-report.html
+e2e/live-report.json
+e2e/live-report.html
 e2e/.auth/
 e2e/chatgpt-audit/
 e2e/output/
@@ -89,4 +91,5 @@ output/
 discord-bot/.env
 discord-bot/node_modules/
 discord-bot/.chat-history.json
+.claude/settings.local.json
 .claude/worktrees/

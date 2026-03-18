@@ -101,4 +101,81 @@ export function canExecute(employee, workflowType) {
   return { allowed: missing.length === 0, missing };
 }
 
-export default { PERMISSION_REGISTRY, PermissionDeniedError, checkPermission, canExecute };
+// ── Tool Tier Restrictions ──────────────────────────────────────────────────
+// Worker templates can restrict which tool tiers (tier_a, tier_b, tier_c)
+// their workers are allowed to execute. This prevents low-privilege templates
+// from accessing expensive or high-risk tools.
+
+/**
+ * Default tier allowances by template role.
+ * Templates not listed here default to all tiers allowed.
+ */
+export const TEMPLATE_TIER_RESTRICTIONS = {
+  operations_coordinator: ['tier_a', 'tier_b'],          // no tier_c (expensive)
+  procurement_specialist: ['tier_a', 'tier_b', 'tier_c'],
+  data_analyst:           ['tier_a', 'tier_b', 'tier_c'],
+  supply_chain_analyst:   ['tier_a', 'tier_b', 'tier_c'],
+};
+
+/**
+ * Check if a worker's template allows a specific tool tier.
+ *
+ * @param {object} employee - Row from ai_employees (must include .role)
+ * @param {string} toolTier - The tool's tier (tier_a | tier_b | tier_c)
+ * @param {object} [templateOverride] - Optional: DB-loaded template with allowed_tiers
+ * @returns {{ allowed: boolean, reason?: string }}
+ */
+export function checkToolTier(employee, toolTier, templateOverride) {
+  if (!toolTier) return { allowed: true };
+
+  // Check DB-loaded template override first
+  if (templateOverride?.allowed_tiers) {
+    const allowed = templateOverride.allowed_tiers.includes(toolTier);
+    if (!allowed) {
+      return {
+        allowed: false,
+        reason: `Template "${templateOverride.name || employee.role}" does not allow ${toolTier} tools`,
+      };
+    }
+    return { allowed: true };
+  }
+
+  // Fall back to hardcoded restrictions
+  const role = employee?.role;
+  const allowedTiers = TEMPLATE_TIER_RESTRICTIONS[role];
+  if (!allowedTiers) return { allowed: true }; // unknown role = all tiers allowed
+
+  if (!allowedTiers.includes(toolTier)) {
+    return {
+      allowed: false,
+      reason: `Worker role "${role}" is restricted from ${toolTier} tools (allowed: ${allowedTiers.join(', ')})`,
+    };
+  }
+
+  return { allowed: true };
+}
+
+/**
+ * Combined permission + tier check for a builtin tool.
+ *
+ * @param {object} employee
+ * @param {string} workflowType
+ * @param {string} [toolTier]
+ * @param {object} [templateOverride]
+ * @returns {{ allowed: boolean, missing: string[], tierBlocked: boolean, reason?: string }}
+ */
+export function canExecuteTool(employee, workflowType, toolTier, templateOverride) {
+  const permCheck = canExecute(employee, workflowType);
+  if (!permCheck.allowed) {
+    return { ...permCheck, tierBlocked: false };
+  }
+
+  const tierCheck = checkToolTier(employee, toolTier, templateOverride);
+  if (!tierCheck.allowed) {
+    return { allowed: false, missing: [], tierBlocked: true, reason: tierCheck.reason };
+  }
+
+  return { allowed: true, missing: [], tierBlocked: false };
+}
+
+export default { PERMISSION_REGISTRY, TEMPLATE_TIER_RESTRICTIONS, PermissionDeniedError, checkPermission, canExecute, checkToolTier, canExecuteTool };

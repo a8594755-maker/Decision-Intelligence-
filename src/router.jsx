@@ -20,6 +20,13 @@ const EmployeeTasksPage   = lazy(() => import('./pages/EmployeeTasksPage'));
 const EmployeeReviewPage  = lazy(() => import('./pages/EmployeeReviewPage'));
 const ToolRegistryPage    = lazy(() => import('./pages/ToolRegistryPage'));
 const OutputProfilesPage  = lazy(() => import('./pages/OutputProfilesPage'));
+const WorkerTemplatesPage = lazy(() => import('./pages/WorkerTemplatesPage'));
+const PolicyRulesPage     = lazy(() => import('./pages/PolicyRulesPage'));
+const WebhookConfigPage   = lazy(() => import('./pages/WebhookConfigPage'));
+const ScheduleManagerPage = lazy(() => import('./pages/ScheduleManagerPage'));
+const ApprovalQueuePage  = lazy(() => import('./pages/ApprovalQueuePage'));
+// @product: unified-workspace (Canvas Architecture)
+const WorkspacePage      = lazy(() => import('./pages/WorkspacePage'));
 
 export const router = createBrowserRouter([
   {
@@ -43,14 +50,21 @@ export const router = createBrowserRouter([
       { path: 'employees/review', element: <EmployeeReviewPage /> },
       { path: 'employees/tools',  element: <ToolRegistryPage /> },
       { path: 'employees/profiles', element: <OutputProfilesPage /> },
+      { path: 'employees/templates', element: <WorkerTemplatesPage /> },
+      { path: 'employees/policies',  element: <PolicyRulesPage /> },
+      { path: 'employees/webhooks',  element: <WebhookConfigPage /> },
+      { path: 'employees/schedules', element: <ScheduleManagerPage /> },
+      { path: 'employees/approvals', element: <ApprovalQueuePage /> },
+      // @product: unified-workspace (Canvas Architecture — Trinity Layout)
+      { path: 'workspace', element: <WorkspacePage /> },
       { path: 'ops', element: <OpsDashboard /> },
       { path: 'sandbox', element: <SyntheticERPSandbox /> },
       { path: 'settings', element: <SettingsPage /> },
 
       // Legacy redirects (previously handled by src/utils/router.js)
       { path: 'ai/decision', element: <Navigate to="/plan" replace /> },
-      { path: 'planning/forecasts', element: <Navigate to="/forecast" replace /> },
-      { path: 'planning/risk-dashboard', element: <Navigate to="/risk" replace /> },
+      { path: 'planning/forecasts', element: <Navigate to="/workspace?widget=forecast" replace /> },
+      { path: 'planning/risk-dashboard', element: <Navigate to="/workspace?widget=risk" replace /> },
       { path: 'home', element: <Navigate to="/" replace /> },
       { path: 'data/*', element: <Navigate to="/settings" replace /> },
       { path: 'analysis/*', element: <Navigate to="/" replace /> },

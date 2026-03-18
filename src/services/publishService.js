@@ -16,6 +16,10 @@
 
 import { applyApproval, markWritebackFailed } from './artifacts/writebackPayloadBuilder.js';
 import { enforceApprovalGate, validateIdempotencyKey } from './approvalGateService.js';
+import { checkIdempotency, _resetForTesting as _resetIdempotency } from './hardening/idempotencyService.js';
+import { executeWithRecovery } from './hardening/publishRecoveryService.js';
+import { validateExportSchema, normalizeExportRows } from './hardening/exportSchemaValidator.js';
+import { transformToErpPayload } from './hardening/erpAdapterPayload.js';
 
 // ── Publish Status ──────────────────────────────────────────────────────────
 
@@ -25,10 +29,6 @@ export const PUBLISH_STATUS = Object.freeze({
   PUBLISHED: 'published',
   FAILED:    'failed',
 });
-
-// ── Idempotency Registry (prevent duplicate publishes) ──────────────────────
-
-const _publishedKeys = new Set();
 
 // ── Public API ──────────────────────────────────────────────────────────────
 
@@ -66,15 +66,11 @@ export async function publishSpreadsheetExport({
     return { ok: false, error: `Export blocked: ${gate.reason}`, needs_approval: true };
   }
 
-  // 2. Check idempotency
   const idemKey = writebackPayload?.idempotency_key;
-  if (idemKey && _publishedKeys.has(`export:${idemKey}`)) {
-    return { ok: true, path: null, deduplicated: true, message: 'Export already published (idempotency)' };
-  }
 
-  // 3. Build export data from mutations
+  // 2. Build export data from mutations
   const mutations = writebackPayload?.intended_mutations || [];
-  const rows = mutations.map(m => ({
+  const rawRows = mutations.map(m => ({
     material_code: m.field_changes?.material_code || '',
     plant_id: m.field_changes?.plant_id || '',
     action: m.action || '',
@@ -85,23 +81,44 @@ export async function publishSpreadsheetExport({
     entity_type: m.entity || '',
   }));
 
-  // 4. Generate export artifact
-  const exportArtifact = {
-    artifact_type: 'spreadsheet_export',
-    format,
-    row_count: rows.length,
-    columns: rows.length > 0 ? Object.keys(rows[0]) : [],
-    data: rows,
-    task_id: taskId,
-    idempotency_key: idemKey,
-    approved_by: gate.resolution?.reviewer_id || null,
-    exported_at: new Date().toISOString(),
-  };
+  // 3. Validate schema via hardening validator
+  const exportArtifactDraft = { data: rawRows };
+  const schemaCheck = validateExportSchema(exportArtifactDraft);
+  if (!schemaCheck.valid) {
+    return { ok: false, error: `Export schema invalid: ${schemaCheck.errors.join('; ')}` };
+  }
 
-  // Mark idempotency
-  if (idemKey) _publishedKeys.add(`export:${idemKey}`);
+  // 4. Normalize rows to canonical schema
+  const rows = normalizeExportRows(rawRows);
 
-  return { ok: true, artifact: exportArtifact, row_count: rows.length };
+  // 5. Execute with idempotency + recovery
+  const result = await executeWithRecovery({
+    idempotencyKey: idemKey || `export_${taskId}_${Date.now()}`,
+    operation: 'export',
+    taskId,
+    executeFn: async () => {
+      const exportArtifact = {
+        artifact_type: 'spreadsheet_export',
+        format,
+        row_count: rows.length,
+        columns: rows.length > 0 ? Object.keys(rows[0]) : [],
+        data: rows,
+        task_id: taskId,
+        idempotency_key: idemKey,
+        approved_by: gate.resolution?.reviewer_id || null,
+        exported_at: new Date().toISOString(),
+        schema_warnings: schemaCheck.warnings,
+      };
+      return { ok: true, artifact: exportArtifact, row_count: rows.length };
+    },
+  });
+
+  if (result.deduplicated) {
+    return { ok: true, deduplicated: true, message: 'Export already published (idempotency)', ...(result.result || {}) };
+  }
+  return result.ok
+    ? { ok: true, ...(result.result || {}) }
+    : { ok: false, error: result.error };
 }
 
 /**
@@ -147,47 +164,53 @@ export async function publishWriteback({
 
   const idemKey = writebackPayload.idempotency_key;
 
-  // 3. Check duplicate publish
-  if (_publishedKeys.has(`writeback:${idemKey}`)) {
-    return { ok: true, deduplicated: true, message: 'Writeback already published (idempotency)' };
-  }
-
-  // 4. Apply approval metadata to payload
+  // 3. Apply approval metadata to payload
   const approvedPayload = applyApproval(writebackPayload, {
     approved_by: approval.approved_by || gate.resolution?.reviewer_id || 'unknown',
     review_id: approval.review_id || gate.resolution?.id || null,
     policy_ref: approval.policy_ref || null,
   });
 
-  // 5. In v1, we don't actually connect to ERP — just produce the approved payload
-  // Future: send to ERP adapter service here
-  try {
-    // Simulate writeback (v1: no-op, just validate and mark as applied)
-    const publishedPayload = {
-      ...approvedPayload,
-      status: 'applied',
-      applied_at: new Date().toISOString(),
-    };
+  // 4. Transform to ERP adapter format (if target_system specified)
+  const erpResult = transformToErpPayload(approvedPayload);
 
-    // Mark idempotency
-    _publishedKeys.add(`writeback:${idemKey}`);
+  // 5. Execute with idempotency + recovery
+  const result = await executeWithRecovery({
+    idempotencyKey: idemKey,
+    operation: 'writeback',
+    taskId,
+    executeFn: async () => {
+      // v1: no-op — validate + produce approved payload; no direct ERP connection
+      const publishedPayload = {
+        ...approvedPayload,
+        status: 'applied',
+        applied_at: new Date().toISOString(),
+        erp_adapter: erpResult.ok ? erpResult.adapter_payload : null,
+        erp_errors: erpResult.ok ? null : erpResult.errors,
+      };
+      return { ok: true, payload: publishedPayload };
+    },
+  });
 
-    return { ok: true, payload: publishedPayload };
-  } catch (err) {
-    const failedPayload = markWritebackFailed(approvedPayload, err.message);
-    return { ok: false, error: err.message, payload: failedPayload };
+  if (result.deduplicated) {
+    return { ok: true, deduplicated: true, message: 'Writeback already published (idempotency)', ...(result.result || {}) };
   }
+  if (!result.ok) {
+    const failedPayload = markWritebackFailed(approvedPayload, result.error);
+    return { ok: false, error: result.error, payload: failedPayload };
+  }
+  return { ok: true, ...(result.result || {}) };
 }
 
 /**
  * Check if a publish key has been used (for idempotency queries).
  */
 export function isPublished(type, idempotencyKey) {
-  return _publishedKeys.has(`${type}:${idempotencyKey}`);
+  return checkIdempotency(idempotencyKey, type).exists;
 }
 
 // ── Reset (for testing) ─────────────────────────────────────────────────────
 
 export function _resetForTesting() {
-  _publishedKeys.clear();
+  _resetIdempotency();
 }

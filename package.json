@@ -41,7 +41,11 @@
     "test:flows:chat": "npx playwright test --project=flows e2e/flows/chat-workflow.spec.js",
     "test:flows:full": "npx playwright test --project=flows e2e/flows/full-workflow.spec.js",
     "test:flows:upload-chat": "npx playwright test --project=flows e2e/flows/chat-full-upload.spec.js",
-    "test:e2e:all": "npx playwright test"
+    "test:e2e:all": "npx playwright test",
+    "test:live": "node e2e/live-worker-test.js",
+    "test:live:headful": "node e2e/live-worker-test.js --headful",
+    "test:live:ui-only": "node e2e/live-worker-test.js --skip-llm",
+    "test:live:full": "node e2e/live-worker-test.js --headful --timeout 600"
   },
   "dependencies": {
     "@sentry/react": "^10.42.0",
@@ -50,20 +54,22 @@
     "axios": "^1.13.4",
     "date-fns": "^3.6.0",
     "fflate": "^0.8.2",
+    "i18next": "^24.2.0",
     "lucide-react": "^0.555.0",
+    "ralph-loop-agent": "^0.0.3",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
+    "react-i18next": "^15.4.0",
     "react-markdown": "^10.1.0",
     "react-router-dom": "^6.22.3",
     "reactflow": "^11.11.4",
     "recharts": "^3.7.0",
-    "i18next": "^24.2.0",
-    "react-i18next": "^15.4.0",
     "remark-gfm": "^4.0.1",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
+    "@playwright/test": "^1.50.0",
     "@tailwindcss/vite": "^4.1.17",
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/react": "^16.3.0",
@@ -83,7 +89,6 @@
     "tailwindcss": "^4.1.17",
     "typescript": "^5.9.3",
     "vite": "^7.2.4",
-    "vitest": "^4.0.18",
-    "@playwright/test": "^1.50.0"
+    "vitest": "^4.0.18"
   }
 }

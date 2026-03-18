@@ -48,6 +48,7 @@ export const TOOL_CATEGORY = {
  * @property {string[]} depends_on      - Other tool IDs that should run first
  * @property {boolean}  needs_dataset_profile - Whether it requires a dataset_profile_id
  * @property {object}   input_schema    - Simplified input parameter description
+ * @property {string}   [ui_hint]       - Canvas widget hint: 'open_canvas:<widget_key>' (used by Tool-to-Widget Protocol)
  */
 
 /** @type {BuiltinTool[]} */
@@ -68,6 +69,7 @@ export const BUILTIN_TOOLS = [
     output_artifacts: ['forecast_series', 'forecast_csv', 'metrics'],
     depends_on: [],
     needs_dataset_profile: true,
+    ui_hint: 'open_canvas:forecast_series',
     input_schema: {
       userId: 'string',
       datasetProfileRow: 'object (from datasetProfilesService)',
@@ -90,6 +92,7 @@ export const BUILTIN_TOOLS = [
     output_artifacts: ['plan_table', 'plan_csv', 'inventory_projection', 'solver_meta', 'constraint_check', 'replay_metrics'],
     depends_on: ['run_forecast'],
     needs_dataset_profile: true,
+    ui_hint: 'open_canvas:plan_table',
     input_schema: {
       userId: 'string',
       datasetProfileRow: 'object',
@@ -113,6 +116,7 @@ export const BUILTIN_TOOLS = [
     output_artifacts: ['risk_scores', 'report_json'],
     depends_on: [],
     needs_dataset_profile: true,
+    ui_hint: 'open_canvas:risk_scores',
     input_schema: {
       userId: 'string',
       datasetProfileRow: 'object',
@@ -156,6 +160,7 @@ export const BUILTIN_TOOLS = [
     output_artifacts: ['risk_plan_table', 'risk_solver_meta', 'risk_replay_metrics', 'risk_inventory_projection', 'plan_comparison'],
     depends_on: ['run_forecast', 'run_risk_analysis'],
     needs_dataset_profile: true,
+    ui_hint: 'open_canvas:risk_plan_table',
     input_schema: {
       userId: 'string',
       datasetProfileRow: 'object',
@@ -180,6 +185,7 @@ export const BUILTIN_TOOLS = [
     output_artifacts: ['scenario_comparison'],
     depends_on: ['run_plan'],
     needs_dataset_profile: false,
+    ui_hint: 'open_canvas:scenario_comparison',
     input_schema: {
       userId: 'string',
       scenario: 'object ({ base_run_id, overrides })',

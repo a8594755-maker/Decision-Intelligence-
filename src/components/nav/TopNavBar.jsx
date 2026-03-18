@@ -1,11 +1,11 @@
 import { useState } from 'react';
-import { NavLink as RouterNavLink, useNavigate } from 'react-router-dom';
+import { NavLink as RouterNavLink, useNavigate, useLocation } from 'react-router-dom';
 import {
   Activity, MessageSquare, ClipboardList, CheckSquare, LayoutDashboard,
   Settings, Moon, Sun, LogOut,
   ChevronsLeft, ChevronsRight, BarChart3, Database, Bot, Wrench, FileText,
   ChevronDown, Calculator, TrendingUp, ShieldAlert, Cpu, GitCompare, Handshake,
-  ArrowLeftRight,
+  ArrowLeftRight, Shield, Webhook, Clock, Layers, Inbox, PanelTop,
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useApp } from '../../contexts/AppContext';
@@ -17,40 +17,51 @@ import { APP_NAME } from '../../config/branding';
 const DI_NAV_ITEMS = [
   { to: '/',              label: 'Command Center',  icon: LayoutDashboard, end: true },
   { to: '/plan',          label: 'Plan Studio',     icon: Calculator },
-  { to: '/forecast',      label: 'Forecast Studio', icon: TrendingUp },
-  { to: '/risk',          label: 'Risk Center',     icon: ShieldAlert },
+  { to: '/workspace?widget=forecast', label: 'Forecast Studio', icon: TrendingUp },
+  { to: '/workspace?widget=risk',     label: 'Risk Center',     icon: ShieldAlert },
   { to: '/digital-twin',  label: 'Digital Twin',    icon: Cpu },
-  { to: '/scenarios',     label: 'Scenarios',       icon: GitCompare },
-  { to: '/negotiation',   label: 'Negotiation',     icon: Handshake },
+  { to: '/workspace?widget=scenario', label: 'Scenarios',       icon: GitCompare },
+  { to: '/workspace?widget=negotiation', label: 'Negotiation',  icon: Handshake },
 ];
 
 const DI_ADVANCED_ITEMS = [
-  { to: '/employees',        label: 'Digital Worker',  icon: Bot },
-  { to: '/employees/tasks',  label: 'Tasks',           icon: ClipboardList },
-  { to: '/employees/review', label: 'Review',          icon: CheckSquare },
-  { to: '/employees/tools',  label: 'Tool Library',    icon: Wrench },
-  { to: '/employees/profiles', label: 'Output Profiles', icon: FileText },
+  { to: '/employees',           label: 'Digital Worker',    icon: Bot },
+  { to: '/employees/tasks',     label: 'Tasks',             icon: ClipboardList },
+  { to: '/employees/review',    label: 'Review',            icon: CheckSquare },
+  { to: '/employees/tools',     label: 'Tool Library',      icon: Wrench },
+  { to: '/employees/profiles',  label: 'Output Profiles',   icon: FileText },
+  { to: '/employees/templates', label: 'Templates',         icon: Layers },
+  { to: '/employees/policies',  label: 'Governance',        icon: Shield },
+  { to: '/employees/approvals', label: 'Approvals',         icon: Inbox },
+  { to: '/employees/webhooks',  label: 'Webhooks',          icon: Webhook },
+  { to: '/employees/schedules', label: 'Schedules',         icon: Clock },
 ];
 
 // ────────────────────────────────────────────────────────────
 // Digital Worker Workspace nav
 // ────────────────────────────────────────────────────────────
 const AI_NAV_ITEMS = [
-  { to: '/',                 label: 'Chat',           icon: MessageSquare, end: true },
-  { to: '/employees/tasks',  label: 'Tasks',          icon: ClipboardList },
-  { to: '/employees/review', label: 'Review',         icon: CheckSquare },
-  { to: '/employees',        label: 'Digital Worker',  icon: Bot },
-  { to: '/employees/tools',  label: 'Tool Library',  icon: Wrench },
-  { to: '/employees/profiles', label: 'Profiles',     icon: FileText },
+  { to: '/workspace',           label: 'Workspace',     icon: PanelTop },
+  { to: '/',                    label: 'Chat',           icon: MessageSquare, end: true },
+  { to: '/employees/tasks',     label: 'Tasks',          icon: ClipboardList },
+  { to: '/employees/review',    label: 'Review',         icon: CheckSquare },
+  { to: '/employees',           label: 'Digital Worker',  icon: Bot },
+  { to: '/employees/tools',     label: 'Tool Library',   icon: Wrench },
+  { to: '/employees/profiles',  label: 'Profiles',       icon: FileText },
+  { to: '/employees/templates', label: 'Templates',      icon: Layers },
+  { to: '/employees/policies',  label: 'Governance',     icon: Shield },
+  { to: '/employees/approvals', label: 'Approvals',      icon: Inbox },
+  { to: '/employees/webhooks',  label: 'Webhooks',       icon: Webhook },
+  { to: '/employees/schedules', label: 'Schedules',      icon: Clock },
 ];
 
 const AI_ADVANCED_ITEMS = [
   { to: '/plan',        label: 'Plan Studio',     icon: Calculator },
-  { to: '/forecast',    label: 'Forecast Studio', icon: TrendingUp },
-  { to: '/risk',        label: 'Risk Center',     icon: ShieldAlert },
+  { to: '/workspace?widget=forecast', label: 'Forecast Studio', icon: TrendingUp },
+  { to: '/workspace?widget=risk',     label: 'Risk Center',     icon: ShieldAlert },
   { to: '/digital-twin',label: 'Digital Twin',    icon: Cpu },
-  { to: '/scenarios',   label: 'Scenarios',       icon: GitCompare },
-  { to: '/negotiation', label: 'Negotiation',     icon: Handshake },
+  { to: '/workspace?widget=scenario', label: 'Scenarios',       icon: GitCompare },
+  { to: '/workspace?widget=negotiation', label: 'Negotiation',  icon: Handshake },
 ];
 
 // ────────────────────────────────────────────────────────────
@@ -228,37 +239,54 @@ export default function Sidebar() {
 /* ── Sidebar link item ── */
 // eslint-disable-next-line no-unused-vars -- Icon is used in JSX below; ESLint false positive on destructured rename
 function SidebarLink({ to, label, icon: Icon, end, expanded }) {
+  const location = useLocation();
+
+  // Custom active matching: for links with query params (e.g. /workspace?widget=risk),
+  // check both pathname AND query string match, since NavLink only matches on pathname.
+  const hasQuery = to.includes('?');
+  let isActiveCustom;
+  if (hasQuery) {
+    const [linkPath, linkSearch] = to.split('?');
+    const linkParams = new URLSearchParams(linkSearch);
+    const currentParams = new URLSearchParams(location.search);
+    isActiveCustom = location.pathname === linkPath
+      && [...linkParams.entries()].every(([k, v]) => currentParams.get(k) === v);
+  }
+
   return (
     <RouterNavLink
       to={to}
       end={end}
-      className={({ isActive }) =>
-        [
+      className={({ isActive: routerActive }) => {
+        const active = hasQuery ? isActiveCustom : routerActive;
+        return [
           'group relative flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-sm font-medium transition-colors',
-          isActive
+          active
             ? 'bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400'
             : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-subtle)]',
-        ].join(' ')
-      }
+        ].join(' ');
+      }}
     >
-      {({ isActive }) => (
-        <>
-          {/* Active accent bar */}
-          {isActive && (
-            <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-5 rounded-r-full bg-indigo-600 dark:bg-indigo-400" />
-          )}
-          <span className="w-5 h-5 flex items-center justify-center flex-shrink-0">
-            <Icon className="w-[18px] h-[18px]" />
-          </span>
-          <span
-            className={`whitespace-nowrap overflow-hidden transition-all duration-200 ${
-              expanded ? 'opacity-100 w-auto' : 'opacity-0 w-0'
-            }`}
-          >
-            {label}
-          </span>
-        </>
-      )}
+      {({ isActive: routerActive }) => {
+        const active = hasQuery ? isActiveCustom : routerActive;
+        return (
+          <>
+            {active && (
+              <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-5 rounded-r-full bg-indigo-600 dark:bg-indigo-400" />
+            )}
+            <span className="w-5 h-5 flex items-center justify-center flex-shrink-0">
+              <Icon className="w-[18px] h-[18px]" />
+            </span>
+            <span
+              className={`whitespace-nowrap overflow-hidden transition-all duration-200 ${
+                expanded ? 'opacity-100 w-auto' : 'opacity-0 w-0'
+              }`}
+            >
+              {label}
+            </span>
+          </>
+        );
+      }}
     </RouterNavLink>
   );
 }

@@ -20,6 +20,7 @@
 
 import { listTasks } from './aiEmployee/queries.js';
 import { fromLegacyWorkOrder, validateDecisionWorkOrder } from '../contracts/decisionWorkOrderContract.js';
+import { routeWorkOrder } from './intakeRoutingService.js';
 
 // ── Intake Source Types ──────────────────────────────────────────────────────
 
@@ -314,7 +315,25 @@ export async function processIntake(params) {
     };
   }
 
-  // Step 4: Ready for planner
+  // Step 4: Auto-route to best worker (if multiple workers exist)
+  try {
+    const routing = await routeWorkOrder(workOrder, params.userId, {
+      preferredEmployeeId: params.employeeId,
+    });
+    if (routing.employeeId && routing.employeeId !== workOrder.employee_id) {
+      workOrder.employee_id = routing.employeeId;
+      workOrder._routing = {
+        routed_to: routing.workerName,
+        intent: routing.intent,
+        confidence: routing.confidence,
+        reason: routing.reason,
+      };
+    }
+  } catch {
+    // Auto-routing is best-effort — proceed with original employee_id
+  }
+
+  // Step 5: Ready for planner
   return { workOrder, status: 'created' };
 }
 

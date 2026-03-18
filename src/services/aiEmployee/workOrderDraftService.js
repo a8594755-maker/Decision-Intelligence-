@@ -37,15 +37,17 @@ const WORKFLOW_LABELS = {
 
 // ── Intent detection ────────────────────────────────────────────────────────
 
-const TASK_INTENT_RX = /\b(run|execute|generate|create|build|analyze|forecast|plan|report|check|compare|simulate|evaluate|calculate|產生|執行|分析|預測|計畫|報告|檢查|比較|模擬|計算)\b/i;
+const TASK_INTENT_EN_RX = /\b(run|execute|generate|create|build|analyze|forecast|plan|report|check|compare|simulate|evaluate|calculate|export|publish|prepare|review|assess|monitor|optimize|summarize)\b/i;
+const TASK_INTENT_ZH_RX = /(產生|執行|分析|預測|計畫|規劃|報告|檢查|比較|模擬|計算|匯出|發布|準備|審核|評估|監控|優化|摘要|幫我|請你|做一|跑一|生成|建立|製作|彙整|統計|盤點|補貨|採購|排程)/;
 
 /**
  * Returns true if the message looks like a task intent rather than a question
- * or casual chat.
+ * or casual chat. Uses separate patterns for EN (\b word boundary) and ZH
+ * (no word boundary needed — CJK chars are self-delimiting).
  */
 export function isTaskIntent(message) {
   if (!message || typeof message !== 'string') return false;
-  return TASK_INTENT_RX.test(message);
+  return TASK_INTENT_EN_RX.test(message) || TASK_INTENT_ZH_RX.test(message);
 }
 
 // ── Draft builder ───────────────────────────────────────────────────────────
