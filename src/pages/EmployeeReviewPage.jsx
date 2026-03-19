@@ -19,8 +19,11 @@ import { appendWorklog } from '../services/aiEmployee/persistence/worklogRepo.js
 import { attachFeedback } from '../services/aiEmployeeMemoryService';
 import { resolveReviewDecision } from '../services/aiEmployee/index.js';
 import { buildDeliverablePreview } from '../services/aiEmployee/deliverableProfile.js';
-import { buildTaskTimeline, computeReplayCompleteness } from '../services/taskTimelineService';
+import { buildTaskTimeline, computeReplayCompleteness, EVIDENCE_EVENTS } from '../services/taskTimelineService';
+import { listGovernanceByTask, GOVERNANCE_STATUS } from '../services/approvalWorkflowService';
 import AuditTimelineCard from '../components/chat/AuditTimelineCard';
+import { TASK_STATES } from '../services/aiEmployee/taskStateMachine.js';
+import { STEP_STATES } from '../services/aiEmployee/stepStateMachine.js';
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -33,7 +36,10 @@ function fmtTime(iso) {
 
 function fmtRelative(iso) {
   if (!iso) return '';
-  const ms = Date.now() - new Date(iso).getTime();
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  const ms = Date.now() - d.getTime();
+  if (ms < 0) return 'just now'; // future timestamp guard
   const mins = Math.floor(ms / 60000);
   if (mins < 1) return 'just now';
   if (mins < 60) return `${mins}m ago`;
@@ -286,6 +292,7 @@ function DeliverableViewer({ item }) {
   const [taskTimeline, setTaskTimeline] = useState(null);
   const [traceCompleteness, setTraceCompleteness] = useState(null);
   const [timelineLoading, setTimelineLoading] = useState(false);
+  const [governanceItems, setGovernanceItems] = useState([]);
 
   const loadTimeline = useCallback((taskId) => {
     if (!taskId) return;
@@ -297,6 +304,9 @@ function DeliverableViewer({ item }) {
       setTaskTimeline(null);
       setTraceCompleteness(null);
     }).finally(() => setTimelineLoading(false));
+
+    // Also load governance approvals for this task via the unified service
+    listGovernanceByTask(taskId).then(setGovernanceItems).catch(() => setGovernanceItems([]));
   }, []);
 
   const itemId = item?.id;
@@ -513,6 +523,41 @@ function DeliverableViewer({ item }) {
               )}
             </div>
 
+            {/* Governance approvals (from unified approvalWorkflowService) */}
+            {governanceItems.length > 0 && (
+              <div className="p-3 rounded-xl border" style={{ borderColor: 'var(--border-default)', backgroundColor: 'var(--surface-card)' }}>
+                <div className="flex items-center gap-2 mb-2">
+                  <Shield className="w-3.5 h-3.5 text-indigo-500" />
+                  <span className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>Governance Approvals</span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800" style={{ color: 'var(--text-muted)' }}>
+                    {governanceItems.length}
+                  </span>
+                </div>
+                <div className="space-y-1.5">
+                  {governanceItems.map((gi) => (
+                    <div key={gi.id} className="flex items-center gap-2 text-xs">
+                      <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+                        gi.status === GOVERNANCE_STATUS.APPROVED ? 'bg-emerald-500' :
+                        gi.status === GOVERNANCE_STATUS.REJECTED ? 'bg-red-500' :
+                        gi.status === GOVERNANCE_STATUS.ESCALATED ? 'bg-amber-500' :
+                        gi.status === GOVERNANCE_STATUS.EXPIRED ? 'bg-slate-400' :
+                        'bg-blue-500'
+                      }`} />
+                      <span className="capitalize" style={{ color: 'var(--text-secondary)' }}>
+                        {(gi.type || 'approval').replace(/_/g, ' ')}
+                      </span>
+                      <span className="capitalize font-medium" style={{ color: 'var(--text-primary)' }}>
+                        {gi.status}
+                      </span>
+                      {gi.reviewed_at && (
+                        <span style={{ color: 'var(--text-muted)' }}>{fmtRelative(gi.reviewed_at)}</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* SLA info from task intake */}
             {item.input_context?.sla?.deadline && (() => {
               const sla = computeSlaStatus(item);
@@ -617,10 +662,10 @@ function RevisionLogPanel({ item, onDecision, deciding }) {
                     {/* Dot on timeline */}
                     <div
                       className={`absolute -left-[calc(0.5rem+1px)] top-1 w-3 h-3 rounded-full border-2 ${
-                        step.status === 'done' ? 'bg-emerald-500 border-emerald-200' :
-                        step.status === 'failed' ? 'bg-red-500 border-red-200' :
-                        step.status === 'review_hold' ? 'bg-amber-500 border-amber-200' :
-                        step.status === 'running' ? 'bg-blue-500 border-blue-200 animate-pulse' :
+                        step.status === STEP_STATES.SUCCEEDED ? 'bg-emerald-500 border-emerald-200' :
+                        step.status === STEP_STATES.FAILED ? 'bg-red-500 border-red-200' :
+                        step.status === STEP_STATES.REVIEW_HOLD ? 'bg-amber-500 border-amber-200' :
+                        step.status === STEP_STATES.RUNNING ? 'bg-blue-500 border-blue-200 animate-pulse' :
                         'bg-slate-300 border-slate-200'
                       }`}
                     />
@@ -710,8 +755,8 @@ function RevisionLogPanel({ item, onDecision, deciding }) {
 
           <div className="flex flex-col gap-2 mt-3">
             <button
-              onClick={() => onDecision(item, runs[0], 'approved', comment)}
-              disabled={deciding}
+              onClick={() => onDecision(item, runs?.[0] || null, 'approved', comment)}
+              disabled={deciding || !runs?.length}
               className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold text-white transition-all disabled:opacity-50"
               style={{
                 background: 'linear-gradient(135deg, #059669 0%, #10b981 100%)',
@@ -729,7 +774,7 @@ function RevisionLogPanel({ item, onDecision, deciding }) {
               <button
                 onClick={() => {
                   if (!comment.trim()) { alert('Please add a comment before requesting revision.'); return; }
-                  onDecision(item, runs[0], 'needs_revision', comment);
+                  onDecision(item, runs?.[0] || null, 'needs_revision', comment);
                 }}
                 disabled={deciding}
                 className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-sm font-medium border transition-colors hover:bg-[var(--surface-subtle)] disabled:opacity-50"
@@ -883,7 +928,7 @@ export default function EmployeeReviewPage() {
 
       if (empId) {
         await appendWorklog(empId, item.id, run?.id || null, 'task_update', {
-          previous_status: resolution.previousStatus || item.status || 'waiting_review',
+          previous_status: resolution.previousStatus || item.status || TASK_STATES.REVIEW_HOLD,
           new_status: resolution.nextStatus,
           note: comment || `Manager ${decision}.`,
           review_decision: decision,

@@ -31,6 +31,11 @@ import {
   recordPlanningAttempt, recordPlanningSuccess, recordPlanningFailure,
   recordFallbackUsed, recordDegradedCapability, recordZeroResultPlan
 } from './observability';
+import {
+  normalizeText, createBlockingError, toNumber,
+  parseDateValue, toIsoDay, normalizeRowsFromUserFile, getRowsForSheet,
+  normalizeTargetMapping, chooseDatasetByType
+} from '../utils/dataServiceHelpers';
 
 const MAX_PLAN_ROWS_IN_CARD = 50;
 const MAX_PLAN_ROWS_IN_ARTIFACT = 2000;
@@ -59,140 +64,10 @@ const ENV_RISK_AWARE = parseEnvBoolean(import.meta.env.VITE_DI_RISK_AWARE, false
 const DEFAULT_LEAD_TIME_DAYS = Math.max(0, Number(import.meta.env.VITE_DI_DEFAULT_LEAD_TIME_DAYS || 7));
 const DEFAULT_SAFETY_STOCK = Math.max(0, Number(import.meta.env.VITE_DI_DEFAULT_SAFETY_STOCK || 0));
 
-const normalizeText = (value) => String(value || '').trim();
-
-const createBlockingError = (message, questions = []) => {
-  const err = new Error(message);
-  err.blockingQuestions = Array.isArray(questions) ? questions.slice(0, MAX_BLOCKING_QUESTIONS) : [];
-  err.isBlocking = true;
-  return err;
-};
-
-const toNumber = (value, fallback = NaN) => {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : fallback;
-};
-
-const parseDateValue = (value) => {
-  if (value === null || value === undefined || value === '') return null;
-
-  if (value instanceof Date && !Number.isNaN(value.getTime())) {
-    return value;
-  }
-
-  if (typeof value === 'number' && value > 1 && value < 100000) {
-    const excelEpoch = new Date(Date.UTC(1899, 11, 30));
-    const parsed = new Date(excelEpoch.getTime() + (value * 24 * 60 * 60 * 1000));
-    return Number.isNaN(parsed.getTime()) ? null : parsed;
-  }
-
-  const raw = String(value).trim();
-  if (!raw) return null;
-
-  const weekMatch = raw.match(/^(\d{4})[-/ ]?W(\d{1,2})$/i);
-  if (weekMatch) {
-    const year = Number(weekMatch[1]);
-    const week = Number(weekMatch[2]);
-    const jan4 = new Date(Date.UTC(year, 0, 4));
-    const jan4Day = jan4.getUTCDay() || 7;
-    const week1Monday = new Date(jan4);
-    week1Monday.setUTCDate(jan4.getUTCDate() - jan4Day + 1);
-    const target = new Date(week1Monday);
-    target.setUTCDate(week1Monday.getUTCDate() + ((week - 1) * 7));
-    return Number.isNaN(target.getTime()) ? null : target;
-  }
-
-  const monthMatch = raw.match(/^(\d{4})-(\d{1,2})$/);
-  if (monthMatch) {
-    const year = Number(monthMatch[1]);
-    const month = Number(monthMatch[2]);
-    if (month < 1 || month > 12) return null;
-    return new Date(Date.UTC(year, month - 1, 1));
-  }
-
-  const parsed = new Date(raw);
-  return Number.isNaN(parsed.getTime()) ? null : parsed;
-};
-
-const toIsoDay = (dateObj) => {
-  if (!dateObj || Number.isNaN(dateObj.getTime())) return null;
-  return dateObj.toISOString().slice(0, 10);
-};
-
-const normalizeSheetName = (value) => normalizeText(value).toLowerCase();
-
-const normalizeRowsFromUserFile = (fileRecord) => {
-  if (!fileRecord) return [];
-  const raw = fileRecord.data;
-  if (Array.isArray(raw)) return raw;
-  if (Array.isArray(raw?.rows)) return raw.rows;
-  return [];
-};
-
-const getRowsForSheet = (rows, sheetName) => {
-  const normalizedSheet = normalizeSheetName(sheetName);
-  const hasSheetMarker = rows.some((row) => row && Object.prototype.hasOwnProperty.call(row, '__sheet_name'));
-
-  if (!hasSheetMarker) return rows;
-  return rows.filter((row) => normalizeSheetName(row.__sheet_name) === normalizedSheet);
-};
-
-const normalizeTargetMapping = (mapping = {}) => {
-  if (!mapping || typeof mapping !== 'object' || Array.isArray(mapping)) return {};
-
-  const knownTargetFields = new Set([
-    'material_code',
-    'plant_id',
-    'demand_qty',
-    'week_bucket',
-    'date',
-    'time_bucket',
-    'snapshot_date',
-    'onhand_qty',
-    'safety_stock',
-    'open_qty',
-    'lead_time_days',
-    'moq',
-    'pack_size',
-    'max_order_qty',
-    'unit_cost',
-    'unit_price',
-    'cost'
-  ]);
-
-  const keys = Object.keys(mapping);
-  const values = Object.values(mapping).map((value) => normalizeText(value));
-
-  const keysLookLikeTarget = keys.some((key) => knownTargetFields.has(normalizeText(key)));
-  if (keysLookLikeTarget) {
-    return mapping;
-  }
-
-  const valuesLookLikeTarget = values.some((value) => knownTargetFields.has(value));
-  if (!valuesLookLikeTarget) {
-    return mapping;
-  }
-
-  const inverted = {};
-  Object.entries(mapping).forEach(([source, target]) => {
-    const targetField = normalizeText(target);
-    if (!targetField) return;
-    inverted[targetField] = source;
-  });
-  return inverted;
-};
-
-const chooseDatasetByType = (contractJson = {}, uploadType) => {
-  const datasets = Array.isArray(contractJson?.datasets) ? contractJson.datasets : [];
-  return datasets
-    .filter((dataset) => normalizeText(dataset.upload_type).toLowerCase() === normalizeText(uploadType).toLowerCase())
-    .sort((a, b) => {
-      const aPass = a?.validation?.status === 'pass' ? 1 : 0;
-      const bPass = b?.validation?.status === 'pass' ? 1 : 0;
-      if (aPass !== bPass) return bPass - aPass;
-      return toNumber(b.requiredCoverage, 0) - toNumber(a.requiredCoverage, 0);
-    })[0] || null;
-};
+// Shared helpers imported from ../utils/dataServiceHelpers.js
+// (normalizeText, normalizeSheetName, createBlockingError, toNumber,
+//  parseDateValue, toIsoDay, normalizeRowsFromUserFile, getRowsForSheet,
+//  normalizeTargetMapping, chooseDatasetByType)
 
 const getMappedTimeField = (mapping = {}, candidates = []) => {
   for (const targetField of candidates) {
@@ -1556,6 +1431,16 @@ export async function runPlanFromDatasetProfile({
       throw createBlockingError('No forecast artifacts found. Run forecast before planning.', [
         'Run `/forecast` first to generate forecast_series.',
         'Then click "Run Plan" from the Forecast card.'
+      ]);
+    }
+
+    // Validate forecast artifact has actual content — not just an empty shell.
+    // Prevents the plan solver from proceeding with invalid/empty forecast data.
+    const forecastSeries = forecastArtifact?.series || forecastArtifact?.data?.series;
+    if (Array.isArray(forecastSeries) && forecastSeries.length === 0) {
+      throw createBlockingError('Forecast artifact exists but contains no forecast series data.', [
+        'The forecast may have run with insufficient data.',
+        'Re-upload demand data with at least 8 clean rows and rerun forecast.',
       ]);
     }
 

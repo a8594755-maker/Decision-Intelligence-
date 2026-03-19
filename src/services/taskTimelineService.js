@@ -71,6 +71,17 @@ export const TIMELINE_EVENT = {
   KPI_SNAPSHOT:        'kpi_snapshot',
 };
 
+// ── v1 Evidence Events (curated subset for audit completeness) ──────────────
+
+export const EVIDENCE_EVENTS = Object.freeze([
+  TIMELINE_EVENT.TASK_CREATED,
+  TIMELINE_EVENT.PLAN_GENERATED,
+  TIMELINE_EVENT.STEPS_CREATED,
+  TIMELINE_EVENT.ARTIFACT_PRODUCED,
+  TIMELINE_EVENT.APPROVAL_DECIDED,     // review_decision
+  TIMELINE_EVENT.MANAGER_REVIEWED,     // approval_result (human)
+]);
+
 // ── Required Phases for Completeness ────────────────────────────────────────
 
 const REQUIRED_EVENTS = [
@@ -356,7 +367,11 @@ export function summarizeTimeline(timeline) {
 
   const first = timeline[0];
   const last = timeline[timeline.length - 1];
-  const durationMs = new Date(last.timestamp) - new Date(first.timestamp);
+  const firstTs = first?.timestamp ? new Date(first.timestamp) : null;
+  const lastTs = last?.timestamp ? new Date(last.timestamp) : null;
+  const durationMs = (firstTs && lastTs && !isNaN(firstTs) && !isNaN(lastTs))
+    ? lastTs - firstTs
+    : 0;
 
   const phases = {};
   for (const e of timeline) {

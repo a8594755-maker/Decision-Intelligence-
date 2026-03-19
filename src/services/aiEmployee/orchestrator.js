@@ -49,7 +49,7 @@ import { recordTaskValue } from '../roi/valueTrackingService.js';
 import { buildFullAuditTrail } from '../hardening/auditTrailService.js';
 import { isRalphLoopEnabled, runRalphLoop } from './ralphLoopAdapter.js';
 import { evaluateRules } from '../policyRuleService.js';
-import { canExecuteTool } from '../toolPermissionGuard.js';
+import { canExecuteTool, checkCapabilityPolicy } from '../toolPermissionGuard.js';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -244,6 +244,14 @@ export async function approvePlan(taskId, userId) {
     // Employee may already be busy from another task — don't block
   }
 
+  // ── Worklog: plan approved (audit trail / timeline evidence) ──
+  try {
+    await appendWorklog(active.employee_id, taskId, null, 'task_lifecycle', {
+      event: 'plan_approved', approved_by: userId,
+      previous_status: task.status, next_status: active.status,
+    });
+  } catch { /* worklog is best-effort */ }
+
   eventBus.emit(EVENT_NAMES.TASK_STARTED, { taskId, userId });
 
   // Start the tick loop
@@ -258,11 +266,12 @@ export async function cancelTask(taskId, _userId) {
   const nextStatus = taskTransition(task.status, TASK_EVENTS.CANCEL);
   await taskRepo.updateTaskStatus(taskId, nextStatus, task.version);
 
-  // Reset employee to idle
+  // Reset employee to idle (read actual state instead of assuming BUSY)
   try {
-    const empState = employeeTransition(EMPLOYEE_STATES.BUSY, EMPLOYEE_EVENTS.TASK_DONE);
+    const employee = await employeeRepo.getEmployee(task.employee_id);
+    const empState = employeeTransition(employee._logicalState, EMPLOYEE_EVENTS.TASK_DONE);
     await employeeRepo.updateEmployeeStatus(task.employee_id, empState);
-  } catch { /* ignore */ }
+  } catch { /* ignore — employee may already be idle or in an incompatible state */ }
 
   eventBus.emit(EVENT_NAMES.TASK_FAILED, { taskId, reason: 'cancelled' });
 }
@@ -302,24 +311,37 @@ export async function retryTask(taskId, _userId) {
  */
 export async function approveReview(taskId, userId, opts = {}) {
   const task = await taskRepo.getTask(taskId);
-  const nextStatus = taskTransition(task.status, TASK_EVENTS.REVIEW_APPROVED);
-  const active = await taskRepo.updateTaskStatus(taskId, nextStatus, task.version);
+  const { feedback, decision = 'approve' } = opts;
 
+  // Dispatch the correct task state machine event based on decision
+  const taskEvent = (decision === 'needs_revision' || decision === 'rejected')
+    ? TASK_EVENTS.REVIEW_REJECTED
+    : TASK_EVENTS.REVIEW_APPROVED;
+  const nextStatus = taskTransition(task.status, taskEvent);
+  const updated = await taskRepo.updateTaskStatus(taskId, nextStatus, task.version);
+
+  // Transition employee state
   try {
-    const employee = await employeeRepo.getEmployee(active.employee_id);
+    const employee = await employeeRepo.getEmployee(updated.employee_id);
     const empState = employeeTransition(employee._logicalState, EMPLOYEE_EVENTS.REVIEW_RESOLVED);
-    await employeeRepo.updateEmployeeStatus(active.employee_id, empState);
+    await employeeRepo.updateEmployeeStatus(updated.employee_id, empState);
   } catch {
     // Best-effort only — task execution should still resume.
   }
 
-  const { feedback, decision } = opts;
+  // ── Worklog: review resolved (audit trail) ──
+  try {
+    await appendWorklog(updated.employee_id, taskId, null, 'task_lifecycle', {
+      event: 'review_resolved', decision, has_feedback: Boolean(feedback),
+      previous_status: task.status, next_status: nextStatus,
+    });
+  } catch { /* worklog is best-effort */ }
 
   // ── Feed review outcome into style/trust learning (best-effort) ──
   try {
     // Extract style rules from revision feedback (requires feedback text)
     if (feedback && decision !== 'approve') {
-      await extractFromSingleRevision(active.employee_id, taskId, {
+      await extractFromSingleRevision(updated.employee_id, taskId, {
         original: opts.revision?.original,
         revised: opts.revision?.revised,
         feedback,
@@ -327,9 +349,9 @@ export async function approveReview(taskId, userId, opts = {}) {
       }, opts.llmFn || null);
     }
     // Record outcome for trust metrics (regardless of decision)
-    await recordReviewOutcome(active.employee_id, {
+    await recordReviewOutcome(updated.employee_id, {
       taskId,
-      decision: decision || 'approve',
+      decision,
       hasFeedback: Boolean(feedback),
       hasRevision: decision === 'needs_revision',
     });
@@ -337,8 +359,13 @@ export async function approveReview(taskId, userId, opts = {}) {
     console.warn('[Orchestrator] Style/trust learning failed (non-blocking):', learnErr.message);
   }
 
-  // Continue tick loop
-  _runTickLoop(taskId);
+  // Only continue tick loop if the review was approved
+  if (taskEvent === TASK_EVENTS.REVIEW_APPROVED) {
+    _runTickLoop(taskId);
+  } else {
+    // Rejected/needs_revision — emit failure event
+    eventBus.emit(EVENT_NAMES.TASK_FAILED, { taskId, reason: decision });
+  }
 }
 
 /**
@@ -391,6 +418,36 @@ export async function provideStepInput(taskId, input, userId) {
 }
 
 /**
+ * Skip a step that is in waiting_input state (fail-fast).
+ * Use this for non-interactive runs where no UI can provide input.
+ * The step is marked as skipped with a fallback note.
+ *
+ * @param {string} taskId
+ * @param {string} userId
+ * @returns {Promise<{skipped: boolean, stepName: string}>}
+ */
+export async function skipWaitingInputStep(taskId, _userId) {
+  const steps = await stepRepo.getSteps(taskId);
+  const waitingStep = steps.find(s => s.status === STEP_STATES.WAITING_INPUT);
+  if (!waitingStep) {
+    return { skipped: false, stepName: null };
+  }
+
+  const skippedStatus = stepTransition(waitingStep.status, STEP_EVENTS.SKIP);
+  await stepRepo.updateStep(waitingStep.id, {
+    status: skippedStatus,
+    error_message: 'Skipped: no interactive input UI available. Step requires user-provided data.',
+  });
+
+  console.warn(`[Orchestrator] Skipped waiting_input step ${waitingStep.step_index} "${waitingStep.step_name}" for task ${taskId}`);
+
+  // Resume tick loop to continue with remaining steps
+  _runTickLoop(taskId);
+
+  return { skipped: true, stepName: waitingStep.step_name };
+}
+
+/**
  * Execute a single tick — find next pending step, run it, handle result.
  * @returns {Promise<{done: boolean, stepResult?: object}>}
  */
@@ -401,12 +458,16 @@ export async function tick(taskId) {
     return { done: true };
   }
 
-  // Check for any step in waiting_input — if so, pause the tick loop
+  // Check for any step in waiting_input — if so, pause the tick loop.
+  // NOTE: No UI path currently exists for users to provide step input interactively.
+  // The ralph-loop-adapter detects this and reports "Waiting for user input".
+  // For non-interactive runs (scheduled/proactive), callers should use
+  // skipWaitingInputStep() to unblock the pipeline.
   const allStepsForCheck = await stepRepo.getSteps(taskId);
   const waitingInputStep = allStepsForCheck.find(s => isStepWaitingInput(s.status));
   if (waitingInputStep) {
-    console.log(`[Orchestrator] Step ${waitingInputStep.step_index} "${waitingInputStep.step_name}" is waiting for input — pausing tick loop`);
-    return { done: true, waiting_input: true };
+    console.warn(`[Orchestrator] Step ${waitingInputStep.step_index} "${waitingInputStep.step_name}" is waiting for input — pausing tick loop. No interactive input UI available yet.`);
+    return { done: true, waiting_input: true, waiting_step_name: waitingInputStep.step_name, waiting_step_index: waitingInputStep.step_index };
   }
 
   // Find next step to execute
@@ -521,10 +582,42 @@ async function _executeStep(task, step) {
       }
     }
 
-    // If lazy context didn't resolve dataset, let the step try anyway — the executor
-    // will report a data dependency error if the tool truly cannot proceed.
+    // If lazy context didn't resolve dataset, block the step and ask for user input.
+    // Previous behavior was "proceed optimistically" which caused silent failures.
     if (!lazyDatasetResolved) {
-      console.warn(`[Orchestrator] Step "${step.step_name}" requires dataset but none attached — proceeding optimistically. Executor will block if data is truly needed.`);
+      console.warn(`[Orchestrator] Step "${step.step_name}" requires dataset but none attached — blocking for user input.`);
+
+      // Transition step to waiting_input
+      const waitingStatus = stepTransition(step.status, STEP_EVENTS.NEED_INPUT);
+      await stepRepo.updateStep(step.id, {
+        status: waitingStatus,
+        error_message: `Step "${step.step_name}" requires a dataset. Please upload or attach one to continue.`,
+      });
+
+      // Transition task to blocked
+      try {
+        const blockedStatus = taskTransition(task.status, TASK_EVENTS.BLOCK);
+        await taskRepo.updateTaskStatus(task.id, blockedStatus, task.version);
+        task.version += 1;
+      } catch { /* task may already be blocked */ }
+
+      // Notify UI
+      const blockPayload = {
+        taskId: task.id, stepIndex: step.step_index, stepName: step.step_name,
+        reason: 'dataset_required',
+        message: `Step "${step.step_name}" requires a dataset but none is available. Please upload a workbook or attach a dataset profile.`,
+      };
+      eventBus.emit(EVENT_NAMES.AGENT_STEP_BLOCKED, blockPayload);
+      _publishSSE(task.id, { event_type: 'step_blocked', ...blockPayload });
+
+      try {
+        await appendWorklog(task.employee_id, task.id, step.id, 'step_progress', {
+          event: 'dataset_required', step_name: step.step_name,
+          detail: 'Step requires dataset but lazy context resolution failed. Blocked for user input.',
+        });
+      } catch { /* worklog is best-effort */ }
+
+      return { ok: false, error: blockPayload.message, needs_input: true };
     }
   }
 
@@ -532,8 +625,9 @@ async function _executeStep(task, step) {
   try {
     const budgetResult = await checkBudget(task.id);
     if (!budgetResult.allowed) {
+      const gateStatus = stepTransition(step.status, STEP_EVENTS.SKIP);
       await stepRepo.updateStep(step.id, {
-        status: 'failed',
+        status: gateStatus,
         error_message: `Budget exceeded: ${budgetResult.reason}`,
         ended_at: new Date().toISOString(),
       });
@@ -561,8 +655,9 @@ async function _executeStep(task, step) {
           reason: 'capability_policy_hold', message: holdMsg,
         };
 
+        const holdStatus = stepTransition(step.status, STEP_EVENTS.HOLD);
         await stepRepo.updateStep(step.id, {
-          status: 'review_hold',
+          status: holdStatus,
           error_message: holdMsg,
         });
 
@@ -570,6 +665,7 @@ async function _executeStep(task, step) {
         try {
           const nextTaskStatus = taskTransition(task.status, TASK_EVENTS.REVIEW_NEEDED);
           await taskRepo.updateTaskStatus(task.id, nextTaskStatus, task.version);
+          task.version += 1;
         } catch { /* task may already be in review */ }
 
         eventBus.emit(EVENT_NAMES.AGENT_STEP_BLOCKED, holdPayload);
@@ -583,8 +679,9 @@ async function _executeStep(task, step) {
         const inputDataForCheck = task.input_context?.inputData || {};
         if (_hasSensitiveData(inputDataForCheck)) {
           const sensitiveMsg = `Capability "${capClass}" does not allow sensitive data access. Remove sensitive fields or use a capability with sensitive_data_allowed=true.`;
+          const gateStatus = stepTransition(step.status, STEP_EVENTS.SKIP);
           await stepRepo.updateStep(step.id, {
-            status: 'failed',
+            status: gateStatus,
             error_message: sensitiveMsg,
             ended_at: new Date().toISOString(),
           });
@@ -597,30 +694,39 @@ async function _executeStep(task, step) {
     console.warn('[Orchestrator] Capability policy check failed (non-blocking):', capErr.message);
   }
 
-  // ── Tool permission + tier gate ──
+  // ── Tool permission + tier + capability policy gate (DB-first) ──
   try {
     const employee = await employeeRepo.getEmployee(task.employee_id);
     const toolType = stepDef.tool_type || 'builtin_tool';
     const toolTier = stepDef.tier || null;
-    const tierCheck = canExecuteTool(employee, toolType, toolTier);
+    const autonomyLevel = await _getAutonomyLevel(task.employee_id);
+    const policyCheck = await checkCapabilityPolicy(employee, toolType, {
+      builtin_tool_id: stepDef.builtin_tool_id,
+      tool_type: toolType,
+      toolTier,
+    }, autonomyLevel);
 
-    if (!tierCheck.allowed) {
-      const reason = tierCheck.tierBlocked
-        ? `Tool tier restricted: ${tierCheck.reason}`
-        : `Permission denied: missing ${tierCheck.missing.join(', ')}`;
+    if (!policyCheck.allowed) {
+      const reason = policyCheck.capabilityBlocked
+        ? `Capability policy blocked: ${policyCheck.reason}`
+        : policyCheck.tierBlocked
+        ? `Tool tier restricted: ${policyCheck.reason}`
+        : `Permission denied: missing ${policyCheck.missing.join(', ')}`;
+      const gateStatus = stepTransition(step.status, STEP_EVENTS.SKIP);
       await stepRepo.updateStep(step.id, {
-        status: 'failed',
+        status: gateStatus,
         error_message: reason,
         ended_at: new Date().toISOString(),
       });
       await appendWorklog(task.employee_id, task.id, step.id, 'step_progress', {
         event: 'permission_denied', reason, tool_type: toolType, tool_tier: toolTier,
+        capability_blocked: policyCheck.capabilityBlocked || false,
       });
       return { ok: false, error: reason };
     }
   } catch (permErr) {
     // Permission check is best-effort — log and proceed
-    console.warn('[Orchestrator] Permission/tier check failed (non-blocking):', permErr.message);
+    console.warn('[Orchestrator] Permission/tier/capability check failed (non-blocking):', permErr.message);
   }
 
   // ── User-configurable governance rules gate ──
@@ -640,8 +746,9 @@ async function _executeStep(task, step) {
 
     if (!ruleResult.allowed) {
       const blockMsg = `Blocked by governance rule: ${ruleResult.reasons.join('; ')}`;
+      const gateStatus = stepTransition(step.status, STEP_EVENTS.SKIP);
       await stepRepo.updateStep(step.id, {
-        status: 'failed',
+        status: gateStatus,
         error_message: blockMsg,
         ended_at: new Date().toISOString(),
       });
@@ -653,10 +760,12 @@ async function _executeStep(task, step) {
 
     if (ruleResult.require_approval && !step._governance_approved) {
       const holdMsg = `Governance rule requires approval: ${ruleResult.reasons.join('; ')}`;
-      await stepRepo.updateStep(step.id, { status: 'review_hold', error_message: holdMsg });
+      const holdStatus = stepTransition(step.status, STEP_EVENTS.HOLD);
+      await stepRepo.updateStep(step.id, { status: holdStatus, error_message: holdMsg });
       try {
         const nextTaskStatus = taskTransition(task.status, TASK_EVENTS.REVIEW_NEEDED);
         await taskRepo.updateTaskStatus(task.id, nextTaskStatus, task.version);
+        task.version += 1;
       } catch { /* may already be in review */ }
 
       eventBus.emit(EVENT_NAMES.AGENT_STEP_BLOCKED, {
@@ -692,6 +801,7 @@ async function _executeStep(task, step) {
         try {
           const awaitingStatus = taskTransition(task.status, TASK_EVENTS.REVIEW_NEEDED);
           await taskRepo.updateTaskStatus(task.id, awaitingStatus, task.version);
+          task.version += 1;
         } catch { /* may already be in awaiting_approval */ }
 
         _publishSSE(task.id, {
@@ -734,7 +844,7 @@ async function _executeStep(task, step) {
   const priorArtifacts = {};
   const priorStepResults = [];
   for (const s of allSteps) {
-    if (s.step_index < step.step_index && s.status === 'succeeded') {
+    if (s.step_index < step.step_index && s.status === STEP_STATES.SUCCEEDED) {
       const arts = s.artifact_refs || [];
       priorArtifacts[s.step_name] = arts;
       priorStepResults.push({ step_name: s.step_name, status: s.status, artifacts: arts });
@@ -826,8 +936,6 @@ async function _executeStep(task, step) {
       tool_type: stepDef.tool_type || 'python_tool',
       input_args: stepDef.input_args || {},
       report_format: stepDef.report_format,
-      opencloud_action: stepDef.opencloud_action,
-      opencloud_config: stepDef.opencloud_config,
       review_checkpoint: stepDef.review_checkpoint,
       ai_review: stepDef.ai_review,
       // Self-healing context from prior retries
@@ -869,9 +977,11 @@ async function _executeStep(task, step) {
           });
 
           if (!review.passed && (step.retry_count || 0) < MAX_RETRIES) {
-            // Revision needed — reset step for retry with AI feedback
+            // Revision needed — transition through state machine: running → failed → retrying
+            const failedStatus = stepTransition(STEP_STATES.RUNNING, STEP_EVENTS.FAIL);
+            const retryingStatus = stepTransition(failedStatus, STEP_EVENTS.RETRY);
             await stepRepo.updateStep(step.id, {
-              status: 'retrying',
+              status: retryingStatus,
               retry_count: (step.retry_count || 0) + 1,
               error_message: `AI review: ${review.score}/${review.threshold} — revision needed`,
               _revision_instructions: review.suggestions || [],
@@ -963,6 +1073,7 @@ async function _handleStepSuccess(task, step, result, stepDef) {
       // Standard review pause
       const nextTaskStatus = taskTransition(task.status, TASK_EVENTS.REVIEW_NEEDED);
       await taskRepo.updateTaskStatus(task.id, nextTaskStatus, task.version);
+      task.version += 1;
 
       const employee = await employeeRepo.getEmployee(task.employee_id);
       try {
@@ -991,6 +1102,7 @@ async function _handleStepFailure(task, step, errorMessage, stepDef = {}) {
     await stepRepo.markStepFailed(step.id, errorMessage);
     const nextTaskStatus = taskTransition(task.status, TASK_EVENTS.FAIL);
     await taskRepo.updateTaskStatus(task.id, nextTaskStatus, task.version);
+    task.version += 1;
     await _resetEmployee(task.employee_id);
 
     const failPayload = {
@@ -1007,9 +1119,11 @@ async function _handleStepFailure(task, step, errorMessage, stepDef = {}) {
   // Can we retry?
   const retryCount = (step.retry_count || 0) + 1;
   if (retryCount <= MAX_RETRIES && healing.healingStrategy !== 'skip_with_fallback') {
-    // Build healing context for the retry
+    // Transition through state machine: running → failed → retrying
+    const failedStatus = stepTransition(STEP_STATES.RUNNING, STEP_EVENTS.FAIL);
+    const retryingStatus = stepTransition(failedStatus, STEP_EVENTS.RETRY);
     const healingUpdates = {
-      status: 'retrying',
+      status: retryingStatus,
       retry_count: retryCount,
     };
 
@@ -1057,8 +1171,11 @@ async function _handleStepFailure(task, step, errorMessage, stepDef = {}) {
 
   // Max retries exceeded or skip_with_fallback
   if (healing.healingStrategy === 'skip_with_fallback') {
+    // Transition through state machine: running → failed → skipped
+    const failedStatus = stepTransition(STEP_STATES.RUNNING, STEP_EVENTS.FAIL);
+    const skippedStatus = stepTransition(failedStatus, STEP_EVENTS.SKIP);
     await stepRepo.updateStep(step.id, {
-      status: 'skipped',
+      status: skippedStatus,
       error_message: `Skipped after ${retryCount} failures: ${errorMessage}`,
       ended_at: new Date().toISOString(),
     });
@@ -1077,6 +1194,7 @@ async function _handleStepFailure(task, step, errorMessage, stepDef = {}) {
   await stepRepo.markStepFailed(step.id, errorMessage);
   const nextTaskStatus = taskTransition(task.status, TASK_EVENTS.FAIL);
   await taskRepo.updateTaskStatus(task.id, nextTaskStatus, task.version);
+  task.version += 1;
   await _resetEmployee(task.employee_id);
 
   const failPayload = {
@@ -1095,7 +1213,7 @@ function _writeFailureWorklog(task, step, errorMessage, healing) {
   appendWorklog(task.employee_id, task.id, step.id, 'step_progress', {
     step_name: step.step_name,
     step_index: step.step_index,
-    status: 'failed',
+    status: STEP_STATES.FAILED,
     error: errorMessage,
     retry_count: (step.retry_count || 0) + 1,
     healing_strategy: healing?.healingStrategy || null,
@@ -1107,6 +1225,7 @@ function _writeFailureWorklog(task, step, errorMessage, healing) {
 async function _completeTask(task) {
   const nextStatus = taskTransition(task.status, TASK_EVENTS.ALL_STEPS_DONE);
   await taskRepo.updateTaskStatus(task.id, nextStatus, task.version);
+  task.version += 1;
   await _resetEmployee(task.employee_id);
 
   const donePayload = { taskId: task.id, timestamp: Date.now() / 1000 };
@@ -1120,7 +1239,7 @@ async function _completeTask(task) {
     const priorArtifacts = {};
     const priorStepResults = [];
     for (const s of allSteps) {
-      if (s.status === 'succeeded') {
+      if (s.status === STEP_STATES.SUCCEEDED) {
         const arts = s.artifact_refs || [];
         priorArtifacts[s.step_name] = arts;
         priorStepResults.push({ step_name: s.step_name, status: s.status, artifacts: arts, started_at: s.started_at });

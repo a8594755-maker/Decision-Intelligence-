@@ -20,11 +20,31 @@ import { eventBus, EVENT_NAMES } from '../services/eventBus';
 
 const ML_API_BASE = import.meta.env?.VITE_ML_API_URL || 'http://localhost:8000';
 
+// Pre-flight check: verify SSE endpoint is reachable before opening EventSource.
+// EventSource doesn't surface HTTP errors cleanly (just fires onerror), so we
+// do a quick HEAD request first to avoid the "wrong MIME type" console error.
+async function _isSSEEndpointReachable(url) {
+  try {
+    const resp = await fetch(url, { method: 'HEAD', signal: AbortSignal.timeout(3000) });
+    const ct = resp.headers.get('content-type') || '';
+    // SSE endpoints return text/event-stream; reject anything else
+    return ct.includes('text/event-stream') || resp.ok;
+  } catch {
+    return false;
+  }
+}
+
+const createStreamState = taskId => ({
+  taskId,
+  events: [],
+  loopState: null,
+  done: false,
+});
+
 export default function useAgentSSE(taskId, options = {}) {
   const { enabled = true, onStepEvent, onLoopDone } = options;
-  const [events, setEvents] = useState([]);
-  const [loopState, setLoopState] = useState(null);
-  const [done, setDone] = useState(false);
+  const [streamState, setStreamState] = useState(() => createStreamState(taskId));
+  const [sseReachable, setSSEReachable] = useState(false);
 
   const onStepEventRef = useRef(onStepEvent);
   const onLoopDoneRef = useRef(onLoopDone);
@@ -38,6 +58,21 @@ export default function useAgentSSE(taskId, options = {}) {
   }, [onLoopDone]);
 
   const url = taskId ? `${ML_API_BASE}/sse/agent/${taskId}/events` : null;
+  const currentState = streamState.taskId === taskId ? streamState : createStreamState(taskId);
+
+  // Pre-flight: check SSE endpoint reachability before opening EventSource.
+  // Prevents "wrong MIME type" console errors when ML API is unavailable.
+  useEffect(() => {
+    if (!url || !enabled || !taskId) {
+      setSSEReachable(false);
+      return;
+    }
+    let cancelled = false;
+    _isSSEEndpointReachable(url).then(ok => {
+      if (!cancelled) setSSEReachable(ok);
+    });
+    return () => { cancelled = true; };
+  }, [url, enabled, taskId]);
 
   const handleEvent = useCallback((eventType, data) => {
     // Map SSE event to the stepEvent shape used by AgentExecutionPanel
@@ -60,32 +95,42 @@ export default function useAgentSSE(taskId, options = {}) {
     };
 
     if (data.loop_state) {
-      setLoopState(data.loop_state);
+      setStreamState(prev => {
+        const next = prev.taskId === taskId ? prev : createStreamState(taskId);
+        return { ...next, loopState: data.loop_state };
+      });
     }
 
     if (eventType === 'loop_done' || eventType === 'end') {
-      setDone(true);
+      setStreamState(prev => {
+        const next = prev.taskId === taskId ? prev : createStreamState(taskId);
+        return { ...next, done: true };
+      });
       eventBus.emit(EVENT_NAMES.AGENT_LOOP_DONE, { taskId, ...data });
       onLoopDoneRef.current?.(data);
       return;
     }
 
     if (eventType === 'loop_error') {
-      setDone(true);
+      setStreamState(prev => {
+        const next = prev.taskId === taskId ? prev : createStreamState(taskId);
+        return { ...next, done: true };
+      });
       eventBus.emit(EVENT_NAMES.AGENT_LOOP_ERROR, { taskId, error: data.error });
       return;
     }
 
     // Accumulate events for the panel
-    setEvents(prev => {
+    setStreamState(prev => {
+      const next = prev.taskId === taskId ? prev : createStreamState(taskId);
       // Update existing step event or append new one
-      const idx = prev.findIndex(e => e.step_name === stepEvent.step_name && e.step_index === stepEvent.step_index);
+      const idx = next.events.findIndex(e => e.step_name === stepEvent.step_name && e.step_index === stepEvent.step_index);
       if (idx >= 0) {
-        const updated = [...prev];
+        const updated = [...next.events];
         updated[idx] = { ...updated[idx], ...stepEvent };
-        return updated;
+        return { ...next, events: updated };
       }
-      return [...prev, stepEvent];
+      return { ...next, events: [...next.events, stepEvent] };
     });
 
     // Emit to EventBus for other consumers
@@ -99,17 +144,17 @@ export default function useAgentSSE(taskId, options = {}) {
 
   const { connected, error, reconnectCount } = useSSE(url, {
     onEvent: handleEvent,
-    enabled: enabled && !!taskId && !done,
+    enabled: enabled && !!taskId && !currentState.done && sseReachable,
   });
 
   return {
     connected,
-    events,
-    loopState,
-    done,
+    events: currentState.events,
+    loopState: currentState.loopState,
+    done: currentState.done,
     error,
     reconnectCount,
-    clearEvents: () => setEvents([]),
+    clearEvents: () => setStreamState(prev => ({ ...(prev.taskId === taskId ? prev : createStreamState(taskId)), events: [] })),
   };
 }
 

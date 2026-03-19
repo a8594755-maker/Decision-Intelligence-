@@ -256,6 +256,23 @@ export async function requestRevision(itemId, reviewerId, feedback) {
 }
 
 async function updateDecision(itemId, status, reviewerId, comment) {
+  // Guard: only allow decision on items that are still pending.
+  // Prevents race condition where two managers approve concurrently.
+  try {
+    const { data: current } = await supabase
+      .from('di_approval_requests')
+      .select('status')
+      .eq('id', itemId)
+      .single();
+    if (current && current.status !== GOVERNANCE_STATUS.PENDING && current.status !== 'pending') {
+      throw new Error(`Item ${itemId} is already ${current.status}. Cannot change to ${status}.`);
+    }
+  } catch (checkErr) {
+    // If the check itself fails (e.g. item not found or DB down), throw clearly
+    if (checkErr.message?.includes('already')) throw checkErr;
+    // For DB errors during check, fall through to allow in-memory fallback
+  }
+
   const patch = {
     status,
     reviewer_id: reviewerId,

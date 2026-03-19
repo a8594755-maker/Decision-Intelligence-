@@ -1,6 +1,23 @@
 // ============================================
 // useWorkflowExecutor — workflow A/B/DigitalTwin execution, async polling
 // Extracted from DecisionSupportView/index.jsx
+//
+// ── TWO EXECUTION PATHS (both valid for V1) ──
+//
+// PATH 1 — Workflow Engine (this file):
+//   User clicks "Run Workflow A/B" button → executeWorkflowFlow()
+//   → workflowAEngine/workflowBEngine runs forecast→plan→risk→verify→topology→report
+//   → Results appear as chat cards directly. No AI employee task lifecycle.
+//   Use case: Quick analysis, power users, demo "show the engines work".
+//
+// PATH 2 — Digital Worker Orchestrator (DecisionSupportView index.jsx):
+//   User sends chat message → task decomposition → submitPlan() → orchestrator.tick()
+//   → Full task lifecycle: draft_plan → waiting_approval → in_progress → review → done
+//   → Results appear via SSE + AgentExecutionPanel. Full audit trail.
+//   Use case: Digital worker demo, task board, review/approve flow.
+//
+// For V1 demo: PATH 1 shows domain engine strength; PATH 2 shows digital worker vision.
+// Both paths share the same underlying domain engines. They do NOT conflict.
 // ============================================
 
 import { useState, useRef, useEffect, useCallback } from 'react';
@@ -360,6 +377,17 @@ export default function useWorkflowExecutor({
         content: 'No dataset profile available. Upload data first.',
         timestamp: new Date().toISOString(),
       }]);
+      return;
+    }
+
+    const guessedWorkflowLabel = String(profileRow?.profile_json?.global?.workflow_guess?.label || '').trim().toUpperCase();
+    if (!workflowName && guessedWorkflowLabel && guessedWorkflowLabel !== 'A' && guessedWorkflowLabel !== 'B') {
+      appendMessagesToCurrentConversation([{
+        role: 'ai',
+        content: `Workflow guess "${guessedWorkflowLabel}" is not executable here. Choose Workflow A or Workflow B explicitly, or fix the dataset mapping first.`,
+        timestamp: new Date().toISOString(),
+      }]);
+      addNotification?.(`Unsupported workflow guess: ${guessedWorkflowLabel}`, 'error');
       return;
     }
 

@@ -1,7 +1,7 @@
 /**
  * useSSE — Generic React hook for Server-Sent Events connections.
  *
- * Inspired by OpenCloud's SSEAdapter pattern:
+ * SSE adapter pattern:
  * - Auto-reconnect with exponential backoff + jitter
  * - Heartbeat detection for stale connections
  * - Clean unmount handling
@@ -109,9 +109,15 @@ export default function useSSE(url, options = {}) {
       });
     }
 
-    es.onerror = () => {
+    es.onerror = (evt) => {
       setConnected(false);
-      const msg = 'SSE connection lost';
+      // EventSource fires onerror for MIME type mismatch, network failures, etc.
+      // Check readyState: CLOSED (2) means the browser rejected the connection
+      // (e.g. wrong MIME type), CONNECTING (0) means transient network error.
+      const isFatal = es.readyState === EventSource.CLOSED;
+      const msg = isFatal
+        ? 'SSE connection rejected (server may be unavailable or returned wrong content type)'
+        : 'SSE connection lost';
       setError(msg);
       onErrorRef.current?.(msg);
 
@@ -119,7 +125,7 @@ export default function useSSE(url, options = {}) {
       es.close();
       eventSourceRef.current = null;
 
-      // Exponential backoff with jitter (OpenCloud pattern: 30s + random 15s)
+      // Exponential backoff with jitter (30s + random 15s)
       const attempt = attemptRef.current;
       const delay = Math.min(reconnectBaseMs * Math.pow(2, attempt), reconnectMaxMs);
       const jitter = Math.random() * delay * 0.3;
