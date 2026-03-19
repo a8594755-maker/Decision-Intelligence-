@@ -1,33 +1,17 @@
-Run the Ralph Loop autonomous agent for a given task.
+---
+description: "Start Ralph Loop in current session"
+argument-hint: "PROMPT [--max-iterations N] [--completion-promise TEXT]"
+allowed-tools: ["Bash(/Users/xuweijin/.claude/plugins/marketplaces/claude-plugins-official/plugins/ralph-loop/scripts/setup-ralph-loop.sh:*)"]
+---
 
-## What to do
+# Ralph Loop Command
 
-1. Read the user's task description from the argument: $ARGUMENTS
-2. If no argument is provided, explain Ralph Loop usage and available commands.
-3. Execute the task using the Ralph Loop pattern:
-   - Decompose the task into steps using `src/services/aiEmployee/chatTaskDecomposer.js`
-   - For each step, identify the appropriate builtin tool from `src/services/aiEmployee/builtinToolCatalog.js`
-   - Execute each step sequentially, checking results before proceeding
-   - If a step fails, analyze the error and decide whether to retry, skip, or abort
-4. Report results after each step completes.
+Execute the setup script to initialize the Ralph loop:
 
-## Key files
+```!
+/Users/xuweijin/.claude/plugins/marketplaces/claude-plugins-official/plugins/ralph-loop/scripts/setup-ralph-loop.sh $ARGUMENTS
+```
 
-- `src/services/aiEmployee/ralphLoopAdapter.js` — Ralph Loop adapter (abort, config)
-- `src/services/aiEmployee/orchestrator.js` — Task orchestrator
-- `src/services/aiEmployee/chatTaskDecomposer.js` — Task decomposition
-- `src/services/aiEmployee/builtinToolCatalog.js` — Available tools
-- `src/views/DecisionSupportView/index.jsx` — Chat command handler
+Please work on the task. When you try to exit, the Ralph loop will feed the SAME PROMPT back to you for the next iteration. You'll see your previous work in files and git history, allowing you to iterate and improve.
 
-## Available sub-commands
-
-- `/ralph-loop <task description>` — Execute a task autonomously
-- `/ralph-loop status` — Show current Ralph Loop configuration
-- `/ralph-loop config` — Show env vars and settings
-
-## Configuration
-
-- `VITE_RALPH_LOOP_ENABLED` — Enable/disable globally (default: false)
-- `VITE_RALPH_MAX_ITERATIONS` — Max loop iterations (default: 30)
-- `VITE_RALPH_MAX_COST` — Max LLM cost per task in USD (default: 5.00)
-- `VITE_RALPH_LLM_MODEL` — LLM model to use (default: anthropic/claude-sonnet-4.5)
+CRITICAL RULE: If a completion promise is set, you may ONLY output it when the statement is completely and unequivocally TRUE. Do not output false promises to escape the loop, even if you think you're stuck or should exit for other reasons. The loop is designed to continue until genuine completion.

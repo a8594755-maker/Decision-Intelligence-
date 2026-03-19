@@ -53,7 +53,7 @@ export function createSeededRng(seed) {
  * @returns {number} - Standard normal variate
  */
 export function randn(rng) {
-  const u1 = rng();
+  const u1 = Math.max(Number.EPSILON, rng());
   const u2 = rng();
   const mag = Math.sqrt(-2 * Math.log(u1));
   const z0 = mag * Math.cos(2 * Math.PI * u2);
@@ -340,59 +340,60 @@ export function runSingleTrial({
   let totalShortage = 0;
   
   for (const bucket of timeBuckets) {
-    // Get inbound for this bucket
-    const inboundMap = inboundByKeyBucket;
-    let inboundQty = 0;
-    for (const [_key, bucketMap] of inboundMap) {
-      if (bucketMap.has(bucket)) {
-        inboundQty += bucketMap.get(bucket);
-      }
-    }
-    
-    // Get demand for this bucket (sum across all keys)
-    let demandQty = 0;
-    for (const [_key, bucketDemandMap] of demandByKeyBucket) {
-      if (bucketDemandMap.has(bucket)) {
-        const dist = bucketDemandMap.get(bucket);
-        demandQty += sampleDemand(dist, rng);
-      }
-    }
-    
-    // Update inventory for all keys (simplified: aggregate view)
-    // In real implementation, this would be per-key
     let totalOnHand = 0;
-    for (const [, inv] of currentInventory) {
+    let totalShortageThisBucket = 0;
+
+    // Process each key independently to avoid cross-key inventory pooling
+    for (const [key, inv] of currentInventory) {
+      // Inbound for this key+bucket
+      let inboundQty = 0;
+      if (inboundByKeyBucket.has(key)) {
+        const bucketMap = inboundByKeyBucket.get(key);
+        if (bucketMap.has(bucket)) {
+          inboundQty = bucketMap.get(bucket);
+        }
+      }
+
+      // Demand for this key+bucket
+      let demandQty = 0;
+      if (demandByKeyBucket.has(key)) {
+        const bucketDemandMap = demandByKeyBucket.get(key);
+        if (bucketDemandMap.has(bucket)) {
+          const dist = bucketDemandMap.get(bucket);
+          demandQty = sampleDemand(dist, rng);
+        }
+      }
+
+      // Update this key's inventory independently
+      const newOnHand = inv.onHand + inboundQty - demandQty;
+      const keyShortage = newOnHand < 0 ? -newOnHand : 0;
+      inv.onHand = Math.max(0, newOnHand);
+
       totalOnHand += inv.onHand;
+      totalShortageThisBucket += keyShortage;
     }
-    
-    const newOnHand = totalOnHand + inboundQty - demandQty;
-    const available = newOnHand; // Simplified, could subtract safety stock
-    
+
+    const available = totalOnHand;
+
     // Track min available
     if (available < minAvailable) {
       minAvailable = available;
     }
-    
+
     // Check stockout
-    const shortage = available < 0 ? -available : 0;
-    if (shortage > 0) {
-      totalShortage += shortage;
+    if (totalShortageThisBucket > 0) {
+      totalShortage += totalShortageThisBucket;
       if (stockoutBucket === null) {
         stockoutBucket = bucket;
       }
     }
-    
+
     bucketResults.push({
       bucket,
-      endOnHand: newOnHand,
+      endOnHand: totalOnHand,
       available,
-      shortage
+      shortage: totalShortageThisBucket
     });
-    
-    // Update inventory for next bucket
-    for (const [, inv] of currentInventory) {
-      inv.onHand = Math.max(0, newOnHand); // Simplified
-    }
   }
   
   return {
@@ -551,6 +552,7 @@ export function executeInventoryProbForecast(inputs, options = {}) {
         `${po.materialCode}|${po.plantId}` === key
       );
       
+      const keyIndex = keys.indexOf(key);
       const result = runMonteCarloForKey({
         key,
         startingInv,
@@ -558,7 +560,7 @@ export function executeInventoryProbForecast(inputs, options = {}) {
         poForecastsForKey,
         timeBuckets,
         trials,
-        seed
+        seed: seed + keyIndex
       });
       
       keyResults.push(result);

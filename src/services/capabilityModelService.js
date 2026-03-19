@@ -2,7 +2,7 @@
  * capabilityModelService.js — Platform-Level Capability Model
  *
  * Abstracts the raw executor types (builtin_tool, registered_tool, dynamic_tool,
- * python_tool, report, export, llm_call, opencloud, excel) into a unified
+ * python_tool, report, export, llm_call, excel) into a unified
  * platform-level capability catalog.
  *
  * Provides:
@@ -33,7 +33,7 @@ export const CAPABILITY_CLASS = {
   ANALYSIS:      'analysis',       // data analysis, solver, ML
   REPORTING:     'reporting',      // report generation, export, excel
   SYNTHESIS:     'synthesis',      // LLM summarization, narrative
-  INTEGRATION:   'integration',    // OpenCloud, external systems
+  INTEGRATION:   'integration',    // external systems
   CUSTOM_CODE:   'custom_code',    // dynamic/registered python tools
   NEGOTIATION:   'negotiation',    // negotiation strategy
   MONITORING:    'monitoring',     // alerts, closed-loop, dashboards
@@ -49,7 +49,6 @@ const EXECUTOR_TO_CLASS = {
   llm_call:      CAPABILITY_CLASS.SYNTHESIS,
   report:        CAPABILITY_CLASS.REPORTING,
   export:        CAPABILITY_CLASS.REPORTING,
-  opencloud:     CAPABILITY_CLASS.INTEGRATION,
   excel:         CAPABILITY_CLASS.REPORTING,
 };
 
@@ -417,13 +416,6 @@ export function buildCapabilityCatalog(policyMap = CAPABILITY_POLICIES) {
       description: 'Generate styled Excel workbooks with charts and formatting',
       capability_class: CAPABILITY_CLASS.REPORTING,
       executor_type: 'excel',
-    },
-    {
-      id: 'platform:opencloud',
-      name: 'OpenCloud Integration',
-      description: 'Publish or import data via OpenCloud',
-      capability_class: CAPABILITY_CLASS.INTEGRATION,
-      executor_type: 'opencloud',
     },
   ];
 

@@ -28,12 +28,6 @@ export const PERMISSION_REGISTRY = {
   python_tool:     ['can_run_python_tool'],
   python_report:   ['can_generate_report'],
   excel_ops:       ['can_drive_excel'],
-  // OpenCloud EU integration
-  opencloud_sync:       ['can_sync_opencloud'],
-  opencloud_import:     ['can_import_opencloud'],
-  opencloud_search:     ['can_search_opencloud'],
-  opencloud_distribute: ['can_distribute_opencloud'],
-  opencloud_watch:      ['can_watch_opencloud'],
 };
 
 // ── Error ────────────────────────────────────────────────────────────────────
@@ -178,4 +172,85 @@ export function canExecuteTool(employee, workflowType, toolTier, templateOverrid
   return { allowed: true, missing: [], tierBlocked: false };
 }
 
-export default { PERMISSION_REGISTRY, TEMPLATE_TIER_RESTRICTIONS, PermissionDeniedError, checkPermission, canExecute, checkToolTier, canExecuteTool };
+// ── Capability-Level Enforcement (DB-First) ─────────────────────────────────
+// Extends permission + tier checks with capability class policy from DB.
+// This is the authoritative guard for the platform — combines all three layers:
+//   1. Permission JSONB (can_run_*)
+//   2. Tool tier restrictions (tier_a/b/c)
+//   3. Capability class policy (autonomy level, allowed_capabilities from DB)
+
+import { resolveCapabilityClass, getCapabilityPolicyFromDB } from './capabilityModelService.js';
+import { getWorkerTemplateFromDB } from './aiEmployee/persistence/employeeRepo.js';
+
+/**
+ * Full capability-aware permission check (async, DB-first).
+ * Checks permission JSONB + tool tier + capability class policy + autonomy level.
+ *
+ * @param {object} employee - Row from ai_employees (must include .role, .permissions, .name)
+ * @param {string} workflowType - The workflow_type being dispatched
+ * @param {object} [stepInfo] - Step context for capability resolution
+ * @param {string} [stepInfo.builtin_tool_id] - Builtin tool ID
+ * @param {string} [stepInfo.tool_type] - Executor type
+ * @param {string} [stepInfo.toolTier] - Tool tier
+ * @param {string} [autonomyLevel='A1'] - Worker's current autonomy level
+ * @returns {Promise<{ allowed: boolean, missing: string[], tierBlocked: boolean, capabilityBlocked: boolean, reason?: string }>}
+ */
+export async function checkCapabilityPolicy(employee, workflowType, stepInfo = {}, autonomyLevel = 'A1') {
+  // Layer 1: Permission JSONB check
+  const permCheck = canExecute(employee, workflowType);
+  if (!permCheck.allowed) {
+    return { ...permCheck, tierBlocked: false, capabilityBlocked: false };
+  }
+
+  // Layer 2: Tool tier check (try DB template first)
+  let dbTemplate = null;
+  try {
+    dbTemplate = await getWorkerTemplateFromDB(employee.role);
+  } catch { /* best-effort */ }
+
+  const tierCheck = checkToolTier(employee, stepInfo.toolTier, dbTemplate);
+  if (!tierCheck.allowed) {
+    return { allowed: false, missing: [], tierBlocked: true, capabilityBlocked: false, reason: tierCheck.reason };
+  }
+
+  // Layer 3: Capability class policy from DB
+  const capClass = resolveCapabilityClass({
+    tool_type: stepInfo.tool_type || workflowType,
+    builtin_tool_id: stepInfo.builtin_tool_id,
+  });
+
+  // Check if worker's template allows this capability class
+  const templateCaps = dbTemplate?.allowed_capabilities || [];
+  if (templateCaps.length > 0 && !templateCaps.includes(capClass)) {
+    return {
+      allowed: false,
+      missing: [],
+      tierBlocked: false,
+      capabilityBlocked: true,
+      reason: `Worker template '${employee.role}' does not allow capability class '${capClass}' (allowed: ${templateCaps.join(', ')})`,
+    };
+  }
+
+  // Check autonomy level against policy minimum
+  try {
+    const policy = await getCapabilityPolicyFromDB(capClass, stepInfo.builtin_tool_id);
+    if (policy?.min_autonomy_level) {
+      const levels = ['A0', 'A1', 'A2', 'A3', 'A4'];
+      const currentIdx = levels.indexOf(autonomyLevel);
+      const minIdx = levels.indexOf(policy.min_autonomy_level);
+      if (currentIdx >= 0 && minIdx >= 0 && currentIdx < minIdx) {
+        return {
+          allowed: false,
+          missing: [],
+          tierBlocked: false,
+          capabilityBlocked: true,
+          reason: `Autonomy level ${autonomyLevel} below minimum ${policy.min_autonomy_level} for capability '${capClass}'`,
+        };
+      }
+    }
+  } catch { /* DB unavailable — allow (policy enforcement is best-effort over hardcoded) */ }
+
+  return { allowed: true, missing: [], tierBlocked: false, capabilityBlocked: false };
+}
+
+export default { PERMISSION_REGISTRY, TEMPLATE_TIER_RESTRICTIONS, PermissionDeniedError, checkPermission, canExecute, checkToolTier, canExecuteTool, checkCapabilityPolicy };

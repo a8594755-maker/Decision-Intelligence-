@@ -5,15 +5,16 @@
  *
  * Format:
  *   Header (32 bytes):
- *     [4B] magic "CFR1"/"CFR2"  [2B] version  [2B] bucketCount
+ *     [4B] magic "CFR1"/"CFR2"/"CFR3"  [2B] version  [2B] bucketCount
  *     [4B] numFlops/scenarios   [4B] iterations  [4B] indexOffset
  *     [4B] entryCount           [8B] reserved
  *
  *   Index (entryCount * 8 bytes, sorted by hash for binary search):
  *     [4B] fnv1a hash of key   [4B] body offset
  *
- *   Body (variable):
- *     [1B] numActions  [numActions bytes] uint8 quantized probs (0-255)
+ *   Body (variable, per entry):
+ *     CFR2: [1B] numActions  [numActions bytes] uint8 quantized probs (0-255)
+ *     CFR3: [1B] numActions  [numActions bytes] uint8 quantized probs  [2B] keyLen  [keyLen bytes] key UTF-8
  *
  * Typical compression: 513MB JSONL → ~30MB .cfr2.gz
  */
@@ -69,10 +70,11 @@ export function buildBinaryBuffer(entries, meta = {}) {
   const { iterations = 50000, bucketCount = 5, numScenarios = 1 } = meta;
   const totalEntries = entries.length;
 
-  // Compute body size
+  // Compute body size (CFR3: includes key strings for collision verification)
   let totalBodySize = 0;
   for (const entry of entries) {
-    totalBodySize += 1 + entry.probs.length;
+    const keyBytes = Buffer.byteLength(entry.key, 'utf8');
+    totalBodySize += 1 + entry.probs.length + 2 + keyBytes;
   }
 
   // Build index + body
@@ -84,6 +86,7 @@ export function buildBinaryBuffer(entries, meta = {}) {
     const { key, probs } = entries[i];
     const hash = fnv1a(key);
     const numActions = probs.length;
+    const keyBytes = Buffer.byteLength(key, 'utf8');
 
     // Index entry: hash, bodyOffset, numActions
     const iOff = i * 12;
@@ -91,12 +94,14 @@ export function buildBinaryBuffer(entries, meta = {}) {
     indexBuf.writeUInt32LE(bodyOffset, iOff + 4);
     indexBuf.writeUInt32LE(numActions, iOff + 8);
 
-    // Body: [numActions] [quantized probs...]
+    // Body: [numActions] [quantized probs...] [keyLen] [key UTF-8]
     bodyBuf[bodyOffset] = numActions;
     for (let j = 0; j < numActions; j++) {
       bodyBuf[bodyOffset + 1 + j] = quantizeProb(probs[j]);
     }
-    bodyOffset += 1 + numActions;
+    bodyBuf.writeUInt16LE(keyBytes, bodyOffset + 1 + numActions);
+    bodyBuf.write(key, bodyOffset + 1 + numActions + 2, keyBytes, 'utf8');
+    bodyOffset += 1 + numActions + 2 + keyBytes;
   }
 
   // Sort index by hash (simple sort for small negotiation strategy sets)
@@ -109,12 +114,19 @@ export function buildBinaryBuffer(entries, meta = {}) {
   }
   sortedEntries.sort((a, b) => a.hash - b.hash);
 
+  // Detect hash collisions — two different keys mapping to the same FNV-1a hash
+  for (let i = 1; i < sortedEntries.length; i++) {
+    if (sortedEntries[i].hash === sortedEntries[i - 1].hash) {
+      console.warn(`[BinaryStrategy] FNV-1a hash collision detected at index ${i} (hash=${sortedEntries[i].hash}). Lookup may return wrong strategy.`);
+    }
+  }
+
   // Assemble final binary
   const indexSize = totalEntries * 8;
   const buffer = Buffer.alloc(HEADER_SIZE + indexSize + totalBodySize);
 
-  // Header
-  buffer.write('CFR2', 0);
+  // Header (CFR3 includes key strings in body for collision verification)
+  buffer.write('CFR3', 0);
   buffer.writeUInt16LE(1, 4);                    // version
   buffer.writeUInt16LE(bucketCount, 6);
   buffer.writeUInt32LE(numScenarios, 8);
@@ -157,9 +169,10 @@ export class BinaryStrategyReader {
 
     // Validate magic
     const magic = this._buffer.subarray(0, 4).toString();
-    if (magic !== 'CFR1' && magic !== 'CFR2') {
-      throw new Error(`Invalid binary format: expected CFR1 or CFR2, got ${magic}`);
+    if (magic !== 'CFR1' && magic !== 'CFR2' && magic !== 'CFR3') {
+      throw new Error(`Invalid binary format: expected CFR1/CFR2/CFR3, got ${magic}`);
     }
+    this._hasCFR3Keys = (magic === 'CFR3');
 
     this._indexStart = this._buffer.readUInt32LE(16);
     this._indexCount = this._buffer.readUInt32LE(20);
@@ -187,6 +200,19 @@ export class BinaryStrategyReader {
         const bodyOff = this._buffer.readUInt32LE(this._indexStart + mid * 8 + 4);
         const abs = this._bodyStart + bodyOff;
         const n = this._buffer[abs];
+
+        // CFR3: verify the original key to guard against hash collisions
+        if (this._hasCFR3Keys) {
+          const keyLen = this._buffer.readUInt16LE(abs + 1 + n);
+          const storedKey = this._buffer.subarray(abs + 1 + n + 2, abs + 1 + n + 2 + keyLen).toString('utf8');
+          if (storedKey !== key) {
+            // Hash collision — the stored key doesn't match. Continue searching.
+            // Since index is sorted by hash, check adjacent entries.
+            lo = mid + 1;
+            continue;
+          }
+        }
+
         const probs = [];
         for (let i = 0; i < n; i++) {
           probs.push(dequantizeProb(this._buffer[abs + 1 + i]));

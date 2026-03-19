@@ -28,7 +28,7 @@ export const SCHEDULE_TYPES = {
   WEEKLY: 'weekly',
   MONTHLY: 'monthly',
   CRON: 'cron',
-  // Event-based triggers (OpenCloud file events)
+  // Event-based triggers (file events)
   ON_FILE_UPLOADED: 'on_file_uploaded',
   ON_FILE_MODIFIED: 'on_file_modified',
   ON_FILE_DETECTED: 'on_file_detected',
@@ -431,8 +431,8 @@ async function updateScheduleStatus(scheduleId, status) {
   return null;
 }
 
-// ── Event-based triggers (OpenCloud file events) ─────────────────────────────
-// These allow schedules to fire when an OpenCloud file event occurs
+// ── Event-based triggers (file events) ──────────────────────────────────────
+// These allow schedules to fire when a file event occurs
 // (e.g. "run forecast when a new .xlsx is uploaded to /Imports").
 
 const _eventUnsubscribers = new Map(); // scheduleId → unsubscribe fn
@@ -471,9 +471,9 @@ export function activateEventTrigger(schedule) {
   deactivateEventTrigger(schedule.id);
 
   const eventMap = {
-    on_file_uploaded: EVENT_NAMES.OPENCLOUD_FILE_UPLOADED,
-    on_file_modified: EVENT_NAMES.OPENCLOUD_FILE_MODIFIED,
-    on_file_detected: EVENT_NAMES.OPENCLOUD_FILE_DETECTED,
+    on_file_uploaded: EVENT_NAMES.FILE_UPLOADED,
+    on_file_modified: EVENT_NAMES.FILE_MODIFIED,
+    on_file_detected: EVENT_NAMES.FILE_DETECTED,
   };
 
   const eventName = eventMap[type];

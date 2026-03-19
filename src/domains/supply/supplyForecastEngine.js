@@ -8,6 +8,8 @@
  * - Step D: Build trace (explainability)
  */
 
+import { dateToBucket } from '../../utils/timeBucket.js';
+
 /**
  * Calculate percentile from an array of numbers
  */
@@ -35,26 +37,6 @@ function daysBetween(date1, date2) {
 }
 
 /**
- * Map a date to a time bucket (week format: YYYY-WNN)
- */
-function dateToBucket(date, bucketFormat = 'week') {
-  const d = new Date(date);
-  const year = d.getFullYear();
-  
-  if (bucketFormat === 'week') {
-    // Calculate ISO week number
-    const startOfYear = new Date(year, 0, 1);
-    const dayOfYear = Math.floor((d - startOfYear) / (1000 * 60 * 60 * 24));
-    const weekNum = Math.ceil((dayOfYear + startOfYear.getDay() + 1) / 7);
-    return `${year}-W${String(weekNum).padStart(2, '0')}`;
-  }
-  
-  // Default to month format: YYYY-MM
-  const month = String(d.getMonth() + 1).padStart(2, '0');
-  return `${year}-${month}`;
-}
-
-/**
  * Get date for a specific bucket (returns Monday of that week)
  */
 function bucketToDate(bucket) {
@@ -62,9 +44,12 @@ function bucketToDate(bucket) {
   if (match) {
     const year = parseInt(match[1]);
     const week = parseInt(match[2]);
-    const startOfYear = new Date(year, 0, 1);
-    const dayOffset = (week - 1) * 7 - startOfYear.getDay() + 1;
-    return new Date(year, 0, 1 + dayOffset);
+    // ISO 8601: find Monday of the given ISO week.
+    // Jan 4 is always in ISO week 1. Find the Monday of week 1, then offset.
+    const jan4 = new Date(Date.UTC(year, 0, 4));
+    const dayOfWeek = jan4.getUTCDay() || 7; // Mon=1 … Sun=7
+    const week1Monday = new Date(Date.UTC(year, 0, 4 - dayOfWeek + 1));
+    return new Date(week1Monday.getTime() + (week - 1) * 7 * 86400000);
   }
   return new Date();
 }
@@ -353,7 +338,7 @@ export function calculatePOForecasts(poLines, supplierStatsResult, timeBuckets, 
  * @param {Array} timeBuckets - Target time buckets (optional, will use all unique buckets if not provided)
  * @returns {Object} - { inboundByBucket[], metrics }
  */
-export function aggregateInboundByBucket(poForecasts, timeBuckets = null) {
+export function aggregateInboundByBucket(poForecasts, _timeBuckets = null) {
   const inboundMap = {};
   
   // Collect all unique buckets if timeBuckets not provided
@@ -364,8 +349,6 @@ export function aggregateInboundByBucket(poForecasts, timeBuckets = null) {
       allBuckets.add(pf.arrival_p90_bucket);
     }
   });
-  
-  const _targetBuckets = timeBuckets || Array.from(allBuckets).sort();
   
   // Aggregate P50 quantities
   poForecasts.forEach(pf => {

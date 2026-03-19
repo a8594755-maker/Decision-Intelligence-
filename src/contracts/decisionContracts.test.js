@@ -130,7 +130,7 @@ describe('Decision Artifact Contract', () => {
     });
 
     it('rejects missing summary', () => {
-      const { summary, ...rest } = valid;
+      const { summary: _summary, ...rest } = valid;
       expect(validateDecisionBrief(rest).valid).toBe(false);
     });
 
@@ -158,7 +158,7 @@ describe('Decision Artifact Contract', () => {
     });
 
     it('rejects missing source_datasets', () => {
-      const { source_datasets, ...rest } = valid;
+      const { source_datasets: _source_datasets, ...rest } = valid;
       expect(validateEvidencePackV2(rest).valid).toBe(false);
     });
 
@@ -187,7 +187,7 @@ describe('Decision Artifact Contract', () => {
     });
 
     it('rejects missing idempotency_key', () => {
-      const { idempotency_key, ...rest } = valid;
+      const { idempotency_key: _idempotency_key, ...rest } = valid;
       expect(validateWritebackPayload(rest).valid).toBe(false);
     });
 
@@ -278,6 +278,26 @@ describe('Review Contract', () => {
       const policy = createApprovalPolicy({ worker_template_id: 'tpl-1' });
       const check = checkApprovalGate(policy, 'notify', { autonomy_level: 'A2' });
       expect(check.requires_approval).toBe(true);
+    });
+
+    it('gate: threshold escalation overrides auto-approve tiers', () => {
+      const policy = createApprovalPolicy({
+        worker_template_id: 'tpl-1',
+        rules: [{
+          action_type: 'notify',
+          requires_approval: true,
+          thresholds: { risk_level: 'medium' },
+          auto_approve_at: ['A3', 'A4'],
+        }],
+      });
+
+      const check = checkApprovalGate(policy, 'notify', {
+        autonomy_level: 'A3',
+        risk_level: 'high',
+      });
+
+      expect(check.requires_approval).toBe(true);
+      expect(check.reason).toContain('Risk level');
     });
 
     it('gate: unknown action defaults to require approval', () => {

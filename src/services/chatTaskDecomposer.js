@@ -22,7 +22,7 @@ const SUPABASE_URL = String(import.meta.env.VITE_SUPABASE_URL || '').replace(/\/
 
 const KNOWN_WORKFLOWS = new Set([
   'forecast', 'plan', 'risk', 'synthesize',
-  'dynamic_tool', 'registered_tool', 'report', 'export',
+  'dynamic_tool', 'registered_tool', 'report', 'export', 'excel',
   'builtin_tool', 'python_tool', 'python_report',
 ]);
 
@@ -31,13 +31,6 @@ const KNOWN_WORKFLOWS = new Set([
 const LEGACY_KEYWORD_WORKFLOWS = [
   { keywords: ['report', 'summary', 'dashboard', '報告', '摘要', '報表'], workflow: 'report', name: 'report' },
   { keywords: ['excel', 'xlsx', 'export', 'powerbi', 'power bi', '匯出', '導出'], workflow: 'export', name: 'export' },
-  // OpenCloud EU integration — cloud import/publish detected here, dispatched as builtin_tool
-  { keywords: ['opencloud', 'cloud import', 'cloud file', '雲端匯入', '雲端檔案', '開放雲'], workflow: 'builtin_tool', name: 'opencloud_import_dataset' },
-  { keywords: ['publish to cloud', 'cloud publish', 'upload to cloud', '雲端發布', '發布到雲端', '上傳雲端'], workflow: 'builtin_tool', name: 'opencloud_publish_report' },
-  { keywords: ['distribute report', 'share report', 'send report', '分發報告', '發送報告', '分享報告'], workflow: 'builtin_tool', name: 'opencloud_distribute_report' },
-  { keywords: ['search artifact', 'find artifact', 'search cloud', '搜尋', '搜索文件', '查找文件'], workflow: 'builtin_tool', name: 'opencloud_search_artifacts' },
-  { keywords: ['watch folder', 'monitor folder', '監控文件夾', '監視資料夾'], workflow: 'builtin_tool', name: 'opencloud_watch_folder' },
-  { keywords: ['find by tag', 'tag search', '標籤搜尋', '按標籤查找'], workflow: 'builtin_tool', name: 'opencloud_find_by_tag' },
 ];
 
 // ── General analysis detection ──────────────────────────────────────────────
@@ -395,6 +388,7 @@ export async function decomposeTask({ userMessage, sessionContext: _sessionConte
 
     // Add Excel generation step — general analysis always produces Excel output
     // Uses excelExecutor → /agent/generate-excel (Opus 4.6 generates openpyxl code)
+    const priorStepNames = subtasks.map(s => s.name);
     subtasks.push({
       name: 'generate_excel',
       workflow_type: 'excel',
@@ -403,7 +397,7 @@ export async function decomposeTask({ userMessage, sessionContext: _sessionConte
       tool_hint: 'MBR Monthly Business Review Excel Report',
       tool_id: null,
       builtin_tool_id: null,
-      depends_on: subtasks.map(s => s.name),
+      depends_on: priorStepNames,
       estimated_tier: 'tier_c',
       needs_dataset_profile: false,
     });
@@ -587,7 +581,7 @@ function _finalize(subtasks, userMessage, reportFormat, confidence, clarificatio
       const bi = orderedIds.indexOf(b.name);
       if (ai === -1 && bi === -1) return 0;
       if (ai === -1) return 1;
-      if (bi === -1) return 1;
+      if (bi === -1) return -1;
       return ai - bi;
     });
   }

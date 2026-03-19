@@ -7,6 +7,7 @@
 
 import { supabase } from './supabaseClient';
 import { recordFieldEdit } from './dataEditAuditService';
+import { escapeIlike } from '../utils/dataServiceHelpers';
 
 // ── Table Registry ───────────────────────────────────────────────────────────
 
@@ -168,7 +169,7 @@ export async function queryTable(userId, tableName, {
       const value = filters[filterDef.key];
       if (value == null || value === '') continue;
       if (filterDef.type === 'ilike') {
-        query = query.ilike(filterDef.key, `%${value}%`);
+        query = query.ilike(filterDef.key, `%${escapeIlike(value)}%`);
       } else {
         query = query.eq(filterDef.key, value);
       }
@@ -215,7 +216,7 @@ export async function getTableCount(userId, tableName, filters = {}) {
       const value = filters[filterDef.key];
       if (value == null || value === '') continue;
       if (filterDef.type === 'ilike') {
-        query = query.ilike(filterDef.key, `%${value}%`);
+        query = query.ilike(filterDef.key, `%${escapeIlike(value)}%`);
       } else {
         query = query.eq(filterDef.key, value);
       }

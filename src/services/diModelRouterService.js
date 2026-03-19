@@ -156,64 +156,25 @@ const toPromptText = (promptId, input) => {
   throw new Error(`Unsupported DI prompt id: ${promptId}`);
 };
 
-const callGeminiDirect = async ({ prompt, model, temperature = 0.15, maxOutputTokens = 4096 }) => {
-  if (!GEMINI_API_KEY) throw new Error('No VITE_GEMINI_API_KEY configured for direct Gemini call.');
-  const candidates = DI_GEMINI_MODEL_CANDIDATES.length > 0 ? DI_GEMINI_MODEL_CANDIDATES : [model];
-  let lastError = null;
-  for (const m of candidates) {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`;
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { temperature, maxOutputTokens, responseMimeType: 'application/json' }
-      })
-    });
-    if (res.ok) {
-      const data = await res.json();
-      const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-      if (text) return { text, model: m };
-      throw new Error('Gemini direct API returned empty content.');
-    }
-    const errData = await res.json().catch(() => ({}));
-    const errMsg = errData?.error?.message || `Gemini ${res.status}`;
-    if (res.status === 404 || /not found|unsupported/i.test(errMsg)) {
-      lastError = new Error(errMsg);
-      continue;
-    }
-    throw new Error(errMsg);
-  }
-  throw lastError || new Error('All Gemini model candidates failed.');
-};
-
 const callGeminiPrompt = async ({ prompt, model, temperature = 0.15, maxOutputTokens = 4096 }) => {
-  // Try Edge Function with timeout, fall back to direct API
+  // All Gemini calls go through the ai-proxy Edge Function (no client-side API key)
   const t0 = performance.now();
-  if (GEMINI_API_KEY) {
-    try {
-      const response = await withTimeout(
-        (signal) => invokeAiProxy('di_prompt', {
-          provider: 'gemini',
-          prompt,
-          model,
-          modelCandidates: DI_GEMINI_MODEL_CANDIDATES,
-          temperature,
-          maxOutputTokens,
-          responseMimeType: 'application/json'
-        }, { signal }),
-        EDGE_FN_TIMEOUT_MS
-      );
-      const text = typeof response?.text === 'string' ? response.text : '';
-      if (!text) throw new Error('AI proxy returned empty Gemini content.');
-      console.info(`[diModelRouter] Gemini via Edge Function OK in ${Math.round(performance.now() - t0)}ms`);
-      return { text, model: response?.model || model };
-    } catch (proxyError) {
-      console.warn(`[diModelRouter] Gemini Edge Function failed after ${Math.round(performance.now() - t0)}ms, trying direct API:`, proxyError.message);
-      return callGeminiDirect({ prompt, model, temperature, maxOutputTokens });
-    }
-  }
-  return callGeminiDirect({ prompt, model, temperature, maxOutputTokens });
+  const response = await withTimeout(
+    (signal) => invokeAiProxy('di_prompt', {
+      provider: 'gemini',
+      prompt,
+      model,
+      modelCandidates: DI_GEMINI_MODEL_CANDIDATES,
+      temperature,
+      maxOutputTokens,
+      responseMimeType: 'application/json'
+    }, { signal }),
+    EDGE_FN_TIMEOUT_MS
+  );
+  const text = typeof response?.text === 'string' ? response.text : '';
+  if (!text) throw new Error('AI proxy returned empty Gemini content.');
+  console.info(`[diModelRouter] Gemini via Edge Function OK in ${Math.round(performance.now() - t0)}ms`);
+  return { text, model: response?.model || model };
 };
 
 const callDeepSeekDirect = async ({ prompt, model, temperature = 0.15, maxOutputTokens = 4096 }) => {

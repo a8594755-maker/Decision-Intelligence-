@@ -6,6 +6,22 @@ const _localRuns = new Map();       // run_id → run object
 const _localSteps = new Map();      // run_id → Map<step, step object>
 const _localArtifacts = new Map();  // run_id → artifact[]
 
+const LOCAL_MAP_MAX_SIZE = 100;
+
+/** Evict the oldest entry (first key) if map exceeds max size. */
+function _evictIfFull(map) {
+  while (map.size > LOCAL_MAP_MAX_SIZE) {
+    const firstKey = map.keys().next().value;
+    map.delete(firstKey);
+  }
+}
+
+/** Set a key on a capped map, evicting oldest if full. */
+function _cappedSet(map, key, value) {
+  map.set(key, value);
+  _evictIfFull(map);
+}
+
 function nextLocalId() {
   return `local-run-${++_localIdCounter}-${Date.now()}`;
 }
@@ -37,7 +53,7 @@ export const diRunsService = {
         started_at: null, finished_at: null, error: null,
         _local: true
       };
-      _localRuns.set(localRun.id, localRun);
+      _cappedSet(_localRuns,localRun.id, localRun);
       return localRun;
     }
 
@@ -49,7 +65,7 @@ export const diRunsService = {
         .single();
 
       if (error) throw error;
-      _localRuns.set(data.id, data);
+      _cappedSet(_localRuns,data.id, data);
       return data;
     } catch (err) {
       warnFallback('createRun', err);
@@ -60,7 +76,7 @@ export const diRunsService = {
         started_at: null, finished_at: null, error: null,
         _local: true
       };
-      _localRuns.set(localRun.id, localRun);
+      _cappedSet(_localRuns,localRun.id, localRun);
       return localRun;
     }
   },
@@ -75,7 +91,7 @@ export const diRunsService = {
     if (isLocalId(run_id)) {
       const existing = _localRuns.get(run_id) || { id: run_id };
       const updated = { ...existing, ...updates };
-      _localRuns.set(run_id, updated);
+      _cappedSet(_localRuns,run_id, updated);
       return updated;
     }
 
@@ -88,13 +104,13 @@ export const diRunsService = {
         .single();
 
       if (error) throw error;
-      _localRuns.set(data.id, data);
+      _cappedSet(_localRuns,data.id, data);
       return data;
     } catch (err) {
       warnFallback('updateRunStatus', err);
       const existing = _localRuns.get(run_id) || { id: run_id };
       const updated = { ...existing, ...updates };
-      _localRuns.set(run_id, updated);
+      _cappedSet(_localRuns,run_id, updated);
       return updated;
     }
   },
@@ -109,7 +125,7 @@ export const diRunsService = {
         created_at: new Date().toISOString(),
         _local: true
       };
-      if (!_localArtifacts.has(run_id)) _localArtifacts.set(run_id, []);
+      if (!_localArtifacts.has(run_id)) _cappedSet(_localArtifacts, run_id,[]);
       _localArtifacts.get(run_id).push(localArtifact);
       return localArtifact;
     }
@@ -122,7 +138,7 @@ export const diRunsService = {
         .single();
 
       if (error) throw error;
-      if (!_localArtifacts.has(run_id)) _localArtifacts.set(run_id, []);
+      if (!_localArtifacts.has(run_id)) _cappedSet(_localArtifacts, run_id,[]);
       _localArtifacts.get(run_id).push(data);
       return data;
     } catch (err) {
@@ -135,7 +151,7 @@ export const diRunsService = {
         created_at: new Date().toISOString(),
         _local: true
       };
-      if (!_localArtifacts.has(run_id)) _localArtifacts.set(run_id, []);
+      if (!_localArtifacts.has(run_id)) _cappedSet(_localArtifacts, run_id,[]);
       _localArtifacts.get(run_id).push(localArtifact);
       return localArtifact;
     }
@@ -283,7 +299,7 @@ export const diRunsService = {
         .maybeSingle();
 
       if (error) throw error;
-      if (data) _localRuns.set(data.id, data);
+      if (data) _cappedSet(_localRuns,data.id, data);
       return data || _localRuns.get(run_id) || null;
     } catch (err) {
       warnFallback('getRun', err);
@@ -304,7 +320,7 @@ export const diRunsService = {
         .order('created_at', { ascending: true });
 
       if (error) throw error;
-      if (data?.length > 0) _localArtifacts.set(run_id, data);
+      if (data?.length > 0) _cappedSet(_localArtifacts, run_id,data);
       return data || _localArtifacts.get(run_id) || [];
     } catch (err) {
       warnFallback('getArtifactsForRun', err);
@@ -362,7 +378,7 @@ export const diRunsService = {
         input_ref: null, output_ref: null,
         _local: true
       }));
-      if (!_localSteps.has(run_id)) _localSteps.set(run_id, new Map());
+      if (!_localSteps.has(run_id)) _cappedSet(_localSteps, run_id, new Map());
       const stepMap = _localSteps.get(run_id);
       localStepResults.forEach((s) => stepMap.set(s.step, s));
       return localStepResults;
@@ -375,7 +391,7 @@ export const diRunsService = {
         .select('*');
 
       if (error) throw error;
-      if (!_localSteps.has(run_id)) _localSteps.set(run_id, new Map());
+      if (!_localSteps.has(run_id)) _cappedSet(_localSteps, run_id, new Map());
       const stepMap = _localSteps.get(run_id);
       (data || []).forEach((s) => stepMap.set(s.step, s));
       return data || [];
@@ -390,7 +406,7 @@ export const diRunsService = {
         input_ref: null, output_ref: null,
         _local: true
       }));
-      if (!_localSteps.has(run_id)) _localSteps.set(run_id, new Map());
+      if (!_localSteps.has(run_id)) _cappedSet(_localSteps, run_id, new Map());
       const stepMap = _localSteps.get(run_id);
       localStepResults.forEach((s) => stepMap.set(s.step, s));
       return localStepResults;
@@ -412,7 +428,7 @@ export const diRunsService = {
 
       if (error) throw error;
       if (data?.length > 0) {
-        if (!_localSteps.has(run_id)) _localSteps.set(run_id, new Map());
+        if (!_localSteps.has(run_id)) _cappedSet(_localSteps, run_id, new Map());
         const stepMap = _localSteps.get(run_id);
         data.forEach((s) => stepMap.set(s.step, s));
       }
@@ -451,7 +467,7 @@ export const diRunsService = {
       const existing = _localSteps.get(run_id)?.get(step) || {};
       const merged = { ...existing, ...payload, _local: true };
       if (!merged.id) merged.id = `local-step-${++_localIdCounter}`;
-      if (!_localSteps.has(run_id)) _localSteps.set(run_id, new Map());
+      if (!_localSteps.has(run_id)) _cappedSet(_localSteps, run_id, new Map());
       _localSteps.get(run_id).set(step, merged);
       return merged;
     }
@@ -464,7 +480,7 @@ export const diRunsService = {
         .single();
 
       if (error) throw error;
-      if (!_localSteps.has(run_id)) _localSteps.set(run_id, new Map());
+      if (!_localSteps.has(run_id)) _cappedSet(_localSteps, run_id, new Map());
       _localSteps.get(run_id).set(step, data);
       return data;
     } catch (err) {
@@ -472,7 +488,7 @@ export const diRunsService = {
       const existing = _localSteps.get(run_id)?.get(step) || {};
       const merged = { ...existing, ...payload, _local: true };
       if (!merged.id) merged.id = `local-step-${++_localIdCounter}`;
-      if (!_localSteps.has(run_id)) _localSteps.set(run_id, new Map());
+      if (!_localSteps.has(run_id)) _cappedSet(_localSteps, run_id, new Map());
       _localSteps.get(run_id).set(step, merged);
       return merged;
     }
@@ -502,7 +518,7 @@ export const diRunsService = {
       const existing = _localSteps.get(run_id)?.get(step) || { run_id, step };
       const merged = { ...existing, ...updates, _local: true };
       if (!merged.id) merged.id = `local-step-${++_localIdCounter}`;
-      if (!_localSteps.has(run_id)) _localSteps.set(run_id, new Map());
+      if (!_localSteps.has(run_id)) _cappedSet(_localSteps, run_id, new Map());
       _localSteps.get(run_id).set(step, merged);
       return merged;
     }
@@ -517,7 +533,7 @@ export const diRunsService = {
         .single();
 
       if (error) throw error;
-      if (!_localSteps.has(run_id)) _localSteps.set(run_id, new Map());
+      if (!_localSteps.has(run_id)) _cappedSet(_localSteps, run_id, new Map());
       _localSteps.get(run_id).set(step, data);
       return data;
     } catch (err) {
@@ -525,7 +541,7 @@ export const diRunsService = {
       const existing = _localSteps.get(run_id)?.get(step) || { run_id, step };
       const merged = { ...existing, ...updates, _local: true };
       if (!merged.id) merged.id = `local-step-${++_localIdCounter}`;
-      if (!_localSteps.has(run_id)) _localSteps.set(run_id, new Map());
+      if (!_localSteps.has(run_id)) _cappedSet(_localSteps, run_id, new Map());
       _localSteps.get(run_id).set(step, merged);
       return merged;
     }

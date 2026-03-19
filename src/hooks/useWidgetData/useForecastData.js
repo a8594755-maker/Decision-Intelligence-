@@ -41,13 +41,13 @@ export default function useForecastData({ user } = {}) {
       const { forecastRunsService } = await import('../../services/supabaseClient');
       const runs = await forecastRunsService.listRuns(user.id, { limit: 20 });
       setForecastRuns(runs || []);
-      if (runs?.length && !selectedRunId) {
-        setSelectedRunId(runs[0].id);
+      if (runs?.length) {
+        setSelectedRunId(prev => prev || runs[0].id);
       }
     } catch (err) {
       console.error('useForecastData: failed to load runs:', err);
     }
-  }, [user?.id, selectedRunId]);
+  }, [user?.id]);
 
   const loadRunData = useCallback(async () => {
     if (!user?.id || !selectedRunId) {
@@ -71,8 +71,8 @@ export default function useForecastData({ user } = {}) {
       // Extract unique materials
       const mats = [...new Set(demands.map(d => d.material_code).filter(Boolean))].sort();
       setMaterials(mats);
-      if (mats.length && !selectedMaterial) {
-        setSelectedMaterial(mats[0]);
+      if (mats.length) {
+        setSelectedMaterial(prev => (prev && mats.includes(prev) ? prev : mats[0]));
       }
 
       // Load trace records
@@ -95,7 +95,7 @@ export default function useForecastData({ user } = {}) {
     } finally {
       setLoading(false);
     }
-  }, [user?.id, selectedRunId, selectedMaterial]);
+  }, [user?.id, selectedRunId]);
 
   useEffect(() => { loadRuns(); }, [loadRuns]);
   useEffect(() => { loadRunData(); }, [loadRunData]);

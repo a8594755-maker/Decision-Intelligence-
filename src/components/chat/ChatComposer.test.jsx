@@ -26,12 +26,22 @@ describe('ChatComposer', () => {
         onDragOver={vi.fn()}
         onDragLeave={vi.fn()}
         onDrop={vi.fn()}
+        pendingAttachments={[
+          {
+            id: 'att_1',
+            file_name: 'monthly_report.xlsx',
+            kind: 'spreadsheet',
+            size_bytes: 4096,
+          },
+        ]}
+        onRemoveAttachment={vi.fn()}
         status={{ text: 'Attached dataset: monthly_report.xlsx', tone: 'neutral' }}
         variant="ai_employee"
       />
     );
 
     expect(screen.getByText(/attached dataset: monthly_report.xlsx/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/monthly_report.xlsx/i).length).toBeGreaterThan(0);
     expect(screen.queryByText(/shift\+enter for newline/i)).not.toBeInTheDocument();
   });
 });

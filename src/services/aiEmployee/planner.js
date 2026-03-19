@@ -27,7 +27,7 @@ const DATASET_REQUIRED_TOOL_IDS = new Set([
  * @typedef {object} PlanStep
  * @property {string} name
  * @property {string} tool_hint
- * @property {string} tool_type - builtin_tool | python_tool | llm_call | report | opencloud
+ * @property {string} tool_type - builtin_tool | python_tool | llm_call | report | export | excel
  * @property {string} [builtin_tool_id]
  * @property {boolean} [review_checkpoint]
  */
@@ -71,8 +71,6 @@ export async function createPlan({ userMessage, sessionContext, employeeId, user
       requires_dataset: raw.requires_dataset ?? DATASET_REQUIRED_TOOL_IDS.has(raw.builtin_tool_id),
       review_checkpoint: raw.review_checkpoint || false,
       report_format: raw.report_format || null,
-      opencloud_action: raw.opencloud_action || null,
-      opencloud_config: raw.opencloud_config || null,
     };
   });
 

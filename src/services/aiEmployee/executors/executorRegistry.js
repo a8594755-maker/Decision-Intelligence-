@@ -9,7 +9,6 @@ import { executeBuiltinTool } from './builtinToolExecutor.js';
 import { executePythonTool } from './pythonToolExecutor.js';
 import { executeLlmCall } from './llmCallExecutor.js';
 import { executeReport } from './reportExecutor.js';
-import { executeOpenCloud } from './opencloudExecutor.js';
 import { executeExcelTool } from './excelExecutor.js';
 
 const REGISTRY = {
@@ -20,7 +19,6 @@ const REGISTRY = {
   llm_call:      executeLlmCall,
   report:        executeReport,
   export:        executeReport,      // Export steps use report executor
-  opencloud:     executeOpenCloud,
   excel:         executeExcelTool,
 };
 

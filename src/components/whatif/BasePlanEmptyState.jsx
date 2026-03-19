@@ -101,7 +101,7 @@ export default function BasePlanEmptyState({
       {/* Hint when no profile row */}
       {!hasProfileRow && !isRunning && (
         <p className="mt-3 text-xs text-slate-400 max-w-[220px]">
-          Upload dataset data in the chat first to enable auto-baseline.
+          Upload dataset data via the task intake to enable auto-baseline.
         </p>
       )}
     </div>

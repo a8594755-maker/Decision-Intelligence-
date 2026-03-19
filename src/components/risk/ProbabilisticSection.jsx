@@ -100,7 +100,7 @@ const ProbabilisticSection = ({
             details.pStockout > 0.5 ? 'text-red-600' :
             details.pStockout > 0.2 ? 'text-amber-600' :
             'text-green-600'
-          }}`}>
+          }`}>
             {(details.pStockout * 100).toFixed(1)}%
           </div>
         </div>

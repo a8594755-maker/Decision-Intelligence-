@@ -109,8 +109,8 @@ export function computeSupplierTypePriors(kpis = {}) {
   if (Number.isFinite(defect) && defect > 0.05) {
     const shift = Math.min(0.20, defect);
     desperate += shift;
-    cooperative -= shift / 2;
-    aggressive -= shift / 2;
+    cooperative = Math.max(0, cooperative - shift / 2);
+    aggressive = Math.max(0, aggressive - shift / 2);
   }
 
   // Normalize to ensure probabilities sum to 1
@@ -174,6 +174,63 @@ export const PAYOFF_CONFIG = Object.freeze({
 });
 
 // ---------------------------------------------------------------------------
+// Canonical Negotiation Option Schema
+// ---------------------------------------------------------------------------
+
+/**
+ * NEGOTIATION_OPTION_SCHEMA — single source of truth for negotiation option shape.
+ *
+ * Every option object produced by negotiationOptionsGenerator, consumed by
+ * negotiationEvaluator, and translated by negotiationOutcomeTranslator MUST
+ * conform to this schema. The field set is frozen so drift is caught at dev time.
+ *
+ * Fields:
+ *   option_id      — stable identifier (opt_001 … opt_006+)
+ *   title          — human-readable label
+ *   overrides      — solver constraint overrides { constraints?, objective? }
+ *   engine_flags   — solver engine flag overrides
+ *   why            — string[] reasoning bullets
+ *   evidence_refs  — string[] artifact path references
+ *   cfr_weight     — (optional) CFR enrichment weight, set by orchestrator
+ */
+export const NEGOTIATION_OPTION_SCHEMA = Object.freeze({
+  required: ['option_id', 'title', 'overrides', 'engine_flags', 'why', 'evidence_refs'],
+  optional: ['cfr_weight'],
+});
+
+/**
+ * Known canonical option IDs. Orchestrator, evaluator, and outcome translator
+ * all key off these IDs.
+ */
+export const NEGOTIATION_OPTION_IDS = Object.freeze([
+  'opt_001', // Budget +10%
+  'opt_002', // MOQ relax
+  'opt_003', // Pack rounding
+  'opt_004', // Expedite
+  'opt_005', // Safety stock
+  'opt_006', // Target -5%
+]);
+
+/**
+ * Validate a single negotiation option object against the canonical schema.
+ * Throws if any required field is missing.
+ *
+ * @param {Object} option
+ * @returns {Object} the validated option (pass-through)
+ */
+export function validateNegotiationOption(option) {
+  if (!option || typeof option !== 'object') {
+    throw new Error('Negotiation option must be a non-null object');
+  }
+  for (const field of NEGOTIATION_OPTION_SCHEMA.required) {
+    if (!(field in option)) {
+      throw new Error(`Negotiation option missing required field "${field}" (option_id=${option.option_id || 'unknown'})`);
+    }
+  }
+  return option;
+}
+
+// ---------------------------------------------------------------------------
 // Option-to-CFR-Action Mapping
 // ---------------------------------------------------------------------------
 
@@ -210,6 +267,9 @@ export default {
   POSITION_BUCKET_NAMES,
   NUM_POSITION_BUCKETS,
   PAYOFF_CONFIG,
+  NEGOTIATION_OPTION_SCHEMA,
+  NEGOTIATION_OPTION_IDS,
+  validateNegotiationOption,
   OPTION_TO_CFR_ACTION,
   DEFAULT_CFR_INFLUENCE,
 };

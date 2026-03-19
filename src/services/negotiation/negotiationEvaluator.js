@@ -147,6 +147,7 @@ function computeRankScore(evalResult, baseKpis) {
  * @param {Object}        params.datasetProfileRow - dataset profile for re-solve
  * @param {number|null}   params.forecastRunId     - forecast child run for re-solve
  * @param {string}        params.userId            - user ID
+ * @param {Object|null}   params.cfrParamAdjustment - CFR solver parameter adjustments from cfr-solver-bridge
  * @returns {Object} negotiation_evaluation payload
  */
 export async function evaluateNegotiationOptions({
@@ -157,7 +158,8 @@ export async function evaluateNegotiationOptions({
   options = [],
   datasetProfileRow,
   forecastRunId = null,
-  userId
+  userId,
+  cfrParamAdjustment = null,
 }) {
   if (!userId) throw new Error('userId is required for evaluateNegotiationOptions');
   if (!datasetProfileRow?.id)
@@ -193,6 +195,20 @@ export async function evaluateNegotiationOptions({
     };
 
     try {
+      // Merge CFR solver parameter adjustments into objectiveOverride if available
+      const mergedObjective = { ...objectiveOverride };
+      if (cfrParamAdjustment) {
+        if (cfrParamAdjustment.safety_stock_alpha_multiplier != null) {
+          mergedObjective.safety_stock_alpha_multiplier = cfrParamAdjustment.safety_stock_alpha_multiplier;
+        }
+        if (cfrParamAdjustment.stockout_penalty_multiplier != null) {
+          mergedObjective.stockout_penalty_multiplier = cfrParamAdjustment.stockout_penalty_multiplier;
+        }
+        if (cfrParamAdjustment.dual_source_flag) {
+          mergedObjective.dual_source = true;
+        }
+      }
+
       const planResult = await runPlanFromDatasetProfile({
         userId,
         datasetProfileRow,
@@ -202,7 +218,7 @@ export async function evaluateNegotiationOptions({
             ? constraintsOverride
             : null,
         objectiveOverride:
-          Object.keys(objectiveOverride).length > 0 ? objectiveOverride : null
+          Object.keys(mergedObjective).length > 0 ? mergedObjective : null
       });
 
       const scenRunId = planResult?.run?.id ?? null;

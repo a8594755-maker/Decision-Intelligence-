@@ -15,7 +15,7 @@ import { Shield, Plus, Edit3, Trash2, ToggleLeft, ToggleRight, AlertTriangle, Ch
 import { Card, Modal } from '../components/ui';
 import { useAuth } from '../contexts/AuthContext';
 import {
-  listRules, createRule, updateRule, deleteRule, evaluateRules,
+  listRules, createRule, updateRule, deleteRule,
   RULE_TYPES, RULE_TEMPLATES,
 } from '../services/policyRuleService.js';
 import { CAPABILITY_CLASS } from '../services/capabilityModelService.js';

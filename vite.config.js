@@ -29,8 +29,7 @@ function manualChunks(id) {
   }
 
   if (
-    normalized.includes('/src/components/chat/') &&
-    !normalized.includes('/src/components/chat/OpenCloudFilePicker.jsx')
+    normalized.includes('/src/components/chat/')
   ) {
     return 'workspace-chat-cards'
   }
@@ -98,13 +97,6 @@ function manualChunks(id) {
     normalized.includes('/src/utils/applyScenarioOverrides')
   ) {
     return 'workspace-scenario'
-  }
-
-  if (
-    normalized.includes('/src/services/opencloud') ||
-    normalized.includes('/src/config/opencloudConfig')
-  ) {
-    return 'workspace-opencloud'
   }
 
   return undefined

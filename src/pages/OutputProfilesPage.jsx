@@ -5,7 +5,7 @@
 // Lists all company output profiles, allows uploading exemplars, viewing profile detail,
 // managing proposals (baseline vs suggested), and running onboarding pipeline.
 
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   FileText, Upload, Plus, Search, Filter, ChevronRight, ChevronDown,
   CheckCircle2, Clock, Archive, XCircle, ArrowUpRight, RotateCcw,
@@ -20,6 +20,8 @@ import {
   rollbackOutputProfile,
   ONBOARDING_STAGES,
 } from '../services/aiEmployee/styleLearning';
+import { useAuth } from '../contexts/AuthContext';
+import { getOrCreateWorker } from '../services/aiEmployee/queries.js';
 import ProfileCard from '../components/output-profile/ProfileCard';
 import ExemplarUploadPanel from '../components/output-profile/ExemplarUploadPanel';
 import ProfileDetailPanel from '../components/output-profile/ProfileDetailPanel';
@@ -51,6 +53,23 @@ const TABS = [
 ];
 
 export default function OutputProfilesPage() {
+  const { user } = useAuth();
+
+  // ── Resolve real AI employee ID (UUID) ─────────────────────
+  const [workerId, setWorkerId] = useState(null);
+  const [workerError, setWorkerError] = useState(null);
+  const workerResolved = useRef(false);
+  useEffect(() => {
+    if (!user?.id || workerResolved.current) return;
+    workerResolved.current = true;
+    getOrCreateWorker(user.id)
+      .then(w => setWorkerId(w.id))
+      .catch(err => {
+        console.error('[OutputProfilesPage] Failed to resolve worker:', err);
+        setWorkerError(err.message || 'Failed to load worker');
+      });
+  }, [user?.id]);
+
   // ── State ──────────────────────────────────────────────────
   const [tab, setTab] = useState('profiles');
   const [profiles, setProfiles] = useState([]);
@@ -83,16 +102,17 @@ export default function OutputProfilesPage() {
   }, [statusFilter, docTypeFilter]);
 
   const loadExemplars = useCallback(async () => {
+    if (!workerId) { setLoading(false); return; }
     setLoading(true);
     try {
-      const result = await listExemplars({ limit: 100 });
+      const result = await listExemplars(workerId, { limit: 100 });
       setExemplars(result || []);
     } catch (err) {
       console.error('[OutputProfilesPage] Failed to load exemplars:', err);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [workerId]);
 
   useEffect(() => {
     if (tab === 'profiles' || tab === 'proposals') loadProfiles();
@@ -130,7 +150,7 @@ export default function OutputProfilesPage() {
   // ── Handlers ──────────────────────────────────────────────
   const handleApproveProposal = async (proposalId) => {
     try {
-      await approveOutputProfileProposal(proposalId, 'manager');
+      await approveOutputProfileProposal({ proposalId, actorUserId: 'manager' });
       setSelectedProposal(null);
       loadProfiles();
     } catch (err) {
@@ -140,7 +160,7 @@ export default function OutputProfilesPage() {
 
   const handleRejectProposal = async (proposalId, comment) => {
     try {
-      await rejectOutputProfileProposal(proposalId, 'manager', comment);
+      await rejectOutputProfileProposal({ proposalId, actorUserId: 'manager', reviewComment: comment });
       setSelectedProposal(null);
       loadProfiles();
     } catch (err) {
@@ -151,7 +171,7 @@ export default function OutputProfilesPage() {
   const handleRollback = async (profileId) => {
     if (!confirm('Rollback to the previous version? The current active version will be superseded.')) return;
     try {
-      await rollbackOutputProfile(profileId);
+      await rollbackOutputProfile({ profileId });
       loadProfiles();
     } catch (err) {
       console.error('[OutputProfilesPage] Rollback failed:', err);
@@ -167,12 +187,9 @@ export default function OutputProfilesPage() {
     fontSize: 13,
     fontWeight: active ? 600 : 400,
     color: active ? '#4f46e5' : '#666',
-    borderBottom: `2px solid ${active ? '#4f46e5' : 'transparent'}`,
     background: 'none',
     border: 'none',
-    borderBottomStyle: 'solid',
-    borderBottomWidth: 2,
-    borderBottomColor: active ? '#4f46e5' : 'transparent',
+    borderBottom: `2px solid ${active ? '#4f46e5' : 'transparent'}`,
     cursor: 'pointer',
     transition: 'all 0.15s ease',
   });
@@ -192,15 +209,19 @@ export default function OutputProfilesPage() {
         <div style={{ display: 'flex', gap: 8 }}>
           <button
             onClick={() => setShowUpload(true)}
+            disabled={!workerId}
+            title={!workerId ? 'Loading worker...' : 'Upload files and learn style patterns'}
             style={{
               display: 'flex', alignItems: 'center', gap: 6,
               padding: '8px 16px', borderRadius: 8,
               border: 'none',
-              background: '#4f46e5', color: '#fff',
-              fontSize: 13, fontWeight: 600, cursor: 'pointer',
+              background: workerId ? '#4f46e5' : '#a5b4fc', color: '#fff',
+              fontSize: 13, fontWeight: 600,
+              cursor: workerId ? 'pointer' : 'not-allowed',
+              opacity: workerId ? 1 : 0.7,
             }}
           >
-            <Sparkles size={14} /> Bulk Upload & Learn
+            <Sparkles size={14} /> {workerId ? 'Bulk Upload & Learn' : 'Loading...'}
           </button>
         </div>
       </div>
@@ -422,6 +443,7 @@ export default function OutputProfilesPage() {
       {/* ═══ Learning / Onboarding Tab ═══ */}
       {tab === 'onboarding' && (
         <OnboardingWizard
+          employeeId={workerId}
           onComplete={() => { loadProfiles(); setTab('profiles'); }}
         />
       )}
@@ -447,13 +469,60 @@ export default function OutputProfilesPage() {
 
       {showUpload && (
         <ExemplarUploadPanel
+          employeeId={workerId}
           onClose={() => setShowUpload(false)}
-          onUploaded={() => { loadExemplars(); setShowUpload(false); }}
+          onUploaded={(uploadSummary) => {
+            setShowUpload(false);
+            // Try loading from DB first
+            loadExemplars();
+            loadProfiles();
+            // If Supabase is offline, inject local state from upload result
+            if (uploadSummary?.profileCreated) {
+              const localProfiles = (uploadSummary.files || []).reduce((acc, f) => {
+                const existing = acc.find(p => p.doc_type === f.docType);
+                if (!existing && f.docType !== 'auto') {
+                  acc.push({
+                    id: `local_${f.docType}_${Date.now()}`,
+                    doc_type: f.docType,
+                    profile_name: `${f.docTypeLabel} Baseline`,
+                    status: 'active',
+                    confidence: uploadSummary.profileCreated ? 0.7 : 0,
+                    version: 1,
+                    sample_count: uploadSummary.files.filter(ff => ff.docType === f.docType).length,
+                    _local: true,
+                  });
+                }
+                return acc;
+              }, []);
+              if (localProfiles.length) {
+                setProfiles(prev => {
+                  const merged = [...prev];
+                  for (const lp of localProfiles) {
+                    if (!merged.find(p => p.doc_type === lp.doc_type)) merged.push(lp);
+                  }
+                  return merged;
+                });
+              }
+            }
+            if (uploadSummary?.files?.length) {
+              const localExemplars = uploadSummary.files.map((f, i) => ({
+                id: `local_ex_${Date.now()}_${i}`,
+                label: f.filename,
+                file_name: f.filename,
+                doc_type: f.docType,
+                quality_tier: 'silver',
+                created_at: new Date().toISOString(),
+                _local: true,
+              }));
+              setExemplars(prev => [...prev, ...localExemplars]);
+            }
+          }}
         />
       )}
 
       {showOnboarding && (
         <OnboardingWizard
+          employeeId={workerId}
           asModal
           onClose={() => setShowOnboarding(false)}
           onComplete={() => { loadProfiles(); setShowOnboarding(false); }}

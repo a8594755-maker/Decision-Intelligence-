@@ -62,14 +62,13 @@ export const AGENT_LOOP_TEMPLATES = {
 
   full_report_with_publish: {
     id: 'full_report_with_publish',
-    label: 'Full Report + OpenCloud Publish',
-    description: 'Forecast + Plan + Risk + Synthesis + Publish to OpenCloud',
+    label: 'Full Report + Delivery Pack',
+    description: 'Forecast + Plan + Risk + Synthesis + delivery-ready report bundle',
     steps: [
       { name: 'forecast',   workflow_type: 'forecast',    requires_review: false },
       { name: 'plan',       workflow_type: 'plan',        requires_review: false },
       { name: 'risk',       workflow_type: 'risk',        requires_review: false },
       { name: 'synthesize', workflow_type: 'synthesize',  requires_review: true },
-      { name: 'publish',    workflow_type: 'builtin_tool', requires_review: false, builtin_tool_id: 'opencloud_publish_report' },
     ],
   },
 
@@ -118,7 +117,7 @@ export const TEMPLATE_OPTIONS = [
   { value: 'full_report',        label: 'Full Analysis Report', composite: true },
   { value: 'forecast_then_plan', label: 'Forecast + Plan',         composite: true },
   { value: 'risk_aware_plan',    label: 'Risk-Aware Plan',         composite: true },
-  { value: 'full_report_with_publish', label: 'Full Report + OpenCloud Publish', composite: true },
+  { value: 'full_report_with_publish', label: 'Full Report + Delivery Pack', composite: true },
   { value: 'mbr_with_excel',          label: 'Monthly Business Review (Excel)', composite: true },
   { value: 'forecast',           label: 'Demand Forecast',         composite: false },
   { value: 'plan',               label: 'Replenishment Plan',      composite: false },

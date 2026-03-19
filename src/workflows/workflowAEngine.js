@@ -18,6 +18,7 @@ import { loadArtifact, saveJsonArtifact } from '../utils/artifactStore';
 import { runClosedLoop, isClosedLoopEnabled } from '../services/closed_loop/index.js';
 import { buildDecisionNarrative } from '../utils/buildDecisionNarrative';
 import { recordPlanGenerated } from '../services/planAuditService';
+import { applyBlockingAnswerBindings } from './blockingAnswerUtils.js';
 
 export const WORKFLOW_A_STEPS = ['profile', 'contract', 'validate', 'forecast', 'optimize', 'verify', 'topology', 'report'];
 
@@ -440,9 +441,16 @@ const loadPlanResultFromChildRun = async ({ childRunId }) => {
   const report = await loadArtifactPayloadByType(childRunId, 'report_json');
   const decisionNarrative = await loadArtifactPayloadByType(childRunId, 'decision_narrative');
   const evidencePack = await loadArtifactPayloadByType(childRunId, 'evidence_pack');
+  const riskAdjustments = await loadArtifactPayloadByType(childRunId, 'risk_adjustments');
+  const riskSolverMeta = await loadArtifactPayloadByType(childRunId, 'risk_solver_meta');
+  const riskPlanTable = await loadArtifactPayloadByType(childRunId, 'risk_plan_table');
+  const riskReplayMetrics = await loadArtifactPayloadByType(childRunId, 'risk_replay_metrics');
+  const riskInventoryProjection = await loadArtifactPayloadByType(childRunId, 'risk_inventory_projection');
+  const planComparison = await loadArtifactPayloadByType(childRunId, 'plan_comparison');
   // Prefer explicit plan_csv; fallback to legacy csv for backward compatibility with old runs.
   const preferredCsvPayload = await loadArtifactPayloadByType(childRunId, 'plan_csv');
   const componentCsvPayload = await loadArtifactPayloadByType(childRunId, 'component_plan_csv');
+  const riskPlanCsvPayload = await loadArtifactPayloadByType(childRunId, 'risk_plan_csv');
   const legacyCsvPayload = preferredCsvPayload
     ? null
     : await loadArtifactPayloadByType(childRunId, 'csv');
@@ -467,10 +475,41 @@ const loadPlanResultFromChildRun = async ({ childRunId }) => {
     evidence_pack: toArtifactRef(getLatestArtifactRecordByType(artifacts, 'evidence_pack')),
     decision_narrative: toArtifactRef(getLatestArtifactRecordByType(artifacts, 'decision_narrative')),
     report_json: toArtifactRef(getLatestArtifactRecordByType(artifacts, 'report_json')),
+    risk_adjustments: toArtifactRef(getLatestArtifactRecordByType(artifacts, 'risk_adjustments')),
+    risk_solver_meta: toArtifactRef(getLatestArtifactRecordByType(artifacts, 'risk_solver_meta')),
+    risk_plan_table: toArtifactRef(getLatestArtifactRecordByType(artifacts, 'risk_plan_table')),
+    risk_replay_metrics: toArtifactRef(getLatestArtifactRecordByType(artifacts, 'risk_replay_metrics')),
+    risk_inventory_projection: toArtifactRef(getLatestArtifactRecordByType(artifacts, 'risk_inventory_projection')),
+    plan_comparison: toArtifactRef(getLatestArtifactRecordByType(artifacts, 'plan_comparison')),
+    risk_plan_csv: toArtifactRef(getLatestArtifactRecordByType(artifacts, 'risk_plan_csv')),
     plan_csv: preferredCsvRef || legacyCsvRef
   };
 
   const normalizedPlanRows = Array.isArray(planTable?.rows) ? planTable.rows : [];
+  const normalizedRiskPlanRows = Array.isArray(riskPlanTable?.rows) ? riskPlanTable.rows : [];
+  const riskAware = (riskAdjustments || planComparison || riskPlanTable)
+    ? {
+        risk_adjustments: riskAdjustments || null,
+        risk_solver_meta: riskSolverMeta || null,
+        risk_plan: normalizedRiskPlanRows,
+        risk_plan_artifact: riskPlanTable || { total_rows: normalizedRiskPlanRows.length, rows: normalizedRiskPlanRows, truncated: false },
+        risk_replay_metrics: riskReplayMetrics || {},
+        risk_inventory_projection: riskInventoryProjection || { total_rows: 0, rows: [], truncated: false },
+        plan_comparison: planComparison || {},
+        risk_plan_csv: typeof riskPlanCsvPayload === 'string'
+          ? riskPlanCsvPayload
+          : (riskPlanCsvPayload?.content || ''),
+        artifact_refs: {
+          risk_adjustments: artifactRefs.risk_adjustments || null,
+          risk_solver_meta: artifactRefs.risk_solver_meta || null,
+          risk_plan_table: artifactRefs.risk_plan_table || null,
+          risk_replay_metrics: artifactRefs.risk_replay_metrics || null,
+          risk_inventory_projection: artifactRefs.risk_inventory_projection || null,
+          plan_comparison: artifactRefs.plan_comparison || null,
+          risk_plan_csv: artifactRefs.risk_plan_csv || null,
+        }
+      }
+    : null;
 
   return {
     run: runRow,
@@ -499,7 +538,9 @@ const loadPlanResultFromChildRun = async ({ childRunId }) => {
       ? componentCsvPayload
       : (componentCsvPayload?.content || ''),
     artifact_refs: artifactRefs,
-    summary_text: decisionNarrative?.summary_text || report?.summary || 'Plan loaded from cached artifacts.'
+    summary_text: decisionNarrative?.summary_text || report?.summary || 'Plan loaded from cached artifacts.',
+    risk_mode: riskAware ? 'on' : 'off',
+    risk_aware: riskAware
   };
 };
 
@@ -705,7 +746,12 @@ const stepHandlers = {
               child_run_id: cached.child_run_id,
               reused: true,
               constraint_passed: cachedPlanResult?.constraint_check?.passed === true,
-              artifact_refs: cachedPlanResult?.artifact_refs || {}
+              artifact_refs: cachedPlanResult?.artifact_refs || {},
+              risk_mode: cachedPlanResult?.risk_mode || 'off',
+              risk_aware: cachedPlanResult?.risk_aware ? {
+                num_impacted_skus: cachedPlanResult.risk_aware.risk_adjustments?.summary?.num_impacted_skus || 0,
+                plan_comparison_ref: cachedPlanResult.artifact_refs?.plan_comparison || null
+              } : null
             },
             result_cards: (() => {
               const cachedRiskPayload = (cachedPlanResult?.risk_mode === 'on' && cachedPlanResult?.risk_aware)
@@ -1161,6 +1207,17 @@ async function executeStep({ run, datasetProfileRow, settings, stepRow, stepMap 
 
 // Module-level cache for dataset profile rows (survives across steps within a run)
 const _profileRowCache = new Map();
+const _PROFILE_ROW_CACHE_MAX = 200;
+
+function _evictProfileRowCache() {
+  if (_profileRowCache.size <= _PROFILE_ROW_CACHE_MAX) return;
+  // Delete oldest entries (Map iterates in insertion order)
+  const excess = _profileRowCache.size - _PROFILE_ROW_CACHE_MAX;
+  const keys = _profileRowCache.keys();
+  for (let i = 0; i < excess; i++) {
+    _profileRowCache.delete(keys.next().value);
+  }
+}
 
 export async function startWorkflowA({ user_id, dataset_profile_id, settings = {}, profileRow: providedProfileRow = null }) {
   if (!user_id) throw new Error('user_id is required');
@@ -1172,6 +1229,7 @@ export async function startWorkflowA({ user_id, dataset_profile_id, settings = {
   }
   // Cache for subsequent steps (runNextStep)
   _profileRowCache.set(String(dataset_profile_id), profileRow);
+  _evictProfileRowCache();
 
   const run = await diRunsService.createRun({
     user_id,
@@ -1236,6 +1294,11 @@ export async function runNextStep(run_id) {
       finished_at: isWaiting ? null : nowIso(),
       error: nextRunStatus === 'failed' ? (run.error || 'Workflow failed') : null
     });
+
+    // Clean up profile cache for completed/failed runs
+    if (run.dataset_profile_id && !isWaiting) {
+      _profileRowCache.delete(String(run.dataset_profile_id));
+    }
 
     return {
       run: finalizedRun,
@@ -1496,13 +1559,58 @@ export async function submitBlockingAnswers(run_id, answers = {}) {
     throw new Error(`Run ${runId} is not waiting_user (status: ${currentStatus})`);
   }
 
+  const blockedStep = sortSteps(snapshot.steps || []).find((step) => normalizeStatus(step.status) === 'blocked') || null;
+  const blockingQuestions = Array.isArray(blockedStep?.output_ref?.blocking_questions)
+    ? blockedStep.output_ref.blocking_questions
+    : [];
   const existingSettings = await getWorkflowSettings(runId);
+  const profileRow = snapshot.run?.dataset_profile_id
+    ? await datasetProfilesService.getDatasetProfileById(snapshot.run.user_id, snapshot.run.dataset_profile_id)
+    : null;
+  const {
+    nextSettings,
+    nextContractJson,
+    answeredQuestions,
+    appliedBindings,
+    validationErrors,
+  } = applyBlockingAnswerBindings({
+    questions: blockingQuestions,
+    answers,
+    settings: existingSettings,
+    contractJson: profileRow?.contract_json || {},
+  });
+
+  if (validationErrors.length > 0) {
+    const summary = validationErrors
+      .map((item) => item.question || item.id || item.reason)
+      .filter(Boolean)
+      .join(', ');
+    throw new Error(`Invalid blocking answers for run ${runId}: ${summary}`);
+  }
+
+  const needsContractUpdate = appliedBindings.some((item) => item.target === 'contract');
+  if (needsContractUpdate && !profileRow) {
+    throw new Error(`Dataset profile ${snapshot.run?.dataset_profile_id} not found for run ${runId}`);
+  }
+  if (needsContractUpdate) {
+    await datasetProfilesService.updateDatasetProfile(snapshot.run.user_id, snapshot.run.dataset_profile_id, {
+      contract_json: nextContractJson,
+    });
+  }
+
   const merged = {
-    ...existingSettings,
+    ...nextSettings,
     blocking_answers: {
-      ...(existingSettings.blocking_answers || {}),
+      ...(nextSettings.blocking_answers || {}),
       ...answers
-    }
+    },
+    last_blocking_step: blockedStep?.step || null,
+    last_blocking_submission_at: nowIso(),
+    last_blocking_submission: {
+      step: blockedStep?.step || null,
+      answered_questions: answeredQuestions,
+      applied_bindings: appliedBindings,
+    },
   };
   await persistWorkflowSettings(runId, snapshot.run.user_id, {
     user_id: snapshot.run.user_id,

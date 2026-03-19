@@ -8,7 +8,6 @@
  * Supported context sources:
  *   - dataset: Fetch dataset from Supabase by profile ID
  *   - artifact: Fetch artifact from a prior step
- *   - opencloud: Fetch file from OpenCloud
  *   - cache: Fetch from in-memory raw rows cache
  */
 
@@ -100,13 +99,6 @@ registerResolver('artifact', async ({ stepName, artifactType, _taskContext }) =>
     return { found: true, artifacts: artifacts.filter(a => a.type === artifactType) };
   }
   return { found: true, artifacts };
-});
-
-// OpenCloud resolver: placeholder for file fetch
-registerResolver('opencloud', async ({ path, _taskContext }) => {
-  // OpenCloud integration would fetch file content here
-  // For now, return metadata
-  return { source: 'opencloud', path, status: 'placeholder' };
 });
 
 export default { resolveContext, registerResolver, detectMissingContext };

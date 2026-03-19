@@ -134,7 +134,7 @@ describe('taskIntakeService — auto-routing wiring', () => {
 
 // ── 2. intakeRoutingService — routeWorkOrder ────────────────────────────────
 
-import { routeWorkOrder, detectIntent } from './intakeRoutingService.js';
+import { routeWorkOrder } from './intakeRoutingService.js';
 
 describe('intakeRoutingService — routing wiring', () => {
   it('routes forecast tasks to supply_chain_analyst', async () => {
@@ -227,7 +227,6 @@ describe('policyRuleService — evaluateRules()', () => {
 import {
   createGovernanceItem,
   approveItem,
-  rejectItem,
   GOVERNANCE_TYPES,
   GOVERNANCE_STATUS,
 } from './governanceService.js';

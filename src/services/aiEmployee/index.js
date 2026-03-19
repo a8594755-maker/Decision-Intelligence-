@@ -16,6 +16,7 @@ export {
   retryTask,
   approveReview,
   provideStepInput,
+  skipWaitingInputStep,
   tick,
   getTaskStatus,
 } from './orchestrator.js';

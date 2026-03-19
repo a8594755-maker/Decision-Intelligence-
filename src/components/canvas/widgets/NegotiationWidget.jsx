@@ -34,7 +34,6 @@ function StrategyBar({ label, probability, color }) {
 export default function NegotiationWidget({ data = {} }) {
   const strategy = data.strategy || data.cfr_strategy || {};
   const options = data.options || [];
-  const evaluation = data.evaluation || {};
   const recommendation = data.recommendation || data.recommended_action;
 
   const strategyEntries = Object.entries(strategy).filter(([k]) => typeof strategy[k] === 'number');

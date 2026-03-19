@@ -29,7 +29,9 @@ export const getEmployee = employeeRepo.getEmployee;
 export const listEmployeesByManager = employeeRepo.listEmployeesByManager;
 export const getKpis = employeeRepo.getKpis;
 export const createWorkerFromTemplate = employeeRepo.createWorkerFromTemplate;
-export const deleteWorker = employeeRepo.deleteWorker;
+export const cloneWorker = employeeRepo.cloneWorker;
+export const archiveWorker = employeeRepo.archiveWorker;
+export const deleteWorker = employeeRepo.deleteWorker; // deprecated alias → archiveWorker
 export const updateWorker = employeeRepo.updateWorker;
 export const listTemplates = employeeRepo.listTemplates;
 
@@ -39,10 +41,11 @@ export const getTask = taskRepo.getTask;
 export const listTasks = taskRepo.listTasks;
 export const listTasksByUser = taskRepo.listTasksByUser;
 export const listTasksByStatus = taskRepo.listTasksByStatus;
+export const reassignTask = taskRepo.reassignTask;
 
 /**
  * List pending reviews with enriched artifact data.
- * Joins runs, enriches artifact refs, and synthesizes loop_state for legacy compat.
+ * Joins runs, enriches artifact refs, and synthesizes loop_state from step rows.
  */
 export async function listPendingReviews(userId) {
   const raw = await taskRepo.listPendingReviews(userId);
@@ -59,7 +62,7 @@ export async function listPendingReviews(userId) {
 /**
  * Get a task with its step rows joined.
  * Returns a task object with an `ai_employee_runs` array (step rows sorted by step_index).
- * Also synthesizes loop_state for backward compatibility with old UI code.
+ * Also synthesizes loop_state from step rows for the UI.
  */
 export async function getTaskWithSteps(taskId) {
   const [task, steps] = await Promise.all([
@@ -145,9 +148,9 @@ export async function enrichRunsWithArtifacts(runs = []) {
 }
 
 /**
- * Synthesize a loop_state shape from step runs for backward compatibility.
- * New tasks store steps as separate ai_employee_runs rows; this recreates
- * the old loop_state.steps[] shape that some UI code still reads.
+ * Synthesize a loop_state shape from step runs.
+ * Steps are stored as ai_employee_runs rows; this builds the
+ * loop_state.steps[] shape that the UI reads for step tracking.
  */
 function synthesizeLoopStateFromRuns(existingLoopState, runs = []) {
   if (existingLoopState?.steps?.length) return existingLoopState;

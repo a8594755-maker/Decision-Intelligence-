@@ -44,7 +44,7 @@ export async function generateDailySummary(employeeId, date = new Date()) {
   const completed = todayTasks.filter((t) => t.status === 'done');
   const failed    = todayTasks.filter((t) => t.status === 'blocked');
   const inProgress = todayTasks.filter((t) => t.status === 'in_progress');
-  const waitingReview = todayTasks.filter((t) => t.status === 'waiting_review');
+  const waitingReview = todayTasks.filter((t) => t.status === 'review_hold');
 
   // ── Cost data ───────────────────────────────────────────────────────────
   let costSummary = { total_cost: 0, total_calls: 0, by_tier: {} };

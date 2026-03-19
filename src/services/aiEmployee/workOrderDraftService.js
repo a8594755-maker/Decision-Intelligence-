@@ -13,7 +13,7 @@ import { findToolsByQuery } from '../builtinToolCatalog.js';
 
 const DATA_HINT_PATTERNS = [
   { key: 'attached',    rx: /attach|upload|csv|xlsx|xls|file|工作簿|附件|上傳/i },
-  { key: 'folder_ref',  rx: /folder|drive|opencloud|雲端|資料夾/i },
+  { key: 'folder_ref',  rx: /folder|drive|cloud|雲端|資料夾/i },
   { key: 'time_range',  rx: /last\s+\d+\s+(month|week|day|quarter|year)|past\s+\d+|近\s*\d+\s*(個月|週|天|季)|去年|上個月/i },
   { key: 'system_ref',  rx: /erp|sap|oracle|netsuite|系統|資料庫/i },
 ];

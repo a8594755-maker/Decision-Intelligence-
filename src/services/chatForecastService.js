@@ -12,6 +12,9 @@ import {
   computeCalibrationMetrics
 } from './forecasting/calibrateQuantiles';
 import { toCanonicalForecastPoint } from './forecasting/forecastPointMapper';
+import {
+  normalizeSheetName, parseDateValue, toIsoDay
+} from '../utils/dataServiceHelpers';
 
 const MAX_GROUPS_IN_ARTIFACT = 25;
 const MAX_HISTORY_POINTS = 24;
@@ -31,25 +34,7 @@ function withTimeout(promise, ms, fallbackValue) {
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
-const normalizeSheetName = (value) => String(value || '').trim().toLowerCase();
-
-const parseDateValue = (value) => {
-  if (value === null || value === undefined || value === '') return null;
-  if (value instanceof Date && !Number.isNaN(value.getTime())) {
-    return value;
-  }
-
-  if (typeof value === 'number' && value > 1 && value < 100000) {
-    const excelEpoch = new Date(Date.UTC(1899, 11, 30));
-    const parsed = new Date(excelEpoch.getTime() + value * 24 * 60 * 60 * 1000);
-    return Number.isNaN(parsed.getTime()) ? null : parsed;
-  }
-
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? null : parsed;
-};
-
-const toIsoDay = (dateObj) => dateObj.toISOString().slice(0, 10);
+// Shared helpers imported from ../utils/dataServiceHelpers.js
 
 const normalizeTimeBucket = (value) => {
   if (value === null || value === undefined || value === '') return null;

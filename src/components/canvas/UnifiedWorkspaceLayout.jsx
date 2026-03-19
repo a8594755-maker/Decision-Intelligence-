@@ -15,7 +15,7 @@
  * The right pane auto-expands when a widget is active, collapses when empty.
  */
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState } from 'react';
 import { PanelRightClose, PanelRightOpen } from 'lucide-react';
 import { useCanvas } from '../../contexts/CanvasContext';
 import DynamicCanvas from './DynamicCanvas';
@@ -28,16 +28,14 @@ import DynamicCanvas from './DynamicCanvas';
 
 export default function UnifiedWorkspaceLayout({ children }) {
   const { activeWidget } = useCanvas();
-  const [rightCollapsed, setRightCollapsed] = useState(false);
+  const [collapsedWidgetKey, setCollapsedWidgetKey] = useState(null);
+  const currentWidgetKey = activeWidget?.instanceId || null;
+  const rightCollapsed = Boolean(currentWidgetKey && collapsedWidgetKey === currentWidgetKey);
 
-  // Auto-expand right pane when widget arrives
-  const prevWidgetRef = useRef(activeWidget);
-  useEffect(() => {
-    if (activeWidget && !prevWidgetRef.current) {
-      setRightCollapsed(false);
-    }
-    prevWidgetRef.current = activeWidget;
-  }, [activeWidget]);
+  const toggleRightPane = () => {
+    if (!currentWidgetKey) return;
+    setCollapsedWidgetKey(prev => (prev === currentWidgetKey ? null : currentWidgetKey));
+  };
 
   return (
     <div className="h-full flex overflow-hidden" style={{ backgroundColor: 'var(--surface-base)' }}>
@@ -49,7 +47,7 @@ export default function UnifiedWorkspaceLayout({ children }) {
       {/* Right expand/collapse toggle */}
       {activeWidget && (
         <button
-          onClick={() => setRightCollapsed(c => !c)}
+          onClick={toggleRightPane}
           className="flex-shrink-0 w-5 flex items-center justify-center hover:bg-gray-100 transition-colors border-l"
           style={{ borderColor: 'var(--border-default)' }}
           title={rightCollapsed ? 'Show canvas' : 'Hide canvas'}

@@ -1,0 +1,4 @@
+material_code,plant_id,time_bucket,demand_qty,uom
+FG-2000,PLANT-01,2026-W05,5000,pcs
+FG-2000,PLANT-01,2026-W06,8000,pcs
+FG-2000,PLANT-01,2026-W07,6000,pcs

@@ -34,6 +34,14 @@ vi.mock('@supabase/supabase-js', () => ({
   })),
 }));
 
+vi.mock('./supabaseClient.js', () => ({
+  supabase: {
+    from: () => ({
+      insert: () => ({ data: null, error: null }),
+    }),
+  },
+}));
+
 // ── Test Data ────────────────────────────────────────────────────────────────
 
 const VALID_DELAY_EVENT = {

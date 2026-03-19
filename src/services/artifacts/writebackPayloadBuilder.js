@@ -184,7 +184,7 @@ function buildMutation(row, targetSystem) {
   return mutation;
 }
 
-function resolveEntityType(action, targetSystem) {
+function resolveEntityType(action, _targetSystem) {
   const entityMap = {
     [MUTATION_ACTIONS.CREATE_PO]: 'purchase_order',
     [MUTATION_ACTIONS.UPDATE_PO]: 'purchase_order',

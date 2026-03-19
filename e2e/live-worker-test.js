@@ -245,7 +245,6 @@ async function setupInterceptions(page) {
 async function injectAuth(page) {
   if (!SUPABASE_URL) return;
   const storageKey = `sb-${PROJECT_REF}-auth-token`;
-  const now = Math.floor(Date.now() / 1000);
   await page.evaluate(([key]) => {
     localStorage.setItem(key, JSON.stringify({
       access_token: 'mock-jwt-for-e2e', token_type: 'bearer', expires_in: 86400,

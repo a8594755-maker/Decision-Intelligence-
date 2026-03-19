@@ -20,25 +20,30 @@ export const SIDEBAR_COLLAPSED_KEY_PREFIX = 'decision_intelligence_sidebar_colla
 export const CANVAS_SPLIT_RATIO_KEY_PREFIX = 'decision_intelligence_canvas_split_ratio_';
 export const MAX_UPLOAD_MESSAGE = 'Please upload aggregated data (e.g., SKU-store-day/week). Maximum 50MB.';
 
-export const DEFAULT_CANVAS_STATE = {
-  isOpen: false,
-  activeTab: 'logs',
-  run: null,
-  logs: [],
-  stepStatuses: RUN_STEP_ORDER.reduce((acc, step) => ({
-    ...acc,
-    [step]: { status: 'queued', updated_at: new Date().toISOString(), notes: '' }
-  }), {}),
-  codeText: '',
-  chartPayload: {
-    actual_vs_forecast: [],
-    inventory_projection: [],
-    cost_breakdown: [],
-    topology_graph: null
-  },
-  downloads: [],
-  topologyRunning: false
-};
+export function createDefaultCanvasState() {
+  return {
+    isOpen: false,
+    activeTab: 'logs',
+    run: null,
+    logs: [],
+    stepStatuses: RUN_STEP_ORDER.reduce((acc, step) => ({
+      ...acc,
+      [step]: { status: 'queued', updated_at: new Date().toISOString(), notes: '' }
+    }), {}),
+    codeText: '',
+    chartPayload: {
+      actual_vs_forecast: [],
+      inventory_projection: [],
+      cost_breakdown: [],
+      topology_graph: null
+    },
+    downloads: [],
+    topologyRunning: false
+  };
+}
+
+/** @deprecated Use createDefaultCanvasState() for a fresh copy with current timestamp */
+export const DEFAULT_CANVAS_STATE = createDefaultCanvasState();
 
 export const EXECUTION_KEYWORDS = [
   'plan',

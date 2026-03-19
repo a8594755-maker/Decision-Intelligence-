@@ -13,8 +13,9 @@ function Sparkline({ values = [], width = 200, height = 40, color = '#6366f1', d
   const max = Math.max(...values, dangerThreshold || 0);
   const min = Math.min(...values, 0);
   const range = max - min || 1;
+  const denominator = values.length > 1 ? values.length - 1 : 1;
   const points = values.map((v, i) =>
-    `${(i / (values.length - 1)) * width},${height - ((v - min) / range) * height}`
+    `${(i / denominator) * width},${height - ((v - min) / range) * height}`
   ).join(' ');
   const thresholdY = dangerThreshold != null
     ? height - ((dangerThreshold - min) / range) * height
@@ -38,7 +39,7 @@ function Sparkline({ values = [], width = 200, height = 40, color = '#6366f1', d
 export default function InventoryWidget({ data = {} }) {
   const [viewMode, setViewMode] = useState('chart');
 
-  const projections = data.projections || data.rows || [];
+  const projections = useMemo(() => data.projections || data.rows || [], [data.projections, data.rows]);
   const alerts = data.stockout_alerts || [];
 
   // Group by material for chart view

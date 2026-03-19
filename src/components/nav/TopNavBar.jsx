@@ -3,7 +3,7 @@ import { NavLink as RouterNavLink, useNavigate, useLocation } from 'react-router
 import {
   Activity, MessageSquare, ClipboardList, CheckSquare, LayoutDashboard,
   Settings, Moon, Sun, LogOut,
-  ChevronsLeft, ChevronsRight, BarChart3, Database, Bot, Wrench, FileText,
+  ChevronsLeft, ChevronsRight, BarChart3, Database, Bot, Wrench, FileText, Users,
   ChevronDown, Calculator, TrendingUp, ShieldAlert, Cpu, GitCompare, Handshake,
   ArrowLeftRight, Shield, Webhook, Clock, Layers, Inbox, PanelTop,
 } from 'lucide-react';
@@ -15,8 +15,8 @@ import { APP_NAME } from '../../config/branding';
 // DI Workspace nav
 // ────────────────────────────────────────────────────────────
 const DI_NAV_ITEMS = [
+  { to: '/workspace',     label: 'Workspace',       icon: PanelTop },
   { to: '/',              label: 'Command Center',  icon: LayoutDashboard, end: true },
-  { to: '/plan',          label: 'Plan Studio',     icon: Calculator },
   { to: '/workspace?widget=forecast', label: 'Forecast Studio', icon: TrendingUp },
   { to: '/workspace?widget=risk',     label: 'Risk Center',     icon: ShieldAlert },
   { to: '/digital-twin',  label: 'Digital Twin',    icon: Cpu },
@@ -41,25 +41,24 @@ const DI_ADVANCED_ITEMS = [
 // Digital Worker Workspace nav
 // ────────────────────────────────────────────────────────────
 const AI_NAV_ITEMS = [
-  { to: '/workspace',           label: 'Workspace',     icon: PanelTop },
-  { to: '/',                    label: 'Chat',           icon: MessageSquare, end: true },
-  { to: '/employees/tasks',     label: 'Tasks',          icon: ClipboardList },
+  { to: '/workspace',           label: 'Workspace',      icon: PanelTop },
+  { to: '/employees/tasks',     label: 'Task Board',     icon: ClipboardList },
   { to: '/employees/review',    label: 'Review',         icon: CheckSquare },
-  { to: '/employees',           label: 'Digital Worker',  icon: Bot },
-  { to: '/employees/tools',     label: 'Tool Library',   icon: Wrench },
-  { to: '/employees/profiles',  label: 'Profiles',       icon: FileText },
-  { to: '/employees/templates', label: 'Templates',      icon: Layers },
-  { to: '/employees/policies',  label: 'Governance',     icon: Shield },
   { to: '/employees/approvals', label: 'Approvals',      icon: Inbox },
-  { to: '/employees/webhooks',  label: 'Webhooks',       icon: Webhook },
-  { to: '/employees/schedules', label: 'Schedules',      icon: Clock },
+  { to: '/',                    label: 'Dashboard',      icon: Bot, end: true },
+  { to: '/employees',           label: 'Workers',        icon: Users },
+  { to: '/employees/profiles',  label: 'Profiles',       icon: FileText },
 ];
 
 const AI_ADVANCED_ITEMS = [
-  { to: '/plan',        label: 'Plan Studio',     icon: Calculator },
+  { to: '/employees/templates', label: 'Templates',      icon: Layers },
+  { to: '/employees/policies',  label: 'Governance',     icon: Shield },
+  { to: '/employees/webhooks',  label: 'Webhooks',       icon: Webhook },
+  { to: '/employees/schedules', label: 'Schedules',      icon: Clock },
+  { to: '/employees/tools',     label: 'Tool Library',   icon: Wrench },
   { to: '/workspace?widget=forecast', label: 'Forecast Studio', icon: TrendingUp },
   { to: '/workspace?widget=risk',     label: 'Risk Center',     icon: ShieldAlert },
-  { to: '/digital-twin',label: 'Digital Twin',    icon: Cpu },
+  { to: '/digital-twin',        label: 'Digital Twin',   icon: Cpu },
   { to: '/workspace?widget=scenario', label: 'Scenarios',       icon: GitCompare },
   { to: '/workspace?widget=negotiation', label: 'Negotiation',  icon: Handshake },
 ];

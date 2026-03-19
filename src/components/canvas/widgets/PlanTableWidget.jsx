@@ -34,7 +34,7 @@ export default function PlanTableWidget({ data = {}, onApprove, onEdit }) {
   const [editingRow, setEditingRow] = useState(null);
   const [editValue, setEditValue] = useState('');
 
-  const rows = data.rows || data.plan_table || data.plan_rows || [];
+  const rows = useMemo(() => data.rows || data.plan_table || data.plan_rows || [], [data.rows, data.plan_table, data.plan_rows]);
   const solverMeta = data.solver_meta || {};
   const isEditable = typeof onEdit === 'function';
 
@@ -55,10 +55,12 @@ export default function PlanTableWidget({ data = {}, onApprove, onEdit }) {
     else { setSortField(field); setSortDir('asc'); }
   }, [sortField]);
 
-  const handleEditSave = useCallback((rowIdx) => {
+  const handleEditSave = useCallback((sortedRow) => {
     if (onEdit) {
+      const origIdx = rows.indexOf(sortedRow);
+      if (origIdx === -1) { setEditingRow(null); setEditValue(''); return; }
       const updated = [...rows];
-      updated[rowIdx] = { ...updated[rowIdx], order_qty: Number(editValue) || updated[rowIdx].order_qty };
+      updated[origIdx] = { ...updated[origIdx], order_qty: Number(editValue) || updated[origIdx].order_qty };
       onEdit(updated);
     }
     setEditingRow(null);
@@ -128,7 +130,7 @@ export default function PlanTableWidget({ data = {}, onApprove, onEdit }) {
             </thead>
             <tbody>
               {sorted.map((row, i) => (
-                <tr key={i} className="border-t" style={{ borderColor: 'var(--border-subtle)' }}>
+                <tr key={`${row.material_code || row.sku || ''}_${row.period || ''}_${row.plant_id || ''}_${i}`} className="border-t" style={{ borderColor: 'var(--border-subtle)' }}>
                   {columns.map(col => (
                     <td key={col} className="py-1.5">
                       {editingRow === i && col === 'order_qty' ? (
@@ -136,8 +138,8 @@ export default function PlanTableWidget({ data = {}, onApprove, onEdit }) {
                           type="number"
                           value={editValue}
                           onChange={e => setEditValue(e.target.value)}
-                          onKeyDown={e => e.key === 'Enter' && handleEditSave(i)}
-                          onBlur={() => handleEditSave(i)}
+                          onKeyDown={e => e.key === 'Enter' && handleEditSave(row)}
+                          onBlur={() => handleEditSave(row)}
                           className="w-20 px-1 py-0.5 border rounded text-sm"
                           autoFocus
                         />

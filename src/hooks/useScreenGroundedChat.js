@@ -19,7 +19,7 @@
  *   screenCtx.buildContextPatch()  // { screen_selection: { ... } }
  */
 
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 
 // Selection auto-expires after this many ms (user likely moved on)
 const SELECTION_TTL_MS = 5 * 60 * 1000; // 5 minutes
@@ -158,6 +158,13 @@ export default function useScreenGroundedChat() {
     const entity = normalizePlanRowSelection(row);
     if (entity) pushSelection(entity);
   }, [pushSelection]);
+
+  // Clear TTL timer on unmount
+  useEffect(() => {
+    return () => {
+      if (ttlTimerRef.current) clearTimeout(ttlTimerRef.current);
+    };
+  }, []);
 
   const clearSelection = useCallback(() => {
     setSelection(null);

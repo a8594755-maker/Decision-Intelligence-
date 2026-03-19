@@ -199,16 +199,7 @@ export function checkApprovalGate(policy, actionType, context = {}) {
     return { requires_approval: true, reason: `No rule for action_type=${actionType} — default to require approval` };
   }
 
-  // Auto-approve check
-  if (rule.auto_approve_at?.includes(context.autonomy_level)) {
-    return { requires_approval: false, reason: `Auto-approved at autonomy level ${context.autonomy_level}` };
-  }
-
-  if (!rule.requires_approval) {
-    return { requires_approval: false, reason: `Policy allows ${actionType} without approval` };
-  }
-
-  // Threshold escalation checks
+  // Threshold escalation checks always take precedence over auto-approval.
   if (rule.thresholds) {
     const t = rule.thresholds;
     if (t.cost_delta_abs !== undefined && Math.abs(context.cost_delta || 0) > t.cost_delta_abs) {
@@ -221,6 +212,15 @@ export function checkApprovalGate(policy, actionType, context = {}) {
     if (t.affected_records_count !== undefined && (context.affected_records_count || 0) > t.affected_records_count) {
       return { requires_approval: true, reason: `Affected records ${context.affected_records_count} exceeds threshold ${t.affected_records_count}` };
     }
+  }
+
+  // Auto-approve check
+  if (rule.auto_approve_at?.includes(context.autonomy_level)) {
+    return { requires_approval: false, reason: `Auto-approved at autonomy level ${context.autonomy_level}` };
+  }
+
+  if (!rule.requires_approval) {
+    return { requires_approval: false, reason: `Policy allows ${actionType} without approval` };
   }
 
   return { requires_approval: true, reason: `Default: ${actionType} requires approval` };

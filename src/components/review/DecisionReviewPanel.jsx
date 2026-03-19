@@ -12,7 +12,7 @@
  *   onResolve:        (resolution) => void
  */
 
-import { useState, useMemo } from 'react';
+import React, { useState } from 'react';
 import {
   CheckCircle2, XCircle, AlertTriangle, RotateCcw, ArrowUpRight,
   Clock, ShieldCheck, FileSearch, TrendingUp, TrendingDown,
@@ -70,6 +70,7 @@ function MutationRow({ mutation, index }) {
 
 function Section({ title, icon: Icon, children, defaultOpen = true }) {
   const [open, setOpen] = useState(defaultOpen);
+  const iconNode = Icon ? React.createElement(Icon, { className: 'w-4 h-4' }) : null;
   return (
     <div className="border-t border-slate-200 dark:border-slate-700">
       <button
@@ -77,7 +78,7 @@ function Section({ title, icon: Icon, children, defaultOpen = true }) {
         className="w-full flex items-center justify-between py-2 px-1 text-sm font-medium text-slate-700 dark:text-slate-200 hover:text-slate-900"
       >
         <span className="flex items-center gap-2">
-          {Icon && <Icon className="w-4 h-4" />}
+          {iconNode}
           {title}
         </span>
         {open ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
@@ -107,18 +108,11 @@ export default function DecisionReviewPanel({
   const writeback = writebackPayload || {};
 
   const mutations = writeback.intended_mutations || [];
-  const affectedRecords = writeback.affected_records || [];
   const riskFlags = brief.risk_flags || [];
   const assumptions = brief.assumptions || [];
   const impact = brief.business_impact || {};
 
   const mutationSummary = writeback.mutation_summary || {};
-
-  // Build affected records summary
-  const affectedSummary = useMemo(() => {
-    const totalQty = affectedRecords.reduce((s, r) => s + (r.qty || 0), 0);
-    return { count: affectedRecords.length, totalQty };
-  }, [affectedRecords]);
 
   function handleSubmit() {
     if (!decision) return;
@@ -387,13 +381,22 @@ function KpiTile({ label, value, positive }) {
   );
 }
 
+// Static Tailwind class map — dynamic `bg-${color}-100` gets purged in production
+const DECISION_BUTTON_STYLES = {
+  emerald: 'bg-emerald-100 dark:bg-emerald-900/40 border-emerald-400 text-emerald-700 dark:text-emerald-300 ring-1 ring-emerald-400',
+  red:     'bg-red-100 dark:bg-red-900/40 border-red-400 text-red-700 dark:text-red-300 ring-1 ring-red-400',
+  amber:   'bg-amber-100 dark:bg-amber-900/40 border-amber-400 text-amber-700 dark:text-amber-300 ring-1 ring-amber-400',
+  slate:   'bg-slate-100 dark:bg-slate-900/40 border-slate-400 text-slate-700 dark:text-slate-300 ring-1 ring-slate-400',
+};
+
 function DecisionButton({ active, onClick, icon: Icon, label, color }) {
   const base = active
-    ? `bg-${color}-100 dark:bg-${color}-900/40 border-${color}-400 text-${color}-700 dark:text-${color}-300 ring-1 ring-${color}-400`
+    ? DECISION_BUTTON_STYLES[color] || DECISION_BUTTON_STYLES.slate
     : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-slate-300';
+  const iconNode = React.createElement(Icon, { className: 'w-3.5 h-3.5' });
   return (
     <button onClick={onClick} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md border text-xs font-medium transition-colors ${base}`}>
-      <Icon className="w-3.5 h-3.5" />
+      {iconNode}
       {label}
     </button>
   );

@@ -6,7 +6,7 @@
  */
 
 import { supabase } from '../../supabaseClient.js';
-import { EMPLOYEE_STATE_TO_DB, DB_TO_EMPLOYEE_STATE } from '../employeeStateMachine.js';
+import { EMPLOYEE_STATES, EMPLOYEE_STATE_TO_DB, DB_TO_EMPLOYEE_STATE } from '../employeeStateMachine.js';
 
 /**
  * Update employee status using logical state names.
@@ -63,12 +63,18 @@ export async function getEmployeeByManager(userId) {
 /**
  * List all employees for a manager user.
  */
-export async function listEmployeesByManager(userId) {
-  const { data, error } = await supabase
+export async function listEmployeesByManager(userId, { includeArchived = false } = {}) {
+  let query = supabase
     .from('ai_employees')
     .select('*')
     .eq('manager_user_id', userId)
     .order('created_at', { ascending: true });
+
+  if (!includeArchived) {
+    query = query.is('archived_at', null);
+  }
+
+  const { data, error } = await query;
 
   if (error) throw new Error(`[EmployeeRepo] listEmployeesByManager failed: ${error.message}`);
   return (data || []).map((emp) => ({
@@ -84,8 +90,6 @@ const DEFAULT_PERMISSIONS = {
   can_run_registered_tool: true, can_generate_report: true,
   can_export: true, can_write_worklog: true, can_submit_review: true,
   can_run_python_tool: true,
-  can_sync_opencloud: true, can_import_opencloud: true,
-  can_search_opencloud: true, can_distribute_opencloud: true, can_watch_opencloud: true,
   can_drive_excel: true,
 };
 
@@ -98,7 +102,7 @@ const WORKER_TEMPLATES = {
     role: 'data_analyst',
     icon: 'bar-chart',
     description: 'Digital worker for data analysis. Runs forecasts, plans, risk assessments, and business reports on demand.',
-    capabilities: ['forecast', 'plan', 'risk', 'report', 'excel', 'opencloud'],
+    capabilities: ['forecast', 'plan', 'risk', 'report', 'excel'],
     defaultTemplates: ['full_report', 'forecast_then_plan', 'risk_aware_plan'],
     permissions: DEFAULT_PERMISSIONS,
   },
@@ -108,7 +112,7 @@ const WORKER_TEMPLATES = {
     role: 'supply_chain_analyst',
     icon: 'file-text',
     description: 'Digital worker for supply chain analysis. Specializes in planning, procurement analysis, and operational reports.',
-    capabilities: ['forecast', 'plan', 'risk', 'report', 'excel', 'opencloud'],
+    capabilities: ['forecast', 'plan', 'risk', 'report', 'excel'],
     defaultTemplates: ['full_report', 'mbr_with_excel', 'risk_aware_plan'],
     permissions: { ...DEFAULT_PERMISSIONS },
   },
@@ -128,7 +132,7 @@ const WORKER_TEMPLATES = {
     role: 'operations_coordinator',
     icon: 'shield-check',
     description: 'Digital worker for operations. Monitors data quality, validates integrity, and coordinates cross-system workflows.',
-    capabilities: ['data_quality', 'report', 'opencloud'],
+    capabilities: ['data_quality', 'report'],
     defaultTemplates: ['full_report'],
     permissions: { ...DEFAULT_PERMISSIONS },
   },
@@ -159,6 +163,7 @@ export async function getOrCreateWorker(userId, templateId = 'data_analyst') {
     .select('*')
     .eq('manager_user_id', userId)
     .in('role', rolesToCheck)
+    .is('archived_at', null)
     .order('created_at', { ascending: true })
     .limit(1);
 
@@ -182,7 +187,7 @@ export async function getOrCreateWorker(userId, templateId = 'data_analyst') {
   const insertPayload = {
     name: template.name,
     role: template.role,
-    status: 'idle',
+    status: EMPLOYEE_STATE_TO_DB[EMPLOYEE_STATES.IDLE],
     manager_user_id: userId,
     description: template.description,
     permissions: template.permissions,
@@ -246,7 +251,7 @@ export async function createWorkerFromTemplate(userId, templateId, overrides = {
   const payload = {
     name: overrides.name || template.name,
     role: template.role,
-    status: 'idle',
+    status: EMPLOYEE_STATE_TO_DB[EMPLOYEE_STATES.IDLE],
     manager_user_id: userId,
     description: overrides.description || template.description,
     permissions: template.permissions,
@@ -273,21 +278,84 @@ export async function createWorkerFromTemplate(userId, templateId, overrides = {
 }
 
 /**
- * Delete a worker (soft or hard).
- * @param {string} employeeId
+ * Clone an existing worker into a new worker with a custom name.
+ * The clone inherits template, permissions, and description from the source.
+ * Enforces manager scope — only the source worker's manager can clone.
+ *
+ * @param {string} sourceEmployeeId - ID of the worker to clone
+ * @param {string} userId - Manager user ID (must own the source worker)
+ * @param {Object} [overrides] - Override cloned fields
+ * @param {string} [overrides.name] - Custom name for the clone
+ * @param {string} [overrides.description] - Custom description
+ * @returns {Promise<object>} Newly created employee row
  */
-export async function deleteWorker(employeeId) {
-  const { error } = await supabase
+export async function cloneWorker(sourceEmployeeId, userId, overrides = {}) {
+  // Fetch source worker with manager scope check
+  const source = await getEmployee(sourceEmployeeId);
+  if (source.manager_user_id !== userId) {
+    throw new Error(`[EmployeeRepo] cloneWorker denied: user '${userId}' is not the manager of worker '${sourceEmployeeId}'`);
+  }
+
+  const payload = {
+    name: overrides.name || `${source.name} (copy)`,
+    role: source.role,
+    status: EMPLOYEE_STATE_TO_DB[EMPLOYEE_STATES.IDLE],
+    manager_user_id: userId,
+    description: overrides.description || source.description,
+    permissions: { ...(source.permissions || {}) },
+  };
+
+  const { data: created, error } = await supabase
     .from('ai_employees')
-    .delete()
-    .eq('id', employeeId);
-  if (error) throw new Error(`[EmployeeRepo] deleteWorker failed: ${error.message}`);
+    .insert(payload)
+    .select()
+    .single();
+
+  if (error) throw new Error(`[EmployeeRepo] cloneWorker failed: ${error.message}`);
+  created._logicalState = DB_TO_EMPLOYEE_STATE[created.status] || created.status;
+  return created;
 }
 
 /**
- * Update a worker's name or description.
+ * Archive a worker (soft-delete). Record stays for audit trail.
+ * Enforces manager scope — only the worker's manager can archive.
+ *
+ * @param {string} employeeId
+ * @param {string} [userId] - Manager user ID. If provided, enforces ownership.
  */
-export async function updateWorker(employeeId, updates) {
+export async function archiveWorker(employeeId, userId) {
+  if (userId) {
+    const emp = await getEmployee(employeeId);
+    if (emp.manager_user_id !== userId) {
+      throw new Error(`[EmployeeRepo] archiveWorker denied: user '${userId}' is not the manager of worker '${employeeId}'`);
+    }
+  }
+  const { error } = await supabase
+    .from('ai_employees')
+    .update({ archived_at: new Date().toISOString() })
+    .eq('id', employeeId);
+  if (error) throw new Error(`[EmployeeRepo] archiveWorker failed: ${error.message}`);
+}
+
+/** @deprecated Use archiveWorker for audit-safe removal. */
+export const deleteWorker = archiveWorker;
+
+/**
+ * Update a worker's name or description.
+ * Enforces manager scope — only the worker's manager can update.
+ *
+ * @param {string} employeeId
+ * @param {Object} updates - { name?, description?, permissions? }
+ * @param {string} [userId] - Manager user ID. If provided, enforces ownership.
+ */
+export async function updateWorker(employeeId, updates, userId) {
+  if (userId) {
+    const emp = await getEmployee(employeeId);
+    if (emp.manager_user_id !== userId) {
+      throw new Error(`[EmployeeRepo] updateWorker denied: user '${userId}' is not the manager of worker '${employeeId}'`);
+    }
+  }
+
   const allowed = {};
   if (updates.name) allowed.name = updates.name;
   if (updates.description) allowed.description = updates.description;

@@ -62,6 +62,19 @@ async def health_ready():
     except Exception:
         checks["solver"] = "ok"  # Non-critical if solver_engines not available
 
+    # Check LLM proxy reachability (Supabase Edge Function ai-proxy)
+    try:
+        sb_url = os.getenv("SUPABASE_URL", "")
+        if sb_url:
+            proxy_url = f"{sb_url.rstrip('/')}/functions/v1/ai-proxy"
+            req = urllib.request.Request(proxy_url, method="OPTIONS")
+            resp = urllib.request.urlopen(req, timeout=5)
+            checks["llm_proxy"] = "ok" if resp.status in (200, 204) else "degraded"
+        else:
+            checks["llm_proxy"] = "not_configured"
+    except Exception:
+        checks["llm_proxy"] = "unreachable"
+
     is_ready = checks.get("database") in ("ok", "skipped")
 
     if is_ready:

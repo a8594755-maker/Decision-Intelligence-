@@ -1,0 +1,4 @@
+material_code,plant_id,snapshot_date,onhand_qty,available_qty
+COMP-001,PLANT-01,2026-02-06,0,0
+COMP-002,PLANT-01,2026-02-06,0,0
+COMP-003,PLANT-01,2026-02-06,5,5

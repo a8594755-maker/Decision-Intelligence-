@@ -171,7 +171,7 @@ test.describe('Canvas Workspace: Widget Rendering', () => {
     // Inject artifact via eventBus (simulate tool completion)
     await page.evaluate(() => {
       // Access the eventBus singleton
-      const mod = window.__eventBus || document.querySelector('[data-eventbus]');
+      const _mod = window.__eventBus || document.querySelector('[data-eventbus]');
       // Try to emit via global
       if (window.__diEventBus) {
         window.__diEventBus.emit('artifact:created', {

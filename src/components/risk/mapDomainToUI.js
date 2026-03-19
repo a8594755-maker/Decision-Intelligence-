@@ -59,7 +59,7 @@ export const mapDomainRiskToTableRow = (domainRisk, inventoryData = {}, options 
 
   // Shortage date
   let shortageDate = null;
-  if (daysToStockout !== Infinity && daysToStockout >= 0) {
+  if (typeof daysToStockout === 'number' && daysToStockout !== Infinity && daysToStockout >= 0) {
     shortageDate = new Date();
     shortageDate.setDate(shortageDate.getDate() + Math.floor(daysToStockout));
   }

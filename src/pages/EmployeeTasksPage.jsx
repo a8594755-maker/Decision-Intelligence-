@@ -9,7 +9,7 @@ import {
 } from 'lucide-react';
 import { Modal } from '../components/ui';
 import { useAuth } from '../contexts/AuthContext';
-import { getOrCreateWorker, listEmployeesByManager, listTasks, listTasksByUser, listWorklogs } from '../services/aiEmployee/queries.js';
+import { getOrCreateWorker, listEmployeesByManager, listTasks, listTasksByUser, listWorklogs, reassignTask } from '../services/aiEmployee/queries.js';
 import { TEMPLATE_OPTIONS } from '../services/agentLoopTemplates';
 import { getNotifications, getUnreadCount, markAllRead } from '../services/notificationService';
 import {
@@ -29,20 +29,21 @@ import {
 import { buildPlanFromTemplateTask } from '../services/aiEmployee/templatePlanAdapter';
 import { EXECUTION_MODES } from '../services/aiEmployee/executionPolicy.js';
 import { createTaskDatasetContextFromFile } from '../services/aiEmployee/taskDatasetContextService.js';
+import { processIntake, INTAKE_SOURCES } from '../services/taskIntakeService.js';
+import { TASK_STATES } from '../services/aiEmployee/taskStateMachine.js';
 
 // ── Constants ─────────────────────────────────────────────────────────────
 
 const STATUS_FILTERS = [
-  { value: '',               label: 'All' },
-  { value: 'todo',           label: 'To Do' },
-  { value: 'waiting_approval',label: 'Ready to Run' },
-  { value: 'queued',         label: 'Queued' },
-  { value: 'in_progress',   label: 'In Progress' },
-  { value: 'waiting_review',label: 'Awaiting Review' },
-  { value: 'review_hold',   label: 'Awaiting Review' },
-  { value: 'blocked',       label: 'Needs Input' },
-  { value: 'failed',        label: 'Failed' },
-  { value: 'done',          label: 'Done' },
+  { value: '',                          label: 'All' },
+  { value: TASK_STATES.DRAFT_PLAN,      label: 'Draft' },
+  { value: TASK_STATES.WAITING_APPROVAL,label: 'Ready to Run' },
+  { value: TASK_STATES.QUEUED,          label: 'Queued' },
+  { value: TASK_STATES.IN_PROGRESS,     label: 'In Progress' },
+  { value: TASK_STATES.REVIEW_HOLD,     label: 'Awaiting Review' },
+  { value: TASK_STATES.BLOCKED,         label: 'Needs Input' },
+  { value: TASK_STATES.FAILED,          label: 'Failed' },
+  { value: TASK_STATES.DONE,            label: 'Done' },
 ];
 
 const PRIORITY_OPTIONS = [
@@ -55,27 +56,25 @@ const PRIORITY_OPTIONS = [
 const WORKFLOW_OPTIONS = TEMPLATE_OPTIONS;
 
 const STATUS_STYLE = {
-  todo:           'text-slate-500  bg-slate-100  dark:bg-slate-800',
-  waiting_approval:'text-violet-600 bg-violet-50 dark:bg-violet-900/20',
-  queued:         'text-indigo-600 bg-indigo-50 dark:bg-indigo-900/20',
-  in_progress:   'text-blue-600   bg-blue-50    dark:bg-blue-900/20',
-  waiting_review:'text-amber-600  bg-amber-50   dark:bg-amber-900/20',
-  review_hold:   'text-amber-600  bg-amber-50   dark:bg-amber-900/20',
-  blocked:       'text-red-600    bg-red-50     dark:bg-red-900/20',
-  failed:        'text-red-600    bg-red-50     dark:bg-red-900/20',
-  done:          'text-emerald-600 bg-emerald-50 dark:bg-emerald-900/20',
+  [TASK_STATES.DRAFT_PLAN]:       'text-slate-500  bg-slate-100  dark:bg-slate-800',
+  [TASK_STATES.WAITING_APPROVAL]: 'text-violet-600 bg-violet-50 dark:bg-violet-900/20',
+  [TASK_STATES.QUEUED]:           'text-indigo-600 bg-indigo-50 dark:bg-indigo-900/20',
+  [TASK_STATES.IN_PROGRESS]:      'text-blue-600   bg-blue-50    dark:bg-blue-900/20',
+  [TASK_STATES.REVIEW_HOLD]:      'text-amber-600  bg-amber-50   dark:bg-amber-900/20',
+  [TASK_STATES.BLOCKED]:          'text-red-600    bg-red-50     dark:bg-red-900/20',
+  [TASK_STATES.FAILED]:           'text-red-600    bg-red-50     dark:bg-red-900/20',
+  [TASK_STATES.DONE]:             'text-emerald-600 bg-emerald-50 dark:bg-emerald-900/20',
 };
 
 const STATUS_LABEL = {
-  todo: 'To Do',
-  waiting_approval: 'Ready to Run',
-  queued: 'Queued',
-  in_progress: 'In Progress',
-  waiting_review: 'Awaiting Review',
-  review_hold: 'Awaiting Review',
-  blocked: 'Needs Input',
-  failed: 'Failed',
-  done: 'Done',
+  [TASK_STATES.DRAFT_PLAN]:       'Draft',
+  [TASK_STATES.WAITING_APPROVAL]: 'Ready to Run',
+  [TASK_STATES.QUEUED]:           'Queued',
+  [TASK_STATES.IN_PROGRESS]:      'In Progress',
+  [TASK_STATES.REVIEW_HOLD]:      'Awaiting Review',
+  [TASK_STATES.BLOCKED]:          'Needs Input',
+  [TASK_STATES.FAILED]:           'Failed',
+  [TASK_STATES.DONE]:             'Done',
 };
 
 const PRIORITY_STYLE = {
@@ -121,17 +120,26 @@ const DAY_OF_MONTH_OPTIONS = Array.from({ length: 31 }, (_, index) => ({
   label: String(index + 1),
 }));
 
-const ORCHESTRATOR_ACTIVE_STATUSES = ['queued', 'in_progress'];
+const ORCHESTRATOR_ACTIVE_STATUSES = [TASK_STATES.QUEUED, TASK_STATES.IN_PROGRESS, TASK_STATES.WAITING_APPROVAL, TASK_STATES.REVIEW_HOLD, TASK_STATES.BLOCKED];
 
 const VIEW_MODES = { LIST: 'list', KANBAN: 'kanban' };
 const ALL_WORKERS_VALUE = '__all_workers__';
 
+// Static Tailwind class map — dynamic `bg-${color}-500` gets purged in production
+const KANBAN_DOT_COLORS = {
+  slate:   'bg-slate-500',
+  blue:    'bg-blue-500',
+  red:     'bg-red-500',
+  amber:   'bg-amber-500',
+  emerald: 'bg-emerald-500',
+};
+
 const KANBAN_COLUMNS = [
-  { key: 'candidate',       label: 'Candidate',       statuses: ['todo', 'waiting_approval'], color: 'slate' },
-  { key: 'delegated',       label: 'Delegated',       statuses: ['queued', 'in_progress'],    color: 'blue' },
-  { key: 'needs_input',     label: 'Needs Input',     statuses: ['blocked'],                  color: 'red' },
-  { key: 'awaiting_review', label: 'Awaiting Review',  statuses: ['waiting_review', 'review_hold'], color: 'amber' },
-  { key: 'done',            label: 'Done',             statuses: ['done', 'failed'],           color: 'emerald' },
+  { key: 'candidate',       label: 'Candidate',       statuses: [TASK_STATES.DRAFT_PLAN, TASK_STATES.WAITING_APPROVAL], dotCls: KANBAN_DOT_COLORS.slate },
+  { key: 'delegated',       label: 'Delegated',       statuses: [TASK_STATES.QUEUED, TASK_STATES.IN_PROGRESS],    dotCls: KANBAN_DOT_COLORS.blue },
+  { key: 'needs_input',     label: 'Needs Input',     statuses: [TASK_STATES.BLOCKED],                  dotCls: KANBAN_DOT_COLORS.red },
+  { key: 'awaiting_review', label: 'Awaiting Review',  statuses: [TASK_STATES.REVIEW_HOLD], dotCls: KANBAN_DOT_COLORS.amber },
+  { key: TASK_STATES.DONE,  label: 'Done',             statuses: [TASK_STATES.DONE, TASK_STATES.FAILED],           dotCls: KANBAN_DOT_COLORS.emerald },
 ];
 
 // ── Helpers ───────────────────────────────────────────────────────────────
@@ -154,8 +162,9 @@ function Badge({ label, className }) {
   );
 }
 
-function isOrchestratorTask(task) {
-  return Boolean(task?.plan_snapshot?.steps?.length);
+/** All tasks go through the orchestrator. */
+function isOrchestratorTask(_task) {
+  return true;
 }
 
 function buildLoopState(task, stepRows = null) {
@@ -670,11 +679,11 @@ function NewScheduleModal({ onClose, onCreated, employeeId, userId }) {
 // ── Status group config ───────────────────────────────────────────────────
 
 const STATUS_GROUPS = [
-  { key: 'active',    label: 'Active',          statuses: ['in_progress', 'queued'], color: 'text-blue-600' },
-  { key: 'attention', label: 'Needs Attention',  statuses: ['waiting_approval', 'waiting_review', 'review_hold', 'blocked'], color: 'text-amber-600' },
-  { key: 'pending',   label: 'Pending',          statuses: ['todo'], color: 'text-slate-500' },
-  { key: 'completed', label: 'Completed',        statuses: ['done'], color: 'text-emerald-600' },
-  { key: 'failed',    label: 'Failed',           statuses: ['failed', 'cancelled'], color: 'text-red-600' },
+  { key: 'active',    label: 'Active',          statuses: [TASK_STATES.IN_PROGRESS, TASK_STATES.QUEUED], color: 'text-blue-600' },
+  { key: 'attention', label: 'Needs Attention',  statuses: [TASK_STATES.WAITING_APPROVAL, TASK_STATES.REVIEW_HOLD, TASK_STATES.BLOCKED], color: 'text-amber-600' },
+  { key: 'pending',   label: 'Pending',          statuses: [TASK_STATES.DRAFT_PLAN], color: 'text-slate-500' },
+  { key: 'completed', label: 'Completed',        statuses: [TASK_STATES.DONE], color: 'text-emerald-600' },
+  { key: TASK_STATES.FAILED, label: 'Failed',      statuses: [TASK_STATES.FAILED, TASK_STATES.CANCELLED], color: 'text-red-600' },
 ];
 
 function fmtElapsed(iso) {
@@ -868,14 +877,13 @@ function StepProgressBar({ loopState }) {
 
 // ── Task detail panel ─────────────────────────────────────────────────────
 
-function TaskDetail({ task, logs, onRun, running }) {
-  const canRun = isOrchestratorTask(task)
-    ? ['waiting_approval', 'failed'].includes(task.status)
-    : ['todo', 'blocked'].includes(task.status);
+function TaskDetail({ task, logs, onRun, running, workers = [], onReassign }) {
+  const canRun = [TASK_STATES.WAITING_APPROVAL, TASK_STATES.FAILED].includes(task.status);
+  const canReassign = [TASK_STATES.DRAFT_PLAN, TASK_STATES.WAITING_APPROVAL].includes(task.status);
   const ctx = task.input_context || {};
-  const runLabel = task.status === 'waiting_approval'
+  const runLabel = task.status === TASK_STATES.WAITING_APPROVAL
     ? 'Approve & Run'
-    : task.status === 'failed'
+    : task.status === TASK_STATES.FAILED
     ? 'Retry'
     : 'Run Now';
 
@@ -968,8 +976,35 @@ function TaskDetail({ task, logs, onRun, running }) {
         </div>
       )}
 
+      {/* Reassign to different worker */}
+      {canReassign && workers.length > 1 && onReassign && (
+        <div className="pt-1">
+          <p className="text-xs font-medium mb-1.5" style={{ color: 'var(--text-muted)' }}>
+            ASSIGN TO WORKER
+          </p>
+          <div className="flex items-center gap-2">
+            <select
+              defaultValue={task.employee_id}
+              onChange={(e) => {
+                if (e.target.value !== task.employee_id) {
+                  onReassign(task, e.target.value);
+                }
+              }}
+              className="flex-1 px-3 py-1.5 rounded-lg text-sm border"
+              style={{ borderColor: 'var(--border-default)', color: 'var(--text-primary)', backgroundColor: 'var(--surface-card)' }}
+            >
+              {workers.map((w) => (
+                <option key={w.id} value={w.id}>
+                  {w.name}{w.id === task.employee_id ? ' (current)' : ''}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+      )}
+
       {/* Waiting review notice */}
-      {(task.status === 'waiting_review' || task.status === 'review_hold') && (
+      {task.status === TASK_STATES.REVIEW_HOLD && (
         <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg bg-amber-50 dark:bg-amber-900/20 text-amber-700 text-sm">
           <Clock className="w-4 h-4 flex-shrink-0" />
           Awaiting manager review — go to the Review Queue to approve.
@@ -1008,7 +1043,7 @@ function KanbanBoard({ tasks, selectedTaskId, onSelect, onRun, runningId }) {
           >
             {/* Column header */}
             <div className="flex items-center gap-2 px-3 py-2.5 border-b" style={{ borderColor: 'var(--border-default)' }}>
-              <span className={`w-2 h-2 rounded-full bg-${col.color}-500`} />
+              <span className={`w-2 h-2 rounded-full ${col.dotCls}`} />
               <span className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>{col.label}</span>
               <span className="ml-auto text-[11px] font-medium rounded-full px-1.5 py-0.5" style={{ color: 'var(--text-muted)', backgroundColor: 'var(--surface-subtle)' }}>
                 {colTasks.length}
@@ -1043,7 +1078,7 @@ function KanbanBoard({ tasks, selectedTaskId, onSelect, onRun, runningId }) {
                       <p className="mt-1.5 text-[10px]" style={{ color: 'var(--text-muted)' }}>{fmtDate(task.updated_at)}</p>
                     )}
                     {/* Quick-run for candidate tasks */}
-                    {col.key === 'candidate' && task.status === 'waiting_approval' && (
+                    {col.key === 'candidate' && task.status === TASK_STATES.WAITING_APPROVAL && (
                       <button
                         type="button"
                         onClick={(e) => { e.stopPropagation(); onRun(task); }}
@@ -1117,7 +1152,7 @@ export default function EmployeeTasksPage() {
       const hydrated = hydrateTaskForBoard(snapshot.task, snapshot.steps);
       setTasks((prev) => prev.map((task) => task.id === hydrated.id ? hydrated : task));
     } catch {
-      // Legacy task or no orchestrator state — ignore.
+      // Task status snapshot unavailable — ignore and let next poll retry.
     }
   }, []);
 
@@ -1229,7 +1264,7 @@ export default function EmployeeTasksPage() {
     setRunningId(task.id);
     setRunError(null);
     // Optimistically mark in_progress so the task stays visible
-    setTasks((prev) => prev.map((t) => t.id === task.id ? { ...t, status: 'in_progress' } : t));
+    setTasks((prev) => prev.map((t) => t.id === task.id ? { ...t, status: TASK_STATES.IN_PROGRESS } : t));
 
     try {
       await runTaskAction(task, user.id);
@@ -1241,6 +1276,17 @@ export default function EmployeeTasksPage() {
     }
   }
 
+  async function handleReassign(task, newEmployeeId) {
+    if (!user?.id) return;
+    setRunError(null);
+    try {
+      await reassignTask(task.id, newEmployeeId, user.id, task.version || 1);
+      await loadTasks();
+    } catch (err) {
+      setRunError(err?.message || 'Reassignment failed.');
+    }
+  }
+
   async function handleQuickTask(e) {
     e.preventDefault();
     const msg = quickTaskInput.trim();
@@ -1249,8 +1295,23 @@ export default function EmployeeTasksPage() {
     setQuickTaskLoading(true);
     setRunError(null);
     try {
+      // Route through unified intake pipeline for normalization, dedup, and routing
+      const intakeResult = await processIntake({
+        source: INTAKE_SOURCES.CHAT,
+        message: msg,
+        employeeId: employee.id,
+        userId: user.id,
+        metadata: { origin: 'task_board_quick_task' },
+      });
+
+      if (intakeResult.status === 'duplicate') {
+        setRunError('A similar task already exists. Check your task board.');
+        return;
+      }
+
+      // After intake normalization, create plan and submit to orchestrator
       const plan = await createPlan({
-        userMessage: msg,
+        userMessage: intakeResult.workOrder?.description || msg,
         employeeId: employee.id,
         userId: user.id,
       });
@@ -1474,6 +1535,8 @@ export default function EmployeeTasksPage() {
                 logs={logs}
                 onRun={handleRun}
                 running={runningId === selectedTask.id}
+                workers={workers}
+                onReassign={handleReassign}
               />
             ) : (
               <div className="flex items-center justify-center h-full">

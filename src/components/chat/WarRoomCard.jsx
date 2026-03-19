@@ -79,7 +79,7 @@ export default function WarRoomCard({ payload, onActionClick }) {
   if (!payload) return null;
 
   const {
-    session_id: _session_id,
+    // session_id not used by this component
     trigger,
     plan_run_id,
     agents_activated = [],
@@ -93,7 +93,6 @@ export default function WarRoomCard({ payload, onActionClick }) {
 
   const criticalFindings = findings.filter(f => f.severity === 'critical');
   const warningFindings = findings.filter(f => f.severity === 'warning');
-  const _infoFindings = findings.filter(f => f.severity === 'info');
   const visibleFindings = showAllFindings ? findings : [...criticalFindings, ...warningFindings.slice(0, 2)];
 
   return (

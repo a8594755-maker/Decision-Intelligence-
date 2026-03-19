@@ -19,6 +19,7 @@
  */
 
 import { listTasks } from './aiEmployee/queries.js';
+import { TASK_STATES } from './aiEmployee/taskStateMachine.js';
 import { fromLegacyWorkOrder, validateDecisionWorkOrder } from '../contracts/decisionWorkOrderContract.js';
 import { routeWorkOrder } from './intakeRoutingService.js';
 
@@ -234,7 +235,7 @@ export async function checkDuplicate(employeeId, dedupKey, windowHours = 24) {
     const cutoff = Date.now() - windowMs;
 
     for (const task of tasks) {
-      if (task.status === 'done') continue;
+      if (task.status === TASK_STATES.DONE) continue;
 
       const taskCreated = new Date(task.created_at).getTime();
       if (taskCreated < cutoff) continue;

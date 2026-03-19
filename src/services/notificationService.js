@@ -20,7 +20,6 @@ export const NOTIFICATION_TYPES = {
   DAILY_SUMMARY_READY: 'daily_summary_ready',
   PROACTIVE_TASK_CREATED: 'proactive_task_created',
   SCHEDULE_EXECUTED: 'schedule_executed',
-  OPENCLOUD_PUBLISHED: 'opencloud_published',
 };
 
 const LOCAL_KEY = 'ai_employee_notifications_v1';

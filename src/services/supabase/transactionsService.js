@@ -125,11 +125,13 @@ export const goodsReceiptsService = {
     return data || [];
   },
 
-  async delete(receiptId) {
+  async delete(userId, receiptId) {
+    if (!userId) throw new Error('goodsReceipts.delete requires userId');
     const { error } = await supabase
       .from('goods_receipts')
       .delete()
-      .eq('id', receiptId);
+      .eq('id', receiptId)
+      .eq('user_id', userId);
 
     if (error) throw error;
     return { success: true };
@@ -237,11 +239,13 @@ export const priceHistoryService = {
     return data || [];
   },
 
-  async delete(priceId) {
+  async delete(userId, priceId) {
+    if (!userId) throw new Error('priceHistory.delete requires userId');
     const { error } = await supabase
       .from('price_history')
       .delete()
-      .eq('id', priceId);
+      .eq('id', priceId)
+      .eq('user_id', userId);
 
     if (error) throw error;
     return { success: true };

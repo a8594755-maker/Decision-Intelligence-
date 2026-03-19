@@ -17,6 +17,7 @@ import { loadArtifact, saveCsvArtifact, saveJsonArtifact } from '../utils/artifa
 import { evaluateRiskReplanRecommendation } from '../services/riskClosedLoopService';
 import { evaluateClosedLoopAfterWorkflowB } from '../services/closed_loop/workflowBClosedLoopBridge.js';
 import { generateAlerts } from '../services/proactiveAlertService.js';
+import { applyBlockingAnswerBindings } from './blockingAnswerUtils.js';
 
 export const WORKFLOW_B_STEPS = ['profile', 'contract', 'validate', 'compute_risk', 'exceptions', 'topology', 'report'];
 
@@ -881,8 +882,8 @@ export async function startWorkflowB({ user_id, dataset_profile_id, settings = {
 }
 
 export async function runNextStep(run_id) {
-  const runId = Number(run_id);
-  if (!Number.isFinite(runId)) throw new Error('run_id must be numeric');
+  const runId = String(run_id || '').startsWith('local-') ? run_id : Number(run_id);
+  if (typeof runId === 'number' && !Number.isFinite(runId)) throw new Error('run_id must be numeric or a local ID');
 
   const snapshotBefore = await buildRunSnapshot(runId);
   const run = snapshotBefore.run;
@@ -1106,30 +1107,31 @@ export async function resumeRun(run_id, options = {}) {
     ? Math.max(1, Number(options.maxSteps))
     : WORKFLOW_B_STEPS.length;
 
+  const safeRunId = String(run_id || '').startsWith('local-') ? run_id : Number(run_id);
   const events = [];
-  let latest = await buildRunSnapshot(run_id);
+  let latest = await buildRunSnapshot(safeRunId);
 
   const currentStatus = normalizeStatus(latest.run?.status);
   if (currentStatus === 'failed') {
-    const resetResult = await resetFailedAndDownstreamSteps(Number(run_id), latest.steps || []);
+    const resetResult = await resetFailedAndDownstreamSteps(safeRunId, latest.steps || []);
     await diRunsService.updateRunStatus({
-      run_id: Number(run_id),
+      run_id: safeRunId,
       status: 'running',
       stage: resetResult.resetFromStep || latest.run?.stage || WORKFLOW_B_STEPS[0],
       finished_at: null,
       error: null
     });
-    latest = await buildRunSnapshot(run_id);
+    latest = await buildRunSnapshot(safeRunId);
   } else if (currentStatus === 'waiting_user') {
-    const resetResult = await resetBlockedAndDownstreamSteps(Number(run_id), latest.steps || []);
+    const resetResult = await resetBlockedAndDownstreamSteps(safeRunId, latest.steps || []);
     await diRunsService.updateRunStatus({
-      run_id: Number(run_id),
+      run_id: safeRunId,
       status: 'running',
       stage: resetResult.resetFromStep || latest.run?.stage || WORKFLOW_B_STEPS[0],
       finished_at: null,
       error: null
     });
-    latest = await buildRunSnapshot(run_id);
+    latest = await buildRunSnapshot(safeRunId);
   }
 
   for (let i = 0; i < maxSteps; i += 1) {
@@ -1161,8 +1163,8 @@ export async function resumeRun(run_id, options = {}) {
 }
 
 export async function submitBlockingAnswers(run_id, answers = {}) {
-  const runId = Number(run_id);
-  if (!Number.isFinite(runId)) throw new Error('run_id must be numeric');
+  const runId = String(run_id || '').startsWith('local-') ? run_id : Number(run_id);
+  if (typeof runId === 'number' && !Number.isFinite(runId)) throw new Error('run_id must be numeric or a local ID');
 
   const snapshot = await buildRunSnapshot(runId);
   const currentStatus = normalizeStatus(snapshot.run?.status);
@@ -1170,13 +1172,58 @@ export async function submitBlockingAnswers(run_id, answers = {}) {
     throw new Error(`Run ${runId} is not waiting_user (status: ${currentStatus})`);
   }
 
+  const blockedStep = sortSteps(snapshot.steps || []).find((step) => normalizeStatus(step.status) === 'blocked') || null;
+  const blockingQuestions = Array.isArray(blockedStep?.output_ref?.blocking_questions)
+    ? blockedStep.output_ref.blocking_questions
+    : [];
   const existingSettings = await getWorkflowSettings(runId);
+  const profileRow = snapshot.run?.dataset_profile_id
+    ? await datasetProfilesService.getDatasetProfileById(snapshot.run.user_id, snapshot.run.dataset_profile_id)
+    : null;
+  const {
+    nextSettings,
+    nextContractJson,
+    answeredQuestions,
+    appliedBindings,
+    validationErrors,
+  } = applyBlockingAnswerBindings({
+    questions: blockingQuestions,
+    answers,
+    settings: existingSettings,
+    contractJson: profileRow?.contract_json || {},
+  });
+
+  if (validationErrors.length > 0) {
+    const summary = validationErrors
+      .map((item) => item.question || item.id || item.reason)
+      .filter(Boolean)
+      .join(', ');
+    throw new Error(`Invalid blocking answers for run ${runId}: ${summary}`);
+  }
+
+  const needsContractUpdate = appliedBindings.some((item) => item.target === 'contract');
+  if (needsContractUpdate && !profileRow) {
+    throw new Error(`Dataset profile ${snapshot.run?.dataset_profile_id} not found for run ${runId}`);
+  }
+  if (needsContractUpdate) {
+    await datasetProfilesService.updateDatasetProfile(snapshot.run.user_id, snapshot.run.dataset_profile_id, {
+      contract_json: nextContractJson,
+    });
+  }
+
   const merged = {
-    ...existingSettings,
+    ...nextSettings,
     blocking_answers: {
-      ...(existingSettings.blocking_answers || {}),
+      ...(nextSettings.blocking_answers || {}),
       ...answers
-    }
+    },
+    last_blocking_step: blockedStep?.step || null,
+    last_blocking_submission_at: nowIso(),
+    last_blocking_submission: {
+      step: blockedStep?.step || null,
+      answered_questions: answeredQuestions,
+      applied_bindings: appliedBindings,
+    },
   };
   await persistWorkflowSettings(runId, snapshot.run.user_id, {
     user_id: snapshot.run.user_id,

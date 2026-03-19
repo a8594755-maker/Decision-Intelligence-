@@ -8,13 +8,19 @@
  * bridge between the negotiation subsystem and the closed-loop re-planning
  * pipeline.
  *
+ * Option IDs and schema are defined in negotiation-types.js
+ * (NEGOTIATION_OPTION_SCHEMA / NEGOTIATION_OPTION_IDS).
+ *
  * Pattern: mirrors forecastToPlanParams.js (deterministic, pure, same inputs → same output)
  */
+
+import { NEGOTIATION_OPTION_IDS } from './cfr/negotiation-types.js';
 
 // ── Option-to-patch mapping ─────────────────────────────────────────────────
 
 /**
  * Known negotiation option IDs and their planning constraint translations.
+ * Keys MUST match NEGOTIATION_OPTION_IDS from negotiation-types.js.
  */
 const OPTION_PATCH_MAP = {
   // opt_001: Increase budget cap by 10%
@@ -86,22 +92,31 @@ const OPTION_PATCH_MAP = {
     };
   },
 
-  // opt_006: Supplier-agreed price reduction
+  // opt_006: Reduce service level target by 5%
   opt_006: (outcome) => {
-    const discount = outcome?.agreed_terms?.unit_cost_adjustment
-      ?? outcome?.agreed_terms?.discount_pct;
-    if (discount != null && Number.isFinite(Number(discount))) {
+    const reducedTarget = outcome?.agreed_terms?.service_level_target
+      ?? outcome?.overrides?.objective?.service_level_target;
+    if (reducedTarget != null && Number.isFinite(Number(reducedTarget))) {
       return {
         patch: {
-          objective: { unit_cost_adjustment: Number(discount) },
+          objective: { service_level_target: Number(reducedTarget) },
         },
-        explanation: `Unit cost adjusted by ${(Number(discount) * 100).toFixed(1)}% per supplier agreement.`,
-        rule_id: 'NEG-R6_price_adjustment',
+        explanation: `Service level target reduced to ${(Number(reducedTarget) * 100).toFixed(1)}% per negotiation agreement.`,
+        rule_id: 'NEG-R6_service_target_reduction',
       };
     }
     return null;
   },
 };
+
+// ── Sync guard: OPTION_PATCH_MAP keys must be subset of canonical IDs ───────
+const _patchMapKeys = Object.keys(OPTION_PATCH_MAP);
+const _unknownKeys = _patchMapKeys.filter((k) => !NEGOTIATION_OPTION_IDS.includes(k));
+if (_unknownKeys.length > 0) {
+  throw new Error(
+    `[negotiationOutcomeTranslator] OPTION_PATCH_MAP contains unknown option IDs not in NEGOTIATION_OPTION_IDS: ${_unknownKeys.join(', ')}`
+  );
+}
 
 // ── Core translation ────────────────────────────────────────────────────────
 

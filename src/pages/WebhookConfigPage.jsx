@@ -357,7 +357,7 @@ export default function WebhookConfigPage() {
       {showCreate && (
         <CreateWebhookModal
           onClose={() => setShowCreate(false)}
-          onCreated={(wh) => { setShowCreate(false); load(); }}
+          onCreated={(_wh) => { setShowCreate(false); load(); }}
           workers={workers}
         />
       )}

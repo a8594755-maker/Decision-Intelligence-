@@ -13,14 +13,18 @@ import { useNavigate } from 'react-router-dom';
 import {
   Bot, MessageSquare, CheckCircle2, Clock, AlertTriangle, BarChart3,
   ChevronRight, Users, Zap, TrendingUp, FileText, ArrowUpRight,
-  Shield, Activity, Target, Eye, Sparkles
+  Shield, Activity, Target, Eye, Sparkles, ClipboardList
 } from 'lucide-react';
 import { Card } from '../components/ui';
 import { useAuth } from '../contexts/AuthContext';
 import { listEmployeesByManager, getKpis, createWorkerFromTemplate, listTemplates } from '../services/aiEmployee/queries.js';
 import { getLatestSummary } from '../services/dailySummaryService';
-import { listPending, getGovernanceStats } from '../services/governanceService';
+import { getPendingApprovals as listPending, getGovernanceStats } from '../services/approvalWorkflowService';
 import { buildPerformanceDashboard, AUTONOMY_LABELS } from '../services/workerPerformanceService';
+import { EMPLOYEE_STATES, EMPLOYEE_STATE_TO_DB } from '../services/aiEmployee/employeeStateMachine.js';
+import { processIntake, INTAKE_SOURCES } from '../services/taskIntakeService.js';
+import { submitPlan, approvePlan as orchestratorApprovePlan } from '../services/aiEmployee/index.js';
+import { decomposeTask } from '../services/chatTaskDecomposer.js';
 
 const DecisionSupportView = lazy(() => import('../views/DecisionSupportView'));
 
@@ -51,14 +55,14 @@ function QuickStat({ icon: Icon, label, value, trend, accent = 'text-indigo-600'
 // ── Worker Status Row ───────────────────────────────────────────────────────
 
 const WORKER_STATUS_STYLES = {
-  idle: { color: 'text-slate-500', bg: 'bg-slate-100 dark:bg-slate-800', dot: 'bg-slate-400' },
-  working: { color: 'text-blue-600', bg: 'bg-blue-50 dark:bg-blue-900/20', dot: 'bg-blue-500' },
-  waiting_review: { color: 'text-amber-600', bg: 'bg-amber-50 dark:bg-amber-900/20', dot: 'bg-amber-500' },
-  blocked: { color: 'text-red-600', bg: 'bg-red-50 dark:bg-red-900/20', dot: 'bg-red-500' },
+  [EMPLOYEE_STATE_TO_DB[EMPLOYEE_STATES.IDLE]]: { color: 'text-slate-500', bg: 'bg-slate-100 dark:bg-slate-800', dot: 'bg-slate-400' },
+  [EMPLOYEE_STATE_TO_DB[EMPLOYEE_STATES.BUSY]]: { color: 'text-blue-600', bg: 'bg-blue-50 dark:bg-blue-900/20', dot: 'bg-blue-500' },
+  [EMPLOYEE_STATE_TO_DB[EMPLOYEE_STATES.REVIEW_NEEDED]]: { color: 'text-amber-600', bg: 'bg-amber-50 dark:bg-amber-900/20', dot: 'bg-amber-500' },
+  [EMPLOYEE_STATE_TO_DB[EMPLOYEE_STATES.ERROR]]: { color: 'text-red-600', bg: 'bg-red-50 dark:bg-red-900/20', dot: 'bg-red-500' },
 };
 
 function WorkerRow({ worker, kpis, onClick }) {
-  const statusCfg = WORKER_STATUS_STYLES[worker.status] || WORKER_STATUS_STYLES.idle;
+  const statusCfg = WORKER_STATUS_STYLES[worker.status] || WORKER_STATUS_STYLES[EMPLOYEE_STATE_TO_DB[EMPLOYEE_STATES.IDLE]];
   const completionRate = kpis?.tasks_completed && kpis?.tasks_open != null
     ? Math.round((kpis.tasks_completed / Math.max(kpis.tasks_completed + kpis.tasks_open, 1)) * 100)
     : null;
@@ -79,7 +83,7 @@ function WorkerRow({ worker, kpis, onClick }) {
           </span>
           <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${statusCfg.dot}`} />
           <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${statusCfg.bg} ${statusCfg.color}`}>
-            {(worker.status || 'idle').replace(/_/g, ' ')}
+            {(worker.status || EMPLOYEE_STATE_TO_DB[EMPLOYEE_STATES.IDLE]).replace(/_/g, ' ')}
           </span>
         </div>
         <p className="text-[11px] capitalize" style={{ color: 'var(--text-muted)' }}>
@@ -288,7 +292,7 @@ export default function AIEmployeeHome() {
           avgOnTime = avgOnTime == null ? k.on_time_rate_pct : (avgOnTime + k.on_time_rate_pct) / 2;
         }
       }
-      if (w.status === 'waiting_review') totalReviewPending++;
+      if (w.status === EMPLOYEE_STATE_TO_DB[EMPLOYEE_STATES.REVIEW_NEEDED]) totalReviewPending++;
     }
 
     return { totalCompleted, totalOpen, totalReviewPending, avgOnTime, workerCount: workers.length };
@@ -350,6 +354,72 @@ export default function AIEmployeeHome() {
     );
   }
 
+  // ── Create Task handler (unified intake pipeline) ──
+  const [newTaskText, setNewTaskText] = useState('');
+  const [creatingTask, setCreatingTask] = useState(false);
+
+  const handleCreateTask = useCallback(async () => {
+    if (!newTaskText.trim() || creatingTask) return;
+    const text = newTaskText.trim();
+    setCreatingTask(true);
+    try {
+      const targetWorker = selectedWorker || workers[0];
+      if (!targetWorker?.id) throw new Error('No worker available.');
+
+      // Step 1: Unified intake pipeline
+      const intakeResult = await processIntake({
+        source: INTAKE_SOURCES.CHAT,
+        message: text,
+        employeeId: targetWorker.id,
+        userId: user?.id,
+        metadata: { source_ref: 'manager_console' },
+      });
+
+      if (intakeResult?.status === 'duplicate') {
+        addNotification?.({ type: 'warning', message: `Duplicate task detected: "${intakeResult.workOrder?.title || text}". Check Task Board.` });
+        return;
+      }
+
+      const routedEmployeeId = intakeResult?.workOrder?.employee_id || targetWorker.id;
+
+      // Step 2: Decompose into subtasks
+      const decomposition = await decomposeTask({ userMessage: text, userId: user?.id });
+      if (!decomposition?.subtasks?.length) {
+        addNotification?.({ type: 'error', message: 'Could not decompose this task. Try rephrasing.' });
+        return;
+      }
+
+      const steps = (decomposition.subtasks || []).map((s, i) => ({
+        name: s.name || s.step_name || `step_${i}`,
+        tool_hint: s.tool_hint || s.description || s.name,
+        tool_type: s.workflow_type || s.tool_type || 'python_tool',
+        builtin_tool_id: s.builtin_tool_id || null,
+        review_checkpoint: s.review_checkpoint || false,
+      }));
+
+      const plan = {
+        title: text.slice(0, 120),
+        description: decomposition.original_instruction || text,
+        steps,
+        inputData: { userId: user?.id },
+        taskMeta: { source_type: 'manager_console' },
+        llmConfig: { provider: 'anthropic', model: 'claude-sonnet-4-6', temperature: 0.15, max_tokens: 4096 },
+      };
+
+      // Step 3: Submit to orchestrator
+      const { taskId } = await submitPlan(plan, routedEmployeeId, user?.id);
+      await orchestratorApprovePlan(taskId, user?.id);
+
+      setNewTaskText('');
+      addNotification?.({ type: 'success', message: `Task created and assigned: "${text.slice(0, 60)}"` });
+      navigate(`/employees/tasks?highlight=${taskId}`);
+    } catch (err) {
+      addNotification?.({ type: 'error', message: `Task creation failed: ${err?.message || 'Unknown error'}` });
+    } finally {
+      setCreatingTask(false);
+    }
+  }, [newTaskText, creatingTask, selectedWorker, workers, user?.id, addNotification, navigate]);
+
   // Dashboard view
   return (
     <div className="h-full overflow-y-auto scrollbar-thin" style={{ backgroundColor: 'var(--surface-bg)' }}>
@@ -362,15 +432,48 @@ export default function AIEmployeeHome() {
               Manager Console
             </h1>
           </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => navigate('/workspace')}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700 transition-colors"
+            >
+              <Activity className="w-4 h-4" />
+              Workspace
+            </button>
+            <button
+              onClick={() => navigate('/employees/tasks')}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium border transition-colors hover:bg-slate-50 dark:hover:bg-slate-800"
+              style={{ borderColor: 'var(--border-default)', color: 'var(--text-secondary)' }}
+            >
+              <ClipboardList className="w-3.5 h-3.5" />
+              Task Board
+            </button>
+          </div>
+        </div>
+
+        {/* Quick Task Creation via unified intake pipeline */}
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={newTaskText}
+            onChange={(e) => setNewTaskText(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleCreateTask(); } }}
+            placeholder="Describe a new task\u2026 (e.g. \u300c\u672c\u6708\u88dc\u8ca8\u8a08\u756b\u300d\u3001\u300crun forecast for dataset 5\u300d)"
+            className="flex-1 px-3 py-2 rounded-lg border text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            style={{ borderColor: 'var(--border-default)', backgroundColor: 'var(--surface-card)', color: 'var(--text-primary)' }}
+            disabled={creatingTask}
+          />
           <button
-            onClick={() => {
-              if (selectedWorker?.id) persistSelectedWorker(selectedWorker.id);
-              setView('chat');
-            }}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700 transition-colors"
+            onClick={handleCreateTask}
+            disabled={creatingTask || !newTaskText.trim()}
+            className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium bg-emerald-600 text-white hover:bg-emerald-700 transition-colors disabled:opacity-50"
           >
-            <MessageSquare className="w-4 h-4" />
-            {selectedWorker ? `Chat with ${selectedWorker.name}` : 'Open Chat'}
+            {creatingTask ? (
+              <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+            ) : (
+              <Zap className="w-4 h-4" />
+            )}
+            Create Task
           </button>
         </div>
 
@@ -447,7 +550,7 @@ export default function AIEmployeeHome() {
                       </div>
                     </div>
                     <button
-                      onClick={() => navigate('/chat')}
+                      onClick={() => navigate('/employees/approvals')}
                       className="text-xs px-2.5 py-1 rounded-md font-medium bg-indigo-600 text-white hover:bg-indigo-700 transition-colors"
                     >
                       Review
@@ -676,7 +779,7 @@ export default function AIEmployeeHome() {
                     key={w.id}
                     worker={w}
                     kpis={kpisMap[w.id]}
-                    onClick={() => openWorkerChat(w.id)}
+                    onClick={() => navigate(`/employees/tasks?worker=${w.id}`)}
                   />
                 ))}
               </div>
@@ -702,16 +805,18 @@ export default function AIEmployeeHome() {
               <ActivityFeed dailySummary={dailySummary} />
             </Card>
 
-            {/* Quick Links */}
+            {/* Quick Links — operational actions first */}
             <Card className="!p-4">
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-3">Quick Links</p>
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-3">Operations</p>
               <div className="space-y-1.5">
                 {[
-                  { label: 'Task Board', icon: Clock, path: '/employees/tasks' },
+                  { label: 'Task Board', icon: ClipboardList, path: '/employees/tasks' },
                   { label: 'Review Queue', icon: CheckCircle2, path: '/employees/review' },
-                  { label: 'Output Profiles', icon: FileText, path: '/output-profiles' },
-                  { label: 'Tool Library', icon: Zap, path: '/tool-registry' },
-                  { label: 'Trust & Autonomy', icon: Shield, path: '/employees' },
+                  { label: 'Approvals', icon: Target, path: '/employees/approvals' },
+                  { label: 'Webhooks', icon: Shield, path: '/employees/webhooks' },
+                  { label: 'Schedules', icon: Eye, path: '/employees/schedules' },
+                  { label: 'Output Profiles', icon: FileText, path: '/employees/profiles' },
+                  { label: 'Tool Library', icon: Zap, path: '/employees/tools' },
                 ].map((link) => (
                   <button
                     key={link.path}

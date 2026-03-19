@@ -34,8 +34,6 @@ export default function AIEmployeeChatShell({
   secondaryPanel = null,
   actions = [],
 }) {
-  const showBackdrop = Boolean(secondaryPanel);
-
   return (
     <div className="relative h-full overflow-hidden rounded-[34px] border border-black/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(248,250,252,0.96))] shadow-[0_36px_120px_rgba(15,23,42,0.14)] dark:border-white/10 dark:bg-[linear-gradient(180deg,rgba(20,20,20,0.98),rgba(12,12,12,0.98))]">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(15,23,42,0.05),transparent_42%)] dark:bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.05),transparent_36%)]" />

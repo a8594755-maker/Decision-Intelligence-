@@ -23,7 +23,10 @@ export default function useCanvasEventBridge() {
   const { openWidget } = useCanvas();
   const [recentArtifacts, setRecentArtifacts] = useState([]);
   const openWidgetRef = useRef(openWidget);
-  openWidgetRef.current = openWidget;
+
+  useEffect(() => {
+    openWidgetRef.current = openWidget;
+  }, [openWidget]);
 
   const handleArtifactCreated = useCallback((payload) => {
     if (!payload) return;

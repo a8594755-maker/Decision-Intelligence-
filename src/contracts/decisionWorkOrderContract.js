@@ -228,6 +228,7 @@ export function fromLegacyWorkOrder(legacyWO, overrides = {}) {
     required_decision: overrides.required_decision || DECISION_TYPES.INFORMATIONAL,
     risk_level: overrides.risk_level || RISK_LEVELS.MEDIUM,
     due_at: legacyWO.sla?.due_at || null,
+    attachments: overrides.attachments || legacyWO.context?.attachments || [],
     input_context: legacyWO.context || {},
     priority: legacyWO.priority || 'medium',
     user_id: legacyWO.user_id,

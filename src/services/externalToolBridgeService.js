@@ -7,9 +7,6 @@
 //   - Excel: XLSX with refresh metadata (delegates to exportWorkbook)
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { saveJsonArtifact } from '../utils/artifactStore';
-import { syncTaskOutputsToOpenCloud } from './opencloudArtifactSync';
-
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 function flattenArtifacts(artifacts) {
@@ -19,6 +16,17 @@ function flattenArtifacts(artifacts) {
 
 function now() {
   return new Date().toISOString();
+}
+
+function buildInlineArtifactRef(artifactType, payload, label) {
+  return {
+    artifact_type: artifactType,
+    label,
+    payload,
+    data: payload,
+    storage: 'inline',
+    generated_at: now(),
+  };
 }
 
 // ── Power BI Dataset ────────────────────────────────────────────────────────
@@ -65,10 +73,13 @@ export function toPowerBIDataset(artifacts) {
 
     if (rows.length === 0) continue;
 
-    const columns = Array.from(columnSet).map(name => ({
-      name,
-      dataType: inferDataType(rows[0]?.[name]),
-    }));
+    const columns = Array.from(columnSet).map(name => {
+      let sampleValue;
+      for (const row of rows) {
+        if (row[name] !== null && row[name] !== undefined) { sampleValue = row[name]; break; }
+      }
+      return { name, dataType: inferDataType(sampleValue) };
+    });
 
     tables.push({
       name: typeName,
@@ -86,12 +97,7 @@ export function toPowerBIDataset(artifacts) {
 
   const filename = `powerbi_dataset_${Date.now()}.json`;
 
-  let artifact_ref = null;
-  try {
-    artifact_ref = saveJsonArtifact?.('powerbi_dataset', dataset, {
-      label: 'Power BI Dataset Export',
-    }) || null;
-  } catch { /* best-effort */ }
+  const artifact_ref = buildInlineArtifactRef('powerbi_dataset', dataset, 'Power BI Dataset Export');
 
   return { dataset, filename, artifact_ref };
 }
@@ -141,12 +147,7 @@ export function toExcelWithRefresh(artifacts, _cfg = {}) {
     total_rows: sheets.reduce((sum, s) => sum + s.rows.length, 0),
   };
 
-  let artifact_ref = null;
-  try {
-    artifact_ref = saveJsonArtifact?.('report_json', { sheets, metadata }, {
-      label: 'Excel Export Data',
-    }) || null;
-  } catch { /* best-effort */ }
+  const artifact_ref = buildInlineArtifactRef('report_json', { sheets, metadata }, 'Excel Export Data');
 
   return { sheets, metadata, artifact_ref };
 }
@@ -164,24 +165,4 @@ function inferDataType(value) {
   return 'string';
 }
 
-// ── OpenCloud Upload ──────────────────────────────────────────────────────
-
-/**
- * Upload DI artifacts to an OpenCloud drive.
- * Delegates to opencloudArtifactSync for the actual upload.
- *
- * @param {object} artifacts - Prior step artifacts { step_name: artifact_refs[] }
- * @param {string} driveId - OpenCloud drive ID
- * @param {string} [folderPath] - Target folder path
- * @returns {Promise<{ fileRefs: object[], artifact_ref: object|null }>}
- */
-export async function toOpenCloudUpload(artifacts, driveId, folderPath) {
-  const allRefs = flattenArtifacts(artifacts);
-  return syncTaskOutputsToOpenCloud(
-    `export_${Date.now()}`,
-    driveId,
-    { artifactRefs: allRefs, employeeName: folderPath || 'exports' }
-  );
-}
-
-export default { toPowerBIDataset, toExcelWithRefresh, toOpenCloudUpload };
+export default { toPowerBIDataset, toExcelWithRefresh };

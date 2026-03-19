@@ -1,18 +1,12 @@
 // @product: ai-employee
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Bot, CheckCircle2, Clock, AlertTriangle, BarChart3, ChevronRight, Plus, FileText, DollarSign, ShieldCheck, Shield } from 'lucide-react';
+import { Bot, CheckCircle2, Clock, AlertTriangle, BarChart3, ChevronRight, Plus, FileText, DollarSign, ShieldCheck, Shield, XCircle, Timer } from 'lucide-react';
 import { Card, Modal } from '../components/ui';
 import { useAuth } from '../contexts/AuthContext';
 import { getOrCreateWorker, listEmployeesByManager, getKpis, WORKER_TEMPLATES, listTemplatesFromDB } from '../services/aiEmployee/queries.js';
 import { getEmployeeCostSummary } from '../services/modelRoutingService';
 import { getLatestMetrics } from '../services/aiEmployee/styleLearning/trustMetricsService';
-
-const TEMPLATE_ICON = {
-  'bar-chart': BarChart3,
-  'file-text': FileText,
-  'shield-check': ShieldCheck,
-};
 
 // ── Status badge ──────────────────────────────────────────────────────────
 
@@ -108,7 +102,7 @@ function EmployeeCard({ employee, kpis, cost, trust, onViewTasks }) {
       )}
 
       {/* KPI grid */}
-      <div className="grid grid-cols-3 sm:grid-cols-6 gap-4 pt-2 border-t" style={{ borderColor: 'var(--border-default)' }}>
+      <div className="grid grid-cols-4 sm:grid-cols-8 gap-3 pt-2 border-t" style={{ borderColor: 'var(--border-default)' }}>
         <KpiTile
           label="Tasks Done"
           value={kpis?.tasks_completed ?? 0}
@@ -122,6 +116,12 @@ function EmployeeCard({ employee, kpis, cost, trust, onViewTasks }) {
           color="text-blue-600"
         />
         <KpiTile
+          label="Overdue"
+          value={kpis?.tasks_overdue ?? 0}
+          icon={XCircle}
+          color="text-red-600"
+        />
+        <KpiTile
           label="On-Time %"
           value={kpis?.on_time_rate_pct != null ? `${kpis.on_time_rate_pct}%` : '—'}
           icon={BarChart3}
@@ -132,6 +132,12 @@ function EmployeeCard({ employee, kpis, cost, trust, onViewTasks }) {
           value={kpis?.review_pass_rate_pct != null ? `${kpis.review_pass_rate_pct}%` : '—'}
           icon={AlertTriangle}
           color="text-amber-600"
+        />
+        <KpiTile
+          label="Revisions"
+          value={kpis?.reviews_revised ?? 0}
+          icon={Timer}
+          color="text-orange-600"
         />
         <KpiTile
           label="Cost"
@@ -299,6 +305,7 @@ function TeamPerformanceSummary({ workers, kpisMap, costsMap, trustMap = {} }) {
   // Aggregate KPIs across all workers
   let totalCompleted = 0;
   let totalOpen = 0;
+  let totalOverdue = 0;
   let onTimeSum = 0;
   let onTimeCount = 0;
   let reviewPassSum = 0;
@@ -310,6 +317,7 @@ function TeamPerformanceSummary({ workers, kpisMap, costsMap, trustMap = {} }) {
     if (k) {
       totalCompleted += k.tasks_completed ?? 0;
       totalOpen += k.tasks_open ?? 0;
+      totalOverdue += k.tasks_overdue ?? 0;
       if (k.on_time_rate_pct != null) { onTimeSum += k.on_time_rate_pct; onTimeCount++; }
       if (k.review_pass_rate_pct != null) { reviewPassSum += k.review_pass_rate_pct; reviewPassCount++; }
     }
@@ -339,6 +347,7 @@ function TeamPerformanceSummary({ workers, kpisMap, costsMap, trustMap = {} }) {
   const tiles = [
     { label: 'Total Completed', value: totalCompleted, icon: CheckCircle2, color: 'text-emerald-600' },
     { label: 'Open Tasks', value: totalOpen, icon: Clock, color: 'text-blue-600' },
+    { label: 'Overdue', value: totalOverdue, icon: XCircle, color: 'text-red-600' },
     { label: 'Avg On-Time %', value: avgOnTime != null ? `${avgOnTime}%` : '—', icon: BarChart3, color: 'text-indigo-600' },
     { label: 'Avg Review Pass %', value: avgReviewPass != null ? `${avgReviewPass}%` : '—', icon: AlertTriangle, color: 'text-amber-600' },
     { label: 'Total Cost', value: totalCost > 0 ? `$${totalCost.toFixed(2)}` : '—', icon: DollarSign, color: 'text-slate-600' },
@@ -351,7 +360,7 @@ function TeamPerformanceSummary({ workers, kpisMap, costsMap, trustMap = {} }) {
       <p className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: 'var(--text-muted)' }}>
         Team Performance
       </p>
-      <div className="grid grid-cols-3 sm:grid-cols-7 gap-4">
+      <div className="grid grid-cols-4 sm:grid-cols-8 gap-3">
         {tiles.map((t) => (
           <KpiTile key={t.label} label={t.label} value={t.value} icon={t.icon} color={t.color} />
         ))}

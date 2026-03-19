@@ -487,7 +487,7 @@ def _coerce_forecast_result(result: Any, *, source: str) -> Dict[str, Any]:
     return normalized
 
 
-# ── Health Check Endpoints (inspired by OpenCloud /healthz + /readyz) ──────
+# ── Health Check Endpoints (/healthz + /readyz) ─────────────────────────────
 
 @app.get("/healthz")
 async def health_liveness():
@@ -513,6 +513,19 @@ async def health_readiness():
             checks["supabase"] = False
     except Exception:
         checks["supabase"] = False
+
+    # Check LLM proxy reachability (Supabase Edge Function ai-proxy)
+    try:
+        sb_url_proxy = os.getenv("SUPABASE_URL", "")
+        if sb_url_proxy:
+            proxy_url = f"{sb_url_proxy.rstrip('/')}/functions/v1/ai-proxy"
+            proxy_req = urllib.request.Request(proxy_url, method="OPTIONS")
+            proxy_resp = urllib.request.urlopen(proxy_req, timeout=5)
+            checks["llm_proxy"] = proxy_resp.status in (200, 204)
+        else:
+            checks["llm_proxy"] = False
+    except Exception:
+        checks["llm_proxy"] = False
 
     all_ok = all(checks.values())
     return JSONResponse(

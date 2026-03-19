@@ -8,7 +8,7 @@
  * Table: di_closed_loop_runs
  */
 
-import { supabase } from '../supabaseClient';
+import { supabase } from '../supabaseClient.js';
 import { closedLoopStore } from './closedLoopStore.js';
 import { CLOSED_LOOP_STATUS } from './closedLoopConfig.js';
 
@@ -19,7 +19,8 @@ const TABLE = 'di_closed_loop_runs';
 async function trySupabase(fn) {
   try {
     return await fn();
-  } catch {
+  } catch (err) {
+    console.warn('[closedLoopPersistence] Supabase error (falling back to local):', err.message);
     return null;
   }
 }

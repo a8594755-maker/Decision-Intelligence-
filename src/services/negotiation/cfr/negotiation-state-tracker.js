@@ -303,7 +303,23 @@ export class NegotiationStateTracker {
   expireStale(maxAgeMs = 7 * 24 * 60 * 60 * 1000) {
     const now = Date.now();
     let count = 0;
+    const EXPIRED_RETENTION_MS = 60 * 60 * 1000; // 1 hour
 
+    // Delete entries that have been expired for more than 1 hour
+    for (const [id, state] of this._negotiations) {
+      if (state.status === NEGOTIATION_STATUS.EXPIRED) {
+        const sinceUpdate = now - new Date(state.updated_at).getTime();
+        if (sinceUpdate > EXPIRED_RETENTION_MS) {
+          this._negotiations.delete(id);
+          // Clean up reverse index
+          if (state.plan_run_id && this._byPlanRun.get(state.plan_run_id) === id) {
+            this._byPlanRun.delete(state.plan_run_id);
+          }
+        }
+      }
+    }
+
+    // Mark stale active negotiations as expired
     for (const [_id, state] of this._negotiations) {
       if (state.status !== NEGOTIATION_STATUS.ACTIVE) continue;
       const age = now - new Date(state.updated_at).getTime();

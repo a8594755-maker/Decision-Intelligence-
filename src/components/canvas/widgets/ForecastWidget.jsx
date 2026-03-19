@@ -69,7 +69,7 @@ function ForecastChart({ series }) {
 function ForecastWidgetArtifact({ data = {} }) {
   const [viewMode, setViewMode] = useState('chart');
 
-  const series = data.series || data.forecast_series || [];
+  const series = useMemo(() => data.series || data.forecast_series || [], [data.series, data.forecast_series]);
   const metrics = data.metrics || {};
   const materialCode = data.material_code || data.sku || 'All SKUs';
 
@@ -186,13 +186,15 @@ function ForecastWidgetLive({ user }) {
   React.useEffect(() => {
     let cancelled = false;
     const load = async () => {
-      if (!user?.id) { setLoading(false); return; }
+      if (!user?.id) { setLoading(false); setError('Sign in to view forecast runs.'); return; }
       try {
         const { forecastRunsService } = await import('../../../services/supabaseClient');
         const runs = await forecastRunsService.listRuns(user.id, { limit: 20 });
         if (!cancelled) {
           setForecastRuns(runs || []);
-          if (runs?.length && !selectedRunId) setSelectedRunId(runs[0].id);
+          if (runs?.length) {
+            setSelectedRunId(prev => prev || runs[0].id);
+          }
         }
       } catch (err) {
         console.error('ForecastWidget live: failed to load runs:', err);
@@ -266,8 +268,6 @@ function ForecastWidgetLive({ user }) {
     totalQuantity: componentDemands.reduce((s, d) => s + (d.quantity || d.demand_qty || 0), 0),
     traceCount: traceRecords.length,
   }), [componentDemands, materials, traceRecords]);
-
-  const activeRun = useMemo(() => forecastRuns.find(r => r.id === selectedRunId), [forecastRuns, selectedRunId]);
 
   return (
     <div className="flex flex-col h-full">

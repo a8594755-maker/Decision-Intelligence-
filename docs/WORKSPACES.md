@@ -10,7 +10,6 @@ This repository keeps one root app and multiple supporting integration surfaces.
 
 ## Intentionally Outside The npm Workspace
 
-- `opencloud-extension/`: extension surface without a Node package manifest yet
 - `powerbi-connector/`: connector assets and setup docs, not a packaged runtime
 - `.netlify/`: platform-generated implementation details
 

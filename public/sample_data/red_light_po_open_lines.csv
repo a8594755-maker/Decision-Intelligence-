@@ -1,0 +1,3 @@
+po_number,po_line,material_code,plant_id,time_bucket,open_qty,supplier_id,status
+PO-001,1,COMP-001,PLANT-01,2026-W07,2000,SUP-001,open
+PO-002,1,COMP-002,PLANT-01,2026-W07,3000,SUP-002,open

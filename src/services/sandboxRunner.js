@@ -179,7 +179,8 @@ function _runInWorker(code, input, timeoutMs, maxOutputBytes) {
 
 // ── Direct execution fallback (non-browser / test) ───────────────────────────
 
-function _runDirect(code, input, _timeoutMs) {
+function _runDirect(code, input, timeoutMs) {
+  const effectiveTimeout = timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const start = Date.now();
   const stdout = [];
   const stderr = [];
@@ -192,13 +193,25 @@ function _runDirect(code, input, _timeoutMs) {
 
   try {
     const fn = new Function('input', 'console', code + '\nreturn typeof run === "function" ? run(input) : undefined;');
-    const result = fn(input, console_);
-    return Promise.resolve({
-      result,
-      stdout: stdout.join('\n'),
-      stderr: stderr.join('\n'),
-      durationMs: Date.now() - start,
-    });
+    const resultPromise = Promise.resolve().then(() => fn(input, console_));
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('Execution timed out')), effectiveTimeout)
+    );
+    return Promise.race([resultPromise, timeoutPromise]).then(
+      (result) => ({
+        result,
+        stdout: stdout.join('\n'),
+        stderr: stderr.join('\n'),
+        durationMs: Date.now() - start,
+      }),
+      (err) => ({
+        result: null,
+        stdout: stdout.join('\n'),
+        stderr: err?.message || String(err),
+        durationMs: Date.now() - start,
+        timedOut: err?.message === 'Execution timed out',
+      })
+    );
   } catch (err) {
     return Promise.resolve({
       result: null,

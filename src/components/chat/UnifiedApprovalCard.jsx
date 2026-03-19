@@ -25,6 +25,10 @@ const TYPE_CONFIG = {
   model_promotion: { label: 'Model Promotion',      icon: ShieldCheck, color: 'text-indigo-600 dark:text-indigo-400', bg: 'bg-indigo-100 dark:bg-indigo-900/40' },
 };
 
+function normalizeStatus(value) {
+  return String(value || '').trim().toUpperCase();
+}
+
 function getDeadlineCountdown(deadline, _refreshToken = 0) {
   if (!deadline) return null;
   const remainingMs = new Date(deadline).getTime() - Date.now();
@@ -84,7 +88,8 @@ export default function UnifiedApprovalCard({ payload, onDecision }) {
 
   const cfg = TYPE_CONFIG[approval_type] || TYPE_CONFIG.plan_commit;
   const TypeIcon = cfg.icon;
-  const isResolved = status === 'approved' || status === 'rejected' || status === 'expired' || decided;
+  const normalizedStatus = normalizeStatus(status);
+  const isResolved = ['APPROVED', 'REJECTED', 'EXPIRED', 'AUTO_APPROVED'].includes(normalizedStatus) || decided;
 
   const handleDecision = (decision) => {
     setDecided(true);
@@ -112,12 +117,12 @@ export default function UnifiedApprovalCard({ payload, onDecision }) {
             </span>
             {status && (
               <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
-                status === 'approved' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'
-                : status === 'rejected' ? 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300'
-                : status === 'expired' ? 'bg-slate-100 text-slate-500'
+                normalizedStatus === 'APPROVED' || normalizedStatus === 'AUTO_APPROVED' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'
+                : normalizedStatus === 'REJECTED' ? 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300'
+                : normalizedStatus === 'EXPIRED' ? 'bg-slate-100 text-slate-500'
                 : 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'
               }`}>
-                {decided ? chosenAction?.toUpperCase() : status.toUpperCase()}
+                {decided ? chosenAction?.toUpperCase() : normalizedStatus}
               </span>
             )}
           </div>
@@ -197,16 +202,16 @@ export default function UnifiedApprovalCard({ payload, onDecision }) {
       {/* Resolved state */}
       {isResolved && (
         <div className="px-4 py-2.5 text-xs flex items-center gap-2" style={{ color: 'var(--text-muted)' }}>
-          {(chosenAction || status) === 'approved' || chosenAction === 'approve' || chosenAction === 'approve_conservative'
+          {normalizedStatus === 'APPROVED' || normalizedStatus === 'AUTO_APPROVED' || chosenAction === 'approve' || chosenAction === 'approve_conservative'
             ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
-            : status === 'expired'
+            : normalizedStatus === 'EXPIRED'
               ? <AlertTriangle className="w-3.5 h-3.5 text-slate-400" />
               : <XCircle className="w-3.5 h-3.5 text-red-500" />
           }
           <span>
             {decided
               ? `You chose: ${DECISION_STYLES[chosenAction]?.label || chosenAction}`
-              : `Status: ${status}`
+              : `Status: ${normalizedStatus}`
             }
           </span>
         </div>

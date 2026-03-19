@@ -53,7 +53,7 @@ const PHASE = {
   DONE:     'done',
 };
 
-export default function ExemplarUploadPanel({ onClose, onUploaded }) {
+export default function ExemplarUploadPanel({ employeeId, onClose, onUploaded }) {
   const [files, setFiles] = useState([]);  // { file, inferred }
   const [phase, setPhase] = useState(PHASE.SELECT);
   const [progress, setProgress] = useState({ stage: '', detail: '', pct: 0 });
@@ -129,9 +129,13 @@ export default function ExemplarUploadPanel({ onClose, onUploaded }) {
       // Call onboarding pipeline with bulk files
       setProgress({ stage: 'Running learning pipeline...', detail: 'Extracting style patterns', pct: 25 });
 
+      if (!employeeId) {
+        throw new Error('No worker ID available. Please wait for authentication to complete and try again.');
+      }
+
       const onboardingResult = await runOnboarding({
-        employeeId: 'default',
-        teamId: 'default',
+        employeeId,
+        teamId: null,
         inputs: {
           bulkFiles,
         },
@@ -151,7 +155,18 @@ export default function ExemplarUploadPanel({ onClose, onUploaded }) {
       setPhase(PHASE.DONE);
 
       if (onUploaded) {
-        setTimeout(() => onUploaded(), 2000);
+        // Pass result + file info back to parent so it can update local state
+        // even when Supabase is offline
+        const uploadSummary = {
+          ...onboardingResult,
+          files: files.map(f => ({
+            filename: f.file.name,
+            size: f.file.size,
+            docType: f.inferred.type,
+            docTypeLabel: f.inferred.label,
+          })),
+        };
+        setTimeout(() => onUploaded(uploadSummary), 2000);
       }
     } catch (err) {
       setError(err.message);

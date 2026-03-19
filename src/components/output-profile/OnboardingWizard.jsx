@@ -24,10 +24,10 @@ const STAGE_META = {
   profile:   { icon: Sparkles,       color: '#ec4899', label: 'Profile Synthesis',   desc: 'Compile canonical output profile from all signals' },
 };
 
-// Map ONBOARDING_STAGES to our display order
-const STAGES = ONBOARDING_STAGES || ['policies', 'exemplars', 'bulk_style', 'feedback', 'metrics', 'profile'];
+// Display stages in pipeline order (ONBOARDING_STAGES is an object of status strings, not the display list)
+const STAGES = ['policies', 'exemplars', 'bulk_style', 'feedback', 'metrics', 'profile'];
 
-export default function OnboardingWizard({ asModal = false, onClose, onComplete }) {
+export default function OnboardingWizard({ employeeId, asModal = false, onClose, onComplete }) {
   const [running, setRunning] = useState(false);
   const [currentStage, setCurrentStage] = useState(null);
   const [completedStages, setCompletedStages] = useState([]);
@@ -55,24 +55,41 @@ export default function OnboardingWizard({ asModal = false, onClose, onComplete 
     addLog('Starting learning pipeline...', 'info');
 
     try {
+      if (!employeeId) {
+        throw new Error('No worker ID. Please wait for authentication to complete.');
+      }
+
+      // Map onboarding stages to wizard stages
+      const stageMapping = {
+        [ONBOARDING_STAGES.POLICIES]: 'policies',
+        [ONBOARDING_STAGES.EXEMPLARS]: 'exemplars',
+        [ONBOARDING_STAGES.BULK_STYLE]: 'bulk_style',
+        [ONBOARDING_STAGES.FEEDBACK]: 'feedback',
+        [ONBOARDING_STAGES.METRICS]: 'metrics',
+        [ONBOARDING_STAGES.COMPLETE]: 'profile',
+      };
+
       // Run onboarding with progress callback
       const onboardingResult = await runOnboarding({
-        onStageStart: (stage) => {
-          setCurrentStage(stage);
-          const meta = STAGE_META[stage] || {};
-          addLog(`Starting: ${meta.label || stage}`, 'info');
-        },
-        onStageComplete: (stage, _stageResult) => {
-          setCompletedStages(prev => [...prev, stage]);
-          setCurrentStage(null);
-          const meta = STAGE_META[stage] || {};
-          addLog(`Completed: ${meta.label || stage}`, 'success');
-        },
-        onStageError: (stage, error) => {
-          setFailedStage(stage);
-          setCurrentStage(null);
-          const meta = STAGE_META[stage] || {};
-          addLog(`Failed: ${meta.label || stage} — ${error.message}`, 'error');
+        employeeId,
+        teamId: null,
+        inputs: {},
+        onProgress: (stage, detail) => {
+          const wizardStage = stageMapping[stage] || stage;
+          if (stage === ONBOARDING_STAGES.COMPLETE) {
+            setCompletedStages(STAGES);
+            setCurrentStage(null);
+            addLog(detail || 'Pipeline complete!', 'success');
+          } else {
+            // Mark previous stages as completed when moving to a new one
+            setCurrentStage(prev => {
+              if (prev && prev !== wizardStage) {
+                setCompletedStages(cs => cs.includes(prev) ? cs : [...cs, prev]);
+              }
+              return wizardStage;
+            });
+            addLog(detail || `Stage: ${wizardStage}`, 'info');
+          }
         },
       });
 

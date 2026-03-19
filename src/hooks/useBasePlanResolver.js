@@ -49,8 +49,9 @@ export function useBasePlanResolver({
   const [error, setError] = useState(null);
   const [autoProgress, setAutoProgress] = useState(null);
 
-  // Prevent double-resolve on StrictMode double-invocation
-  const resolveCalledRef = useRef(false);
+  // Prevent duplicate resolves for the same dependency set while still
+  // allowing the hook to re-resolve when inputs actually change.
+  const lastResolveKeyRef = useRef('');
 
   // ── Recent plans loader ────────────────────────────────────────────────────
 
@@ -113,15 +114,23 @@ export function useBasePlanResolver({
     }
   }, [userId, datasetProfileId, routeRunId, latestDataTs, latestContractTs, loadRecentPlans]);
 
+  const resolveKey = [
+    userId || '',
+    datasetProfileId ?? '',
+    routeRunId ?? '',
+    latestDataTs || '',
+    latestContractTs || '',
+  ].join('|');
+
   useEffect(() => {
-    if (resolveCalledRef.current) return;
-    resolveCalledRef.current = true;
+    if (lastResolveKeyRef.current === resolveKey) return;
+    lastResolveKeyRef.current = resolveKey;
     // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time resolve on mount; setState is inside an async callback
     doResolve();
-  }, [doResolve]);
+  }, [doResolve, resolveKey]);
 
   const retryResolve = useCallback(() => {
-    resolveCalledRef.current = false;
+    lastResolveKeyRef.current = '';
     doResolve();
   }, [doResolve]);
 

@@ -44,11 +44,9 @@ const parseDate = (dateValue) => {
     }
     
     try {
-      // Excel date epoch is 1900-01-01, but has a bug: treats 1900 as leap year
-      // So special handling is needed
-      const excelEpoch = new Date(1900, 0, 1);
-      const daysOffset = dateValue - 1; // Excel counts from 1
-      const resultDate = new Date(excelEpoch.getTime() + daysOffset * 24 * 60 * 60 * 1000);
+      // Excel date epoch: use UTC to avoid timezone drift (consistent with dataServiceHelpers)
+      const excelEpoch = new Date(Date.UTC(1899, 11, 30));
+      const resultDate = new Date(excelEpoch.getTime() + dateValue * 24 * 60 * 60 * 1000);
       
       if (isNaN(resultDate.getTime())) return null;
       
@@ -299,14 +297,13 @@ const validateAndCleanField = (value, fieldDef, uploadType, _row = {}) => {
           if (parsedDate) {
             // Convert to week bucket format YYYY-W##
             const date = new Date(parsedDate + 'T00:00:00');
-            const year = date.getFullYear();
-            // Calculate week number (ISO week)
-            const d = new Date(Date.UTC(year, date.getMonth(), date.getDate()));
+            // Calculate ISO week number (Thursday-based)
+            const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
             const dayNum = d.getUTCDay() || 7;
             d.setUTCDate(d.getUTCDate() + 4 - dayNum);
             const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
             const weekNo = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
-            cleanedValue = `${year}-W${weekNo.toString().padStart(2, '0')}`;
+            cleanedValue = `${d.getUTCFullYear()}-W${weekNo.toString().padStart(2, '0')}`;
           } else {
             errors.push({ message: `${fieldDef.label} format incorrect, Excel date number conversion failed: ${strValue}`, reasonCode: 'INVALID_DATE' });
           }
@@ -316,14 +313,13 @@ const validateAndCleanField = (value, fieldDef, uploadType, _row = {}) => {
           const parsedDate = parseDate(cleanedValue);
           if (parsedDate) {
             const date = new Date(parsedDate + 'T00:00:00');
-            const year = date.getFullYear();
-            // Calculate week number (ISO week)
-            const d = new Date(Date.UTC(year, date.getMonth(), date.getDate()));
+            // Calculate ISO week number (Thursday-based)
+            const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
             const dayNum = d.getUTCDay() || 7;
             d.setUTCDate(d.getUTCDate() + 4 - dayNum);
             const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
             const weekNo = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
-            cleanedValue = `${year}-W${weekNo.toString().padStart(2, '0')}`;
+            cleanedValue = `${d.getUTCFullYear()}-W${weekNo.toString().padStart(2, '0')}`;
           } else {
             errors.push({ message: `${fieldDef.label} format incorrect, should be YYYY-W## format (e.g. 2026-W02) or valid date`, reasonCode: 'INVALID_DATE' });
           }
@@ -574,15 +570,14 @@ const processTimeBucket = (row) => {
       if (!isNaN(numericValue) && numericValue > 40000 && numericValue < 60000) {
         const parsedDate = parseDate(numericValue);
         if (parsedDate) {
-          // Convert to week bucket format YYYY-W##
+          // Convert to week bucket format YYYY-W## (ISO 8601 Thursday-based)
           const dateObj = new Date(parsedDate + 'T00:00:00');
-          const year = dateObj.getFullYear();
-          const d = new Date(Date.UTC(year, dateObj.getMonth(), dateObj.getDate()));
+          const d = new Date(Date.UTC(dateObj.getFullYear(), dateObj.getMonth(), dateObj.getDate()));
           const dayNum = d.getUTCDay() || 7;
           d.setUTCDate(d.getUTCDate() + 4 - dayNum);
           const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
           const weekNo = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
-          timeBucket = `${year}-W${weekNo.toString().padStart(2, '0')}`;
+          timeBucket = `${d.getUTCFullYear()}-W${weekNo.toString().padStart(2, '0')}`;
         } else {
           errors.push({ message: 'Week bucket format incorrect, Excel date number conversion failed', reasonCode: 'INVALID_DATE' });
         }
@@ -705,12 +700,13 @@ const validatePoOpenLinesRules = (row) => {
     
     if (!validStatuses.includes(normalizedStatus)) {
       // Auto-correct to 'open' and log warning
+      const originalStatus = row.status;
       row.status = 'open';
       warnings.push({
         field: 'status',
         fieldLabel: 'Status',
-        error: `status value "${row.status}" not in allowed range (open/closed/cancelled), auto-set to 'open'`,
-        originalValue: row.status,
+        error: `status value "${originalStatus}" not in allowed range (open/closed/cancelled), auto-set to 'open'`,
+        originalValue: originalStatus,
         type: 'warning',
         reasonCode: 'INVALID_STATUS'
       });

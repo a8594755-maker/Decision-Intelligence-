@@ -8,7 +8,7 @@
 import React, { useState } from 'react';
 import { Activity, AlertTriangle, CheckCircle, XCircle, RefreshCw } from 'lucide-react';
 
-const ML_API_BASE = 'http://localhost:8000';
+const ML_API_BASE = import.meta.env.VITE_ML_API_URL || 'http://localhost:8000';
 
 const DRIFT_COLORS = {
   none: { bg: 'bg-green-50 dark:bg-green-900/20', border: 'border-green-200 dark:border-green-800', icon: CheckCircle, iconColor: 'text-green-500' },

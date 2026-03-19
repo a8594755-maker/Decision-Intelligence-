@@ -14,6 +14,7 @@ import { CLOSED_LOOP_CONFIG, CLOSED_LOOP_STATUS } from './closedLoopConfig.js';
 import { derivePlanningParams } from './forecastToPlanParams.js';
 import { evaluateTriggers, getDefaultCooldownManager } from './triggerEngine.js';
 import { closedLoopStore } from './closedLoopStore.js';
+import { processIntake, INTAKE_SOURCES } from '../taskIntakeService.js';
 
 // ─── Feature flag ─────────────────────────────────────────────────────────────
 
@@ -147,7 +148,7 @@ export async function runClosedLoop({
     // ── Step 3: No trigger → early return ───────────────────────────────────────
     if (!triggerDecision.should_trigger) {
       const status = triggerDecision.suppressed_by_cooldown
-        ? CLOSED_LOOP_STATUS.NO_TRIGGER
+        ? CLOSED_LOOP_STATUS.COOLDOWN_SUPPRESSED
         : CLOSED_LOOP_STATUS.NO_TRIGGER;
       const explanation = triggerDecision.suppressed_by_cooldown
         ? ['Trigger detected but suppressed by cooldown window.']
@@ -240,11 +241,46 @@ export async function runClosedLoop({
         status: CLOSED_LOOP_STATUS.RERUN_SUBMITTED
       });
 
+      // ── Unified intake gate (dedup, routing, SLA) ──
+      try {
+        const intakeResult = await processIntake({
+          source: INTAKE_SOURCES.CLOSED_LOOP,
+          message: `Closed-loop auto-replan: ${(paramPatch.explanation || []).join('; ') || 'trigger conditions met'}`,
+          employeeId: null,
+          userId,
+          metadata: {
+            source_ref: 'closed_loop_auto_run',
+            closed_loop_run_id: run.id,
+            forecast_run_id: forecastRunId,
+            param_patch: paramPatch,
+          },
+        });
+        if (intakeResult?.status === 'duplicate') {
+          effectiveStore.updateRun(run.id, {
+            status: CLOSED_LOOP_STATUS.TRIGGERED_DRY_RUN,
+            finished_at: new Date().toISOString()
+          });
+          return {
+            closed_loop_status: CLOSED_LOOP_STATUS.TRIGGERED_DRY_RUN,
+            closed_loop_run_id: run.id,
+            trigger_decision: triggerDecision,
+            param_patch: paramPatch,
+            explanation: [...(paramPatch.explanation || []), 'Duplicate detected by intake pipeline; skipped rerun.'],
+            planning_run_id: null,
+            planning_run_result: null,
+            artifact_refs
+          };
+        }
+      } catch (intakeErr) {
+        // Intake normalization is best-effort — proceed with planRunner
+        console.warn('[ClosedLoop] Intake normalization failed (non-blocking):', intakeErr?.message);
+      }
+
       const planResult = await planRunner({
         userId,
         datasetProfileRow,
         forecastRunId,
-        objectiveOverride: paramPatch.patch.objective || null,
+        objectiveOverride: paramPatch?.patch?.objective || null,
         settings: {
           ...settings,
           closed_loop_meta: {

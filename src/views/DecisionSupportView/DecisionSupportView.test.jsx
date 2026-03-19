@@ -6,6 +6,13 @@ import { render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import '@testing-library/jest-dom';
 
+// Mock broken ESM package (dist/index.js uses extensionless imports)
+vi.mock('ralph-loop-agent', () => ({
+  RalphLoopAgent: vi.fn(),
+  iterationCountIs: vi.fn(() => () => false),
+  costIs: vi.fn(() => () => false),
+}));
+
 // Mock all heavy service dependencies before importing component
 vi.mock('../../services/supabaseClient', () => ({
   supabase: {
@@ -35,6 +42,7 @@ vi.mock('../../services/geminiAPI', () => ({
 
 vi.mock('../../services/chatDatasetProfilingService', () => ({
   prepareChatUploadFromFile: vi.fn(),
+  prepareChatUploadFromFiles: vi.fn(),
   buildDataSummaryCardPayload: vi.fn(),
   MAX_UPLOAD_BYTES: 50_000_000,
 }));

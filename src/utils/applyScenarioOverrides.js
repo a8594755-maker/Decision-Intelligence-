@@ -28,6 +28,12 @@
 export function applyScenarioOverridesToPayload(payload, overrides = {}, engineFlags = {}) {
   if (!payload || !overrides) return { payload, effectiveParams: {} };
 
+  // Idempotency guard: prevent double-application when called from both
+  // scenarioEngine and chatPlanningService in the same pipeline.
+  if (payload._scenario_overrides_applied) {
+    return { payload, effectiveParams: {} };
+  }
+
   const effectiveParams = {};
 
   // ─── risk_mode: boost baseline stockout_penalty before multiplier ───
@@ -139,6 +145,9 @@ export function applyScenarioOverridesToPayload(payload, overrides = {}, engineF
   if (overrides.service_target != null) {
     effectiveParams.service_level_target = Number(overrides.service_target);
   }
+
+  // Mark payload so subsequent calls are no-ops (idempotency).
+  payload._scenario_overrides_applied = true;
 
   return { payload, effectiveParams };
 }

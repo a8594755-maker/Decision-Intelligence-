@@ -8,15 +8,13 @@
 import React, { useState, useEffect } from 'react';
 import { Brain, RefreshCw, AlertTriangle, TrendingUp, ChevronDown, ChevronUp } from 'lucide-react';
 
-const ML_API_BASE = 'http://localhost:8000';
+const ML_API_BASE = import.meta.env.VITE_ML_API_URL || 'http://localhost:8000';
 
 const FeatureImportancePanel = () => {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [expanded, setExpanded] = useState(false);
-  const [_driftData, _setDriftData] = useState(null);
-
   const fetchImportance = async () => {
     setLoading(true);
     setError(null);

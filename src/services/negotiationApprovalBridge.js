@@ -275,7 +275,7 @@ function buildApprovalMessages({ approvalPayload, decisionBundle, selectedOption
  */
 export function checkApprovalRequired({ kpiImpact, option }) {
   // Always require approval for budget changes
-  if (option?.overrides?.budget_cap) {
+  if (option?.overrides?.budget_cap || option?.overrides?.constraints?.budget_cap) {
     return { needsApproval: true, reason: 'Budget constraint modification requires approval.' };
   }
 

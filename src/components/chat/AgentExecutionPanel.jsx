@@ -13,9 +13,8 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import {
   Clock, CheckCircle2, AlertTriangle, Loader2, Code2, FileText,
-  ChevronDown, ChevronRight, Terminal, Zap, Eye, Database, Download,
-  RotateCcw, Brain, XCircle, Activity, Copy, Check, ArrowRight, X,
-  Wifi, WifiOff,
+  ChevronDown, ChevronRight, Terminal, Zap, Eye, Database,
+  RotateCcw, Brain, XCircle, Activity, Copy, Check, ArrowRight, X, Wifi,
 } from 'lucide-react';
 import useEventBus from '../../hooks/useEventBus';
 
@@ -396,9 +395,10 @@ function SummaryBar({ steps, events }) {
   const total = steps.length;
   const pct = total > 0 ? Math.round((succeeded / total) * 100) : 0;
 
-  const totalArtifacts = events.reduce((sum, e) => sum + (e?.artifacts?.length || 0), 0);
+  const totalArtifacts = events.reduce((sum, e) => sum + (Array.isArray(e?.artifacts) ? e.artifacts.length : 0), 0);
   const totalRows = events.reduce((sum, e) => {
-    return sum + (e?.artifacts || []).reduce((rs, a) => rs + (Array.isArray(a.data) ? a.data.length : 0), 0);
+    const arts = Array.isArray(e?.artifacts) ? e.artifacts : [];
+    return sum + arts.reduce((rs, a) => rs + (a && Array.isArray(a.data) ? a.data.length : 0), 0);
   }, 0);
 
   return (

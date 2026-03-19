@@ -8,6 +8,7 @@ import { buildDataProfilerPrompt } from '../prompts/dataProfilerPrompt';
 import { invokeAiProxy, streamTextToChunks } from './aiProxyService';
 import { trackLlmUsage } from '../utils/llmUsageTracker';
 import { acquireOrThrow, RateLimitError } from '../utils/rateLimiter';
+import { buildAttachmentPromptText } from './chatAttachmentService';
 
 const USE_EDGE_AI_PROXY = true;
 
@@ -192,11 +193,24 @@ const normalizeChatRole = (role) => {
   return 'user';
 };
 
+const buildMessageTextWithAttachments = (message = {}) => {
+  const content = typeof message?.content === 'string' ? message.content.trim() : '';
+  const attachmentBlock = buildAttachmentPromptText(message?.attachments || [], {
+    heading: 'Attachments',
+    includeExcerpts: true,
+    maxExcerptChars: 320,
+  });
+
+  if (!content) return attachmentBlock;
+  if (!attachmentBlock) return content;
+  return `${content}\n\n${attachmentBlock}`;
+};
+
 const buildHistoryLines = (conversationHistory = [], limit = 10) => {
   return conversationHistory
     .slice(-limit)
     .map((msg) => {
-      const content = typeof msg?.content === 'string' ? msg.content.trim() : '';
+      const content = buildMessageTextWithAttachments(msg);
       if (!content) return null;
       const speaker = normalizeChatRole(msg.role) === 'assistant' ? 'Assistant' : 'User';
       return `${speaker}: ${content}`;
@@ -228,7 +242,7 @@ const buildDeepSeekMessages = ({ message, conversationHistory = [], systemPrompt
         (() => {
           const last = historyWindow[historyWindow.length - 1];
           const lastRole = normalizeChatRole(last?.role);
-          const lastContent = typeof last?.content === 'string' ? last.content.trim() : '';
+          const lastContent = buildMessageTextWithAttachments(last);
           if (lastRole === 'user' && lastContent === cleanMessage) {
             return [];
           }
@@ -238,7 +252,7 @@ const buildDeepSeekMessages = ({ message, conversationHistory = [], systemPrompt
     : [];
 
   dedupedHistory.forEach((entry) => {
-    const content = typeof entry?.content === 'string' ? entry.content.trim() : '';
+    const content = buildMessageTextWithAttachments(entry);
     if (!content) return;
     messages.push({
       role: normalizeChatRole(entry.role),

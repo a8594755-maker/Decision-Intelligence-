@@ -19,6 +19,7 @@ import {
   validateDecisionWorkOrder,
   fromLegacyWorkOrder,
 } from '../../contracts/decisionWorkOrderContract.js';
+import { STEP_STATES } from './stepStateMachine.js';
 
 // ── Pipeline Phases ─────────────────────────────────────────────────────────
 
@@ -69,7 +70,7 @@ const PHASE_PATTERNS = [
   // Publish phase
   { phase: PIPELINE_PHASES.PUBLISH, patterns: [
     'publish', 'export', 'writeback', 'send', 'notify', 'share',
-    'upload', 'sync', 'excel_build', 'opencloud',
+    'upload', 'sync', 'excel_build',
   ]},
 ];
 
@@ -131,7 +132,7 @@ export function getPipelineProgress(steps) {
 
   for (const phase of PHASE_ORDER) {
     const phaseSteps = steps.filter(s => classifyStepPhase(s) === phase);
-    const completed = phaseSteps.filter(s => s.status === 'succeeded' || s.status === 'skipped');
+    const completed = phaseSteps.filter(s => s.status === STEP_STATES.SUCCEEDED || s.status === STEP_STATES.SKIPPED);
     phaseProgress[phase] = {
       total: phaseSteps.length,
       completed: completed.length,
@@ -168,7 +169,7 @@ export function isReadyForReview(steps) {
 
   for (const phase of prereqPhases) {
     const phaseSteps = steps.filter(s => classifyStepPhase(s) === phase);
-    if (phaseSteps.length > 0 && phaseSteps.some(s => s.status !== 'succeeded' && s.status !== 'skipped')) {
+    if (phaseSteps.length > 0 && phaseSteps.some(s => s.status !== STEP_STATES.SUCCEEDED && s.status !== STEP_STATES.SKIPPED)) {
       return false;
     }
   }

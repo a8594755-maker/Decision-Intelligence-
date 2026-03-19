@@ -13,44 +13,85 @@ import {
 // ── Icon & color maps ────────────────────────────────────────
 
 const EVENT_ICON = {
-  step_started:      Clock,
-  step_succeeded:    CheckCircle2,
-  step_failed:       XCircle,
-  step_retrying:     RefreshCw,
-  step_blocked:      AlertTriangle,
-  ai_review_passed:  CheckCircle2,
-  ai_review_failed:  Eye,
-  task_created:      FileText,
-  task_approved:     Shield,
-  task_completed:    CheckCircle2,
-  task_failed:       XCircle,
+  step_started:       Clock,
+  step_completed:     CheckCircle2,
+  step_succeeded:     CheckCircle2,
+  step_failed:        XCircle,
+  step_retrying:      RefreshCw,
+  step_retried:       RefreshCw,
+  step_blocked:       AlertTriangle,
+  step_skipped:       Clock,
+  ai_review_passed:   CheckCircle2,
+  ai_review_failed:   Eye,
+  ai_review_scored:   Eye,
+  task_created:       FileText,
+  task_approved:      Shield,
+  task_completed:     CheckCircle2,
+  task_failed:        XCircle,
+  // Evidence events (v1)
+  plan_generated:     FileText,
+  plan_submitted:     FileText,
+  steps_created:      FileText,
+  artifact_produced:  FileText,
+  approval_requested: Shield,
+  approval_decided:   Shield,
+  approval_escalated: AlertTriangle,
+  approval_expired:   Clock,
+  manager_reviewed:   CheckCircle2,
+  revision_requested: RefreshCw,
+  memory_written:     FileText,
+  kpi_snapshot:       Eye,
 };
 
 const EVENT_COLOR = {
-  step_started:      'text-blue-500',
-  step_succeeded:    'text-emerald-500',
-  step_failed:       'text-red-500',
-  step_retrying:     'text-amber-500',
-  step_blocked:      'text-red-400',
-  ai_review_passed:  'text-emerald-600',
-  ai_review_failed:  'text-amber-600',
-  task_created:      'text-slate-500',
-  task_approved:     'text-indigo-500',
-  task_completed:    'text-emerald-600',
-  task_failed:       'text-red-600',
+  step_started:       'text-blue-500',
+  step_completed:     'text-emerald-500',
+  step_succeeded:     'text-emerald-500',
+  step_failed:        'text-red-500',
+  step_retrying:      'text-amber-500',
+  step_retried:       'text-amber-500',
+  step_blocked:       'text-red-400',
+  step_skipped:       'text-slate-400',
+  ai_review_passed:   'text-emerald-600',
+  ai_review_failed:   'text-amber-600',
+  ai_review_scored:   'text-indigo-500',
+  task_created:       'text-slate-500',
+  task_approved:      'text-indigo-500',
+  task_completed:     'text-emerald-600',
+  task_failed:        'text-red-600',
+  // Evidence events (v1)
+  plan_generated:     'text-indigo-500',
+  plan_submitted:     'text-indigo-500',
+  steps_created:      'text-blue-500',
+  artifact_produced:  'text-emerald-500',
+  approval_requested: 'text-amber-500',
+  approval_decided:   'text-indigo-600',
+  approval_escalated: 'text-red-500',
+  approval_expired:   'text-slate-500',
+  manager_reviewed:   'text-indigo-600',
+  revision_requested: 'text-amber-600',
+  memory_written:     'text-slate-500',
+  kpi_snapshot:       'text-emerald-500',
 };
 
 const LINE_COLOR = {
-  step_succeeded:   'border-emerald-400',
-  step_failed:      'border-red-400',
-  step_retrying:    'border-amber-400',
-  task_completed:   'border-emerald-400',
-  task_failed:      'border-red-400',
+  step_completed:     'border-emerald-400',
+  step_succeeded:     'border-emerald-400',
+  step_failed:        'border-red-400',
+  step_retrying:      'border-amber-400',
+  step_retried:       'border-amber-400',
+  task_completed:     'border-emerald-400',
+  task_failed:        'border-red-400',
+  approval_decided:   'border-indigo-400',
+  approval_escalated: 'border-red-400',
+  manager_reviewed:   'border-indigo-400',
 };
 
 const MAJOR_TYPES = new Set([
   'task_created', 'task_approved', 'task_completed', 'task_failed',
-  'step_succeeded', 'step_failed',
+  'step_succeeded', 'step_completed', 'step_failed',
+  'plan_generated', 'steps_created', 'artifact_produced',
+  'approval_decided', 'manager_reviewed',
 ]);
 
 // ── Helpers ──────────────────────────────────────────────────
@@ -157,11 +198,27 @@ function eventLabel(evt) {
     case 'step_blocked':      return `Step ${name} blocked`;
     case 'ai_review_passed':  return `AI review passed ${name}`;
     case 'ai_review_failed':  return `AI review flagged issues ${name}`;
-    case 'task_created':      return 'Task created';
-    case 'task_approved':     return 'Task approved';
-    case 'task_completed':    return 'Task completed';
-    case 'task_failed':       return 'Task failed';
-    default:                  return evt.type?.replace(/_/g, ' ') || 'Event';
+    case 'task_created':        return 'Task created';
+    case 'task_approved':       return 'Task approved';
+    case 'task_completed':      return 'Task completed';
+    case 'task_failed':         return 'Task failed';
+    // Evidence / timeline events
+    case 'plan_generated':      return 'Plan generated';
+    case 'plan_submitted':      return 'Plan submitted';
+    case 'steps_created':       return `Steps created${evt.details?.total_steps ? ` (${evt.details.total_steps})` : ''}`;
+    case 'artifact_produced':   return `Artifact produced${evt.details?.artifact_id ? `: ${evt.details.artifact_id}` : ''}`;
+    case 'approval_requested':  return 'Approval requested';
+    case 'approval_decided':    return `Approval ${evt.details?.decision || 'decided'}`;
+    case 'approval_escalated':  return 'Approval escalated';
+    case 'approval_expired':    return 'Approval expired';
+    case 'manager_reviewed':    return `Manager ${evt.details?.decision || 'reviewed'}`;
+    case 'revision_requested':  return 'Revision requested';
+    case 'intake_normalized':   return 'Intake normalized';
+    case 'dedup_checked':       return 'Dedup checked';
+    case 'ai_review_scored':    return `AI review scored${name}`;
+    case 'memory_written':      return 'Memory written';
+    case 'kpi_snapshot':        return 'KPI snapshot recorded';
+    default:                    return evt.type?.replace(/_/g, ' ') || 'Event';
   }
 }
 

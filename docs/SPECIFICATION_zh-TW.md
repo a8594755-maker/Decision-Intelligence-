@@ -38,7 +38,7 @@
 | 產品名稱 | Decision Intelligence |
 | 版本號 | 0.1.0 |
 | 產品類型 | SaaS Web Application |
-| 產品定位 | Chat-first 供應鏈決策支援平台 |
+| 產品定位 | Analytics Digital Worker — 企業營運與分析數位工作者平台 |
 | 授權類型 | Private (非開源) |
 | 應用領域 | 供應鏈管理、補貨計畫最佳化、需求預測、風險管理 |
 

@@ -1616,7 +1616,7 @@ async function _autoSaveWorkbook() {
 // ── Auto-upload: export workbook as artifact to Supabase Storage ─────────
 // Uses Office.js getFileAsync() to get the workbook binary, then uploads
 // via report-api Edge Function → Supabase Storage. The agent loop workflow
-// handles any downstream publishing (OpenCloud, etc.) as a separate step.
+// handles any downstream publishing as a separate step.
 
 async function _uploadExcelArtifact(taskId, batchId) {
   try {

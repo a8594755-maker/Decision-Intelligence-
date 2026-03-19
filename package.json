@@ -33,7 +33,10 @@
     "test:solver-regression": "./venv312/bin/python -m pytest -q tests/regression",
     "test:phase4-guardrails": "python3 -m pytest -q tests/test_action_guardrails.py tests/test_registry_router_guardrails.py tests/test_retrain_triggers.py tests/test_model_lifecycle_registry.py tests/test_promotion_gates.py",
     "lint:fix": "eslint . --fix",
-    "ci": "npm run lint && npm run test:run && npm run test:dw-gate && npm run build",
+    "start": "bash scripts/start.sh",
+    "start:check": "bash scripts/start.sh --check",
+    "healthcheck": "bash scripts/healthcheck.sh",
+    "ci": "npm run lint && npm run test:run && npm run test:dw-gate && npm run test:v1-gate && npm run build",
     "test:e2e": "playwright test",
     "test:auto-debug": "node e2e/auto-crawler.js",
     "test:flows": "npx playwright test --project=flows",
@@ -45,7 +48,14 @@
     "test:live": "node e2e/live-worker-test.js",
     "test:live:headful": "node e2e/live-worker-test.js --headful",
     "test:live:ui-only": "node e2e/live-worker-test.js --skip-llm",
-    "test:live:full": "node e2e/live-worker-test.js --headful --timeout 600"
+    "test:live:full": "node e2e/live-worker-test.js --headful --timeout 600",
+    "test:v1-gate": "npx playwright test e2e/flows/upload-to-plan.spec.js e2e/flows/revise-output.spec.js e2e/flows/approve-audit.spec.js",
+    "test:v1-gate:record": "LLM_REPLAY=record npx playwright test e2e/flows/upload-to-plan.spec.js e2e/flows/revise-output.spec.js e2e/flows/approve-audit.spec.js",
+    "test:v1-gate:replay": "LLM_REPLAY=replay npx playwright test e2e/flows/upload-to-plan.spec.js e2e/flows/revise-output.spec.js e2e/flows/approve-audit.spec.js",
+    "test:ai-flows": "npx playwright test --project=ai-flows",
+    "test:autofix": "node e2e/auto-fix-loop.mjs --source live",
+    "test:autofix:dry": "node e2e/auto-fix-loop.mjs --source live --dry-run",
+    "test:autofix:crawler": "node e2e/auto-fix-loop.mjs --source crawler"
   },
   "dependencies": {
     "@sentry/react": "^10.42.0",

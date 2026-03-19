@@ -6,6 +6,7 @@
  */
 
 import { supabase } from '../../supabaseClient.js';
+import { STEP_STATES } from '../stepStateMachine.js';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -63,7 +64,7 @@ export async function createSteps(taskId, employeeId, steps) {
     employee_id: employeeId,
     step_index: index,
     step_name: step.name,
-    status: 'pending',
+    status: STEP_STATES.PENDING,
     retry_count: 0,
     max_retries: step.max_retries ?? 3,
   }));
@@ -123,7 +124,7 @@ export async function getNextPendingStep(taskId) {
     .from('ai_employee_runs')
     .select('*')
     .eq('task_id', taskId)
-    .in('status', ['pending', 'retrying'])
+    .in('status', [STEP_STATES.PENDING, STEP_STATES.RETRYING])
     .not('step_index', 'is', null)
     .order('step_index', { ascending: true })
     .limit(1)
@@ -138,7 +139,7 @@ export async function getNextPendingStep(taskId) {
  */
 export async function markStepRetrying(stepId, currentRetryCount) {
   return updateStep(stepId, {
-    status: 'retrying',
+    status: STEP_STATES.RETRYING,
     retry_count: currentRetryCount + 1,
   });
 }
@@ -148,7 +149,7 @@ export async function markStepRetrying(stepId, currentRetryCount) {
  */
 export async function markStepSucceeded(stepId, { summary, artifactRefs = [] } = {}) {
   return updateStep(stepId, {
-    status: 'succeeded',
+    status: STEP_STATES.SUCCEEDED,
     summary,
     artifact_refs: artifactRefs,
     ended_at: new Date().toISOString(),
@@ -160,7 +161,7 @@ export async function markStepSucceeded(stepId, { summary, artifactRefs = [] } =
  */
 export async function markStepFailed(stepId, errorMessage) {
   return updateStep(stepId, {
-    status: 'failed',
+    status: STEP_STATES.FAILED,
     error_message: errorMessage,
     ended_at: new Date().toISOString(),
   });

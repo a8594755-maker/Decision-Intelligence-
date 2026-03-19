@@ -202,7 +202,7 @@ export function matchEventRule(event, rules, recentEvents = []) {
     const ruleEvents = recentEvents.filter(e =>
       matchEventType(e.event_type, rule.event_type_pattern)
     );
-    const { inCooldown, cooldownRemainingMs } = isInCooldown(rule, ruleEvents);
+    const { inCooldown, cooldownRemainingMs: _cooldownRemainingMs } = isInCooldown(rule, ruleEvents);
     if (inCooldown) {
       continue; // Skip this rule, check next
     }

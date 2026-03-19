@@ -32,7 +32,7 @@ Workers accept tasks from chat, email, transcripts, scheduled triggers, or proac
 
 ### 2. Autonomous execution with guardrails
 
-Workers execute steps through domain-specific tools (forecast, plan, risk, report, Excel, OpenCloud) with capability policies and autonomy levels (A1–A4) governing what requires human review.
+Workers execute steps through domain-specific tools (forecast, plan, risk, report, Excel) with capability policies and autonomy levels (A1–A4) governing what requires human review.
 
 ### 3. Review, feedback, and trust progression
 
@@ -91,7 +91,6 @@ flowchart LR
     TC --> ML[FastAPI ML API]
     EF --> LLM[Gemini / DeepSeek]
     ML --> REG[(Model Registry + Governance Store)]
-    WK --> OC[OpenCloud EU · Excel Autopilot]
 ```
 
 ## Engineering Confidence

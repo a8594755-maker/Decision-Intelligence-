@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  TrendingUp, TrendingDown,
+  TrendingUp,
   Calculator, ShieldAlert, Activity, Clock,
   CheckCircle, AlertCircle,
   FileText, BarChart3, RefreshCw, Database, Upload,
@@ -12,8 +12,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { getRecentAuditTrail } from '../services/planAuditService';
 import { useSystemHealth } from '../hooks/useSystemHealth';
 import { useDecisionOverview } from '../hooks/useDecisionOverview';
-import { getApprovalDeadlineStatus } from '../services/approvalWorkflowService';
-import { supabase } from '../services/supabaseClient';
+import { getApprovalDeadlineStatus, getPendingApprovals } from '../services/approvalWorkflowService';
 import FirstRunGuide from '../components/onboarding/FirstRunGuide';
 
 /* ───── Uniform KPI Card ───── */
@@ -118,15 +117,9 @@ export default function CommandCenter() {
       .then(setRecentActivity)
       .finally(() => setLoadingActivity(false));
 
-    // Fetch pending approvals from di_approval_requests (best-effort)
-    supabase
-      .from('di_approval_requests')
-      .select('id, type, title, description, urgency, status, expires_at, created_at, payload')
-      .eq('user_id', user.id)
-      .eq('status', 'pending')
-      .order('created_at', { ascending: false })
-      .limit(10)
-      .then(({ data }) => setPendingApprovals(data || []))
+    // Fetch pending approvals via approvalWorkflowService → governanceService (SOT)
+    getPendingApprovals(user.id, { limit: 10 })
+      .then((items) => setPendingApprovals(items || []))
       .catch(() => {});
   }, [user?.id]);
 
@@ -167,7 +160,7 @@ export default function CommandCenter() {
           </div>
           <div className="flex items-center gap-2">
             <button
-              onClick={() => navigate('/plan')}
+              onClick={() => navigate('/workspace')}
               className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-full border transition-colors hover:shadow-sm"
               style={{
                 borderColor: 'var(--border-default)',
@@ -381,7 +374,7 @@ export default function CommandCenter() {
                         </div>
                       </div>
                       <button
-                        onClick={() => navigate('/chat')}
+                        onClick={() => navigate('/employees/approvals')}
                         className="text-xs px-2.5 py-1 rounded-md font-medium transition-colors"
                         style={{
                           backgroundColor: 'var(--brand-600)',

@@ -119,9 +119,8 @@ function shiftBucketEarlier(bucket, byBuckets) {
     const year = parseInt(monthMatch[1], 10);
     const month = parseInt(monthMatch[2], 10);
     
-    // Assume it's a month if > 12
-    if (month > 12) {
-      // It's actually a week, treat as week
+    // Values > 12 cannot be a month — treat as week
+    if (month > 12 && month <= 53) {
       let newWeek = month - byBuckets;
       let newYear = year;
       while (newWeek <= 0) {
@@ -154,10 +153,7 @@ function shiftBucketEarlier(bucket, byBuckets) {
  * @returns {number} New P(stockout) 0-1
  */
 export function calculateExpeditedStockoutProbability(input, expeditedInbound) {
-  const { onHand, safetyStock, gapQty } = input;
-  
-  // Net available after safety stock
-  const _netAvailable = onHand - safetyStock;
+  const { gapQty } = input;
   
   // Calculate total expedited inbound arriving before/at stockout bucket
   const expeditedQty = expeditedInbound

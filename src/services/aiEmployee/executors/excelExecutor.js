@@ -10,7 +10,9 @@
  * Pure function: stepInput → { ok, artifacts, logs, error? }
  */
 
-const ML_API_BASE = 'http://localhost:8000';
+const ML_API_BASE = typeof import.meta !== 'undefined' && import.meta.env?.VITE_ML_API_URL
+  ? import.meta.env.VITE_ML_API_URL
+  : 'http://localhost:8000';
 
 /**
  * @param {object} stepInput
@@ -28,7 +30,8 @@ export async function executeExcelTool(stepInput) {
     logs.push(`[ExcelExecutor] Using output profile: ${outputProfile.profileName} (${outputProfile.docType}, v${outputProfile.version})`);
   }
   if (styleContext) {
-    logs.push(`[ExcelExecutor] Applied learned style context (${styleContext.length} chars)`);
+    const ctxLen = typeof styleContext === 'string' ? styleContext.length : JSON.stringify(styleContext).length;
+    logs.push(`[ExcelExecutor] Applied learned style context (${ctxLen} chars)`);
   }
 
   try {

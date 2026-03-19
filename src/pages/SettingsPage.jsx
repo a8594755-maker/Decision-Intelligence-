@@ -1,9 +1,9 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  User, Bot, Moon, Sun, AlertCircle, Settings, Database, Shield, Key,
+  User, Bot, Moon, Sun, AlertCircle, Settings, Database,
 } from 'lucide-react';
-import { Card, Button, Badge } from '../components/ui';
+import { Card, Button } from '../components/ui';
 import { useAuth } from '../contexts/AuthContext';
 import { useApp } from '../contexts/AppContext';
 import AdminLogicControlCenter from '../views/AdminLogicControlCenter';
@@ -16,7 +16,7 @@ const TABS = [
 ];
 
 export default function SettingsPage() {
-  const { user, addNotification: _addNotification } = useAuth();
+  const { user } = useAuth();
   const { darkMode, setDarkMode } = useApp();
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('profile');

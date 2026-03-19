@@ -51,9 +51,9 @@ import ClarificationCard from '../../components/chat/ClarificationCard';
 import AIReviewCard from '../../components/chat/AIReviewCard';
 import RevisionLogCard from '../../components/chat/RevisionLogCard';
 import ToolRegistryCard from '../../components/chat/ToolRegistryCard';
-import OpenCloudPublishCard from '../../components/chat/OpenCloudPublishCard';
 import UnifiedApprovalCard from '../../components/chat/UnifiedApprovalCard';
 import WorkOrderDraftCard from '../../components/chat/WorkOrderDraftCard';
+import SupplierEventCard from '../../components/chat/SupplierEventCard';
 import AuditTimelineCard from '../../components/chat/AuditTimelineCard';
 import DecisionReviewPanel from '../../components/review/DecisionReviewPanel';
 import { toPositiveRunId } from './helpers.js';
@@ -111,6 +111,49 @@ export default function MessageCardRenderer({ message, handlers, state }) {
     user,
     _rawRowsCache,
   } = state;
+
+  const resolveSessionApproval = async ({ approvalId, decision, runId = null, narrative = null, note = '' }) => {
+    if (!approvalId) return null;
+    const mutation = decision === 'approve' || decision === 'approve_conservative'
+      ? handleApprovePlanApproval
+      : handleRejectPlanApproval;
+    if (typeof mutation !== 'function') return null;
+
+    const record = await mutation({
+      approvalId,
+      note,
+      runId,
+      narrative,
+    });
+
+    sessionCtx?.resolveApproval?.(
+      record?.approval_id || approvalId,
+      decision === 'approve' || decision === 'approve_conservative' ? 'APPROVED' : 'REJECTED'
+    );
+    return record;
+  };
+
+  const resolveBatchApprovals = async ({ approvalIds = [], decision, note = '' }) => {
+    const ids = Array.isArray(approvalIds) ? approvalIds.filter(Boolean) : [];
+    if (ids.length === 0) return [];
+
+    const mutation = decision === 'approve' ? batchApprove : batchReject;
+    if (typeof mutation !== 'function') return [];
+
+    const results = await mutation({
+      approvalIds: ids,
+      userId: user?.id,
+      note,
+    });
+
+    (Array.isArray(results) ? results : []).forEach((result) => {
+      if (result?.status === 'APPROVED' || result?.status === 'REJECTED') {
+        sessionCtx?.resolveApproval?.(result.approval_id, result.status);
+      }
+    });
+
+    return results;
+  };
 
   if (message.type === 'dataset_summary_card') {
     return (
@@ -345,26 +388,38 @@ export default function MessageCardRenderer({ message, handlers, state }) {
   if (message.type === 'plan_comparison_card') {
     return <PlanComparisonCard payload={message.payload} />;
   }
+  if (message.type === 'scenario_comparison_card') {
+    return <PlanComparisonCard payload={message.payload} />;
+  }
+  if (message.type === 'supplier_event_card') {
+    return <SupplierEventCard payload={message.payload} />;
+  }
   if (message.type === 'enhanced_plan_approval_card') {
     return (
       <EnhancedPlanApprovalCard
         payload={message.payload}
-        onApprove={(approvalId) => {
-          handleApprovePlanApproval(approvalId);
-          sessionCtx.resolveApproval(approvalId, 'APPROVED');
-        }}
-        onReject={(approvalId) => {
-          handleRejectPlanApproval(approvalId);
-          sessionCtx.resolveApproval(approvalId, 'REJECTED');
-        }}
-        onBatchApprove={async (ids) => {
-          await batchApprove({ approvalIds: ids, userId: user?.id, note: 'Batch approved via chat' });
-          ids.forEach((id) => sessionCtx.resolveApproval(id, 'APPROVED'));
-        }}
-        onBatchReject={async (ids) => {
-          await batchReject({ approvalIds: ids, userId: user?.id, note: 'Batch rejected via chat' });
-          ids.forEach((id) => sessionCtx.resolveApproval(id, 'REJECTED'));
-        }}
+        onApprove={(approvalId) => resolveSessionApproval({
+          approvalId,
+          decision: 'approve',
+          runId: toPositiveRunId(message.payload?.approval?.run_id || message.payload?.run_id),
+          narrative: message.payload,
+        })}
+        onReject={(approvalId) => resolveSessionApproval({
+          approvalId,
+          decision: 'reject',
+          runId: toPositiveRunId(message.payload?.approval?.run_id || message.payload?.run_id),
+          narrative: message.payload,
+        })}
+        onBatchApprove={(ids) => resolveBatchApprovals({
+          approvalIds: ids,
+          decision: 'approve',
+          note: 'Batch approved via chat',
+        })}
+        onBatchReject={(ids) => resolveBatchApprovals({
+          approvalIds: ids,
+          decision: 'reject',
+          note: 'Batch rejected via chat',
+        })}
       />
     );
   }
@@ -372,10 +427,12 @@ export default function MessageCardRenderer({ message, handlers, state }) {
     return (
       <ApprovalReminderCard
         payload={message.payload}
-        onQuickApprove={(approvalId) => {
-          handleApprovePlanApproval(approvalId);
-          sessionCtx.resolveApproval(approvalId, 'APPROVED');
-        }}
+        onQuickApprove={(approvalId) => resolveSessionApproval({
+          approvalId,
+          decision: 'approve',
+          runId: toPositiveRunId(message.payload?.run_id),
+          narrative: message.payload,
+        })}
         onDismiss={(approvalId) => sessionCtx.dismissAlert(approvalId)}
       />
     );
@@ -493,9 +550,6 @@ export default function MessageCardRenderer({ message, handlers, state }) {
   if (message.type === 'tool_registry_card') {
     return <ToolRegistryCard tool={message.payload} onSave={handlers.handleSaveToToolLibrary} />;
   }
-  if (message.type === 'opencloud_file_ref' || message.type === 'opencloud_publish_card') {
-    return <OpenCloudPublishCard artifact={message} />;
-  }
   if (message.type === 'audit_timeline_card') {
     return (
       <AuditTimelineCard
@@ -521,15 +575,12 @@ export default function MessageCardRenderer({ message, handlers, state }) {
     return (
       <UnifiedApprovalCard
         payload={message.payload}
-        onDecision={(approvalId, decision) => {
-          if (decision === 'approve' || decision === 'approve_conservative') {
-            handleApprovePlanApproval(approvalId);
-            sessionCtx.resolveApproval(approvalId, 'APPROVED');
-          } else {
-            handleRejectPlanApproval(approvalId);
-            sessionCtx.resolveApproval(approvalId, 'REJECTED');
-          }
-        }}
+        onDecision={(approvalId, decision) => resolveSessionApproval({
+          approvalId,
+          decision,
+          runId: toPositiveRunId(message.payload?.run_id),
+          narrative: message.payload,
+        })}
       />
     );
   }

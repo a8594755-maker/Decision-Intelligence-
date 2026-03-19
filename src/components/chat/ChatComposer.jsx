@@ -1,5 +1,6 @@
 import React, { memo, useState, useMemo } from 'react';
-import { Loader2, Paperclip, Send } from 'lucide-react';
+import { FileText, Loader2, Paperclip, Send, Table2, X } from 'lucide-react';
+import { CHAT_ATTACHMENT_ACCEPT, formatAttachmentSize } from '../../services/chatAttachmentService';
 
 const STATUS_TONE_CLASSES = {
   neutral: 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300',
@@ -38,6 +39,8 @@ function ChatComposer({
   onDragOver,
   onDragLeave,
   onDrop,
+  pendingAttachments = [],
+  onRemoveAttachment,
   status = null,
   variant = 'default',
 }) {
@@ -56,10 +59,53 @@ function ChatComposer({
   }, [input]);
 
   const showSlashMenu = slashMatches.length > 0;
+  const selectedMatchIdx = Math.min(selectedIdx, Math.max(slashMatches.length - 1, 0));
+  const canSubmit = Boolean(String(input || '').trim()) || pendingAttachments.length > 0;
 
   const handleSlashSelect = (cmd) => {
     onInputChange({ target: { value: cmd + ' ' } });
     textareaRef.current?.focus();
+  };
+
+  const renderAttachmentChip = (attachment) => {
+    const isSpreadsheet = attachment?.kind === 'spreadsheet';
+    const Icon = isSpreadsheet ? Table2 : FileText;
+    const secondary = [
+      attachment?.kind,
+      formatAttachmentSize(attachment?.size_bytes),
+    ].filter(Boolean).join(' • ');
+
+    return (
+      <div
+        key={attachment.id}
+        className={`flex min-w-0 items-center gap-3 rounded-2xl border px-3 py-2 ${
+          isAIEmployeeVariant
+            ? 'bg-white/96 shadow-sm dark:bg-slate-900/90'
+            : 'bg-slate-50 dark:bg-slate-900/60'
+        }`}
+        style={{ borderColor: 'rgba(148, 163, 184, 0.28)' }}
+      >
+        <div className={`flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-2xl ${isSpreadsheet ? 'bg-emerald-500 text-white' : 'bg-blue-500 text-white'}`}>
+          <Icon className="h-4.5 w-4.5" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">
+            {attachment.file_name}
+          </p>
+          <p className="truncate text-xs text-slate-500 dark:text-slate-400">
+            {secondary}
+          </p>
+        </div>
+        <button
+          type="button"
+          className="rounded-full p-1 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+          onClick={() => onRemoveAttachment?.(attachment.id)}
+          aria-label={`Remove ${attachment.file_name}`}
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+    );
   };
 
   // Intercept arrow keys and Enter for slash menu navigation
@@ -77,7 +123,7 @@ function ChatComposer({
       }
       if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
         e.preventDefault();
-        handleSlashSelect(slashMatches[Math.min(selectedIdx, slashMatches.length - 1)].cmd);
+        handleSlashSelect(slashMatches[selectedMatchIdx].cmd);
         setSelectedIdx(0);
         return;
       }
@@ -87,13 +133,6 @@ function ChatComposer({
     }
     onKeyDown?.(e);
   };
-
-  // Reset selection when matches change
-  const prevMatchCount = React.useRef(slashMatches.length);
-  if (prevMatchCount.current !== slashMatches.length) {
-    prevMatchCount.current = slashMatches.length;
-    if (selectedIdx >= slashMatches.length) setSelectedIdx(0);
-  }
 
   return (
     <div
@@ -114,7 +153,8 @@ function ChatComposer({
       <input
         ref={fileInputRef}
         type="file"
-        accept=".csv,.xlsx,.xls"
+        accept={CHAT_ATTACHMENT_ACCEPT}
+        multiple
         className="hidden"
         onChange={onFileInputChange}
       />
@@ -139,7 +179,7 @@ function ChatComposer({
                 key={s.cmd}
                 type="button"
                 className={`flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm transition-colors ${
-                  i === selectedIdx
+                  i === selectedMatchIdx
                     ? 'bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300'
                     : 'text-slate-700 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-700/50'
                 }`}
@@ -160,6 +200,12 @@ function ChatComposer({
               : 'rounded-2xl border border-slate-200 bg-white shadow-sm focus-within:ring-2 focus-within:ring-blue-500/40 dark:border-slate-700 dark:bg-slate-800'
           }`}
         >
+          {pendingAttachments.length > 0 ? (
+            <div className={`flex flex-wrap gap-2 px-3 pt-3 ${isAIEmployeeVariant ? 'pb-1' : 'pb-2'}`}>
+              {pendingAttachments.map(renderAttachmentChip)}
+            </div>
+          ) : null}
+
           <button
             type="button"
             className={`absolute left-2.5 p-2 text-slate-500 transition-colors disabled:opacity-50 ${
@@ -169,7 +215,8 @@ function ChatComposer({
             }`}
             onClick={onFilePicker}
             disabled={isUploading}
-            title="Upload CSV/XLSX"
+            data-testid="attach-button"
+            title="Attach files"
           >
             {isUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Paperclip className="w-4 h-4" />}
           </button>
@@ -181,7 +228,7 @@ function ChatComposer({
             onChange={onInputChange}
             onKeyDown={handleKeyDownWrapper}
             disabled={isTyping || isUploading}
-            placeholder={isDragOver ? 'Drop CSV/XLSX to upload...' : isAIEmployeeVariant ? 'Message your worker' : 'Message Decision-Intelligence'}
+            placeholder={isDragOver ? 'Drop files to attach...' : isAIEmployeeVariant ? 'Message your worker' : 'Message Decision-Intelligence'}
             className={`w-full resize-none overflow-hidden bg-transparent text-sm outline-none ${
               isAIEmployeeVariant
                 ? 'rounded-[26px] pl-12 pr-16 py-4 text-[15px] leading-6 text-slate-800 dark:text-slate-100 placeholder:text-slate-400'
@@ -192,7 +239,7 @@ function ChatComposer({
 
           <button
             type="submit"
-            disabled={isTyping || isUploading || !String(input || '').trim()}
+            disabled={isTyping || isUploading || !canSubmit}
             className={`absolute right-2.5 p-2 text-white transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
               isAIEmployeeVariant
                 ? 'bottom-2.5 rounded-full bg-slate-900 hover:bg-slate-700 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-200'
@@ -213,7 +260,7 @@ function ChatComposer({
               {uploadStatusText || 'Processing...'}
             </span>
           ) : (
-            <span>Attach CSV/XLSX (max 50MB)</span>
+            <span>Attach spreadsheets or documents (max 50MB total)</span>
           )}
           <span className="text-slate-300">•</span>
           <span>Commands: /forecast, /plan, /workflowA, /ralph-loop, /reuse off, /retrain</span>

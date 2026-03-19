@@ -296,16 +296,18 @@ export function buildDraftContext({
   return {
     sku: datasetProfileRow?.sku || datasetProfileRow?.material_code || null,
     supplier_name: datasetProfileRow?.supplier_name || supplierKpis?.supplier_name || null,
-    current_price: solverMeta?.kpis?.estimated_total_cost || null,
-    target_price: userIntent?.budget_cap || null,
-    cfr_action: topAction?.[0] || null,
-    expected_value: topAction?.[1] || null,
+    current_price: solverMeta?.kpis?.estimated_total_cost ?? null,
+    target_price: userIntent?.budget_cap ?? null,
+    cfr_action: topAction?.[0] ?? null,
+    expected_value: topAction?.[1] ?? null,
     risk_score: datasetProfileRow?.risk_score ?? null,
     on_time_rate: supplierKpis?.on_time_rate ?? null,
     defect_rate: supplierKpis?.defect_rate ?? null,
-    position_strength: cfrEnrichment
-      ? ['VERY_WEAK', 'WEAK', 'NEUTRAL', 'STRONG', 'VERY_STRONG'][cfrEnrichment.buyer_bucket] || 'NEUTRAL'
-      : null,
+    position_strength: (() => {
+      if (!cfrEnrichment) return null;
+      const pl = ['VERY_WEAK', 'WEAK', 'NEUTRAL', 'STRONG', 'VERY_STRONG'];
+      return pl[Math.max(0, Math.min(cfrEnrichment.buyer_bucket, pl.length - 1))] || 'NEUTRAL';
+    })(),
     constraint_violations: solverMeta?.proof?.constraints_checked
       ?.filter((c) => c?.binding)
       ?.map((c) => c.name) || [],

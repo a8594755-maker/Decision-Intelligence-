@@ -162,14 +162,15 @@ export async function listExemplars(employeeId, { docType, limit = 50 } = {}) {
  * Record that an exemplar was used in generation.
  */
 export async function recordUsage(exemplarId) {
-  await supabase.rpc('increment_exemplar_usage', { exemplar_id: exemplarId }).catch(() => {
-    // Fallback: manual increment
-    return supabase
-      .from(TABLE)
-      .update({ usage_count: supabase.raw('usage_count + 1') })
-      .eq('id', exemplarId);
-  });
-  // Ignore errors — usage tracking is best-effort
+  const { error } = await supabase.rpc('increment_exemplar_usage', { exemplar_id: exemplarId });
+  if (error) {
+    // Fallback: read current value then increment
+    const { data: current } = await supabase.from(TABLE).select('usage_count').eq('id', exemplarId).single();
+    if (current) {
+      await supabase.from(TABLE).update({ usage_count: (current.usage_count || 0) + 1 }).eq('id', exemplarId);
+    }
+  }
+  // Best-effort — ignore remaining errors
 }
 
 /**

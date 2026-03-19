@@ -1,7 +1,7 @@
 /**
  * stepStateMachine.js — Formal state machine for agent loop steps
  *
- * Inspired by OpenCloud's postprocessing pipeline state machine.
+ * State machine for multi-step postprocessing pipelines.
  * Pure functions: transition(step, event, context) → { step, effects }
  *
  * States:

@@ -5,17 +5,20 @@
  * Supports: scenario_comparison, plan_comparison
  */
 
-import React, { useMemo, useState } from 'react';
-import { GitCompare, ArrowRight, ChevronDown } from 'lucide-react';
+import React, { useMemo } from 'react';
+import { GitCompare } from 'lucide-react';
 
-function DeltaBadge({ before, after }) {
+const LOWER_IS_BETTER_KPIS = /cost|expense|spend|penalty|risk|delay|shortage|stockout|overdue|lead_time/i;
+
+function DeltaBadge({ before, after, kpi = '' }) {
   if (before == null || after == null) return null;
   const delta = after - before;
   const pct = before !== 0 ? ((delta / Math.abs(before)) * 100).toFixed(1) : '∞';
-  const isPositive = delta > 0;
+  const lowerIsBetter = LOWER_IS_BETTER_KPIS.test(kpi);
+  const isGood = lowerIsBetter ? delta < 0 : delta > 0;
   return (
-    <span className={`text-xs font-mono ${isPositive ? 'text-emerald-600' : 'text-red-600'}`}>
-      {isPositive ? '+' : ''}{pct}%
+    <span className={`text-xs font-mono ${isGood ? 'text-emerald-600' : 'text-red-600'}`}>
+      {delta > 0 ? '+' : ''}{pct}%
     </span>
   );
 }
@@ -27,8 +30,7 @@ function DeltaBadge({ before, after }) {
  * @param {object} [props.data.baseline] - baseline KPIs
  */
 export default function ScenarioWidget({ data = {} }) {
-  const scenarios = data.scenarios || [];
-  const baseline = data.baseline || scenarios[0]?.kpis || {};
+  const scenarios = useMemo(() => data.scenarios || [], [data.scenarios]);
 
   const kpiKeys = useMemo(() => {
     const all = new Set();
@@ -67,7 +69,7 @@ export default function ScenarioWidget({ data = {} }) {
                     return (
                       <td key={i} className="py-2 text-right">
                         <span className="font-mono">{typeof val === 'number' ? val.toLocaleString() : (val ?? '-')}</span>
-                        {i > 0 && <span className="ml-2"><DeltaBadge before={scenarios[0]?.kpis?.[kpi]} after={val} /></span>}
+                        {i > 0 && <span className="ml-2"><DeltaBadge before={scenarios[0]?.kpis?.[kpi]} after={val} kpi={kpi} /></span>}
                       </td>
                     );
                   })}

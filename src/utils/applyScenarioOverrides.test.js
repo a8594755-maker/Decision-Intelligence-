@@ -302,7 +302,10 @@ describe('applyScenarioOverridesToPayload: edge cases', () => {
     const original = JSON.stringify(payload);
     const { effectiveParams } = applyScenarioOverridesToPayload(payload, {}, {});
     expect(Object.keys(effectiveParams)).toHaveLength(0);
-    expect(JSON.stringify(payload)).toBe(original); // no mutation
+    // Only the idempotency marker is added; no data fields are mutated
+    const { _scenario_overrides_applied, ...rest } = payload;
+    expect(JSON.stringify(rest)).toBe(original);
+    expect(_scenario_overrides_applied).toBe(true);
   });
 
   it('handles null payload gracefully', () => {
@@ -330,6 +333,22 @@ describe('applyScenarioOverridesToPayload: edge cases', () => {
     );
     expect(effectiveParams).not.toHaveProperty('stockout_penalty_final');
     expect(effectiveParams).not.toHaveProperty('safety_stock_alpha');
+  });
+
+  it('idempotency guard prevents double-application of overrides', () => {
+    const payload = makePayload();
+    const overrides = { stockout_penalty_multiplier: 2 };
+
+    // First call applies overrides
+    const first = applyScenarioOverridesToPayload(payload, overrides, {});
+    const penaltyAfterFirst = payload.objective.stockout_penalty;
+    expect(first.effectiveParams).toHaveProperty('stockout_penalty_final');
+    expect(payload._scenario_overrides_applied).toBe(true);
+
+    // Second call is a no-op — penalty must not double again
+    const second = applyScenarioOverridesToPayload(payload, overrides, {});
+    expect(payload.objective.stockout_penalty).toBe(penaltyAfterFirst);
+    expect(second.effectiveParams).toEqual({});
   });
 
   it('all overrides applied together produce correct compound result', () => {

@@ -6,6 +6,7 @@
  */
 
 import { supabase } from '../../supabaseClient.js';
+import { TASK_STATES } from '../taskStateMachine.js';
 
 /**
  * Create a new task in draft_plan state.
@@ -23,7 +24,7 @@ export async function createTask({
       title,
       description,
       priority,
-      status: 'draft_plan',
+      status: TASK_STATES.DRAFT_PLAN,
       source_type: sourceType,
       assigned_by_user_id: assignedByUserId,
       due_at: dueAt,
@@ -87,7 +88,7 @@ export async function getTask(taskId) {
  * Save the approved plan snapshot.
  */
 export async function savePlanSnapshot(taskId, planSnapshot, expectedVersion) {
-  return updateTaskStatus(taskId, 'waiting_approval', expectedVersion, {
+  return updateTaskStatus(taskId, TASK_STATES.WAITING_APPROVAL, expectedVersion, {
     plan_snapshot: planSnapshot,
   });
 }
@@ -168,14 +169,14 @@ export async function listPendingReviews(userId) {
   const empIds = (emps || []).map((e) => e.id);
   if (empIds.length === 0) return [];
 
-  // Step 2: fetch waiting_review / review_hold tasks with step runs joined
+  // Step 2: fetch review_hold tasks with step runs joined
   const { data, error } = await supabase
     .from('ai_employee_tasks')
     .select(`
       *,
       ai_employee_runs!ai_employee_runs_task_id_fkey(id, status, summary, artifact_refs, ended_at, started_at, step_index, step_name, retry_count, error_message)
     `)
-    .in('status', ['waiting_review', 'review_hold'])
+    .eq('status', TASK_STATES.REVIEW_HOLD)
     .in('employee_id', empIds)
     .order('updated_at', { ascending: false });
 
@@ -204,6 +205,54 @@ export async function updateTaskInputContext(taskId, inputContext, expectedVersi
       throw new Error(`[TaskRepo] Concurrent modification on task ${taskId}. Expected version ${expectedVersion}.`);
     }
     throw new Error(`[TaskRepo] updateTaskInputContext failed: ${error.message}`);
+  }
+  return data;
+}
+
+/**
+ * Reassign a task to a different worker (manual assignment by manager).
+ * Only tasks in draft_plan or waiting_approval can be reassigned.
+ *
+ * @param {string} taskId
+ * @param {string} newEmployeeId - Target worker ID
+ * @param {string} userId - Manager user ID (must own BOTH source and target workers)
+ * @param {number} expectedVersion - Optimistic concurrency version
+ * @returns {Promise<object>} Updated task row
+ */
+export async function reassignTask(taskId, newEmployeeId, userId, expectedVersion) {
+  // Verify manager owns the target worker
+  const { data: targetEmp, error: empErr } = await supabase
+    .from('ai_employees')
+    .select('id, manager_user_id')
+    .eq('id', newEmployeeId)
+    .single();
+
+  if (empErr || !targetEmp) {
+    throw new Error(`[TaskRepo] reassignTask: target worker '${newEmployeeId}' not found`);
+  }
+  if (targetEmp.manager_user_id !== userId) {
+    throw new Error(`[TaskRepo] reassignTask denied: user '${userId}' is not the manager of target worker '${newEmployeeId}'`);
+  }
+
+  // Only reassign tasks that haven't started execution
+  const reassignableStatuses = [TASK_STATES.DRAFT_PLAN, TASK_STATES.WAITING_APPROVAL];
+  const { data, error } = await supabase
+    .from('ai_employee_tasks')
+    .update({
+      employee_id: newEmployeeId,
+      version: expectedVersion + 1,
+    })
+    .eq('id', taskId)
+    .eq('version', expectedVersion)
+    .in('status', reassignableStatuses)
+    .select()
+    .single();
+
+  if (error) {
+    if (error.code === 'PGRST116') {
+      throw new Error(`[TaskRepo] reassignTask: task '${taskId}' not found, version mismatch, or task is not in a reassignable state (${reassignableStatuses.join(', ')})`);
+    }
+    throw new Error(`[TaskRepo] reassignTask failed: ${error.message}`);
   }
   return data;
 }

@@ -24,7 +24,8 @@ export const WORKFLOW_NAMES = {
 
 export const WORKFLOW_REGISTRY_ERROR_CODES = {
   INVALID_RUN_ID: 'INVALID_RUN_ID',
-  RUN_NOT_FOUND: 'RUN_NOT_FOUND'
+  RUN_NOT_FOUND: 'RUN_NOT_FOUND',
+  UNSUPPORTED_WORKFLOW: 'UNSUPPORTED_WORKFLOW'
 };
 
 const DEFAULT_ERROR_ACTIONS = {
@@ -35,6 +36,10 @@ const DEFAULT_ERROR_ACTIONS = {
   [WORKFLOW_REGISTRY_ERROR_CODES.RUN_NOT_FOUND]: [
     'This workflow run is missing or no longer accessible.',
     'Start a new workflow run from the latest dataset card.'
+  ],
+  [WORKFLOW_REGISTRY_ERROR_CODES.UNSUPPORTED_WORKFLOW]: [
+    'Choose Workflow A or Workflow B explicitly before starting the run.',
+    'Update the dataset mapping or workflow guess if the inferred workflow is unsupported.'
   ]
 };
 
@@ -78,19 +83,31 @@ const ENGINES = {
 
 export function normalizeWorkflowName(value) {
   const normalized = String(value || '').trim().toLowerCase();
-  if (!normalized) return WORKFLOW_NAMES.A;
-  return WORKFLOW_ALIASES[normalized] || value;
+  if (!normalized) return null;
+  return WORKFLOW_ALIASES[normalized] || null;
 }
 
 export function getWorkflowFromProfile(profileJson = {}) {
   const label = String(profileJson?.global?.workflow_guess?.label || '').trim().toUpperCase();
+  if (label === 'A') return WORKFLOW_NAMES.A;
   if (label === 'B') return WORKFLOW_NAMES.B;
-  return WORKFLOW_NAMES.A;
+  return null;
 }
+
+const unsupportedWorkflowError = (workflowValue) => new WorkflowRegistryError(
+  WORKFLOW_REGISTRY_ERROR_CODES.UNSUPPORTED_WORKFLOW,
+  `Unsupported workflow "${String(workflowValue || 'unknown')}"`,
+  {
+    nextActions: DEFAULT_ERROR_ACTIONS[WORKFLOW_REGISTRY_ERROR_CODES.UNSUPPORTED_WORKFLOW]
+  }
+);
 
 const resolveEngine = (workflowName) => {
   const normalized = normalizeWorkflowName(workflowName);
-  return ENGINES[normalized] || ENGINES[WORKFLOW_NAMES.A];
+  if (!normalized || !ENGINES[normalized]) {
+    throw unsupportedWorkflowError(workflowName);
+  }
+  return ENGINES[normalized];
 };
 
 const parseRunId = (run_id) => {
@@ -117,6 +134,9 @@ const resolveEngineByRun = async (runId) => {
     );
   }
   const workflowName = normalizeWorkflowName(run.workflow);
+  if (!workflowName) {
+    throw unsupportedWorkflowError(run.workflow);
+  }
   return {
     run,
     workflowName,
@@ -135,9 +155,16 @@ export async function startWorkflow({
   if (!dataset_profile_id) throw new Error('dataset_profile_id is required');
 
   let resolvedWorkflow = workflow ? normalizeWorkflowName(workflow) : null;
+  if (workflow && !resolvedWorkflow) {
+    throw unsupportedWorkflowError(workflow);
+  }
   if (!resolvedWorkflow) {
     const profileRow = providedProfileRow || await datasetProfilesService.getDatasetProfileById(user_id, dataset_profile_id);
     resolvedWorkflow = getWorkflowFromProfile(profileRow?.profile_json || {});
+    if (!resolvedWorkflow) {
+      const guessedLabel = profileRow?.profile_json?.global?.workflow_guess?.label || 'unknown';
+      throw unsupportedWorkflowError(guessedLabel);
+    }
   }
 
   const engine = resolveEngine(resolvedWorkflow);

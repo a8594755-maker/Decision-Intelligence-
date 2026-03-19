@@ -197,7 +197,7 @@ async function updateRuleBreachedAt(ruleId) {
     .eq('id', ruleId);
 }
 
-async function recordBreach(rule, metricValue, reason) {
+async function recordBreach(rule, metricValue, _reason) {
   const { data, error } = await supabase
     .from('kpi_breach_log')
     .insert({

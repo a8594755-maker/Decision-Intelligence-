@@ -65,21 +65,44 @@ export async function openChatPage(page, route = '/plan') {
     .isVisible({ timeout: 2000 }).catch(() => false);
 
   if (!alreadyVisible) {
-    // Need to create a new conversation — click "+ New" button
-    const newBtn = page.locator('button:has-text("New")').first();
-    const newVisible = await newBtn.isVisible({ timeout: 3000 }).catch(() => false);
-    if (newVisible) {
-      await newBtn.click();
+    // On Command Center ("/"), click "Open Chat" button first
+    const openChatBtn = page.locator('button:has-text("Open Chat")').first();
+    const openChatVisible = await openChatBtn.isVisible({ timeout: 2000 }).catch(() => false);
+    if (openChatVisible) {
+      await openChatBtn.click();
       await page.waitForTimeout(2000);
     }
 
-    // If still not visible, the user auth might not be working.
-    // Try clicking "Start a new chat" link/text if it exists
-    const startChat = page.locator('text=Start a new chat, text=start a new').first();
-    const startVisible = await startChat.isVisible({ timeout: 1000 }).catch(() => false);
-    if (startVisible) {
-      await startChat.click();
-      await page.waitForTimeout(2000);
+    // Need to create a new conversation — try "New chat" then "New" button
+    const newChatBtns = page.locator('button:has-text("New chat")');
+    const newChatCount = await newChatBtns.count();
+    for (let i = newChatCount - 1; i >= 0; i--) {
+      const btn = newChatBtns.nth(i);
+      if (await btn.isVisible().catch(() => false)) {
+        await btn.click();
+        await page.waitForTimeout(2000);
+        if (await page.locator(chatInputSelector).first().isVisible({ timeout: 2000 }).catch(() => false)) break;
+      }
+    }
+
+    // Fallback: "+ New" button
+    if (!await page.locator(chatInputSelector).first().isVisible({ timeout: 1000 }).catch(() => false)) {
+      const newBtn = page.locator('button:has-text("New")').first();
+      const newVisible = await newBtn.isVisible({ timeout: 3000 }).catch(() => false);
+      if (newVisible) {
+        await newBtn.click();
+        await page.waitForTimeout(2000);
+      }
+    }
+
+    // If still not visible, try clicking "Start a new chat" link/text
+    if (!await page.locator(chatInputSelector).first().isVisible({ timeout: 1000 }).catch(() => false)) {
+      const startChat = page.locator('text=Start a new chat, text=start a new').first();
+      const startVisible = await startChat.isVisible({ timeout: 1000 }).catch(() => false);
+      if (startVisible) {
+        await startChat.click();
+        await page.waitForTimeout(2000);
+      }
     }
   }
 

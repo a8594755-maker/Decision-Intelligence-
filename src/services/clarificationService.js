@@ -270,10 +270,10 @@ export async function resolveClarification(clarificationId) {
       },
     });
 
-    // Mark resolved
+    // Mark resolved and remove from in-memory map
     clar.status = CLARIFICATION_STATUS.RESOLVED;
     clar.resolved_at = new Date().toISOString();
-    _pendingClarifications.set(clarificationId, clar);
+    _pendingClarifications.delete(clarificationId);
 
     try {
       await supabase.from('clarification_requests').update({
@@ -295,7 +295,7 @@ export async function cancelClarification(clarificationId) {
   const clar = _pendingClarifications.get(clarificationId);
   if (clar) {
     clar.status = CLARIFICATION_STATUS.CANCELLED;
-    _pendingClarifications.set(clarificationId, clar);
+    _pendingClarifications.delete(clarificationId);
   }
   try {
     await supabase.from('clarification_requests').update({
@@ -315,9 +315,10 @@ export async function listPendingClarifications(userId) {
       .from('clarification_requests')
       .select('*')
       .eq('status', CLARIFICATION_STATUS.PENDING)
+      .eq('user_id', userId)
       .order('created_at', { ascending: false });
     if (!error && data?.length) {
-      return data.filter(c => c.work_order?.user_id === userId);
+      return data;
     }
   } catch { /* fall through */ }
 

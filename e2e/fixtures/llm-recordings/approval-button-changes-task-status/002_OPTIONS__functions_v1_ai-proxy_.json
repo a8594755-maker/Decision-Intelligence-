@@ -1,0 +1,15 @@
+{
+  "seq": 2,
+  "key": "OPTIONS__functions_v1_ai-proxy_",
+  "request": {
+    "method": "OPTIONS",
+    "url": "<SUPABASE_URL>/functions/v1/ai-proxy",
+    "postData": ""
+  },
+  "response": {
+    "status": 200,
+    "contentType": "text/plain;charset=UTF-8",
+    "body": "ok"
+  },
+  "recordedAt": "2026-03-19T18:28:27.972Z"
+}

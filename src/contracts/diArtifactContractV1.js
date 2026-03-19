@@ -58,8 +58,6 @@ const V1_VALIDATORS = {
   ai_review_result: validateAiReviewResult,
   report_html: validateReportHtml,
   powerbi_dataset: validatePowerBIDataset,
-  // OpenCloud EU integration — file reference artifact
-  opencloud_file_ref: validateOpenCloudFileRef,
   // Expanded tool catalog — new artifact types
   supplier_kpi_summary: validateObjectPayloadOnly,
   risk_replan_recommendation: validateObjectPayloadOnly,
@@ -80,6 +78,28 @@ const V1_VALIDATORS = {
   decision_brief: validateDecisionBriefV2,
   evidence_pack_v2: validateEvidencePackV2Artifact,
   writeback_payload: validateWritebackPayloadV2,
+  // Risk-aware planning artifacts
+  risk_adjustments: validateObjectPayloadOnly,
+  risk_solver_meta: validateObjectPayloadOnly,
+  risk_plan_table: validateObjectPayloadOnly,
+  risk_replay_metrics: validateObjectPayloadOnly,
+  risk_inventory_projection: validateObjectPayloadOnly,
+  risk_plan_csv: validateObjectPayloadOnly,
+  // Workflow B risk analysis artifacts
+  risk_scores: validateObjectPayloadOnly,
+  risk_scores_csv: validateObjectPayloadOnly,
+  po_delay_signals: validateObjectPayloadOnly,
+  supporting_metrics: validateObjectPayloadOnly,
+  exceptions: validateObjectPayloadOnly,
+  exceptions_csv: validateObjectPayloadOnly,
+  // Workflow engine artifacts
+  workflow_settings: validateObjectPayloadOnly,
+  workflow_report_summary: validateObjectPayloadOnly,
+  workflow_a_readiness: validateObjectPayloadOnly,
+  // Topology graph artifact (supply chain DAG)
+  topology_graph: validateObjectPayloadOnly,
+  // Plan comparison artifact (risk-aware vs base)
+  plan_comparison: validateObjectPayloadOnly,
 };
 
 const MAX_ISSUES = 50;
@@ -1002,22 +1022,9 @@ function validatePowerBIDataset(payload, issues) {
   requireArrayField(issues, root, 'tables', 'payload');
 }
 
-// ---------------------------------------------------------------------------
-// OpenCloud EU integration — file reference
-// ---------------------------------------------------------------------------
-
 /** Lightweight validator: only checks that payload is a non-null object. */
 function validateObjectPayloadOnly(payload, issues) {
   ensureObjectPayload(issues, payload);
-}
-
-function validateOpenCloudFileRef(payload, issues) {
-  const root = ensureObjectPayload(issues, payload);
-  if (!root) return;
-  requireStringField(issues, root, 'driveId', 'payload');
-  requireStringField(issues, root, 'synced_at', 'payload');
-  requireNumberField(issues, root, 'total_files', 'payload');
-  requireArrayField(issues, root, 'files', 'payload');
 }
 
 export function validateArtifactOrThrow({ artifact_type, payload }) {
@@ -1026,6 +1033,9 @@ export function validateArtifactOrThrow({ artifact_type, payload }) {
 
   // Unknown artifact types are intentionally pass-through to preserve compatibility.
   if (!validator) {
+    if (typeof import.meta !== 'undefined' && import.meta.env?.DEV) {
+      console.debug(`[artifactContract] No V1 validator for artifact type "${artifactType}" — pass-through`);
+    }
     return payload;
   }
 

@@ -1,6 +1,6 @@
 import { useSystemHealth } from '../hooks/useSystemHealth';
 import { useTranslation } from 'react-i18next';
-import { RefreshCw, Wifi, WifiOff } from 'lucide-react';
+import { RefreshCw, WifiOff } from 'lucide-react';
 
 /**
  * Fixed-top banner that shows when any backend service is offline.

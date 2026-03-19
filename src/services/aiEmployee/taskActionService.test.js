@@ -3,24 +3,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mockApprovePlan = vi.fn();
 const mockApproveReview = vi.fn();
 const mockRetryTask = vi.fn();
-const mockTaskRepoGetTask = vi.fn();
-const mockTaskRepoUpdateTaskStatus = vi.fn();
-const mockEmployeeRepoUpdateStatus = vi.fn();
 const mockMaybeCreateOutputProfileProposalFromReview = vi.fn();
 
 vi.mock('./orchestrator.js', () => ({
   approvePlan: (...args) => mockApprovePlan(...args),
   approveReview: (...args) => mockApproveReview(...args),
   retryTask: (...args) => mockRetryTask(...args),
-}));
-
-vi.mock('./persistence/taskRepo.js', () => ({
-  getTask: (...args) => mockTaskRepoGetTask(...args),
-  updateTaskStatus: (...args) => mockTaskRepoUpdateTaskStatus(...args),
-}));
-
-vi.mock('./persistence/employeeRepo.js', () => ({
-  updateEmployeeStatus: (...args) => mockEmployeeRepoUpdateStatus(...args),
 }));
 
 vi.mock('../aiEmployeeLLMService.js', () => ({
@@ -41,13 +29,12 @@ vi.mock('./styleLearning/reviewProposalService.js', () => ({
 }));
 
 import { resolveReviewDecision, runTask } from './taskActionService.js';
+import { TASK_STATES } from './taskStateMachine.js';
 
 describe('taskActionService', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockMaybeCreateOutputProfileProposalFromReview.mockResolvedValue(null);
-    mockTaskRepoGetTask.mockResolvedValue({ id: 'task-x', version: 1 });
-    mockTaskRepoUpdateTaskStatus.mockResolvedValue({ id: 'task-x', version: 2 });
   });
 
   describe('runTask', () => {
@@ -65,7 +52,7 @@ describe('taskActionService', () => {
     it('retries failed orchestrator tasks', async () => {
       const result = await runTask({
         id: 'task-2',
-        status: 'failed',
+        status: TASK_STATES.FAILED,
         plan_snapshot: { steps: [{ name: 'plan' }] },
       }, 'user-1');
 
@@ -73,12 +60,11 @@ describe('taskActionService', () => {
       expect(result).toEqual({ nextStatus: 'queued' });
     });
 
-    it('rejects legacy tasks that have no plan_snapshot', async () => {
+    it('rejects tasks with unsupported status', async () => {
       await expect(runTask({
-        id: 'legacy-1',
-        status: 'todo',
-        template_id: 'forecast',
-      }, 'user-1')).rejects.toThrow('legacy system');
+        id: 'task-x',
+        status: 'done',
+      }, 'user-1')).rejects.toThrow('cannot be run from the task board');
     });
   });
 
@@ -136,8 +122,6 @@ describe('taskActionService', () => {
     });
 
     it('marks orchestrator review_hold tasks failed on revision request', async () => {
-      mockTaskRepoGetTask.mockResolvedValue({ id: 'task-4', version: 3 });
-
       const result = await resolveReviewDecision({
         id: 'task-4',
         status: 'review_hold',
@@ -147,33 +131,23 @@ describe('taskActionService', () => {
         decision: 'needs_revision',
       });
 
-      expect(mockTaskRepoGetTask).toHaveBeenCalledWith('task-4');
-      expect(mockTaskRepoUpdateTaskStatus).toHaveBeenCalledWith('task-4', 'failed', 3);
-      expect(mockEmployeeRepoUpdateStatus).toHaveBeenCalledWith('emp-1', 'idle');
+      expect(mockApproveReview).toHaveBeenCalledWith('task-4', 'user-1', expect.objectContaining({
+        decision: 'needs_revision',
+      }));
       expect(result).toEqual(expect.objectContaining({
         previousStatus: 'review_hold',
         nextStatus: 'failed',
       }));
     });
 
-    it('handles legacy waiting_review tasks via direct DB update', async () => {
-      mockTaskRepoGetTask.mockResolvedValue({ id: 'task-5', version: 2 });
-
-      const result = await resolveReviewDecision({
-        id: 'task-5',
-        status: 'waiting_review',
-        employee_id: 'emp-2',
+    it('rejects tasks that are not in review_hold status', async () => {
+      await expect(resolveReviewDecision({
+        id: 'task-x',
+        status: 'in_progress',
       }, {
         userId: 'user-1',
         decision: 'approved',
-      });
-
-      expect(mockTaskRepoGetTask).toHaveBeenCalledWith('task-5');
-      expect(mockTaskRepoUpdateTaskStatus).toHaveBeenCalledWith('task-5', 'done', 2);
-      expect(result).toEqual(expect.objectContaining({
-        previousStatus: 'waiting_review',
-        nextStatus: 'done',
-      }));
+      })).rejects.toThrow('not reviewable');
     });
   });
 });

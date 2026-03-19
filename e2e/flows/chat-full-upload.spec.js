@@ -17,11 +17,18 @@ import { openChatPage } from '../helpers/crawl-utils.js';
 
 test.beforeEach(async ({ page }) => { await setupSupabaseMock(page); });
 
-const XLSX_PATH = path.join(
+import fs from 'fs';
+import { fileURLToPath } from 'url';
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// Prefer repo-local fixture; fall back to Downloads folder
+const REPO_FIXTURE = path.resolve(__dirname, '../../sample_data/test_data.xlsx');
+const DOWNLOADS_FIXTURE = path.join(
   process.env.HOME || '/Users/xuweijin',
   'Downloads',
   'Decision_Intelligence_workflowA_reupload_clean.xlsx'
 );
+const XLSX_PATH = fs.existsSync(REPO_FIXTURE) ? REPO_FIXTURE : DOWNLOADS_FIXTURE;
 
 // Timing thresholds
 const UPLOAD_PARSE_MAX  = 30000;  // 30s for XLSX parse + profiling
@@ -66,7 +73,7 @@ test.describe('Full Chat Upload → Plan Workflow', () => {
 
     // ── Step 2: Upload XLSX via file picker ────────────────────────────
     // The hidden file input is inside ChatComposer
-    const fileInput = page.locator('input[type="file"][accept=".csv,.xlsx,.xls"]');
+    const fileInput = page.locator('input[type="file"]').first();
     await expect(fileInput).toHaveCount(1, { timeout: 5000 });
 
     t0 = Date.now();
@@ -208,7 +215,7 @@ test.describe('Full Chat Upload → Plan Workflow', () => {
     }
 
     // Upload file
-    const fileInput = page.locator('input[type="file"][accept=".csv,.xlsx,.xls"]');
+    const fileInput = page.locator('input[type="file"]').first();
     let t0 = Date.now();
     await fileInput.setInputFiles(XLSX_PATH);
 
@@ -401,7 +408,7 @@ test.describe('Full Chat Upload → Plan Workflow', () => {
     }
 
     // Upload
-    const fileInput = page.locator('input[type="file"][accept=".csv,.xlsx,.xls"]');
+    const fileInput = page.locator('input[type="file"]').first();
     await fileInput.setInputFiles(XLSX_PATH);
 
     // Wait for upload to finish
@@ -457,7 +464,7 @@ test.describe('Full Chat Upload → Plan Workflow', () => {
     }
 
     // Start upload
-    const fileInput = page.locator('input[type="file"][accept=".csv,.xlsx,.xls"]');
+    const fileInput = page.locator('input[type="file"]').first();
     await fileInput.setInputFiles(XLSX_PATH);
 
     // Immediately check — is the UI still responsive?

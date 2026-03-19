@@ -1,7 +1,8 @@
 import React, { memo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Bell } from 'lucide-react';
+import { Bell, FileText, Table2 } from 'lucide-react';
+import { formatAttachmentSize } from '../../services/chatAttachmentService';
 
 const markdownComponents = {
   table: ({ children }) => (
@@ -33,6 +34,50 @@ function ChatMessageBubble({ message, renderSpecialMessage, timestampText = '', 
   const hasSpecial = Boolean(message?.type);
   const isProactive = Boolean(message?.is_proactive);
   const isAIEmployeeVariant = variant === 'ai_employee';
+  const attachments = Array.isArray(message?.attachments) ? message.attachments : [];
+
+  const renderAttachmentList = () => {
+    if (attachments.length === 0) return null;
+    return (
+      <div className="mb-2 flex flex-wrap gap-2">
+        {attachments.map((attachment, index) => {
+          const isSpreadsheet = attachment?.kind === 'spreadsheet';
+          const Icon = isSpreadsheet ? Table2 : FileText;
+          const secondary = attachment?.summary || [
+            attachment?.kind,
+            formatAttachmentSize(attachment?.size_bytes),
+          ].filter(Boolean).join(' • ');
+
+          return (
+            <div
+              key={attachment.id || `${attachment.file_name || 'attachment'}_${index}`}
+              className={`min-w-[12rem] max-w-full rounded-2xl border px-3 py-2 ${
+                isUser
+                  ? 'border-white/20 bg-white/10 text-white'
+                  : 'border-slate-200 bg-slate-50 text-slate-900 dark:border-slate-700 dark:bg-slate-800/80 dark:text-slate-100'
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <div className={`flex h-8 w-8 items-center justify-center rounded-xl ${isSpreadsheet ? 'bg-emerald-500 text-white' : 'bg-blue-500 text-white'}`}>
+                  <Icon className="h-4 w-4" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium">
+                    {attachment.file_name}
+                  </p>
+                  {secondary ? (
+                    <p className={`truncate text-[11px] ${isUser ? 'text-white/75' : 'text-slate-500 dark:text-slate-400'}`}>
+                      {secondary}
+                    </p>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
 
   return (
     <div className={`w-full flex ${isUser ? 'justify-end' : 'justify-start'} animate-fade-in`}>
@@ -57,17 +102,22 @@ function ChatMessageBubble({ message, renderSpecialMessage, timestampText = '', 
                     isUser
                       ? 'bg-blue-600 text-white rounded-br-md'
                       : 'bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 border border-slate-200/70 dark:border-slate-700/70 rounded-bl-md'
-                  }`
+              }`
             }`}
           >
+            {renderAttachmentList()}
             {isUser ? (
-              <p className={`whitespace-pre-wrap leading-relaxed ${isAIEmployeeVariant ? 'text-[14px]' : 'text-sm'}`}>{message.content}</p>
+              message.content ? (
+                <p className={`whitespace-pre-wrap leading-relaxed ${isAIEmployeeVariant ? 'text-[14px]' : 'text-sm'}`}>{message.content}</p>
+              ) : null
             ) : (
-              <div className={`leading-relaxed prose prose-sm max-w-none dark:prose-invert ${isAIEmployeeVariant ? 'text-[15px] prose-p:leading-7 prose-headings:mb-3 prose-p:my-2' : 'text-sm'}`}>
-                <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-                  {message.content || ''}
-                </ReactMarkdown>
-              </div>
+              message.content ? (
+                <div className={`leading-relaxed prose prose-sm max-w-none dark:prose-invert ${isAIEmployeeVariant ? 'text-[15px] prose-p:leading-7 prose-headings:mb-3 prose-p:my-2' : 'text-sm'}`}>
+                  <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+                    {message.content || ''}
+                  </ReactMarkdown>
+                </div>
+              ) : null
             )}
             {timestampText ? (
               <p className={`mt-1 text-[11px] ${isAIEmployeeVariant ? (isUser ? 'text-slate-300 dark:text-slate-500' : 'text-slate-400') : isUser ? 'text-blue-100' : 'text-slate-400'}`}>

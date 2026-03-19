@@ -191,7 +191,7 @@ export function estimateRevenueProtected({
  */
 export function extractValueEvents({
   decisionBrief = {},
-  writebackPayload = {},
+  writebackPayload: _writebackPayload = {},
   taskMeta = {},
   workerId = null,
 }) {
@@ -225,8 +225,9 @@ export function extractValueEvents({
 
   // 4. Revenue protected (from service level impact)
   if (impact.service_level_impact) {
-    const deltaStr = impact.service_level_impact.replace('%', '').replace('+', '');
-    const delta = parseFloat(deltaStr) / 100;
+    const rawSL = impact.service_level_impact;
+    const deltaStr = typeof rawSL === 'string' ? rawSL.replace('%', '').replace('+', '') : String(rawSL);
+    const delta = typeof rawSL === 'number' ? (Math.abs(rawSL) < 1 ? rawSL : rawSL / 100) : parseFloat(deltaStr) / 100;
     if (delta > 0 && impact.units_affected) {
       const ve = estimateRevenueProtected({
         serviceLevelDelta: delta,

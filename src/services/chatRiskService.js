@@ -3,136 +3,23 @@ import { computeRiskScores } from '../risk/riskScoring';
 import { buildExceptions } from '../risk/exceptionBuilder';
 import { buildSupplierStats } from '../domains/supply/supplyForecastEngine';
 import { batchComputePODelayProbabilities } from '../domains/supply/poDelayProbability';
+import {
+  normalizeText, createBlockingError, toNumber,
+  parseDateValue, toIsoDay, normalizeRowsFromUserFile, getRowsForSheet,
+  normalizeTargetMapping as _normalizeTargetMapping, chooseDatasetByType
+} from '../utils/dataServiceHelpers';
 
 const MAX_BLOCKING_QUESTIONS = 2;
 const MAX_CARD_ROWS = 12;
 
-const normalizeText = (value) => String(value || '').trim();
-const normalizeSheetName = (value) => normalizeText(value).toLowerCase();
-
-const toNumber = (value, fallback = NaN) => {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : fallback;
-};
-
-const parseDateValue = (value) => {
-  if (value === null || value === undefined || value === '') return null;
-
-  if (value instanceof Date && !Number.isNaN(value.getTime())) {
-    return value;
-  }
-
-  if (typeof value === 'number' && value > 1 && value < 100000) {
-    const excelEpoch = new Date(Date.UTC(1899, 11, 30));
-    const parsed = new Date(excelEpoch.getTime() + (value * 24 * 60 * 60 * 1000));
-    return Number.isNaN(parsed.getTime()) ? null : parsed;
-  }
-
-  const raw = String(value).trim();
-  if (!raw) return null;
-
-  const weekMatch = raw.match(/^(\d{4})[-/ ]?W(\d{1,2})$/i);
-  if (weekMatch) {
-    const year = Number(weekMatch[1]);
-    const week = Number(weekMatch[2]);
-    const jan4 = new Date(Date.UTC(year, 0, 4));
-    const jan4Day = jan4.getUTCDay() || 7;
-    const week1Monday = new Date(jan4);
-    week1Monday.setUTCDate(jan4.getUTCDate() - jan4Day + 1);
-    const target = new Date(week1Monday);
-    target.setUTCDate(week1Monday.getUTCDate() + ((week - 1) * 7));
-    return Number.isNaN(target.getTime()) ? null : target;
-  }
-
-  const parsed = new Date(raw);
-  return Number.isNaN(parsed.getTime()) ? null : parsed;
-};
-
-const toIsoDay = (dateObj) => (
-  dateObj && !Number.isNaN(dateObj.getTime()) ? dateObj.toISOString().slice(0, 10) : null
-);
-
-const createBlockingError = (message, questions = []) => {
-  const error = new Error(message);
-  error.blockingQuestions = Array.isArray(questions)
-    ? questions.slice(0, MAX_BLOCKING_QUESTIONS)
-    : [];
-  error.isBlocking = true;
-  return error;
-};
-
-const normalizeRowsFromUserFile = (fileRecord) => {
-  if (!fileRecord) return [];
-  const raw = fileRecord.data;
-  if (Array.isArray(raw)) return raw;
-  if (Array.isArray(raw?.rows)) return raw.rows;
-  return [];
-};
-
-const getRowsForSheet = (rows, sheetName) => {
-  const normalizedSheet = normalizeSheetName(sheetName);
-  const hasSheetMarker = rows.some((row) => row && Object.prototype.hasOwnProperty.call(row, '__sheet_name'));
-
-  if (!hasSheetMarker) return rows;
-  return rows.filter((row) => normalizeSheetName(row.__sheet_name) === normalizedSheet);
-};
-
-const chooseDatasetByType = (contractJson = {}, uploadType) => {
-  const datasets = Array.isArray(contractJson?.datasets) ? contractJson.datasets : [];
-  return datasets
-    .filter((dataset) => normalizeText(dataset.upload_type).toLowerCase() === normalizeText(uploadType).toLowerCase())
-    .sort((a, b) => {
-      const aPass = a?.validation?.status === 'pass' ? 1 : 0;
-      const bPass = b?.validation?.status === 'pass' ? 1 : 0;
-      if (aPass !== bPass) return bPass - aPass;
-      return toNumber(b.requiredCoverage, 0) - toNumber(a.requiredCoverage, 0);
-    })[0] || null;
-};
-
-const normalizeTargetMapping = (mapping = {}) => {
-  if (!mapping || typeof mapping !== 'object' || Array.isArray(mapping)) return {};
-
-  const knownTargets = new Set([
-    'supplier',
-    'supplier_name',
-    'supplier_code',
-    'supplier_id',
-    'material_code',
-    'plant_id',
-    'order_date',
-    'promised_date',
-    'planned_delivery_date',
-    'actual_delivery_date',
-    'receipt_date',
-    'date',
-    'week_bucket',
-    'time_bucket',
-    'open_qty',
-    'received_qty',
-    'po_number'
-  ]);
-
-  const keys = Object.keys(mapping).map((key) => normalizeText(key));
-  const values = Object.values(mapping).map((value) => normalizeText(value));
-
-  const keysLookLikeTargets = keys.some((key) => knownTargets.has(key));
-  if (keysLookLikeTargets) {
-    return mapping;
-  }
-
-  const valuesLookLikeTargets = values.some((value) => knownTargets.has(value));
-  if (!valuesLookLikeTargets) {
-    return mapping;
-  }
-
-  const inverted = {};
-  Object.entries(mapping).forEach(([source, target]) => {
-    const targetField = normalizeText(target);
-    if (!targetField) return;
-    inverted[targetField] = source;
-  });
-  return inverted;
-};
+// Risk-specific known target fields (PO/supplier domain)
+const RISK_KNOWN_TARGETS = new Set([
+  'supplier', 'supplier_name', 'supplier_code', 'supplier_id',
+  'material_code', 'plant_id', 'order_date', 'promised_date',
+  'planned_delivery_date', 'actual_delivery_date', 'receipt_date',
+  'date', 'week_bucket', 'time_bucket', 'open_qty', 'received_qty', 'po_number'
+]);
+const normalizeTargetMapping = (mapping) => _normalizeTargetMapping(mapping, RISK_KNOWN_TARGETS);
 
 const resolveColumnByHints = (columns = [], hints = []) => {
   for (const column of columns) {
@@ -242,6 +129,10 @@ const mapPoRows = ({ rows, sheetName, mapping }) => {
     targetCandidates: ['open_qty'],
     headerHints: [/open.*qty/, /remaining.*qty/, /balance.*qty/, /\bqty\b/]
   });
+
+  if (!openQtyField) {
+    console.warn('[chatRiskService] No open_qty column resolved — all PO rows will be dropped. Available columns:', relevantRows[0] ? Object.keys(relevantRows[0]).join(', ') : '(none)');
+  }
 
   const mapped = [];
   let dropped = 0;

@@ -117,10 +117,10 @@ export default function InlineEditCell({
           <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-500" />
         ) : (
           <>
-            <button onClick={commitEdit} className="p-0.5 text-green-600 hover:text-green-700" title="Save">
+            <button onMouseDown={(e) => { e.preventDefault(); commitEdit(); }} className="p-0.5 text-green-600 hover:text-green-700" title="Save">
               <Check className="w-3.5 h-3.5" />
             </button>
-            <button onClick={cancelEdit} className="p-0.5 text-gray-400 hover:text-gray-600" title="Cancel">
+            <button onMouseDown={(e) => { e.preventDefault(); cancelEdit(); }} className="p-0.5 text-gray-400 hover:text-gray-600" title="Cancel">
               <X className="w-3.5 h-3.5" />
             </button>
           </>

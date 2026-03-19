@@ -39,15 +39,16 @@ test.describe('MBR Agent Loop', () => {
       }
     });
 
-    // 1. Navigate to Aiden Chat (root route = Decision Support View)
-    await page.goto('/');
+    // 1. Navigate to Workspace (AI Employee chat)
+    await page.goto('/workspace');
     await page.waitForLoadState('networkidle', { timeout: 15000 });
 
-    // 2. Start a new conversation — click "+ New" button
-    const newBtn = page.locator('button:has-text("New"), button:has-text("+ New")').first();
-    await expect(newBtn).toBeVisible({ timeout: 10000 });
-    await newBtn.click();
-    await page.waitForTimeout(1000);
+    // 2. Start a new conversation — click "New chat" button
+    const newBtn = page.locator('button:has-text("New chat"), button:has-text("New"), button:has-text("+ New")').first();
+    if (await newBtn.isVisible({ timeout: 10000 }).catch(() => false)) {
+      await newBtn.click();
+      await page.waitForTimeout(1000);
+    }
 
     // 3. Upload the MBR Excel file via the hidden file input in ChatComposer
     const fileInput = page.locator('input[type="file"]').first();

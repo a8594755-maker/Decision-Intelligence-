@@ -1,6 +1,6 @@
 import { approvePlan, approveReview, retryTask } from './orchestrator.js';
-import * as taskRepo from './persistence/taskRepo.js';
-import * as employeeRepo from './persistence/employeeRepo.js';
+import { TASK_STATES } from './taskStateMachine.js';
+import { EMPLOYEE_STATES, EMPLOYEE_STATE_TO_DB } from './employeeStateMachine.js';
 import { callLLM } from '../aiEmployeeLLMService.js';
 import { buildDeliverablePreview } from './deliverableProfile.js';
 import { maybeCreateOutputProfileProposalFromReview } from './styleLearning/reviewProposalService.js';
@@ -27,29 +27,20 @@ function buildReviewLlmFn(task, runId = null) {
 
 /**
  * Run a task from the task board.
- * All tasks now go through the orchestrator.
+ * All tasks go through the orchestrator.
  */
 export async function runTask(task, userId) {
   if (!task?.id) throw new Error('Task is required.');
   if (!userId) throw new Error('userId is required.');
 
-  if (task.status === 'waiting_approval') {
+  if (task.status === TASK_STATES.WAITING_APPROVAL) {
     await approvePlan(task.id, userId);
-    return { nextStatus: 'queued' };
+    return { nextStatus: TASK_STATES.QUEUED };
   }
 
-  if (task.status === 'failed') {
+  if (task.status === TASK_STATES.FAILED) {
     await retryTask(task.id, userId);
-    return { nextStatus: 'queued' };
-  }
-
-  // Legacy tasks in 'todo' status: they don't have plan_snapshot,
-  // so they cannot be run through the orchestrator. Show a clear error.
-  if (task.status === 'todo' && !task.plan_snapshot?.steps?.length) {
-    throw new Error(
-      'This task was created with the legacy system and cannot be executed. ' +
-      'Please create a new task from the task board.',
-    );
+    return { nextStatus: TASK_STATES.QUEUED };
   }
 
   throw new Error(`Task status "${task.status}" cannot be run from the task board.`);
@@ -57,8 +48,7 @@ export async function runTask(task, userId) {
 
 /**
  * Resolve a manager review decision.
- * Unified to always go through the orchestrator for review_hold tasks.
- * Falls back to direct DB updates for legacy waiting_review tasks.
+ * All review tasks go through the orchestrator.
  */
 export async function resolveReviewDecision(task, {
   userId,
@@ -70,7 +60,10 @@ export async function resolveReviewDecision(task, {
   if (!task?.id) throw new Error('Task is required.');
   if (!userId) throw new Error('userId is required.');
 
-  const empId = task.employee_id || task.ai_employees?.id || null;
+  if (task.status !== TASK_STATES.REVIEW_HOLD) {
+    throw new Error(`Task status "${task.status}" is not reviewable.`);
+  }
+
   const reviewLlmFn = comment ? buildReviewLlmFn(task, run?.id || null) : null;
   const deliverable = task ? buildDeliverablePreview(task) : null;
   const revision = deliverable ? {
@@ -84,95 +77,49 @@ export async function resolveReviewDecision(task, {
 
   let outputProfileProposal = null;
 
-  // ── Path 1: Orchestrator review_hold — the primary path ──
-  if (task.status === 'review_hold') {
-    if (decision === 'approved') {
-      await approveReview(task.id, userId, {
-        feedback: comment || null,
-        revision,
-        llmFn: reviewLlmFn,
-      });
-
-      outputProfileProposal = await _tryCreateProposal(task, review, run, decision, comment, userId);
-
-      return {
-        previousStatus: 'review_hold',
-        nextStatus: 'in_progress',
-        employeeStatus: 'working',
-        message: outputProfileProposal
-          ? 'Review approved and execution resumed. House-style proposal queued for approval.'
-          : 'Review approved and execution resumed.',
-        toastType: 'success',
-        outputProfileProposal,
-      };
-    }
-
-    // needs_revision or rejected
-    const nextStatus = decision === 'needs_revision' ? 'failed' : 'blocked';
-    const employeeStatus = decision === 'needs_revision' ? 'idle' : 'blocked';
-
-    // Use taskRepo directly (version-aware update)
-    const currentTask = await taskRepo.getTask(task.id);
-    await taskRepo.updateTaskStatus(task.id, nextStatus, currentTask.version);
-    if (empId) {
-      try { await employeeRepo.updateEmployeeStatus(empId, employeeStatus); } catch { /* best-effort */ }
-    }
+  if (decision === 'approved') {
+    await approveReview(task.id, userId, {
+      feedback: comment || null,
+      revision,
+      llmFn: reviewLlmFn,
+    });
 
     outputProfileProposal = await _tryCreateProposal(task, review, run, decision, comment, userId);
 
     return {
-      previousStatus: 'review_hold',
-      nextStatus,
-      employeeStatus,
+      previousStatus: TASK_STATES.REVIEW_HOLD,
+      nextStatus: TASK_STATES.IN_PROGRESS,
+      employeeStatus: EMPLOYEE_STATE_TO_DB[EMPLOYEE_STATES.BUSY],
       message: outputProfileProposal
-        ? `${decision === 'needs_revision'
-          ? 'Revision requested. Task marked failed and can be retried from the Task Board.'
-          : 'Task rejected.'} House-style proposal queued for approval.`
-        : decision === 'needs_revision'
-          ? 'Revision requested. Task marked failed and can be retried from the Task Board.'
-          : 'Task rejected.',
-      toastType: decision === 'needs_revision' ? 'warning' : 'error',
+        ? 'Review approved and execution resumed. House-style proposal queued for approval.'
+        : 'Review approved and execution resumed.',
+      toastType: 'success',
       outputProfileProposal,
     };
   }
 
-  // ── Path 2: Legacy waiting_review tasks ──
-  // These are old tasks that went through the legacy loop. Handle with direct DB updates.
-  const nextStatus = decision === 'approved'
-    ? 'done'
-    : decision === 'needs_revision'
-      ? 'in_progress'
-      : 'blocked';
-  const employeeStatus = decision === 'approved'
-    ? 'idle'
-    : decision === 'needs_revision'
-      ? 'working'
-      : 'blocked';
-
-  const currentTask = await taskRepo.getTask(task.id);
-  await taskRepo.updateTaskStatus(task.id, nextStatus, currentTask.version);
-  if (empId) {
-    try { await employeeRepo.updateEmployeeStatus(empId, employeeStatus); } catch { /* best-effort */ }
-  }
+  // needs_revision or rejected — route through orchestrator for consistent state transitions
+  await approveReview(task.id, userId, {
+    feedback: comment || null,
+    decision,
+    revision,
+    llmFn: reviewLlmFn,
+  });
 
   outputProfileProposal = await _tryCreateProposal(task, review, run, decision, comment, userId);
 
   return {
-    previousStatus: task.status || 'waiting_review',
-    nextStatus,
-    employeeStatus,
+    previousStatus: TASK_STATES.REVIEW_HOLD,
+    nextStatus: TASK_STATES.FAILED,
+    employeeStatus: EMPLOYEE_STATE_TO_DB[EMPLOYEE_STATES.IDLE],
     message: outputProfileProposal
-      ? `${decision === 'approved'
-        ? 'Task approved and marked done.'
-        : decision === 'needs_revision'
-          ? 'Revision requested — task sent back for retry.'
-          : 'Task rejected.'} House-style proposal queued for approval.`
-      : decision === 'approved'
-        ? 'Task approved and marked done.'
-        : decision === 'needs_revision'
-          ? 'Revision requested — task sent back for retry.'
-          : 'Task rejected.',
-    toastType: decision === 'approved' ? 'success' : decision === 'needs_revision' ? 'warning' : 'error',
+      ? `${decision === 'needs_revision'
+        ? 'Revision requested. Task marked failed and can be retried from the Task Board.'
+        : 'Task rejected.'} House-style proposal queued for approval.`
+      : decision === 'needs_revision'
+        ? 'Revision requested. Task marked failed and can be retried from the Task Board.'
+        : 'Task rejected.',
+    toastType: decision === 'needs_revision' ? 'warning' : 'error',
     outputProfileProposal,
   };
 }

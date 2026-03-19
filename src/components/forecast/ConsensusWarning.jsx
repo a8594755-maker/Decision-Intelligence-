@@ -27,15 +27,26 @@ const ConsensusWarning = ({
     }
   };
 
-  const getLevelColor = (level) => {
-    switch (level) {
-      case 'high':
-        return 'red';
-      case 'medium':
-        return 'yellow';
-      default:
-        return 'blue';
-    }
+  // Static Tailwind class maps — dynamic `bg-${color}-50` gets purged in production
+  const LEVEL_STYLES = {
+    high: {
+      bg: 'bg-red-50', border: 'border-red-200', text: 'text-red-600', heading: 'text-red-800',
+      text700: 'text-red-700', text400: 'text-red-400', hoverText: 'hover:text-red-600',
+      bgBtn: 'bg-red-600', hoverBgBtn: 'hover:bg-red-700',
+      border300: 'border-red-300', bgHover100: 'hover:bg-red-100',
+    },
+    medium: {
+      bg: 'bg-yellow-50', border: 'border-yellow-200', text: 'text-yellow-600', heading: 'text-yellow-800',
+      text700: 'text-yellow-700', text400: 'text-yellow-400', hoverText: 'hover:text-yellow-600',
+      bgBtn: 'bg-yellow-600', hoverBgBtn: 'hover:bg-yellow-700',
+      border300: 'border-yellow-300', bgHover100: 'hover:bg-yellow-100',
+    },
+    low: {
+      bg: 'bg-blue-50', border: 'border-blue-200', text: 'text-blue-600', heading: 'text-blue-800',
+      text700: 'text-blue-700', text400: 'text-blue-400', hoverText: 'hover:text-blue-600',
+      bgBtn: 'bg-blue-600', hoverBgBtn: 'hover:bg-blue-700',
+      border300: 'border-blue-300', bgHover100: 'hover:bg-blue-100',
+    },
   };
 
   const getLevelBadgeVariant = (level) => {
@@ -71,14 +82,14 @@ const ConsensusWarning = ({
     }
   };
 
-  const levelColor = getLevelColor(level);
+  const styles = LEVEL_STYLES[level] || LEVEL_STYLES.low;
 
   if (compact) {
     return (
-      <div className={`bg-${levelColor}-50 border border-${levelColor}-200 rounded-lg p-3`}>
+      <div className={`${styles.bg} border ${styles.border} rounded-lg p-3`}>
         <div className="flex items-center space-x-2">
-          <AlertTriangle className={`w-4 h-4 text-${levelColor}-600`} />
-          <span className={`text-sm font-medium text-${levelColor}-800`}>
+          <AlertTriangle className={`w-4 h-4 ${styles.text}`} />
+          <span className={`text-sm font-medium ${styles.heading}`}>
             Model prediction deviation {deviation_pct?.toFixed(1)}%
           </span>
           <Badge variant={getLevelBadgeVariant(level)} className="text-xs">
@@ -90,16 +101,16 @@ const ConsensusWarning = ({
   }
 
   return (
-    <div className={`bg-${levelColor}-50 border border-${levelColor}-200 rounded-lg p-4 space-y-3`}>
+    <div className={`${styles.bg} border ${styles.border} rounded-lg p-4 space-y-3`}>
       {/* Header */}
       <div className="flex items-start justify-between">
         <div className="flex items-center space-x-2">
-          <AlertTriangle className={`w-5 h-5 text-${levelColor}-600`} />
+          <AlertTriangle className={`w-5 h-5 ${styles.text}`} />
           <div>
-            <h4 className={`font-semibold text-${levelColor}-800`}>
+            <h4 className={`font-semibold ${styles.heading}`}>
               Model Consensus Warning
             </h4>
-            <p className={`text-sm text-${levelColor}-700`}>
+            <p className={`text-sm ${styles.text700}`}>
               {message}
             </p>
           </div>
@@ -112,7 +123,7 @@ const ConsensusWarning = ({
           {onDismiss && (
             <button
               onClick={onDismiss}
-              className={`text-${levelColor}-400 hover:text-${levelColor}-600 transition-colors`}
+              className={`${styles.text400} ${styles.hoverText} transition-colors`}
             >
               &times;
             </button>
@@ -148,7 +159,7 @@ const ConsensusWarning = ({
           </div>
           
           <div className="text-right">
-            <div className={`text-lg font-bold text-${levelColor}-600`}>
+            <div className={`text-lg font-bold ${styles.text}`}>
               {deviation_pct?.toFixed(1)}%
             </div>
             <div className="text-xs text-gray-500">Deviation</div>
@@ -161,7 +172,7 @@ const ConsensusWarning = ({
         <div className="flex items-start space-x-2">
           {getRecommendationIcon(recommendation)}
           <div>
-            <p className={`text-sm font-medium text-${levelColor}-800 mb-1`}>
+            <p className={`text-sm font-medium ${styles.heading} mb-1`}>
               Smart Recommendation
             </p>
             <p className="text-sm text-gray-700">
@@ -176,21 +187,21 @@ const ConsensusWarning = ({
         {onModelSwitch && (
           <button
             onClick={() => onModelSwitch(consensusData.secondary_model?.toLowerCase())}
-            className={`px-3 py-2 bg-${levelColor}-600 text-white rounded-lg hover:bg-${levelColor}-700 transition-colors text-sm`}
+            className={`px-3 py-2 ${styles.bgBtn} text-white rounded-lg ${styles.hoverBgBtn} transition-colors text-sm`}
           >
             Switch to {consensusData.secondary_model?.toUpperCase()}
           </button>
         )}
         
         <button
-          className={`px-3 py-2 border border-${levelColor}-300 text-${levelColor}-700 rounded-lg hover:bg-${levelColor}-100 transition-colors text-sm`}
+          className={`px-3 py-2 border ${styles.border300} ${styles.text700} rounded-lg ${styles.bgHover100} transition-colors text-sm`}
         >
           View Detailed Analysis
         </button>
       </div>
 
       {/* Additional Context */}
-      <div className={`text-xs text-${levelColor}-600 border-t border-${levelColor}-200 pt-2`}>
+      <div className={`text-xs ${styles.text} border-t ${styles.border} pt-2`}>
         <p>
           When two models show significant prediction differences, it may indicate:
         </p>

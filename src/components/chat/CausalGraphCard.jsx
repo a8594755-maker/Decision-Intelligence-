@@ -22,7 +22,6 @@ import {
   Search,
   AlertTriangle,
   AlertOctagon,
-  ArrowDown,
   ChevronDown,
   ChevronRight,
   Lightbulb,

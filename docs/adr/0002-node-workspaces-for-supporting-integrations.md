@@ -26,7 +26,7 @@ The initial workspace members are:
 - `discord-bot/`
 - `excel-addin/`
 
-We will keep `opencloud-extension/`, `powerbi-connector/`, and platform-generated directories outside the workspace until they expose their own package manifest and dependency lifecycle.
+We will keep `powerbi-connector/` and platform-generated directories outside the workspace until they expose their own package manifest and dependency lifecycle.
 
 ## Consequences
 

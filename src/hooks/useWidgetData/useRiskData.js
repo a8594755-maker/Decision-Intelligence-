@@ -70,7 +70,9 @@ export default function useRiskData({ user, globalDataSource } = {}) {
     setLoading(true);
     setError(null);
 
+    let cancelled = false;
     const timeoutId = setTimeout(() => {
+      cancelled = true;
       setLoading(false);
       setError({ type: 'error', message: 'Connection timed out', hint: 'Supabase may be paused.' });
     }, 15000);
@@ -85,7 +87,6 @@ export default function useRiskData({ user, globalDataSource } = {}) {
         { mapSupplyCoverageToUI },
         { normalizeOpenPOBatch },
         { aggregateComponentDemandToDaily, normalizeKey },
-        { generateActionsBatch },
       ] = await Promise.all([
         import('../../services/supabaseClient'),
         import('../../domains/risk/coverageCalculator.js'),
@@ -94,7 +95,6 @@ export default function useRiskData({ user, globalDataSource } = {}) {
         import('../../components/risk/mapDomainToUI'),
         import('../../utils/poNormalizer'),
         import('../../utils/componentDemandAggregator'),
-        import('../../domains/risk/actionRecommender'),
       ]);
 
       // Step 0: Forecast Runs
@@ -257,8 +257,10 @@ export default function useRiskData({ user, globalDataSource } = {}) {
         riskRowsWithoutDemand: [...union].filter(k => !demandKeys.has(k)).length,
       });
 
+      if (cancelled) return;
       setUiRows(calculatedRows);
     } catch (err) {
+      if (cancelled) return;
       if (err.message === 'EMPTY_PO_DATA') {
         setError({ type: 'empty', message: 'No Open PO data', hint: 'Upload po_open_lines.xlsx' });
       } else {
@@ -266,7 +268,7 @@ export default function useRiskData({ user, globalDataSource } = {}) {
       }
     } finally {
       clearTimeout(timeoutId);
-      setLoading(false);
+      if (!cancelled) setLoading(false);
     }
   }, [user?.id, selectedForecastRunId, globalDataSource]);
 

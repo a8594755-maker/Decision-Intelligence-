@@ -371,11 +371,8 @@ export async function processSupplierEvent({
 
   // 4. Persist to Supabase (best-effort, graceful degradation)
   try {
-    const { createClient } = await import('@supabase/supabase-js');
-    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-    const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-    if (supabaseUrl && supabaseKey) {
-      const sb = createClient(supabaseUrl, supabaseKey);
+    const { supabase: sb } = await import('./supabaseClient.js');
+    if (sb) {
       await sb.from('supplier_events').insert({
         event_id: normalized.event.event_id,
         event_type: normalized.event.event_type,

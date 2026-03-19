@@ -19,6 +19,7 @@
  *   - artifact_completeness_rate: % tasks with all expected artifacts
  */
 import { supabase } from '../../supabaseClient.js';
+import { TASK_STATES } from '../taskStateMachine.js';
 
 const TABLE = 'trust_metrics';
 const TASKS_TABLE = 'ai_employee_tasks';
@@ -56,8 +57,8 @@ export async function computeMetrics(employeeId, periodStart, periodEnd) {
     fetchAiReviews(employeeId, startStr, endStr),
   ]);
 
-  const completedTasks = tasks.filter(t => ['done', 'succeeded'].includes(t.status));
-  const failedTasks = tasks.filter(t => t.status === 'failed');
+  const completedTasks = tasks.filter(t => t.status === TASK_STATES.DONE);
+  const failedTasks = tasks.filter(t => t.status === TASK_STATES.FAILED);
 
   // Core metrics
   const firstPassAcceptanceRate = computeFirstPassRate(reviews, completedTasks);
@@ -415,9 +416,15 @@ async function fetchTasks(employeeId, startStr, endStr) {
 }
 
 async function fetchReviews(employeeId, startStr, endStr) {
+  // Scope to this employee's tasks to avoid cross-worker contamination
+  const tasks = await fetchTasks(employeeId, startStr, endStr);
+  const taskIds = tasks.map(t => t.id);
+  if (!taskIds.length) return [];
+
   const { data } = await supabase
     .from(REVIEWS_TABLE)
     .select('task_id, reviewer_type, decision, created_at')
+    .in('task_id', taskIds)
     .gte('created_at', startStr)
     .lte('created_at', endStr);
   return data || [];
@@ -434,9 +441,15 @@ async function fetchMemories(employeeId, startStr, endStr) {
 }
 
 async function fetchAiReviews(employeeId, startStr, endStr) {
+  // Scope to this employee's tasks to avoid cross-worker contamination
+  const tasks = await fetchTasks(employeeId, startStr, endStr);
+  const taskIds = tasks.map(t => t.id);
+  if (!taskIds.length) return [];
+
   const { data } = await supabase
     .from(AI_REVIEWS_TABLE)
     .select('task_id, score, passed, created_at')
+    .in('task_id', taskIds)
     .gte('created_at', startStr)
     .lte('created_at', endStr);
   return data || [];

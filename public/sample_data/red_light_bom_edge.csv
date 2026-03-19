@@ -1,0 +1,4 @@
+parent_material,child_material,qty_per,plant_id,uom
+FG-2000,COMP-001,1.0,PLANT-01,pcs
+FG-2000,COMP-002,1.0,PLANT-01,pcs
+FG-2000,COMP-003,0.5,PLANT-01,pcs

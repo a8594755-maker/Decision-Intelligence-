@@ -196,16 +196,22 @@ export async function importPoliciesBatch(employeeId, policies, createdBy) {
 
 // ─── Search ──────────────────────────────────────────────────
 
+/** Escape PostgREST filter special chars to prevent filter injection. */
+function _sanitizeFilterValue(val) {
+  return String(val).replace(/[,.()"\\]/g, '');
+}
+
 /**
  * Search policies by keyword (title + content).
  */
 export async function searchPolicies(employeeId, keyword) {
+  const safe = _sanitizeFilterValue(keyword);
   const { data, error } = await supabase
     .from(TABLE)
     .select('*')
     .eq('employee_id', employeeId)
     .eq('active', true)
-    .or(`title.ilike.%${keyword}%,content.ilike.%${keyword}%`)
+    .or(`title.ilike.%${safe}%,content.ilike.%${safe}%`)
     .order('priority', { ascending: false })
     .limit(20);
 

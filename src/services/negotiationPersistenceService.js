@@ -22,7 +22,8 @@ const nowIso = () => new Date().toISOString();
 async function trySupabase(fn) {
   try {
     return await fn();
-  } catch {
+  } catch (err) {
+    console.warn('[negotiationPersistence] Supabase error:', err.message);
     return null;
   }
 }

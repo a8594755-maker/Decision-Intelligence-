@@ -7,6 +7,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { supabase } from '../../services/supabaseClient';
+import { escapeIlike } from '../../utils/dataServiceHelpers';
 
 const ITEMS_PER_PAGE = 100;
 
@@ -75,7 +76,7 @@ export default function useBOMData({ user, globalDataSource, initialTab = 'bom_e
         if (def.key === 'source') {
           query = query.eq('source', val);
         } else {
-          query = query.ilike(def.key, `%${val}%`);
+          query = query.ilike(def.key, `%${escapeIlike(val)}%`);
         }
       }
 

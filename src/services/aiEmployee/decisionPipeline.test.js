@@ -10,7 +10,6 @@ import {
   TASK_EVENTS,
   isTaskTerminal,
   isTaskWaiting,
-  canTaskTransition,
 } from './taskStateMachine.js';
 
 import {
@@ -171,7 +170,7 @@ describe('Decision Pipeline Service', () => {
     it('classifies publish steps', () => {
       expect(classifyStepPhase({ name: 'export_excel' })).toBe(PIPELINE_PHASES.PUBLISH);
       expect(classifyStepPhase({ name: 'writeback_sap' })).toBe(PIPELINE_PHASES.PUBLISH);
-      expect(classifyStepPhase({ name: 'opencloud_publish' })).toBe(PIPELINE_PHASES.PUBLISH);
+      expect(classifyStepPhase({ name: 'share_report' })).toBe(PIPELINE_PHASES.PUBLISH);
     });
 
     it('respects explicit pipeline_phase override', () => {

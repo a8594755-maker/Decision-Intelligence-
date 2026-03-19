@@ -8,7 +8,7 @@
 import React from 'react';
 import BOMWidget from '../components/canvas/widgets/BOMWidget';
 
-const BOMDataViewLite = ({ user, addNotification, globalDataSource }) => {
+const BOMDataViewLite = ({ user, addNotification: _addNotification, globalDataSource }) => {
   return (
     <div className="h-full">
       <BOMWidget

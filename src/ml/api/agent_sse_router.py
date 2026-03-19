@@ -1,7 +1,7 @@
 """
 agent_sse_router.py — Server-Sent Events for agent loop step progress
 
-Inspired by OpenCloud's services/sse/ pattern.
+Event-stream routing for agent updates.
 Provides real-time push of step execution events to the frontend,
 replacing polling-based progress tracking.
 

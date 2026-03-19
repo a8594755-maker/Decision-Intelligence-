@@ -1,16 +1,18 @@
 /**
  * stepStateMachine.js — Pure state transition functions for agent loop steps.
  *
- * Step States (7):
+ * Step States (8):
  *   pending → running → succeeded
  *                    → failed → retrying → succeeded | failed
  *                    → skipped
  *   pending → waiting_input → pending (when input received)
+ *   pending → review_hold → pending (when approved) | skipped | failed
  */
 
 export const STEP_STATES = Object.freeze({
   PENDING:       'pending',
   WAITING_INPUT: 'waiting_input',
+  REVIEW_HOLD:   'review_hold',
   RUNNING:       'running',
   SUCCEEDED:     'succeeded',
   FAILED:        'failed',
@@ -19,13 +21,15 @@ export const STEP_STATES = Object.freeze({
 });
 
 export const STEP_EVENTS = Object.freeze({
-  START:          'start',
-  SUCCEED:        'succeed',
-  FAIL:           'fail',
-  RETRY:          'retry',
-  SKIP:           'skip',
-  NEED_INPUT:     'need_input',
-  INPUT_RECEIVED: 'input_received',
+  START:            'start',
+  SUCCEED:          'succeed',
+  FAIL:             'fail',
+  RETRY:            'retry',
+  SKIP:             'skip',
+  NEED_INPUT:       'need_input',
+  INPUT_RECEIVED:   'input_received',
+  HOLD:             'hold',
+  REVIEW_APPROVED:  'review_approved',
 });
 
 const TRANSITIONS = {
@@ -33,10 +37,16 @@ const TRANSITIONS = {
     [STEP_EVENTS.START]:      STEP_STATES.RUNNING,
     [STEP_EVENTS.SKIP]:       STEP_STATES.SKIPPED,
     [STEP_EVENTS.NEED_INPUT]: STEP_STATES.WAITING_INPUT,
+    [STEP_EVENTS.HOLD]:       STEP_STATES.REVIEW_HOLD,
   },
   [STEP_STATES.WAITING_INPUT]: {
     [STEP_EVENTS.INPUT_RECEIVED]: STEP_STATES.PENDING,
     [STEP_EVENTS.SKIP]:           STEP_STATES.SKIPPED,
+  },
+  [STEP_STATES.REVIEW_HOLD]: {
+    [STEP_EVENTS.REVIEW_APPROVED]: STEP_STATES.PENDING,
+    [STEP_EVENTS.SKIP]:            STEP_STATES.SKIPPED,
+    [STEP_EVENTS.FAIL]:            STEP_STATES.FAILED,
   },
   [STEP_STATES.RUNNING]: {
     [STEP_EVENTS.SUCCEED]: STEP_STATES.SUCCEEDED,
@@ -44,6 +54,7 @@ const TRANSITIONS = {
   },
   [STEP_STATES.FAILED]: {
     [STEP_EVENTS.RETRY]: STEP_STATES.RETRYING,
+    [STEP_EVENTS.SKIP]:  STEP_STATES.SKIPPED,
   },
   [STEP_STATES.RETRYING]: {
     [STEP_EVENTS.START]:   STEP_STATES.RUNNING,
@@ -93,4 +104,8 @@ export function isStepFailed(state) {
 
 export function isStepWaitingInput(state) {
   return state === STEP_STATES.WAITING_INPUT;
+}
+
+export function isStepOnHold(state) {
+  return state === STEP_STATES.REVIEW_HOLD;
 }

@@ -20,8 +20,17 @@ import { extractPoliciesFromText, importPoliciesBatch } from './policyIngestionS
 import { createExemplarFromFile } from './exemplarService.js';
 import { extractRulesFromFeedback } from './feedbackStyleExtractor.js';
 import { computeAndSave as computeTrustMetrics } from './trustMetricsService.js';
+import { createProfileFromLegacyStyleProfile } from './companyOutputProfileService.js';
 
 const JOBS_TABLE = 'style_ingestion_jobs';
+
+/** Best-effort DB call — swallows errors when Supabase is unreachable. */
+async function safeDbCall(fn) {
+  try { return await fn(); } catch (err) {
+    console.warn('[onboarding] DB call skipped (offline?):', err.message);
+    return null;
+  }
+}
 
 // ─── Onboarding Status ───────────────────────────────────────
 
@@ -33,7 +42,17 @@ export const ONBOARDING_STAGES = {
   FEEDBACK:     'extracting_feedback',
   METRICS:      'computing_metrics',
   COMPLETE:     'complete',
+  FAILED:       'failed',
+  IN_PROGRESS:  'in_progress',
 };
+
+/** DB job statuses (Supabase jobs table values) */
+const JOB_STATUS = Object.freeze({
+  PENDING:    'pending',
+  COMPLETED:  'completed',
+  FAILED:     'failed',
+  PROCESSING: 'processing',
+});
 
 // ─── Full Onboarding Pipeline ────────────────────────────────
 
@@ -57,13 +76,20 @@ export const ONBOARDING_STAGES = {
 export async function runOnboarding(params) {
   const { employeeId, teamId, inputs = {}, llmFn, userId, onProgress } = params;
 
-  const job = await createJob(employeeId, 'onboarding', {
-    teamId, docType: inputs.docType,
-    hasHandbook: !!inputs.handbookText,
-    policyCount: inputs.policies?.length || 0,
-    exemplarCount: inputs.exemplarFiles?.length || 0,
-    bulkFileCount: inputs.bulkFiles?.length || 0,
-  }, userId);
+  let job;
+  try {
+    job = await createJob(employeeId, 'onboarding', {
+      teamId, docType: inputs.docType,
+      hasHandbook: !!inputs.handbookText,
+      policyCount: inputs.policies?.length || 0,
+      exemplarCount: inputs.exemplarFiles?.length || 0,
+      bulkFileCount: inputs.bulkFiles?.length || 0,
+    }, userId);
+  } catch (jobErr) {
+    // Supabase offline — run pipeline in local-only mode
+    console.warn('[onboarding] Job tracking unavailable (Supabase offline?), continuing without persistence:', jobErr.message);
+    job = { id: `local_${Date.now()}` };
+  }
 
   const result = {
     jobId: job.id,
@@ -78,18 +104,26 @@ export async function runOnboarding(params) {
   try {
     // Stage 1: Policy Ingestion
     onProgress?.(ONBOARDING_STAGES.POLICIES, 'Starting policy ingestion...');
-    await updateJobStatus(job.id, 'processing');
+    await safeDbCall(() => updateJobStatus(job.id, 'processing'));
 
     if (inputs.handbookText && llmFn) {
-      const policies = await extractPoliciesFromText(inputs.handbookText, {
-        employeeId, teamId, sourceFile: 'handbook', createdBy: userId,
-      }, llmFn);
-      result.policiesCreated += policies.length;
+      try {
+        const policies = await extractPoliciesFromText(inputs.handbookText, {
+          employeeId, teamId, sourceFile: 'handbook', createdBy: userId,
+        }, llmFn);
+        result.policiesCreated += policies.length;
+      } catch (err) {
+        result.errors.push({ stage: 'policies', error: err.message });
+      }
     }
 
     if (inputs.policies?.length) {
-      const imported = await importPoliciesBatch(employeeId, inputs.policies, userId);
-      result.policiesCreated += imported.length;
+      try {
+        const imported = await importPoliciesBatch(employeeId, inputs.policies, userId);
+        result.policiesCreated += imported.length;
+      } catch (err) {
+        result.errors.push({ stage: 'policies_batch', error: err.message });
+      }
     }
 
     // Stage 2: Exemplar Ingestion
@@ -140,7 +174,16 @@ export async function runOnboarding(params) {
             doc_type: docType,
             profile_name: `${docType}_profile`,
           });
-          await saveProfile(profile);
+          await safeDbCall(() => saveProfile(profile));
+
+          // Bridge: also create a company_output_profile so OutputProfilesPage can see it
+          await safeDbCall(() => createProfileFromLegacyStyleProfile({
+            employeeId,
+            docType,
+            teamId: teamId || null,
+            actorUserId: userId,
+          }));
+
           result.profileCreated = true;
         }
       }
@@ -171,12 +214,12 @@ export async function runOnboarding(params) {
     }
 
     // Done
-    await updateJobCompleted(job.id, result);
+    await safeDbCall(() => updateJobCompleted(job.id, result));
     onProgress?.(ONBOARDING_STAGES.COMPLETE, 'Onboarding complete!');
 
   } catch (err) {
     result.errors.push({ stage: 'unknown', error: err.message });
-    await updateJobFailed(job.id, err.message, result);
+    await safeDbCall(() => updateJobFailed(job.id, err.message, result));
     throw err;
   }
 
@@ -257,9 +300,9 @@ export async function getOnboardingStatus(employeeId) {
   if (!jobs?.length) return { stage: ONBOARDING_STAGES.NOT_STARTED, job: null };
 
   const job = jobs[0];
-  if (job.status === 'completed') return { stage: ONBOARDING_STAGES.COMPLETE, job };
-  if (job.status === 'failed') return { stage: 'failed', job };
-  if (job.status === 'processing') return { stage: 'in_progress', job };
+  if (job.status === JOB_STATUS.COMPLETED) return { stage: ONBOARDING_STAGES.COMPLETE, job };
+  if (job.status === JOB_STATUS.FAILED) return { stage: ONBOARDING_STAGES.FAILED, job };
+  if (job.status === JOB_STATUS.PROCESSING) return { stage: ONBOARDING_STAGES.IN_PROGRESS, job };
 
   return { stage: ONBOARDING_STAGES.NOT_STARTED, job };
 }
@@ -274,7 +317,7 @@ async function createJob(employeeId, jobType, config, userId) {
     .insert({
       employee_id: employeeId,
       job_type: jobType,
-      status: 'pending',
+      status: JOB_STATUS.PENDING,
       total_files: totalFiles,
       config,
       created_by: userId,
@@ -289,7 +332,7 @@ async function createJob(employeeId, jobType, config, userId) {
 async function updateJobStatus(jobId, status) {
   await supabase.from(JOBS_TABLE).update({
     status,
-    started_at: status === 'processing' ? new Date().toISOString() : undefined,
+    started_at: status === JOB_STATUS.PROCESSING ? new Date().toISOString() : undefined,
   }).eq('id', jobId);
 }
 
@@ -299,7 +342,7 @@ async function updateJobProgress(jobId, processed, total) {
 
 async function updateJobCompleted(jobId, result) {
   await supabase.from(JOBS_TABLE).update({
-    status: 'completed',
+    status: JOB_STATUS.COMPLETED,
     completed_at: new Date().toISOString(),
     result,
   }).eq('id', jobId);
@@ -307,7 +350,7 @@ async function updateJobCompleted(jobId, result) {
 
 async function updateJobFailed(jobId, errorMsg, result = {}) {
   await supabase.from(JOBS_TABLE).update({
-    status: 'failed',
+    status: JOB_STATUS.FAILED,
     completed_at: new Date().toISOString(),
     error_log: [{ error: errorMsg, at: new Date().toISOString() }],
     result,

@@ -12,7 +12,22 @@ import { useState, useEffect } from 'react';
 import { supabase } from '../services/supabaseClient';
 
 /* ── circuit-breaker: skip tables that returned 404 / schema-cache miss ── */
-const _unavailableTables = new Set();
+const TABLE_BLACKLIST_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const _unavailableTables = new Map(); // tableName → timestamp
+
+function markTableUnavailable(table) {
+  _unavailableTables.set(table, Date.now());
+}
+
+function isTableUnavailable(table) {
+  const ts = _unavailableTables.get(table);
+  if (ts == null) return false;
+  if (Date.now() - ts > TABLE_BLACKLIST_TTL_MS) {
+    _unavailableTables.delete(table);
+    return false;
+  }
+  return true;
+}
 
 function isTableMissing(error) {
   if (!error) return false;
@@ -71,7 +86,7 @@ export function useDecisionOverview(userId) {
       };
 
       // 1. Latest data quality report artifact
-      if (!_unavailableTables.has('di_artifacts')) {
+      if (!isTableUnavailable('di_artifacts')) {
         try {
           const { data: dqArtifacts, error } = await supabase
             .from('di_artifacts')
@@ -82,7 +97,7 @@ export function useDecisionOverview(userId) {
             .limit(1);
 
           if (error && isTableMissing(error)) {
-            _unavailableTables.add('di_artifacts');
+            markTableUnavailable('di_artifacts');
           } else if (dqArtifacts?.[0]?.payload) {
             const dq = typeof dqArtifacts[0].payload === 'string'
               ? JSON.parse(dqArtifacts[0].payload)
@@ -100,12 +115,12 @@ export function useDecisionOverview(userId) {
             result.import_quality = dq.import_quality;
           }
         } catch {
-          _unavailableTables.add('di_artifacts');
+          markTableUnavailable('di_artifacts');
         }
       }
 
       // 2. Latest plan run to get risk context
-      if (!_unavailableTables.has('di_runs')) {
+      if (!isTableUnavailable('di_runs')) {
         try {
           const { error } = await supabase
             .from('di_runs')
@@ -115,15 +130,15 @@ export function useDecisionOverview(userId) {
             .limit(1);
 
           if (error && (isTableMissing(error) || isColumnMissing(error))) {
-            _unavailableTables.add('di_runs');
+            markTableUnavailable('di_runs');
           }
         } catch {
-          _unavailableTables.add('di_runs');
+          markTableUnavailable('di_runs');
         }
       }
 
       // 3. Open action items count
-      if (!_unavailableTables.has('di_action_items')) {
+      if (!isTableUnavailable('di_action_items')) {
         try {
           const { count, error } = await supabase
             .from('di_action_items')
@@ -132,12 +147,12 @@ export function useDecisionOverview(userId) {
             .in('status', ['open', 'in_progress']);
 
           if (error && isTableMissing(error)) {
-            _unavailableTables.add('di_action_items');
+            markTableUnavailable('di_action_items');
           } else {
             result.open_actions_count = count || 0;
           }
         } catch {
-          _unavailableTables.add('di_action_items');
+          markTableUnavailable('di_action_items');
         }
       }
 

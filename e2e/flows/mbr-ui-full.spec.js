@@ -58,7 +58,7 @@ test.describe('MBR UI Full Pipeline', () => {
     console.log('\n[1/6] Opening app...');
     let t0 = Date.now();
 
-    const chatInput = await openChatPage(page, '/');
+    const chatInput = await openChatPage(page, '/workspace');
     timings.pageLoad = Date.now() - t0;
     console.log(`[1/6] Page loaded in ${timings.pageLoad}ms`);
 

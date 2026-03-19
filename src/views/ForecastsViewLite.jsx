@@ -11,7 +11,7 @@
 import React from 'react';
 import ForecastWidget from '../components/canvas/widgets/ForecastWidget';
 
-const ForecastsViewLite = ({ user, addNotification }) => {
+const ForecastsViewLite = ({ user, addNotification: _addNotification }) => {
   return (
     <div className="h-full">
       <ForecastWidget

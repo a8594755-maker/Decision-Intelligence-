@@ -79,8 +79,8 @@ export default function EmployeeProfilePanel({ userId, employeeId = null }) {
   }
 
   const status = STATUS_STYLE[employee.status] || STATUS_STYLE.idle;
-  const activeTasks = tasks.filter((t) => t.status === 'in_progress' || t.status === 'todo');
-  const pendingReview = tasks.filter((t) => t.status === 'waiting_review');
+  const activeTasks = tasks.filter((t) => t.status === 'in_progress');
+  const pendingReview = tasks.filter((t) => t.status === 'review_hold');
 
   return (
     <div className="flex flex-col gap-4 p-4">

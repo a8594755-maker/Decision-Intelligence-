@@ -8,7 +8,7 @@
 import React from 'react';
 import RiskWidget from '../components/canvas/widgets/RiskWidget';
 
-const RiskDashboardViewLite = ({ user, addNotification, globalDataSource }) => {
+const RiskDashboardViewLite = ({ user, addNotification: _addNotification, globalDataSource }) => {
   return (
     <div className="h-full">
       <RiskWidget

@@ -189,6 +189,31 @@ describe('enforceApprovalGate', () => {
     });
     expect(result.allowed).toBe(false);
   });
+
+  it('does not auto-approve when thresholds require escalation', () => {
+    registerPolicy('tpl-threshold', createApprovalPolicy({
+      worker_template_id: 'tpl-threshold',
+      rules: [{
+        action_type: 'notify',
+        requires_approval: true,
+        thresholds: { risk_level: 'medium' },
+        auto_approve_at: ['A3', 'A4'],
+      }],
+    }));
+
+    const result = enforceApprovalGate({
+      taskId: TASK_ID,
+      actionType: 'notify',
+      workerTemplateId: 'tpl-threshold',
+      autonomyLevel: 'A3',
+      decisionBrief: {
+        risk_flags: [{ level: 'high', category: 'supply', description: 'Critical disruption' }],
+      },
+    });
+
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toContain('Risk level');
+  });
 });
 
 describe('submitResolution', () => {

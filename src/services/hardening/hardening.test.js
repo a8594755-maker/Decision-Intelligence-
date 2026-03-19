@@ -155,6 +155,11 @@ import {
   transformToErpPayload,
   validateForErp,
   SAP_IDOC_FIXTURES,
+  ADAPTER_PAYLOAD_CONTRACT,
+  validateAdapterPayloadContract,
+  MUTATION_FIELD_TYPES,
+  validateMutationFieldTypes,
+  validateWritebackPayload,
 } from './erpAdapterPayload.js';
 
 describe('erpAdapterPayload', () => {
@@ -273,6 +278,241 @@ describe('erpAdapterPayload', () => {
       expect(SAP_IDOC_FIXTURES.material_master).toBeDefined();
       expect(SAP_IDOC_FIXTURES.purchase_order.IDOC_TYPE).toBe('ORDERS05');
       expect(SAP_IDOC_FIXTURES.material_master.IDOC_TYPE).toBe('MATMAS05');
+    });
+  });
+
+  // ── Contract lock tests (schema drift detection) ──────────────────────────
+  describe('ADAPTER_PAYLOAD_CONTRACT (schema lock)', () => {
+    it('contract version is 1.0', () => {
+      expect(ADAPTER_PAYLOAD_CONTRACT.version).toBe('1.0');
+    });
+
+    it('locks exactly 3 supported systems', () => {
+      expect(ADAPTER_PAYLOAD_CONTRACT.supported_systems).toEqual(['sap_mm', 'oracle_scm', 'generic']);
+    });
+
+    it('locks 8 required envelope keys', () => {
+      expect(ADAPTER_PAYLOAD_CONTRACT.required_envelope_keys).toEqual([
+        'target_system', 'schema_version', 'envelope_type',
+        'idempotency_key', 'approval_metadata', 'records',
+        'record_count', 'generated_at',
+      ]);
+    });
+
+    it('locks sap_mm record shape', () => {
+      expect(ADAPTER_PAYLOAD_CONTRACT.sap_mm_record_keys).toEqual([
+        'IDOC_TYPE', 'MESTYP', 'SNDPRT', 'SNDPRN', 'E1MARAM', 'E1MARCM', 'E1EISBE',
+      ]);
+    });
+
+    it('locks oracle_scm record shape', () => {
+      expect(ADAPTER_PAYLOAD_CONTRACT.oracle_scm_record_keys).toEqual([
+        'OrderType', 'VendorId', 'ShipToOrganizationCode', 'Lines',
+      ]);
+    });
+
+    it('locks generic record shape', () => {
+      expect(ADAPTER_PAYLOAD_CONTRACT.generic_record_keys).toEqual([
+        'action', 'entity', 'fields', 'metadata',
+      ]);
+    });
+
+    it('is frozen (immutable)', () => {
+      expect(Object.isFrozen(ADAPTER_PAYLOAD_CONTRACT)).toBe(true);
+      expect(Object.isFrozen(ADAPTER_PAYLOAD_CONTRACT.required_envelope_keys)).toBe(true);
+      expect(Object.isFrozen(ADAPTER_PAYLOAD_CONTRACT.supported_systems)).toBe(true);
+    });
+
+    it('each ERP_SCHEMAS entry version matches contract version', () => {
+      for (const key of ADAPTER_PAYLOAD_CONTRACT.supported_systems) {
+        expect(ERP_SCHEMAS[key].version).toBe(ADAPTER_PAYLOAD_CONTRACT.version);
+      }
+    });
+  });
+
+  describe('validateAdapterPayloadContract', () => {
+    it('passes for a valid SAP adapter payload', () => {
+      const result = transformToErpPayload(validPayload);
+      expect(result.ok).toBe(true);
+      const contractResult = validateAdapterPayloadContract(result.adapter_payload);
+      expect(contractResult.valid).toBe(true);
+      expect(contractResult.errors).toHaveLength(0);
+    });
+
+    it('passes for a valid Oracle SCM adapter payload', () => {
+      const oraclePayload = {
+        ...validPayload,
+        target_system: 'oracle_scm',
+      };
+      const result = transformToErpPayload(oraclePayload);
+      const contractResult = validateAdapterPayloadContract(result.adapter_payload);
+      expect(contractResult.valid).toBe(true);
+    });
+
+    it('passes for a valid generic adapter payload', () => {
+      const genericPayload = {
+        ...validPayload,
+        target_system: 'generic',
+        intended_mutations: [{
+          action: 'create_po',
+          entity: 'purchase_order',
+          field_changes: { material_code: 'MAT-001', quantity: 100 },
+        }],
+      };
+      const result = transformToErpPayload(genericPayload);
+      const contractResult = validateAdapterPayloadContract(result.adapter_payload);
+      expect(contractResult.valid).toBe(true);
+    });
+
+    it('rejects null/undefined input', () => {
+      expect(validateAdapterPayloadContract(null).valid).toBe(false);
+      expect(validateAdapterPayloadContract(undefined).valid).toBe(false);
+    });
+
+    it('detects missing envelope keys', () => {
+      const incomplete = { target_system: 'sap_mm', records: [] };
+      const result = validateAdapterPayloadContract(incomplete);
+      expect(result.valid).toBe(false);
+      expect(result.errors.some(e => e.includes('schema_version'))).toBe(true);
+    });
+
+    it('detects record_count mismatch', () => {
+      const payload = {
+        target_system: 'generic',
+        schema_version: '1.0',
+        envelope_type: 'GenericPayload',
+        idempotency_key: 'k',
+        approval_metadata: {},
+        records: [{ action: 'x', entity: 'y', fields: {}, metadata: {} }],
+        record_count: 99,
+        generated_at: new Date().toISOString(),
+      };
+      const result = validateAdapterPayloadContract(payload);
+      expect(result.valid).toBe(false);
+      expect(result.errors.some(e => e.includes('record_count'))).toBe(true);
+    });
+
+    it('detects missing record keys for SAP', () => {
+      const payload = {
+        target_system: 'sap_mm',
+        schema_version: '1.0',
+        envelope_type: 'MATMAS05',
+        idempotency_key: 'k',
+        approval_metadata: {},
+        records: [{ IDOC_TYPE: 'MATMAS05' }],
+        record_count: 1,
+        generated_at: new Date().toISOString(),
+      };
+      const result = validateAdapterPayloadContract(payload);
+      expect(result.valid).toBe(false);
+      expect(result.errors.some(e => e.includes('E1MARAM'))).toBe(true);
+    });
+
+    it('round-trip: transform → validate contract passes for all systems', () => {
+      for (const system of ADAPTER_PAYLOAD_CONTRACT.supported_systems) {
+        const testPayload = {
+          target_system: system,
+          idempotency_key: 'test',
+          approval_metadata: { approved_by: 'test' },
+          intended_mutations: [{
+            action: 'create_po',
+            entity: 'purchase_order',
+            field_changes: { material_code: 'MAT-001', plant_id: 'P10', quantity: 100 },
+          }],
+        };
+        const transformed = transformToErpPayload(testPayload);
+        expect(transformed.ok).toBe(true);
+        const contractResult = validateAdapterPayloadContract(transformed.adapter_payload);
+        expect(contractResult.valid).toBe(true);
+      }
+    });
+  });
+
+  // ── Mutation field type validation ─────────────────────────────────────────
+  describe('MUTATION_FIELD_TYPES (field type schema)', () => {
+    it('is frozen', () => {
+      expect(Object.isFrozen(MUTATION_FIELD_TYPES)).toBe(true);
+    });
+
+    it('defines types for all core fields', () => {
+      expect(MUTATION_FIELD_TYPES.material_code).toBe('string');
+      expect(MUTATION_FIELD_TYPES.plant_id).toBe('string');
+      expect(MUTATION_FIELD_TYPES.quantity).toBe('number');
+      expect(MUTATION_FIELD_TYPES.unit_cost).toBe('number');
+      expect(MUTATION_FIELD_TYPES.order_date).toBe('string');
+      expect(MUTATION_FIELD_TYPES.delivery_date).toBe('string');
+      expect(MUTATION_FIELD_TYPES.supplier_id).toBe('string');
+    });
+  });
+
+  describe('validateMutationFieldTypes', () => {
+    it('passes for correctly typed fields', () => {
+      const result = validateMutationFieldTypes({
+        material_code: 'MAT-001',
+        plant_id: 'P10',
+        quantity: 500,
+        delivery_date: '2026-04-15',
+      });
+      expect(result.valid).toBe(true);
+      expect(result.errors).toHaveLength(0);
+    });
+
+    it('rejects string where number expected', () => {
+      const result = validateMutationFieldTypes({ quantity: 'five hundred' });
+      expect(result.valid).toBe(false);
+      expect(result.errors[0]).toContain('quantity');
+      expect(result.errors[0]).toContain('number');
+    });
+
+    it('rejects number where string expected', () => {
+      const result = validateMutationFieldTypes({ material_code: 12345 });
+      expect(result.valid).toBe(false);
+      expect(result.errors[0]).toContain('material_code');
+    });
+
+    it('rejects negative quantity', () => {
+      const result = validateMutationFieldTypes({ quantity: -10 });
+      expect(result.valid).toBe(false);
+      expect(result.errors[0]).toContain('non-negative');
+    });
+
+    it('rejects invalid ISO date', () => {
+      const result = validateMutationFieldTypes({ delivery_date: 'not-a-date' });
+      expect(result.valid).toBe(false);
+      expect(result.errors[0]).toContain('ISO date');
+    });
+
+    it('allows null/undefined optional fields', () => {
+      const result = validateMutationFieldTypes({ supplier_id: null, unit_cost: undefined });
+      expect(result.valid).toBe(true);
+    });
+
+    it('passes through unknown fields without error', () => {
+      const result = validateMutationFieldTypes({ custom_field: 'anything' });
+      expect(result.valid).toBe(true);
+    });
+
+    it('rejects null input', () => {
+      const result = validateMutationFieldTypes(null);
+      expect(result.valid).toBe(false);
+    });
+  });
+
+  describe('validateWritebackPayload (full validation)', () => {
+    it('passes for valid payload with correct types', () => {
+      const result = validateWritebackPayload(validPayload, 'sap_mm');
+      expect(result.valid).toBe(true);
+    });
+
+    it('catches type errors even when required fields are present', () => {
+      const bad = {
+        intended_mutations: [{
+          field_changes: { material_code: 123, plant_id: 'P10', quantity: 'fifty' },
+        }],
+      };
+      const result = validateWritebackPayload(bad, 'sap_mm');
+      expect(result.valid).toBe(false);
+      expect(result.errors.length).toBeGreaterThanOrEqual(2);
     });
   });
 });

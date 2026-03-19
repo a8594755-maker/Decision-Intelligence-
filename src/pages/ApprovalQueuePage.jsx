@@ -8,16 +8,16 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import {
-  listPending,
-  approveItem,
-  rejectItem,
-  escalateItem,
+  getPendingApprovals as listPending,
+  approveGovernanceItem as approveItem,
+  rejectGovernanceItem as rejectItem,
+  escalateGovernanceItem as escalateItem,
   getGovernanceStats,
   checkEscalations,
   GOVERNANCE_TYPES,
   GOVERNANCE_STATUS,
   ESCALATION_REASONS,
-} from '../services/governanceService';
+} from '../services/approvalWorkflowService';
 import {
   CheckCircle, XCircle, AlertTriangle, Clock, Shield,
   ChevronDown, ChevronUp, Filter, RefreshCw, ArrowUpRight,
@@ -25,14 +25,26 @@ import {
 
 // ── Type Display Config ──────────────────────────────────────────────────────
 
+// Static Tailwind class map — dynamic `text-${color}-500` gets purged in production
+const TYPE_COLOR_CLASSES = {
+  blue:   'text-blue-500',
+  indigo: 'text-indigo-500',
+  green:  'text-green-500',
+  amber:  'text-amber-500',
+  red:    'text-red-500',
+  purple: 'text-purple-500',
+  teal:   'text-teal-500',
+  gray:   'text-gray-500',
+};
+
 const TYPE_META = {
-  plan_approval:    { label: 'Plan Approval',    color: 'blue',   icon: Shield },
-  step_approval:    { label: 'Step Approval',    color: 'indigo', icon: CheckCircle },
-  output_approval:  { label: 'Output Review',    color: 'green',  icon: CheckCircle },
-  revision_request: { label: 'Revision',         color: 'amber',  icon: AlertTriangle },
-  risk_replan:      { label: 'Risk Re-plan',     color: 'red',    icon: AlertTriangle },
-  closed_loop:      { label: 'Closed Loop',      color: 'purple', icon: RefreshCw },
-  model_promotion:  { label: 'Model Promotion',  color: 'teal',   icon: ArrowUpRight },
+  plan_approval:    { label: 'Plan Approval',    colorCls: TYPE_COLOR_CLASSES.blue,   icon: Shield },
+  step_approval:    { label: 'Step Approval',    colorCls: TYPE_COLOR_CLASSES.indigo, icon: CheckCircle },
+  output_approval:  { label: 'Output Review',    colorCls: TYPE_COLOR_CLASSES.green,  icon: CheckCircle },
+  revision_request: { label: 'Revision',         colorCls: TYPE_COLOR_CLASSES.amber,  icon: AlertTriangle },
+  risk_replan:      { label: 'Risk Re-plan',     colorCls: TYPE_COLOR_CLASSES.red,    icon: AlertTriangle },
+  closed_loop:      { label: 'Closed Loop',      colorCls: TYPE_COLOR_CLASSES.purple, icon: RefreshCw },
+  model_promotion:  { label: 'Model Promotion',  colorCls: TYPE_COLOR_CLASSES.teal,   icon: ArrowUpRight },
 };
 
 const URGENCY_COLORS = {
@@ -50,7 +62,7 @@ export default function ApprovalQueuePage() {
   const [filterType, setFilterType] = useState(null);
   const [expandedId, setExpandedId] = useState(null);
   const [actionLoading, setActionLoading] = useState(null);
-  const [comment, setComment] = useState('');
+  const [commentByItem, setCommentByItem] = useState({});
 
   const userId = user?.id;
 
@@ -86,8 +98,8 @@ export default function ApprovalQueuePage() {
   async function handleApprove(itemId) {
     setActionLoading(itemId);
     try {
-      await approveItem(itemId, userId, comment || 'Approved');
-      setComment('');
+      await approveItem(itemId, userId, commentByItem[itemId] || 'Approved');
+      setCommentByItem((prev) => { const next = { ...prev }; delete next[itemId]; return next; });
       setExpandedId(null);
       await loadData();
     } finally {
@@ -96,14 +108,14 @@ export default function ApprovalQueuePage() {
   }
 
   async function handleReject(itemId) {
-    if (!comment.trim()) {
+    if (!(commentByItem[itemId] || '').trim()) {
       alert('Please provide a reason for rejection.');
       return;
     }
     setActionLoading(itemId);
     try {
-      await rejectItem(itemId, userId, comment);
-      setComment('');
+      await rejectItem(itemId, userId, commentByItem[itemId]);
+      setCommentByItem((prev) => { const next = { ...prev }; delete next[itemId]; return next; });
       setExpandedId(null);
       await loadData();
     } finally {
@@ -114,8 +126,8 @@ export default function ApprovalQueuePage() {
   async function handleEscalate(itemId) {
     setActionLoading(itemId);
     try {
-      await escalateItem(itemId, ESCALATION_REASONS.MANUAL, comment || 'Manually escalated');
-      setComment('');
+      await escalateItem(itemId, ESCALATION_REASONS.MANUAL, commentByItem[itemId] || 'Manually escalated');
+      setCommentByItem((prev) => { const next = { ...prev }; delete next[itemId]; return next; });
       setExpandedId(null);
       await loadData();
     } finally {
@@ -234,7 +246,7 @@ export default function ApprovalQueuePage() {
                   onClick={() => setExpandedId(isExpanded ? null : item.id)}
                   className="w-full flex items-center gap-3 px-4 py-3 text-left"
                 >
-                  <TypeIcon className={`w-5 h-5 flex-shrink-0 text-${meta.color}-500`} />
+                  <TypeIcon className={`w-5 h-5 flex-shrink-0 ${meta.colorCls || TYPE_COLOR_CLASSES.gray}`} />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
                       <span className="font-medium text-sm truncate" style={{ color: 'var(--text-primary)' }}>
@@ -285,8 +297,8 @@ export default function ApprovalQueuePage() {
 
                     {/* Comment input */}
                     <textarea
-                      value={comment}
-                      onChange={(e) => setComment(e.target.value)}
+                      value={commentByItem[item.id] || ''}
+                      onChange={(e) => setCommentByItem((prev) => ({ ...prev, [item.id]: e.target.value }))}
                       placeholder="Add a comment (required for rejection)..."
                       rows={2}
                       className="w-full px-3 py-2 rounded-lg text-sm resize-none mb-3"

@@ -1,0 +1,21 @@
+{
+  "seq": 1,
+  "key": "POST__functions_v1_ai-proxy_1yxg6ny",
+  "request": {
+    "method": "POST",
+    "url": "<SUPABASE_URL>/functions/v1/ai-proxy",
+    "postData": {
+      "mode": "ping",
+      "payload": {}
+    }
+  },
+  "response": {
+    "status": 200,
+    "contentType": "application/json",
+    "body": {
+      "ok": true,
+      "mode": "ping"
+    }
+  },
+  "recordedAt": "2026-03-19T18:37:58.272Z"
+}

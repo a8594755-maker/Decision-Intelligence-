@@ -47,9 +47,17 @@ const ModelToggle = ({
   const selectedModelData = models.find(m => m.id === selectedModel);
   const recommendedModelData = models.find(m => m.id === recommendedModel);
 
-  const getModelColor = (modelId) => {
+  // Static Tailwind class map — dynamic `bg-${color}-50` gets purged in production
+  const MODEL_COLOR_CLASSES = {
+    blue:   { border: 'border-blue-500',   bg: 'bg-blue-50',   text: 'text-blue-600' },
+    purple: { border: 'border-purple-500', bg: 'bg-purple-50', text: 'text-purple-600' },
+    green:  { border: 'border-green-500',  bg: 'bg-green-50',  text: 'text-green-600' },
+    gray:   { border: 'border-gray-500',   bg: 'bg-gray-50',   text: 'text-gray-600' },
+  };
+
+  const getModelColorClasses = (modelId) => {
     const model = models.find(m => m.id === modelId);
-    return model?.color || 'gray';
+    return MODEL_COLOR_CLASSES[model?.color] || MODEL_COLOR_CLASSES.gray;
   };
 
   const getModelBadgeVariant = (modelId) => {
@@ -73,15 +81,15 @@ const ModelToggle = ({
                 disabled={disabled || !model.status || isLoading}
                 className={`
                   p-2 rounded-lg border transition-all duration-200
-                  ${selectedModel === model.id 
-                    ? `border-${getModelColor(model.id)}-500 bg-${getModelColor(model.id)}-50` 
+                  ${selectedModel === model.id
+                    ? `${getModelColorClasses(model.id).border} ${getModelColorClasses(model.id).bg}`
                     : 'border-gray-200 hover:border-gray-300'
                   }
                   ${disabled || !model.status || isLoading ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}
                 `}
                 title={model.description}
               >
-                <Icon className={`w-4 h-4 text-${getModelColor(model.id)}-600`} />
+                <Icon className={`w-4 h-4 ${getModelColorClasses(model.id).text}`} />
               </button>
             );
           })}
@@ -127,8 +135,8 @@ const ModelToggle = ({
               disabled={disabled || !model.status || isLoading}
               className={`
                 relative p-4 rounded-lg border-2 transition-all duration-200 text-left
-                ${isSelected 
-                  ? `border-${getModelColor(model.id)}-500 bg-${getModelColor(model.id)}-50` 
+                ${isSelected
+                  ? `${getModelColorClasses(model.id).border} ${getModelColorClasses(model.id).bg}`
                   : 'border-gray-200 hover:border-gray-300'
                 }
                 ${disabled || !model.status || isLoading ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:shadow-sm'}
@@ -155,7 +163,7 @@ const ModelToggle = ({
               {/* Model Content */}
               <div className="space-y-2">
                 <div className="flex items-center space-x-2">
-                  <Icon className={`w-5 h-5 text-${getModelColor(model.id)}-600`} />
+                  <Icon className={`w-5 h-5 ${getModelColorClasses(model.id).text}`} />
                   <h4 className="font-semibold text-gray-900">{model.name}</h4>
                 </div>
                 
@@ -202,7 +210,7 @@ const ModelToggle = ({
         <div className="bg-gray-50 rounded-lg p-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-2">
-              <selectedModelData.icon className={`w-4 h-4 text-${getModelColor(selectedModel)}-600`} />
+              <selectedModelData.icon className={`w-4 h-4 ${getModelColorClasses(selectedModel).text}`} />
               <span className="text-sm font-medium text-gray-700">
                 Current Selection: {selectedModelData.name}
               </span>

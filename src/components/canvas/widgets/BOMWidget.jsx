@@ -27,21 +27,11 @@ function DepthIndicator({ depth }) {
 // ── Artifact Mode (original pure-props display) ─────────────────────────────
 
 function BOMWidgetArtifact({ data = {} }) {
-  const [expandedNodes, setExpandedNodes] = useState(new Set());
-
   const tree = data.tree || data.bom_tree || data.edges || [];
-  const bottlenecks = data.bottlenecks || [];
+  const bottlenecks = Array.isArray(data.bottlenecks) ? data.bottlenecks : [];
   const componentDemands = data.component_demands || [];
 
-  const bottleneckSet = useMemo(() => new Set(bottlenecks.map(b => b.material_code)), [bottlenecks]);
-
-  const toggleNode = (code) => {
-    setExpandedNodes(prev => {
-      const next = new Set(prev);
-      if (next.has(code)) next.delete(code); else next.add(code);
-      return next;
-    });
-  };
+  const bottleneckSet = new Set(bottlenecks.map(b => b.material_code));
 
   return (
     <div className="flex flex-col h-full">
@@ -95,9 +85,8 @@ function BOMWidgetArtifact({ data = {} }) {
               {tree.map((row, i) => (
                 <tr
                   key={i}
-                  className="border-t cursor-pointer hover:bg-indigo-50/30"
+                  className="border-t hover:bg-indigo-50/30"
                   style={{ borderColor: 'var(--border-subtle)' }}
-                  onClick={() => toggleNode(row.material_code || row.child)}
                 >
                   <td className="py-1.5">
                     <div className="flex items-center gap-1">

@@ -9,7 +9,7 @@
  *  - Environment indicator
  */
 
-import React, { useState, useMemo } from 'react';
+import React, { useState } from 'react';
 import { NavLink } from 'react-router-dom';
 import {
   MessageSquare, ClipboardList, CheckSquare, Bot, Wrench, Layers, Shield,
@@ -35,6 +35,7 @@ const ADVANCED_NAV = [
 ];
 
 function NavItem({ to, label, icon: Icon, end }) {
+  const iconNode = React.createElement(Icon, { size: 14 });
   return (
     <NavLink
       to={to}
@@ -48,7 +49,7 @@ function NavItem({ to, label, icon: Icon, end }) {
       }
       style={({ isActive }) => ({ color: isActive ? undefined : 'var(--text-secondary)' })}
     >
-      <Icon size={14} />
+      {iconNode}
       <span>{label}</span>
     </NavLink>
   );

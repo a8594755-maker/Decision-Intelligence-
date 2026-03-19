@@ -8,9 +8,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { saveJsonArtifact } from '../utils/artifactStore';
-import { isOpenCloudConfigured } from '../config/opencloudConfig';
 import { toPowerBIDataset } from './externalToolBridgeService';
-import { distributeReport } from './opencloudArtifactSync';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -172,7 +170,7 @@ export async function generateReport({ format = 'html', artifacts, taskMeta, nar
       let artifact_ref = null;
       try {
         artifact_ref = await saveJsonArtifact(effectiveRunId, 'report_html', html, 500_000, {
-          label: `Report: ${taskMeta?.title || 'AI Report'}`,
+          filename: `report_html_${effectiveRunId}.html`,
         });
       } catch { /* artifact storage is best-effort */ }
 
@@ -201,7 +199,7 @@ export async function generateReport({ format = 'html', artifacts, taskMeta, nar
       let artifact_ref = null;
       try {
         artifact_ref = await saveJsonArtifact(effectiveRunId, 'report_json', data, 500_000, {
-          label: `Excel Report Data: ${taskMeta?.title || 'AI Report'}`,
+          filename: `report_json_${effectiveRunId}.json`,
         });
       } catch { /* best-effort */ }
 
@@ -218,30 +216,4 @@ export async function generateReport({ format = 'html', artifacts, taskMeta, nar
   }
 }
 
-// ── Generate + Distribute (convenience wrapper) ─────────────────────────────
-
-/**
- * Generate a report and distribute it via OpenCloud in one call.
- *
- * @param {object} opts - Same as generateReport() opts + { driveId, recipients }
- * @returns {Promise<{ report: object, distribution: object|null }>}
- */
-export async function generateAndDistribute(opts) {
-  const report = await generateReport(opts);
-
-  let distribution = null;
-  try {
-    if (isOpenCloudConfigured() && opts.driveId) {
-      distribution = await distributeReport(report, opts.driveId, opts.taskMeta?.id, {
-        recipients: opts.recipients,
-        employeeName: opts.employeeName,
-      });
-    }
-  } catch (err) {
-    console.warn('[reportGeneratorService] Auto-distribute failed:', err?.message);
-  }
-
-  return { report, distribution };
-}
-
-export default { generateReport, generateAndDistribute, fetchReportData, fetchFullReport, fetchMonthlyReport };
+export default { generateReport, fetchReportData, fetchFullReport, fetchMonthlyReport };

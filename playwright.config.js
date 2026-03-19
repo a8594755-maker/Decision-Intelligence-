@@ -16,19 +16,38 @@ export default defineConfig({
     { name: 'setup', testMatch: /auth\.setup\.js/ },
     {
       name: 'chromium',
-      use: { ...devices['Desktop Chrome'] },
+      use: {
+        ...devices['Desktop Chrome'],
+        storageState: 'e2e/.auth/storage-state.json',
+      },
       dependencies: ['setup'],
     },
     {
       name: 'flows',
       testDir: './e2e/flows',
+      testIgnore: /ai-.*\.spec\.js/,
       use: {
         ...devices['Desktop Chrome'],
+        storageState: 'e2e/.auth/storage-state.json',
         screenshot: 'on',
         video: 'retain-on-failure',
         actionTimeout: 15000,
       },
       timeout: 120_000, // 2min per test for workflow tests
+      dependencies: ['setup'],
+    },
+    {
+      name: 'ai-flows',
+      testDir: './e2e/flows',
+      testMatch: /ai-.*\.spec\.js/,
+      use: {
+        ...devices['Desktop Chrome'],
+        storageState: 'e2e/.auth/storage-state.json',
+        screenshot: 'on',
+        video: 'retain-on-failure',
+        actionTimeout: 30000,
+      },
+      timeout: 180_000, // 3min per test — AI actions need more time
       dependencies: ['setup'],
     },
   ],

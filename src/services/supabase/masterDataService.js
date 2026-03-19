@@ -231,11 +231,13 @@ export const suppliersService = {
       throw new Error('searchSuppliers requires userId');
     }
 
+    // Sanitize to prevent PostgREST filter injection
+    const safe = String(searchTerm).replace(/[,.()"\\]/g, '');
     const { data, error } = await supabase
       .from('suppliers')
       .select('*')
       .eq('user_id', userId)
-      .or(`supplier_name.ilike.%${searchTerm}%,supplier_code.ilike.%${searchTerm}%,notes.ilike.%${searchTerm}%`)
+      .or(`supplier_name.ilike.%${safe}%,supplier_code.ilike.%${safe}%,notes.ilike.%${safe}%`)
       .order('created_at', { ascending: false });
 
     if (error) throw error;
@@ -518,11 +520,13 @@ export const materialsService = {
     return data;
   },
 
-  async update(materialId, updates) {
+  async update(userId, materialId, updates) {
+    if (!userId) throw new Error('materials.update requires userId');
     const { data, error } = await supabase
       .from('materials')
       .update(updates)
       .eq('id', materialId)
+      .eq('user_id', userId)
       .select()
       .single();
 
@@ -530,11 +534,13 @@ export const materialsService = {
     return data;
   },
 
-  async delete(materialId) {
+  async delete(userId, materialId) {
+    if (!userId) throw new Error('materials.delete requires userId');
     const { error } = await supabase
       .from('materials')
       .delete()
-      .eq('id', materialId);
+      .eq('id', materialId)
+      .eq('user_id', userId);
 
     if (error) throw error;
     return { success: true };

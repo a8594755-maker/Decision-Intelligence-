@@ -18,6 +18,12 @@ import { ClosedLoopStore, _resetSequence } from './closedLoopStore';
 import { createCooldownManager } from './triggerEngine';
 import { CLOSED_LOOP_STATUS } from './closedLoopConfig';
 
+// Mock taskIntakeService — closedLoopRunner now gates through processIntake
+vi.mock('../taskIntakeService.js', () => ({
+  processIntake: vi.fn(async () => ({ workOrder: { employee_id: null }, status: 'created' })),
+  INTAKE_SOURCES: { CLOSED_LOOP: 'closed_loop' },
+}));
+
 // ─── Fixtures ──────────────────────────────────────────────────────────────────
 
 const STABLE_SERIES = [
@@ -227,7 +233,7 @@ describe('runClosedLoop', () => {
       store,
       cooldownManager
     });
-    expect(second.closed_loop_status).toBe(CLOSED_LOOP_STATUS.NO_TRIGGER);
+    expect(second.closed_loop_status).toBe(CLOSED_LOOP_STATUS.COOLDOWN_SUPPRESSED);
     expect(second.explanation[0]).toContain('suppressed');
   });
 

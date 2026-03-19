@@ -36,7 +36,24 @@ const MAX_HISTORY = 50;
 export function CanvasProvider({ children, onWidgetChange }) {
   const [activeWidget, setActiveWidget] = useState(null);
   const [pinnedTabs, setPinnedTabs] = useState([]); // { id, artifactType, data, title }
+  const [historyDepth, setHistoryDepth] = useState(0);
   const historyRef = useRef([]); // navigation stack
+  const widgetSequenceRef = useRef(0);
+
+  const buildWidget = useCallback((artifactType, data, opts = {}) => ({
+    artifactType,
+    data,
+    title: opts.title || null,
+    size: opts.size || 'full',
+    timestamp: Date.now(),
+    instanceId: `widget_${++widgetSequenceRef.current}`,
+    sourceTaskId: opts.sourceTaskId || null,
+  }), []);
+
+  const syncHistory = useCallback((nextHistory) => {
+    historyRef.current = nextHistory;
+    setHistoryDepth(nextHistory.length);
+  }, []);
 
   /**
    * Open a widget on the canvas.
@@ -45,19 +62,12 @@ export function CanvasProvider({ children, onWidgetChange }) {
    * @param {object} [opts] - { title, size, sourceTaskId, pin }
    */
   const openWidget = useCallback((artifactType, data, opts = {}) => {
-    const widget = {
-      artifactType,
-      data,
-      title: opts.title || null,
-      size: opts.size || 'full',
-      timestamp: Date.now(),
-      sourceTaskId: opts.sourceTaskId || null,
-    };
+    const widget = buildWidget(artifactType, data, opts);
 
     // Push current widget to history before replacing
     setActiveWidget(prev => {
       if (prev) {
-        historyRef.current = [prev, ...historyRef.current].slice(0, MAX_HISTORY);
+        syncHistory([prev, ...historyRef.current].slice(0, MAX_HISTORY));
       }
       return widget;
     });
@@ -73,7 +83,7 @@ export function CanvasProvider({ children, onWidgetChange }) {
         return [...prev, { id, artifactType, data, title: opts.title || artifactType }];
       });
     }
-  }, [onWidgetChange]);
+  }, [buildWidget, onWidgetChange, syncHistory]);
 
   /**
    * Update the data of the currently active widget in-place (e.g. live edits).
@@ -91,10 +101,10 @@ export function CanvasProvider({ children, onWidgetChange }) {
   const goBack = useCallback(() => {
     const prev = historyRef.current[0];
     if (prev) {
-      historyRef.current = historyRef.current.slice(1);
+      syncHistory(historyRef.current.slice(1));
       setActiveWidget(prev);
     }
-  }, []);
+  }, [syncHistory]);
 
   /**
    * Close the canvas (no active widget).
@@ -102,30 +112,20 @@ export function CanvasProvider({ children, onWidgetChange }) {
   const closeCanvas = useCallback(() => {
     setActiveWidget(prev => {
       if (prev) {
-        historyRef.current = [prev, ...historyRef.current].slice(0, MAX_HISTORY);
+        syncHistory([prev, ...historyRef.current].slice(0, MAX_HISTORY));
       }
       return null;
     });
-  }, []);
+  }, [syncHistory]);
 
   /**
    * Switch to a pinned tab by id.
    */
   const switchToTab = useCallback((tabId) => {
-    setPinnedTabs(prev => {
-      const tab = prev.find(t => t.id === tabId);
-      if (tab) {
-        setActiveWidget({
-          artifactType: tab.artifactType,
-          data: tab.data,
-          title: tab.title,
-          size: 'full',
-          timestamp: Date.now(),
-        });
-      }
-      return prev;
-    });
-  }, []);
+    const tab = pinnedTabs.find(t => t.id === tabId);
+    if (!tab) return;
+    setActiveWidget(buildWidget(tab.artifactType, tab.data, { title: tab.title, size: 'full' }));
+  }, [buildWidget, pinnedTabs]);
 
   /**
    * Remove a pinned tab.
@@ -134,7 +134,7 @@ export function CanvasProvider({ children, onWidgetChange }) {
     setPinnedTabs(prev => prev.filter(t => t.id !== tabId));
   }, []);
 
-  const canGoBack = historyRef.current.length > 0;
+  const canGoBack = historyDepth > 0;
 
   const value = {
     activeWidget,

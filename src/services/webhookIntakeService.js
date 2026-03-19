@@ -60,7 +60,17 @@ const _rateLimits = new Map(); // sourceKey → { count, resetAt }
 const RATE_LIMIT_WINDOW_MS = 60_000; // 1 minute
 const RATE_LIMIT_MAX = 60; // max 60 webhooks per minute per source
 
+function _pruneExpiredRateLimits() {
+  const now = Date.now();
+  for (const [key, entry] of _rateLimits) {
+    if (now > entry.resetAt) {
+      _rateLimits.delete(key);
+    }
+  }
+}
+
 function checkRateLimit(sourceKey) {
+  _pruneExpiredRateLimits();
   const now = Date.now();
   const entry = _rateLimits.get(sourceKey);
 
@@ -96,13 +106,14 @@ export async function verifySignature(payload, signature, secret) {
       encoder.encode(secret),
       { name: 'HMAC', hash: 'SHA-256' },
       false,
-      ['sign'],
+      ['sign', 'verify'],
     );
-    const sig = await crypto.subtle.sign('HMAC', key, encoder.encode(payload));
-    const computed = Array.from(new Uint8Array(sig))
-      .map(b => b.toString(16).padStart(2, '0'))
-      .join('');
-    return computed === signature.replace(/^sha256=/, '');
+    // Use crypto.subtle.verify for timing-safe comparison
+    const signatureHex = signature.replace(/^sha256=/, '');
+    const hexPairs = signatureHex.match(/.{2}/g);
+    if (!hexPairs || hexPairs.length === 0) return false;
+    const sigBytes = new Uint8Array(hexPairs.map(b => parseInt(b, 16)));
+    return await crypto.subtle.verify('HMAC', key, sigBytes, encoder.encode(payload));
   } catch {
     return false;
   }
@@ -161,7 +172,7 @@ export async function registerWebhook({
       .single();
     if (error) throw error;
     return { ok: true, webhook: data };
-  } catch (err) {
+  } catch (_err) {
     // Fallback: return in-memory config
     return {
       ok: true,
@@ -439,8 +450,11 @@ export async function handleWebhookRequest({ apiKey, signature, rawBody, payload
     return { ok: false, error: 'Invalid API key', httpStatus: 401 };
   }
 
-  // 2. Verify signature if HMAC secret is configured
-  if (config.hmac_secret && signature) {
+  // 2. Verify signature if HMAC secret is configured — require signature when secret is set
+  if (config.hmac_secret) {
+    if (!signature) {
+      return { ok: false, error: 'Missing signature (HMAC required)', httpStatus: 401 };
+    }
     const valid = await verifySignature(rawBody || JSON.stringify(payload), signature, config.hmac_secret);
     if (!valid) {
       return { ok: false, error: 'Invalid signature', httpStatus: 403 };
@@ -497,19 +511,29 @@ export async function logWebhookEvent({ webhookId, sourceType, status, workOrder
 
 async function _updateWebhookStats(webhookId, success) {
   try {
-    const { data } = await supabase
-      .from('webhook_configs')
-      .select('total_received, total_processed, total_errors')
-      .eq('id', webhookId)
-      .single();
-    if (!data) return;
+    // Use RPC for atomic increment to avoid TOCTOU race under concurrency.
+    // Falls back to read-increment-write if RPC is unavailable.
+    const { error: rpcError } = await supabase.rpc('increment_webhook_stats', {
+      p_webhook_id: webhookId,
+      p_success: success,
+    });
 
-    await supabase.from('webhook_configs').update({
-      last_received_at: new Date().toISOString(),
-      total_received: (data.total_received || 0) + 1,
-      total_processed: (data.total_processed || 0) + (success ? 1 : 0),
-      total_errors: (data.total_errors || 0) + (success ? 0 : 1),
-    }).eq('id', webhookId);
+    if (rpcError) {
+      // Fallback: non-atomic update (acceptable for best-effort stats)
+      const { data } = await supabase
+        .from('webhook_configs')
+        .select('total_received, total_processed, total_errors')
+        .eq('id', webhookId)
+        .single();
+      if (!data) return;
+
+      await supabase.from('webhook_configs').update({
+        last_received_at: new Date().toISOString(),
+        total_received: (data.total_received || 0) + 1,
+        total_processed: (data.total_processed || 0) + (success ? 1 : 0),
+        total_errors: (data.total_errors || 0) + (success ? 0 : 1),
+      }).eq('id', webhookId);
+    }
   } catch {
     // Best-effort
   }

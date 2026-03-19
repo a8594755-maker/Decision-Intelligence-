@@ -8,7 +8,7 @@
  * Supports: risk_scores, risk_adjustments, risk_delta_summary
  */
 
-import React, { useMemo, useState, useCallback, memo } from 'react';
+import React, { useMemo, useState, memo } from 'react';
 import {
   ShieldAlert, AlertTriangle, Filter, RefreshCw, Loader2,
   Search, LayoutGrid, List, Table2, X
@@ -50,7 +50,7 @@ function KPI({ label, value, variant = 'default' }) {
 function RiskWidgetArtifact({ data = {} }) {
   const [filterLevel, setFilterLevel] = useState('all');
 
-  const scores = data.scores || data.risk_scores || data.rows || [];
+  const scores = useMemo(() => data.scores || data.risk_scores || data.rows || [], [data.scores, data.risk_scores, data.rows]);
 
   const summary = useMemo(() => {
     if (data.summary) return data.summary;
@@ -143,9 +143,7 @@ function RiskWidgetArtifact({ data = {} }) {
 function RiskWidgetLiveImpl({ user, globalDataSource }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [filteredRows, setFilteredRows] = useState([]);
   const [allRows, setAllRows] = useState([]);
-  const [kpis, setKpis] = useState({ criticalCount: 0, warningCount: 0, shortageWithinHorizon: 0, totalItems: 0 });
   const [profitSummary, setProfitSummary] = useState({ totalProfitAtRisk: 0 });
 
   // Filters
@@ -162,14 +160,11 @@ function RiskWidgetLiveImpl({ user, globalDataSource }) {
   React.useEffect(() => {
     let cancelled = false;
     const load = async () => {
-      if (!user?.id) { setLoading(false); return; }
+      if (!user?.id) { setLoading(false); setError('Sign in to view risk data.'); return; }
       setLoading(true);
       setError(null);
 
       try {
-        const { default: useRiskDataModule } = await import('../../../hooks/useWidgetData/useRiskData.js');
-        // We can't call hooks dynamically, so use the raw pipeline from the module
-        // Instead, import services directly
         const [
           { supabase, forecastRunsService, componentDemandService },
           { calculateSupplyCoverageRiskBatch },
@@ -190,7 +185,11 @@ function RiskWidgetLiveImpl({ user, globalDataSource }) {
 
         // Load forecast runs
         let runs = [];
-        try { runs = await forecastRunsService.listRuns(user.id, { limit: 30 }); } catch (_) {}
+        try {
+          runs = await forecastRunsService.listRuns(user.id, { limit: 30 });
+        } catch (_err) {
+          // Forecast runs are optional here; fall back to the default latest-data view.
+        }
         if (!cancelled) setForecastRunsList(runs || []);
 
         const runId = selectedForecastRunId || runs?.[0]?.id || null;
@@ -203,7 +202,9 @@ function RiskWidgetLiveImpl({ user, globalDataSource }) {
             const timeBuckets = Array.isArray(runMeta?.parameters?.time_buckets) ? runMeta.parameters.time_buckets : null;
             const dr = await componentDemandService.getComponentDemandsByForecastRun(user.id, runId, { timeBuckets: timeBuckets || undefined });
             demandAgg = aggregateComponentDemandToDaily(dr, 3, { timeBuckets, daysPerBucket: 7 });
-          } catch (_) {}
+          } catch (_err) {
+            // Risk browsing still works without demand aggregation enrichment.
+          }
         }
 
         // PO data
@@ -226,7 +227,9 @@ function RiskWidgetLiveImpl({ user, globalDataSource }) {
         try {
           const { data: isData } = await supabase.from('inventory_snapshots').select('material_code, plant_id, safety_stock, onhand_qty').eq('user_id', user.id);
           (isData || []).forEach(r => { const k = normalizeKey(r.material_code, r.plant_id); if (k && k !== '|') ssMap[k] = { safety_stock: parseFloat(r.safety_stock || 0) }; });
-        } catch (_) {}
+        } catch (_err) {
+          // Safety stock is optional; default to zero when absent.
+        }
 
         // Financials
         const { data: finData } = await supabase.from('fg_financials').select('*').eq('user_id', user.id);
@@ -240,7 +243,9 @@ function RiskWidgetLiveImpl({ user, globalDataSource }) {
         try {
           const { data: sd } = await supabase.from('suppliers').select('id, lead_time_days').eq('user_id', user.id);
           (sd || []).forEach(s => { const lt = parseFloat(s.lead_time_days); if (!isNaN(lt) && lt >= 0) suppLT[s.id] = lt; });
-        } catch (_) {}
+        } catch (_err) {
+          // Supplier lead times are optional; fall back to default lead times.
+        }
 
         const keyLT = {};
         normPO.forEach(po => {
@@ -270,7 +275,9 @@ function RiskWidgetLiveImpl({ user, globalDataSource }) {
               const ir = calculateInventoryRisk({ currentStock: row.onHand ?? 0, safetyStock: row.safetyStock ?? 0, dailyDemand: dd, leadTimeDays: keyLT[ik]?.leadTimeDays || 7, demandVolatility: 0.1 });
               row.daysToStockout = ir.daysToStockout;
               row.stockoutProbability = ir.probability;
-            } catch (_) {}
+            } catch (_err) {
+              // Leave inventory enrichment empty for malformed rows.
+            }
           }
         });
 
@@ -338,7 +345,7 @@ function RiskWidgetLiveImpl({ user, globalDataSource }) {
             {[{ icon: Table2, mode: 'table' }, { icon: LayoutGrid, mode: 'grid' }, { icon: List, mode: 'list' }].map(({ icon: Icon, mode }) => (
               <button key={mode} onClick={() => setViewMode(mode)}
                 className={`p-1 rounded ${viewMode === mode ? 'bg-indigo-100 text-indigo-600' : ''}`} title={mode}>
-                <Icon size={13} />
+                {React.createElement(Icon, { size: 13 })}
               </button>
             ))}
           </div>
@@ -463,9 +470,9 @@ function RiskWidgetLiveImpl({ user, globalDataSource }) {
           </div>
           <div className="grid grid-cols-3 gap-2 text-xs">
             <div><span style={{ color: 'var(--text-muted)' }}>Risk Level:</span> <RiskBadge level={selectedRow.riskLevel || 'safe'} /></div>
-            <div><span style={{ color: 'var(--text-muted)' }}>On Hand:</span> <b>{selectedRow.onHand?.toLocaleString() ?? '-'}</b></div>
-            <div><span style={{ color: 'var(--text-muted)' }}>Inbound Qty:</span> <b>{selectedRow.inboundQty?.toLocaleString() ?? '-'}</b></div>
-            <div><span style={{ color: 'var(--text-muted)' }}>Gap Qty:</span> <b>{selectedRow.gapQty?.toLocaleString() ?? '-'}</b></div>
+            <div><span style={{ color: 'var(--text-muted)' }}>On Hand:</span> <b>{Number.isFinite(Number(selectedRow.onHand)) ? Number(selectedRow.onHand).toLocaleString() : '-'}</b></div>
+            <div><span style={{ color: 'var(--text-muted)' }}>Inbound Qty:</span> <b>{Number.isFinite(Number(selectedRow.inboundQty)) ? Number(selectedRow.inboundQty).toLocaleString() : '-'}</b></div>
+            <div><span style={{ color: 'var(--text-muted)' }}>Gap Qty:</span> <b>{Number.isFinite(Number(selectedRow.gapQty)) ? Number(selectedRow.gapQty).toLocaleString() : '-'}</b></div>
             <div><span style={{ color: 'var(--text-muted)' }}>Days to SO:</span> <b>{selectedRow.daysToStockout === Infinity ? '∞' : selectedRow.daysToStockout?.toFixed?.(0) ?? '-'}</b></div>
             <div><span style={{ color: 'var(--text-muted)' }}>Profit at Risk:</span> <b>{formatCurrency(selectedRow.profitAtRisk)}</b></div>
           </div>

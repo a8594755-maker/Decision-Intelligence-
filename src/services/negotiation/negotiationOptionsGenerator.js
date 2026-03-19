@@ -5,6 +5,8 @@
  * in the same order. LLM must NOT generate numbers; only this module computes
  * candidate relaxations.
  *
+ * All generated options conform to NEGOTIATION_OPTION_SCHEMA (negotiation-types.js).
+ *
  * Trigger conditions:
  *   1. solver_meta.status === 'INFEASIBLE'  => trigger 'infeasible'
  *   2. service_level < service_target - margin => trigger 'kpi_shortfall'
@@ -18,6 +20,8 @@
  *   opt_005 – Increase safety stock buffer (if service shortfall)
  *   opt_006 – Reduce service target by 5% (if target ambitious & shortfall)
  */
+
+import { validateNegotiationOption } from './cfr/negotiation-types.js';
 
 export const DEFAULT_NEGOTIATION_CONFIG = {
   /** Margin below service_target that triggers kpi_shortfall */
@@ -387,6 +391,9 @@ export function generateNegotiationOptions({
   // Limit to max_options (ordering is already deterministic)
   const finalOptions = options.slice(0, cfg.max_options);
   if (finalOptions.length === 0) return null;
+
+  // Validate every option against the canonical schema before returning
+  finalOptions.forEach(validateNegotiationOption);
 
   return {
     version: 'v0',

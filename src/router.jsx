@@ -5,7 +5,6 @@ import AppShell from './layouts/AppShell';
 // Route-level code splitting — each page becomes a separate chunk
 const LoginPage = lazy(() => import('./pages/LoginPage'));
 const HomePage = lazy(() => import('./pages/HomePage'));
-const PlanStudio = lazy(() => import('./pages/PlanStudio'));
 const ForecastStudio = lazy(() => import('./pages/ForecastStudio'));
 const RiskCenter = lazy(() => import('./pages/RiskCenter'));
 const SettingsPage = lazy(() => import('./pages/SettingsPage'));
@@ -38,7 +37,7 @@ export const router = createBrowserRouter([
     element: <AppShell />,
     children: [
       { index: true, element: <HomePage /> },
-      { path: 'plan', element: <PlanStudio /> },
+      // /plan redirects to /workspace (golden path convergence — see below)
       { path: 'forecast', element: <ForecastStudio /> },
       { path: 'risk', element: <RiskCenter /> },
       { path: 'digital-twin', element: <DigitalTwin /> },
@@ -61,8 +60,12 @@ export const router = createBrowserRouter([
       { path: 'sandbox', element: <SyntheticERPSandbox /> },
       { path: 'settings', element: <SettingsPage /> },
 
+      // Golden path convergence: /workspace is the primary entry point
+      { path: 'plan', element: <Navigate to="/workspace" replace /> },
+      { path: 'chat', element: <Navigate to="/workspace" replace /> },
+
       // Legacy redirects (previously handled by src/utils/router.js)
-      { path: 'ai/decision', element: <Navigate to="/plan" replace /> },
+      { path: 'ai/decision', element: <Navigate to="/workspace" replace /> },
       { path: 'planning/forecasts', element: <Navigate to="/workspace?widget=forecast" replace /> },
       { path: 'planning/risk-dashboard', element: <Navigate to="/workspace?widget=risk" replace /> },
       { path: 'home', element: <Navigate to="/" replace /> },

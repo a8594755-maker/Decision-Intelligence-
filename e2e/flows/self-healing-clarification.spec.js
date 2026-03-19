@@ -177,7 +177,7 @@ test.describe('Pre-Execution Clarification Flow', () => {
     await setupMocksWithAiProxy(page, makeStaticHandler(clarificationResponse()));
 
     // AI Employee mode is on the home page ("/")
-    const chatInput = await openChatPage(page, '/');
+    const chatInput = await openChatPage(page, '/workspace');
     await expect(chatInput).toBeVisible({ timeout: 10000 });
 
     await sendChatMessage(page, chatInput, '分析資料');
@@ -215,7 +215,7 @@ test.describe('Pre-Execution Clarification Flow', () => {
       makeSequentialHandler([clarificationResponse(), directTaskPlanResponse()])
     );
 
-    const chatInput = await openChatPage(page, '/');
+    const chatInput = await openChatPage(page, '/workspace');
     await expect(chatInput).toBeVisible({ timeout: 10000 });
 
     await sendChatMessage(page, chatInput, '分析資料');
@@ -257,7 +257,7 @@ test.describe('Pre-Execution Clarification Flow', () => {
       makeSequentialHandler([clarificationResponse(), directTaskPlanResponse()])
     );
 
-    const chatInput = await openChatPage(page, '/');
+    const chatInput = await openChatPage(page, '/workspace');
     await expect(chatInput).toBeVisible({ timeout: 10000 });
 
     await sendChatMessage(page, chatInput, '幫我分析');
@@ -294,7 +294,7 @@ test.describe('Direct Task Plan (no clarification)', () => {
 
     await setupMocksWithAiProxy(page, makeStaticHandler(directTaskPlanResponse()));
 
-    const chatInput = await openChatPage(page, '/');
+    const chatInput = await openChatPage(page, '/workspace');
     await expect(chatInput).toBeVisible({ timeout: 10000 });
 
     await sendChatMessage(page, chatInput, 'Generate monthly revenue analysis report with YoY growth rates and top products');
@@ -364,7 +364,7 @@ test.describe('Keyword Fallback — Long Messages', () => {
     await setupMocksWithAiProxy(page, makeFailingHandler());
 
     // AI Employee mode on home page
-    const chatInput = await openChatPage(page, '/');
+    const chatInput = await openChatPage(page, '/workspace');
     await expect(chatInput).toBeVisible({ timeout: 10000 });
 
     // Send a long message that incidentally contains supply chain keywords

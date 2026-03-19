@@ -1,10 +1,20 @@
 /**
- * approvalWorkflowService.js
+ * approvalWorkflowService.js — v1 Approval / Governance Facade
  *
- * Enhanced approval workflow with deadline tracking, batch operations,
- * proactive reminders, and audit trail integration.
+ * ARCHITECTURE (Source of Truth):
+ *   governanceService.js        — SOT for all governance state (di_approval_requests table)
+ *   approvalWorkflowService.js  — THIS FILE: facade layer (deadlines, batch, reminders, card builders)
+ *   planGovernanceService.js    — Legacy ML API bridge (POST /governance/approvals/*)
  *
- * Wraps the existing planGovernanceService with deadline and batch capabilities.
+ * All UI pages and components MUST import from this file (not governanceService directly).
+ * This ensures a single import surface while governanceService remains the state owner.
+ *
+ * Consumers:
+ *   - ApprovalQueuePage.jsx      (getPendingApprovals, approveGovernanceItem, ...)
+ *   - EmployeeReviewPage.jsx     (listGovernanceByTask, GOVERNANCE_STATUS)
+ *   - AIEmployeeHome.jsx         (getPendingApprovals, getGovernanceStats)
+ *   - CommandCenter.jsx           (getPendingApprovals, getApprovalDeadlineStatus)
+ *   - UnifiedApprovalCard.jsx     (consumes buildUnifiedApprovalCard payload)
  */
 
 import {
@@ -13,6 +23,19 @@ import {
   rejectPlanApproval,
 } from './planGovernanceService';
 
+import {
+  listPending as _govListPending,
+  approveItem as _govApproveItem,
+  rejectItem as _govRejectItem,
+  escalateItem as _govEscalateItem,
+  getGovernanceStats as _govGetStats,
+  checkEscalations as _govCheckEscalations,
+  listByTask as _govListByTask,
+  GOVERNANCE_TYPES,
+  GOVERNANCE_STATUS,
+  ESCALATION_REASONS,
+} from './governanceService';
+
 // ── Configuration ────────────────────────────────────────────────────────────
 
 export const APPROVAL_CONFIG = {
@@ -20,6 +43,16 @@ export const APPROVAL_CONFIG = {
   reminder_intervals_hours: [4, 1],   // remind at 4h and 1h before deadline
   batch_approval_max: 10,
 };
+
+function extractApprovalRecord(result) {
+  const approval = result?.approval || result || {};
+  return approval && typeof approval === 'object' ? approval : {};
+}
+
+function normalizeApprovalStatus(value, fallback = 'PENDING') {
+  const normalized = String(value || '').trim().toUpperCase();
+  return normalized || fallback;
+}
 
 // ── Enhanced Approval Request ────────────────────────────────────────────────
 
@@ -44,18 +77,18 @@ export async function requestApprovalWithDeadline({
   kpiSnapshot = {},
 }) {
   // Call existing governance service
-  const baseApproval = await requestPlanApproval({
-    run_id: runId,
-    user_id: userId,
-  });
+  const baseApproval = extractApprovalRecord(await requestPlanApproval({
+    runId,
+    userId,
+  }));
 
   const requestedAt = new Date();
   const deadline = new Date(requestedAt.getTime() + deadlineHours * 60 * 60 * 1000);
 
   return {
-    approval_id: baseApproval?.approval_id || `approval_${runId}_${Date.now()}`,
+    approval_id: baseApproval.approval_id || `approval_${runId}_${Date.now()}`,
     run_id: runId,
-    status: 'PENDING',
+    status: normalizeApprovalStatus(baseApproval.status),
     requested_at: requestedAt.toISOString(),
     deadline: deadline.toISOString(),
     deadline_hours_remaining: deadlineHours,
@@ -82,7 +115,7 @@ export function getApprovalDeadlineStatus(approval) {
     return { hours_remaining: null, minutes_remaining: null, is_urgent: false, is_critical: false, is_expired: false };
   }
 
-  if (approval.status !== 'PENDING') {
+  if (normalizeApprovalStatus(approval.status) !== 'PENDING') {
     return { hours_remaining: null, minutes_remaining: null, is_urgent: false, is_critical: false, is_expired: false };
   }
 
@@ -113,17 +146,19 @@ export function getApprovalDeadlineStatus(approval) {
  * @param {string} [params.note]
  * @returns {Promise<Array<Object>>} results for each approval
  */
-export async function batchApprove({ approvalIds, userId, note = '' }) {
+export async function batchApprove({ approvalIds = [], userId, note = '' }) {
   const results = [];
-  const batch = approvalIds.slice(0, APPROVAL_CONFIG.batch_approval_max);
+  const batch = (Array.isArray(approvalIds) ? approvalIds : []).slice(0, APPROVAL_CONFIG.batch_approval_max);
 
   for (const approvalId of batch) {
     try {
       const result = await approvePlanApproval({
-        approval_id: approvalId,
-        user_id: userId,
+        approvalId,
+        userId,
         note,
       });
+      // Also update governance SOT so approval queue stays in sync
+      try { await _govApproveItem(approvalId, userId, note); } catch { /* best-effort */ }
       results.push({ approval_id: approvalId, status: 'APPROVED', result });
     } catch (error) {
       results.push({ approval_id: approvalId, status: 'ERROR', error: error?.message });
@@ -142,17 +177,19 @@ export async function batchApprove({ approvalIds, userId, note = '' }) {
  * @param {string} [params.note]
  * @returns {Promise<Array<Object>>} results for each approval
  */
-export async function batchReject({ approvalIds, userId, note = '' }) {
+export async function batchReject({ approvalIds = [], userId, note = '' }) {
   const results = [];
-  const batch = approvalIds.slice(0, APPROVAL_CONFIG.batch_approval_max);
+  const batch = (Array.isArray(approvalIds) ? approvalIds : []).slice(0, APPROVAL_CONFIG.batch_approval_max);
 
   for (const approvalId of batch) {
     try {
       const result = await rejectPlanApproval({
-        approval_id: approvalId,
-        user_id: userId,
+        approvalId,
+        userId,
         note,
       });
+      // Also update governance SOT so approval queue stays in sync
+      try { await _govRejectItem(approvalId, userId, note); } catch { /* best-effort */ }
       results.push({ approval_id: approvalId, status: 'REJECTED', result });
     } catch (error) {
       results.push({ approval_id: approvalId, status: 'ERROR', error: error?.message });
@@ -357,7 +394,7 @@ export function buildUnifiedApprovalCard(approval) {
       approval_id: approval.approval_id,
       approval_type: approval.approval_type || 'plan_commit',
       run_id: approval.run_id,
-      status: approval.status,
+      status: normalizeApprovalStatus(approval.status),
       title: approval.narrative_summary || `Approval for Run #${approval.run_id}`,
       deadline: approval.deadline,
       deadline_status: deadlineStatus,
@@ -396,7 +433,7 @@ export function buildUnifiedApprovalCard(approval) {
 export function listPendingApprovals(sessionCtx) {
   const approvals = sessionCtx?.pending_approvals || [];
   return approvals
-    .filter((a) => a.status === 'PENDING')
+    .filter((a) => normalizeApprovalStatus(a.status) === 'PENDING')
     .map((a) => ({
       ...a,
       deadline_status: a.deadline ? getApprovalDeadlineStatus(a) : null,
@@ -409,6 +446,34 @@ export function listPendingApprovals(sessionCtx) {
     });
 }
 
+// ── Governance Delegation (single source of truth) ──────────────────────────
+// All governance state reads/writes delegate to governanceService.js.
+// UI consumers should import from THIS service, not from governanceService directly.
+
+/** List pending governance items for a user. Delegates to governanceService.listPending(). */
+export const getPendingApprovals = _govListPending;
+
+/** Approve a governance item. Delegates to governanceService.approveItem(). */
+export const approveGovernanceItem = _govApproveItem;
+
+/** Reject a governance item. Delegates to governanceService.rejectItem(). */
+export const rejectGovernanceItem = _govRejectItem;
+
+/** Escalate a governance item. Delegates to governanceService.escalateItem(). */
+export const escalateGovernanceItem = _govEscalateItem;
+
+/** Get governance stats by status. Delegates to governanceService.getGovernanceStats(). */
+export const getGovernanceStats = _govGetStats;
+
+/** Auto-escalate and expire governance items. Delegates to governanceService.checkEscalations(). */
+export const checkEscalations = _govCheckEscalations;
+
+/** List governance items by task ID. Delegates to governanceService.listByTask(). */
+export const listGovernanceByTask = _govListByTask;
+
+// Re-export governance constants for consumers
+export { GOVERNANCE_TYPES, GOVERNANCE_STATUS, ESCALATION_REASONS };
+
 export default {
   requestApprovalWithDeadline,
   getApprovalDeadlineStatus,
@@ -420,5 +485,15 @@ export default {
   requestRiskReplanApproval,
   buildUnifiedApprovalCard,
   listPendingApprovals,
+  getPendingApprovals,
+  approveGovernanceItem,
+  rejectGovernanceItem,
+  escalateGovernanceItem,
+  getGovernanceStats,
+  checkEscalations,
+  listGovernanceByTask,
   APPROVAL_CONFIG,
+  GOVERNANCE_TYPES,
+  GOVERNANCE_STATUS,
+  ESCALATION_REASONS,
 };

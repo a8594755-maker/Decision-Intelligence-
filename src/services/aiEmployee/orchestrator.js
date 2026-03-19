@@ -136,8 +136,30 @@ async function _publishSSE(taskId, eventPayload) {
  * @param {string} userId
  * @returns {Promise<{taskId: string, task: object}>}
  */
+// Map intake source types to DB-allowed values.
+// DB constraint currently allows: manual, scheduled, question_to_task, chat_decomposed.
+// Migration 20260409 will extend this, but until applied we must map safely.
+const SOURCE_TYPE_DB_MAP = {
+  manual: 'manual',
+  scheduled: 'scheduled',
+  question_to_task: 'question_to_task',
+  chat_decomposed: 'chat_decomposed',
+  // New intake sources → map to closest DB-safe value
+  chat: 'question_to_task',
+  schedule: 'scheduled',
+  proactive_alert: 'manual',
+  closed_loop: 'scheduled',
+  email: 'manual',
+  meeting_transcript: 'manual',
+  api: 'manual',
+};
+
 export async function submitPlan(plan, employeeId, userId) {
   const taskMeta = plan.taskMeta || {};
+
+  // Normalize source_type to a DB-safe value
+  const rawSource = taskMeta.source_type || 'question_to_task';
+  const sourceType = SOURCE_TYPE_DB_MAP[rawSource] || 'question_to_task';
 
   // 1. Create task in draft_plan
   const task = await taskRepo.createTask({
@@ -145,7 +167,7 @@ export async function submitPlan(plan, employeeId, userId) {
     title: plan.title,
     description: plan.description,
     priority: plan.priority || 'medium',
-    sourceType: taskMeta.source_type || 'question_to_task',
+    sourceType,
     assignedByUserId: userId,
     dueAt: taskMeta.due_at || null,
     inputContext: {
@@ -200,7 +222,8 @@ export async function submitPlan(plan, employeeId, userId) {
         }
       }
     } catch {
-      // Capability check failure should not block auto-approve
+      // Fail-safe: if capability check fails, require manual approval
+      capabilityBlocksAutoApprove = true;
     }
 
     if (!capabilityBlocksAutoApprove) {

@@ -42,8 +42,6 @@ const ERROR_PATTERNS = [
   // Sandbox errors
   { re: /sandbox|worker error|Worker/i,                                  category: 'sandbox_error' },
 
-  // OpenCloud sync/import errors → retry with backoff (inspired by OpenCloud postprocessing pattern)
-  { re: /\[OpenCloud\]|opencloud.*fail|drive.*not found|sync.*fail/i,    category: 'opencloud_sync_failed' },
 ];
 
 // ── Strategy selection ──────────────────────────────────────────────────────
@@ -134,19 +132,6 @@ export function chooseHealingStrategy(errorMessage, step, retryCount) {
       healingStrategy: 'revise_prompt',
       modifications: { promptSuffix },
       reasoning: `${category} — revising prompt with error context`,
-    };
-  }
-
-  // OpenCloud sync failures → retry with backoff (the sync already has internal retry,
-  // so if it reached here the server may be temporarily down — just retry the step)
-  if (category === 'opencloud_sync_failed') {
-    return {
-      errorCategory: category,
-      healingStrategy: 'revise_prompt',
-      modifications: {
-        promptSuffix: `OpenCloud sync failed: ${errorMessage}. The server may be temporarily unavailable. Retrying.`,
-      },
-      reasoning: `OpenCloud sync failure — retrying (server may be temporarily down)`,
     };
   }
 

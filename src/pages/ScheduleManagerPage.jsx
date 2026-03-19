@@ -19,7 +19,7 @@ import { useAuth } from '../contexts/AuthContext';
 import {
   createSchedule, getSchedules, deleteSchedule, pauseSchedule,
   resumeSchedule, instantiateScheduledTask, getDueTasks,
-  SCHEDULE_TYPES, createEventTrigger,
+  SCHEDULE_TYPES,
 } from '../services/scheduledTaskService.js';
 import { listEmployeesByManager } from '../services/aiEmployee/queries.js';
 

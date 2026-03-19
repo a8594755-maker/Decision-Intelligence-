@@ -13,6 +13,8 @@
  * Horizon: 預設 2-3 個 time_bucket（可調整）
  */
 
+import { getCurrentTimeBucket } from '../../utils/timeBucket.js';
+
 const HORIZON_BUCKETS = 3; // 未來 N 個 time_bucket
 const MIN_QTY_THRESHOLD = 10; // WARNING 閾值
 
@@ -30,21 +32,6 @@ function normalizeItemCode(code) {
 function normalizeFactory(factory) {
   if (!factory) return '';
   return String(factory).trim().toUpperCase();
-}
-
-/**
- * 獲取當前 time_bucket（週別格式，如 2026-W05）
- */
-function getCurrentTimeBucket() {
-  const now = new Date();
-  const year = now.getFullYear();
-  
-  // 計算 ISO 週別（簡化版：第 1 週從 1 月第一個週一開始）
-  const startOfYear = new Date(year, 0, 1);
-  const dayOfYear = Math.floor((now - startOfYear) / (1000 * 60 * 60 * 24));
-  const week = Math.ceil((dayOfYear + startOfYear.getDay() + 1) / 7);
-  
-  return `${year}-W${String(week).padStart(2, '0')}`;
 }
 
 /**
@@ -66,10 +53,13 @@ function isBucketInHorizon(bucketSortKey, currentBucket, horizonBuckets) {
   // 計算 bucket 差距（粗略）
   // 如果是週別格式（YYYY-W##），可以簡單比較
   const currentYear = parseInt(currentBucket.substring(0, 4), 10);
-  const currentWeek = parseInt(currentBucket.substring(6, 8), 10);
-  
+  // Use regex to extract week number robustly (handles W3, W03, W53)
+  const cwMatch = currentBucket.match(/W(\d+)/);
+  const currentWeek = cwMatch ? parseInt(cwMatch[1], 10) : NaN;
+
   const bucketYear = parseInt(bucketSortKey.substring(0, 4), 10);
-  const bucketWeek = parseInt(bucketSortKey.substring(6, 8), 10);
+  const bwMatch = bucketSortKey.match(/W(\d+)/);
+  const bucketWeek = bwMatch ? parseInt(bwMatch[1], 10) : NaN;
   
   if (isNaN(currentYear) || isNaN(currentWeek) || isNaN(bucketYear) || isNaN(bucketWeek)) {
     // 無法解析，降級：只要 sortKey 不太遠即可
@@ -288,7 +278,12 @@ export const generateSampleData = (count = 20) => {
   const inventorySnapshots = [];
   
   const currentYear = new Date().getFullYear();
-  const currentWeek = Math.ceil((new Date().getDate() + new Date().getDay()) / 7);
+  // Use correct ISO 8601 week calculation (Thursday-based)
+  const _now = new Date();
+  const _d = new Date(Date.UTC(_now.getFullYear(), _now.getMonth(), _now.getDate()));
+  _d.setUTCDate(_d.getUTCDate() + 4 - (_d.getUTCDay() || 7));
+  const _yearStart = new Date(Date.UTC(_d.getUTCFullYear(), 0, 1));
+  const currentWeek = Math.ceil((((_d - _yearStart) / 86400000) + 1) / 7);
   
   // 生成庫存快照
   for (let i = 0; i < count; i++) {

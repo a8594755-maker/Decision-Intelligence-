@@ -8,15 +8,16 @@ import { supabase } from '../../services/supabaseClient';
 import { APP_NAME, ASSISTANT_NAME } from '../../config/branding';
 import {
   STORAGE_KEY,
-  DEFAULT_CANVAS_STATE,
+  createDefaultCanvasState,
   loadLocalConversations,
   saveLocalConversations,
   isTableUnavailable,
   markTableUnavailable,
 } from './helpers.js';
 
-const tableAvailable = !isTableUnavailable();
-const conversationsDb = tableAvailable ? supabase : null;
+function getConversationsDb() {
+  return isTableUnavailable() ? null : supabase;
+}
 
 /**
  * Manages conversation list CRUD, selection, search, persistence and message
@@ -67,7 +68,7 @@ export default function useConversationManager({
         return;
       }
 
-      const { data, error } = await conversationsDb
+      const { data, error } = await getConversationsDb()
         .from('conversations')
         .select('*')
         .eq('user_id', user.id)
@@ -132,13 +133,14 @@ export default function useConversationManager({
   );
 
   const activeDatasetContext = conversationDatasetContext[currentConversationId] || null;
-  const activeCanvasState = canvasStateByConversation[currentConversationId] || DEFAULT_CANVAS_STATE;
+  const activeCanvasState = canvasStateByConversation[currentConversationId] || createDefaultCanvasState();
 
   // ── Persistence helper ───────────────────────────────────────────────────
   // eslint-disable-next-line react-hooks/preserve-manual-memoization
   const persistConversation = useCallback((conversationId, payload) => {
-    if (!conversationsDb || !user?.id || !conversationId || !payload) return;
-    conversationsDb
+    const db = getConversationsDb();
+    if (!db || !user?.id || !conversationId || !payload) return;
+    db
       .from('conversations')
       .update({
         title: payload.title,
@@ -202,10 +204,11 @@ export default function useConversationManager({
 
     setConversations((prev) => [newConversation, ...prev]);
     setCurrentConversationId(newConversation.id);
-    updateCanvasState(newConversation.id, DEFAULT_CANVAS_STATE);
+    updateCanvasState(newConversation.id, createDefaultCanvasState());
 
-    if (conversationsDb) {
-      conversationsDb.from('conversations').insert([newConversation]).then(({ error }) => {
+    const db = getConversationsDb();
+    if (db) {
+      db.from('conversations').insert([newConversation]).then(({ error }) => {
         if (error) markTableUnavailable();
       });
     }
@@ -237,8 +240,9 @@ export default function useConversationManager({
       return updated;
     });
 
-    if (conversationsDb) {
-      conversationsDb.from('conversations').delete().eq('id', conversationId).eq('user_id', user.id).then(() => {});
+    const db = getConversationsDb();
+    if (db) {
+      db.from('conversations').delete().eq('id', conversationId).eq('user_id', user.id).then(() => {});
     }
   }, [user?.id, currentConversationId]);
 

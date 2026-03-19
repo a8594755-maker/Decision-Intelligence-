@@ -115,8 +115,8 @@ export function parseBucket(bucket) {
     return null;
   }
   
-  // Try to match patterns like "2026-W06" or "2026-W6"
-  const match = bucket.match(/^(\d{4})-W?(\d{1,2})$/i);
+  // Try to match patterns like "2026-W06" or "2026-W6" (W prefix required)
+  const match = bucket.match(/^(\d{4})-W(\d{1,2})$/i);
   if (match) {
     return {
       year: parseInt(match[1], 10),
@@ -124,17 +124,20 @@ export function parseBucket(bucket) {
     };
   }
   
-  // Try simple year-week format like "2026-06"
+  // Try simple year-number format like "2026-06"
+  // IMPORTANT: without "W" prefix, values 1-12 are ambiguous (month vs week).
+  // Convention: weeks MUST use "W" prefix (e.g. "2026-W06").
+  // Bare "YYYY-NN" with NN <= 12 is treated as MONTH, NN > 12 as week.
   const simpleMatch = bucket.match(/^(\d{4})-(\d{2})$/);
   if (simpleMatch) {
-    const week = parseInt(simpleMatch[2], 10);
-    // Assume it's a week if <= 53, otherwise might be month
-    if (week <= 53) {
+    const num = parseInt(simpleMatch[2], 10);
+    if (num > 12 && num <= 53) {
       return {
         year: parseInt(simpleMatch[1], 10),
-        week: week
+        week: num
       };
     }
+    // num <= 12: treat as month, not a week — return null (caller should use month-based logic)
   }
   
   return null;
@@ -325,31 +328,6 @@ export function calculateRiskScoreBatch(inputs, options = {}) {
 // ============================================================
 // Utilities
 // ============================================================
-
-import axios from 'axios';
-
-const ML_API_ENDPOINT = import.meta.env.VITE_ML_API_ENDPOINT || 'http://localhost:8000';
-
-async function _getDemandPrediction(materialCode) {
-  try {
-    const response = await axios.post(`${ML_API_ENDPOINT}/demand-forecast`, {
-      materialCode,
-      horizonDays: 30
-    });
-    return {
-      dailyDemand: response.data.predictedDemand,
-      fluctuation: (response.data.confidenceInterval[1] - response.data.confidenceInterval[0]) / response.data.predictedDemand
-    };
-  } catch (error) {
-    console.error("ML API error", error);
-    return getLegacyDemand(materialCode);
-  }
-}
-
-// Legacy demand calculation (fallback)
-function getLegacyDemand(_materialCode) {
-  // Existing implementation
-}
 
 /**
  * Normalize key for consistent lookup

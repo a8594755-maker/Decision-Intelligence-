@@ -45,9 +45,22 @@ const NEGOTIATION_COOLDOWN_MS = 24 * 60 * 60 * 1000; // 24 hours
 const _recentTriggers = new Map();
 
 /**
+ * Remove entries older than the cooldown period to prevent unbounded growth.
+ */
+function _pruneRecentTriggers(cooldownMs = NEGOTIATION_COOLDOWN_MS) {
+  const now = Date.now();
+  for (const [key, ts] of _recentTriggers) {
+    if (now - new Date(ts).getTime() >= cooldownMs) {
+      _recentTriggers.delete(key);
+    }
+  }
+}
+
+/**
  * Returns true if this (planRunId, trigger) pair is within the cooldown window.
  */
 function isCooldownActive(planRunId, trigger, cooldownMs = NEGOTIATION_COOLDOWN_MS) {
+  _pruneRecentTriggers(cooldownMs);
   const key = `${planRunId}::${trigger}`;
   const lastTs = _recentTriggers.get(key);
   if (!lastTs) return false;
@@ -251,20 +264,10 @@ export async function runNegotiation({
   // -------------------------------------------------------------------------
   // Step 3: Generate candidate options (deterministic, pure)
   // -------------------------------------------------------------------------
-  // Extract base MOQ constraints for concrete override computation
-  const _baseMoqRows = Array.isArray(constraintCheck?.violations)
-    ? null  // We don't have original constraints from constraint_check
-    : null;
-
   // Try to get MOQ from solver_meta proof if available
   const solverProofConstraints = Array.isArray(solverMeta?.proof?.constraints_checked)
     ? solverMeta.proof.constraints_checked
     : [];
-
-  const baseConstraints = {
-    moq: null,  // Cannot reliably reconstruct from artifacts; engine_flags path used
-    proof_constraints: solverProofConstraints
-  };
 
   const optionsPayload = generateNegotiationOptions({
     solverMeta: solverMeta || {},
@@ -272,7 +275,7 @@ export async function runNegotiation({
     replayMetrics: replayMetrics || {},
     userIntent,
     baseRunId: runId,
-    baseConstraints,
+    baseConstraints: { moq: null, proof_constraints: solverProofConstraints },
     config
   });
 
@@ -317,7 +320,9 @@ export async function runNegotiation({
         });
 
         if (cfrResult.available) {
-          // Attach CFR weights to each option
+          // Attach CFR weights to each option for display/artifact persistence.
+          // Note: cfr_weight is informational — the actual solver adjustments flow
+          // through cfrParamAdjustment → evaluateNegotiationOptions → objectiveOverride.
           for (const option of optionsPayload.options) {
             option.cfr_weight = cfrResult.cfr_weights[option.option_id] ?? null;
           }
@@ -569,8 +574,9 @@ export async function runNegotiation({
     negotiationDrafts = await generateAllDrafts(draftContext);
 
     // Build action card payload for UI rendering
+    const posLabels = ['VERY_WEAK', 'WEAK', 'NEUTRAL', 'STRONG', 'VERY_STRONG'];
     const posStrength = cfrEnrichment
-      ? ['VERY_WEAK', 'WEAK', 'NEUTRAL', 'STRONG', 'VERY_STRONG'][cfrEnrichment.buyer_bucket] || 'NEUTRAL'
+      ? posLabels[Math.max(0, Math.min(cfrEnrichment.buyer_bucket, posLabels.length - 1))] || 'NEUTRAL'
       : null;
 
     actionCardPayload = {
@@ -750,6 +756,9 @@ export async function onNegotiationResolved({
 } = {}) {
   if (!caseId) throw new Error('caseId is required');
   if (!userId) throw new Error('userId is required');
+  if (appliedOptionId && !optionOverrides) {
+    console.warn(`[negotiationOrchestrator] onNegotiationResolved called with appliedOptionId="${appliedOptionId}" but no optionOverrides — patch derivation will use fallback defaults`);
+  }
 
   try {
     // Step 1: Load resolved case with events

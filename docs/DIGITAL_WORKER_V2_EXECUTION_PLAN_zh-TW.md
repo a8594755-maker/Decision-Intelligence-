@@ -477,4 +477,4 @@ Response: { processor_state, last_poll_at, queue_stats: { pending, processed, fa
 - ❌ 複雜 multi-worker mesh
 - ❌ 大規模 ERP connector framework
 - ❌ No-code workflow builder
-- ❌ Chat-first product experience
+- ❌ Chat-only product experience (product is task-driven digital worker)

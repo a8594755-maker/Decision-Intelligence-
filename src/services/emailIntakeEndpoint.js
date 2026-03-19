@@ -35,7 +35,17 @@ const _emailRateLimits = new Map();
 const RATE_LIMIT_WINDOW_MS = 60_000;
 const RATE_LIMIT_MAX = 30; // max 30 emails per minute per sender
 
+function _pruneExpiredEmailRateLimits() {
+  const now = Date.now();
+  for (const [key, entry] of _emailRateLimits) {
+    if (now > entry.resetAt) {
+      _emailRateLimits.delete(key);
+    }
+  }
+}
+
 function checkEmailRateLimit(senderKey) {
+  _pruneExpiredEmailRateLimits();
   const now = Date.now();
   const entry = _emailRateLimits.get(senderKey);
 
@@ -61,7 +71,7 @@ function checkEmailRateLimit(senderKey) {
  * @param {string} toAddress - The destination email (e.g., orders@company.com)
  * @returns {Promise<{employeeId: string, userId: string}|null>}
  */
-async function resolveEmailRouting(toAddress) {
+async function resolveEmailRouting(_toAddress) {
   try {
     const { data, error } = await supabase
       .from('webhook_configs')
@@ -104,6 +114,7 @@ export async function handleEmailIntakeRequest({ apiKey, payload, employeeId, us
   // 2. Authenticate via API key if provided
   let resolvedEmployeeId = employeeId;
   let resolvedUserId = userId;
+  let resolvedWebhookId = null;
 
   if (apiKey) {
     const config = await getWebhookByApiKey(apiKey);
@@ -112,6 +123,7 @@ export async function handleEmailIntakeRequest({ apiKey, payload, employeeId, us
     }
     resolvedEmployeeId = resolvedEmployeeId || config.employee_id;
     resolvedUserId = resolvedUserId || config.user_id;
+    resolvedWebhookId = config.id || null;
   }
 
   // 3. If no employee/user resolved yet, try email routing
@@ -163,7 +175,7 @@ export async function handleEmailIntakeRequest({ apiKey, payload, employeeId, us
 
     // 7. Log webhook event
     await logWebhookEvent({
-      webhookId: null,
+      webhookId: resolvedWebhookId,
       sourceType: 'email',
       status: 'processed',
       workOrderId: result.work_orders?.[0]?.id,
@@ -178,7 +190,7 @@ export async function handleEmailIntakeRequest({ apiKey, payload, employeeId, us
     };
   } catch (err) {
     await logWebhookEvent({
-      webhookId: null,
+      webhookId: resolvedWebhookId,
       sourceType: 'email',
       status: 'error',
       error: err.message,

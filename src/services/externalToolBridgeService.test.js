@@ -2,9 +2,6 @@
 import { describe, it, expect, vi } from 'vitest';
 
 vi.mock('./supabaseClient', () => ({ supabase: null }));
-vi.mock('../utils/artifactStore', () => ({
-  saveJsonArtifact: vi.fn(() => ({ id: 'art-1', artifact_type: 'powerbi_dataset' })),
-}));
 
 import { toPowerBIDataset, toExcelWithRefresh } from './externalToolBridgeService';
 
@@ -76,6 +73,17 @@ describe('toPowerBIDataset', () => {
 
     expect(result.dataset.tables).toEqual([]);
   });
+
+  it('returns an inline artifact descriptor instead of a pending store write', () => {
+    const result = toPowerBIDataset(mockArtifacts);
+
+    expect(result.artifact_ref).toMatchObject({
+      artifact_type: 'powerbi_dataset',
+      label: 'Power BI Dataset Export',
+      storage: 'inline',
+      payload: result.dataset,
+    });
+  });
 });
 
 // ── toExcelWithRefresh ──────────────────────────────────────────────────────
@@ -113,5 +121,19 @@ describe('toExcelWithRefresh', () => {
 
     expect(result.sheets).toEqual([]);
     expect(result.metadata.total_rows).toBe(0);
+  });
+
+  it('returns an inline artifact descriptor for excel export data', () => {
+    const result = toExcelWithRefresh(mockArtifacts);
+
+    expect(result.artifact_ref).toMatchObject({
+      artifact_type: 'report_json',
+      label: 'Excel Export Data',
+      storage: 'inline',
+      payload: {
+        sheets: result.sheets,
+        metadata: result.metadata,
+      },
+    });
   });
 });

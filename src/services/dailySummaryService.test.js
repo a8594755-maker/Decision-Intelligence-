@@ -69,7 +69,7 @@ describe('generateDailySummary', () => {
       makeTask({ status: 'done' }),
       makeTask({ status: 'blocked' }),
       makeTask({ status: 'in_progress' }),
-      makeTask({ status: 'waiting_review' }),
+      makeTask({ status: 'review_hold' }),
     ]);
 
     const summary = await generateDailySummary('emp-1');

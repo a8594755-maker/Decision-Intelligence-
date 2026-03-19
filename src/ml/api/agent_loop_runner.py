@@ -1,7 +1,7 @@
 """
 agent_loop_runner.py — Server-side Agent Loop with Shared Workspace
 
-Inspired by OpenCloud's postprocessing pipeline (event-driven state machine)
+Event-driven pipeline runner for multi-step agent execution
 but with AI brains: LLM generates code per step, executes in sandbox,
 passes DataFrames between steps via in-memory workspace (no JSON round-trips).
 

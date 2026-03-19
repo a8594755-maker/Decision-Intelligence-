@@ -199,7 +199,9 @@ export async function saveJsonArtifact(run_id, type, payload, size_threshold = D
 const rowsToCsv = (rows = []) => {
   if (!Array.isArray(rows) || rows.length === 0) return '';
 
-  const headers = Object.keys(rows[0]);
+  const firstValidRow = rows.find(r => r != null && typeof r === 'object');
+  if (!firstValidRow) return '';
+  const headers = Object.keys(firstValidRow);
   const escapeCell = (value) => {
     const raw = String(value ?? '');
     if (/[",\n]/.test(raw)) {
@@ -210,7 +212,7 @@ const rowsToCsv = (rows = []) => {
 
   return [
     headers.join(','),
-    ...rows.map((row) => headers.map((header) => escapeCell(row[header])).join(','))
+    ...rows.filter(r => r != null).map((row) => headers.map((header) => escapeCell(row[header])).join(','))
   ].join('\n');
 };
 
@@ -302,6 +304,10 @@ export async function loadArtifact(ref) {
   }
 
   if (artifactRef.storage === 'user_files' && artifactRef.file_id) {
+    if (String(artifactRef.file_id).startsWith('local-file-')) {
+      console.warn('[artifactStore] Cannot load artifact from local-file fallback ID:', artifactRef.file_id);
+      return null;
+    }
     const { data, error } = await supabase
       .from('user_files')
       .select('data')
