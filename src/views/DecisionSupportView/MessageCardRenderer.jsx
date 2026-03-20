@@ -21,6 +21,7 @@ import DecisionNarrativeCard from '../../components/chat/DecisionNarrativeCard';
 import PlanApprovalCard from '../../components/chat/PlanApprovalCard';
 import WorkflowProgressCard from '../../components/chat/WorkflowProgressCard';
 import WorkflowErrorCard from '../../components/chat/WorkflowErrorCard';
+import FailureReportCard from '../../components/chat/FailureReportCard';
 import BlockingQuestionsCard from '../../components/chat/BlockingQuestionsCard';
 import BlockingQuestionsInteractiveCard from '../../components/chat/BlockingQuestionsInteractiveCard';
 import WorkflowReportCard from '../../components/chat/WorkflowReportCard';
@@ -202,6 +203,9 @@ export default function MessageCardRenderer({ message, handlers, state }) {
   }
   if (message.type === 'workflow_error_card') {
     return <WorkflowErrorCard payload={message.payload} />;
+  }
+  if (message.type === 'error_diagnosis_card') {
+    return <FailureReportCard payload={message.payload} />;
   }
   if (message.type === 'blocking_questions_card') {
     return <BlockingQuestionsCard payload={message.payload} onSubmit={handleBlockingQuestionsSubmit} />;
@@ -446,6 +450,34 @@ export default function MessageCardRenderer({ message, handlers, state }) {
         payload={message.payload}
         onConfigure={handleConfigureApiKey}
       />
+    );
+  }
+  if (message.type === 'agent_response') {
+    const toolCalls = message.payload?.toolCalls || [];
+    return (
+      <div className="space-y-3">
+        {toolCalls.length > 0 && (
+          <div className="bg-slate-800/50 rounded-lg p-3 border border-slate-700/50">
+            <div className="text-xs font-medium text-slate-400 mb-2">Agent executed {toolCalls.length} tool{toolCalls.length > 1 ? 's' : ''}:</div>
+            <div className="space-y-1.5">
+              {toolCalls.map((tc, i) => (
+                <div key={tc.id || i} className="flex items-center gap-2 text-xs">
+                  <span className={tc.result?.success ? 'text-green-400' : 'text-red-400'}>
+                    {tc.result?.success ? '✅' : '❌'}
+                  </span>
+                  <span className="font-mono text-slate-300">{tc.name}</span>
+                  {tc.result?.artifactTypes?.length > 0 && (
+                    <span className="text-slate-500">→ {tc.result.artifactTypes.join(', ')}</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        {message.content && (
+          <div className="whitespace-pre-wrap text-sm text-slate-200">{message.content}</div>
+        )}
+      </div>
     );
   }
   if (message.type === 'negotiation_action_card') {

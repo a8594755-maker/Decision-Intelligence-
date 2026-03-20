@@ -17,11 +17,11 @@ import { APP_NAME } from '../../config/branding';
 const DI_NAV_ITEMS = [
   { to: '/workspace',     label: 'Workspace',       icon: PanelTop },
   { to: '/',              label: 'Command Center',  icon: LayoutDashboard, end: true },
-  { to: '/workspace?widget=forecast', label: 'Forecast Studio', icon: TrendingUp },
-  { to: '/workspace?widget=risk',     label: 'Risk Center',     icon: ShieldAlert },
+  { to: '/forecast',      label: 'Forecast Studio', icon: TrendingUp },
+  { to: '/risk',           label: 'Risk Center',     icon: ShieldAlert },
   { to: '/digital-twin',  label: 'Digital Twin',    icon: Cpu },
-  { to: '/workspace?widget=scenario', label: 'Scenarios',       icon: GitCompare },
-  { to: '/workspace?widget=negotiation', label: 'Negotiation',  icon: Handshake },
+  { to: '/scenarios',     label: 'Scenarios',       icon: GitCompare },
+  { to: '/negotiation',   label: 'Negotiation',     icon: Handshake },
 ];
 
 const DI_ADVANCED_ITEMS = [
@@ -56,11 +56,11 @@ const AI_ADVANCED_ITEMS = [
   { to: '/employees/webhooks',  label: 'Webhooks',       icon: Webhook },
   { to: '/employees/schedules', label: 'Schedules',      icon: Clock },
   { to: '/employees/tools',     label: 'Tool Library',   icon: Wrench },
-  { to: '/workspace?widget=forecast', label: 'Forecast Studio', icon: TrendingUp },
-  { to: '/workspace?widget=risk',     label: 'Risk Center',     icon: ShieldAlert },
-  { to: '/digital-twin',        label: 'Digital Twin',   icon: Cpu },
-  { to: '/workspace?widget=scenario', label: 'Scenarios',       icon: GitCompare },
-  { to: '/workspace?widget=negotiation', label: 'Negotiation',  icon: Handshake },
+  { to: '/forecast',      label: 'Forecast Studio', icon: TrendingUp },
+  { to: '/risk',           label: 'Risk Center',     icon: ShieldAlert },
+  { to: '/digital-twin',  label: 'Digital Twin',     icon: Cpu },
+  { to: '/scenarios',     label: 'Scenarios',         icon: GitCompare },
+  { to: '/negotiation',   label: 'Negotiation',       icon: Handshake },
 ];
 
 // ────────────────────────────────────────────────────────────

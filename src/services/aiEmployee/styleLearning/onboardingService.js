@@ -96,6 +96,7 @@ export async function runOnboarding(params) {
     policiesCreated: 0,
     exemplarsCreated: 0,
     profileCreated: false,
+    compiledProfiles: [],
     rulesExtracted: 0,
     metricsComputed: false,
     errors: [],
@@ -174,17 +175,50 @@ export async function runOnboarding(params) {
             doc_type: docType,
             profile_name: `${docType}_profile`,
           });
-          await safeDbCall(() => saveProfile(profile));
+          const saveResult = await safeDbCall(() => saveProfile(profile));
+          if (!saveResult) {
+            result.errors.push({ stage: 'bulk_style', error: `Failed to save style_profile for ${docType} (Supabase offline?)` });
+          }
 
-          // Bridge: also create a company_output_profile so OutputProfilesPage can see it
-          await safeDbCall(() => createProfileFromLegacyStyleProfile({
-            employeeId,
-            docType,
-            teamId: teamId || null,
-            actorUserId: userId,
-          }));
+          // Bridge: also create a company_output_profile so OutputProfilesPage can see it.
+          // Pass compiled profile as profileData so the bridge works even when
+          // style_profiles table is unreachable (avoids re-reading from DB).
+          // NOT wrapped in safeDbCall — we want errors to surface so the
+          // fallback in listCompanyOutputProfiles can auto-bridge later.
+          let bridgeResult = null;
+          try {
+            bridgeResult = await createProfileFromLegacyStyleProfile({
+              employeeId,
+              docType,
+              teamId: teamId || null,
+              actorUserId: userId,
+              profileData: saveResult || profile,
+            });
+          } catch (bridgeErr) {
+            console.error(`[onboarding] Bridge to company_output_profiles failed for ${docType}:`, bridgeErr.message);
+            result.errors.push({ stage: 'bridge', docType, error: bridgeErr.message });
+          }
 
           result.profileCreated = true;
+          // Attach compiled profile so the page can use it as local fallback
+          result.compiledProfiles.push({
+            id: bridgeResult?.id || saveResult?.id || `local_${docType}_${Date.now()}`,
+            employee_id: employeeId,
+            team_id: teamId || null,
+            doc_type: docType,
+            profile_name: profile.profile_name || `${docType}_profile`,
+            status: 'active',
+            version: 1,
+            sample_count: profile.sample_count || fps.length,
+            confidence: profile.confidence || 0,
+            high_variance_dims: profile.high_variance_dims || [],
+            canonical_structure: profile.canonical_structure || {},
+            canonical_formatting: profile.canonical_formatting || {},
+            canonical_charts: profile.canonical_charts || {},
+            canonical_kpi_layout: profile.canonical_kpi_layout || {},
+            canonical_text_style: profile.canonical_text_style || {},
+            _local: !bridgeResult,
+          });
         }
       }
     }

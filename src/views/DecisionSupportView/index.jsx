@@ -15,6 +15,7 @@ import { createDatasetProfileFromSheets } from '../../services/datasetProfilingS
 import { datasetProfilesService, registerLocalProfile } from '../../services/datasetProfilesService';
 import { reuseMemoryService } from '../../services/reuseMemoryService';
 import { streamChatWithAI } from '../../services/geminiAPI';
+import { runAgentLoop, shouldUseAgentMode } from '../../services/chatAgentLoop';
 import { diResetService } from '../../services/diResetService';
 import {
   runPlanFromDatasetProfile,
@@ -376,6 +377,28 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
           return { ...prev, steps };
         });
         appendMessagesToCurrentConversation([{ role: 'ai', content: `Step ${stepIndex} failed: ${error?.slice(0, 200)}${note}`, timestamp: new Date().toISOString() }]);
+      }),
+      eventBus.on(EVENT_NAMES.AGENT_STEP_DIAGNOSED, ({ taskId, stepIndex, diagnosis }) => {
+        if (diagnosis) {
+          appendMessagesToCurrentConversation([{
+            role: 'ai',
+            type: 'error_diagnosis_card',
+            payload: diagnosis,
+            timestamp: new Date().toISOString(),
+          }]);
+        }
+      }),
+      eventBus.on(EVENT_NAMES.AGENT_STEP_BLOCKED, ({ stepIndex, stepName, reason, message: msg }) => {
+        setAgentExecLoopState(prev => {
+          if (!prev?.steps) return prev;
+          const steps = prev.steps.map((s, i) => i === stepIndex ? { ...s, status: 'blocked' } : s);
+          return { ...prev, steps };
+        });
+        appendMessagesToCurrentConversation([{
+          role: 'ai',
+          content: `Step "${stepName || stepIndex}" blocked: ${msg || reason || 'Requires user action'}`,
+          timestamp: new Date().toISOString(),
+        }]);
       }),
       eventBus.on(EVENT_NAMES.TASK_COMPLETED, () => {
         appendMessagesToCurrentConversation([{ role: 'ai', content: 'All steps completed. Head to Review to check the results.', timestamp: new Date().toISOString() }]);
@@ -2514,6 +2537,7 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
     const history = stagedMessages.slice(-10);
     let fullResult = '';
     let aiErrorPayload = null;
+    let agentToolCalls = []; // track tool calls from agent loop
 
     // --- "Still thinking" heartbeat: show dots every 12s if no chunks arrive ---
     let lastChunkAt = Date.now();
@@ -2521,37 +2545,99 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
       const silenceMs = Date.now() - lastChunkAt;
       if (silenceMs >= 12_000) {
         setStreamingContent((prev) => prev + (prev ? '\n' : '') + '💭 still thinking...');
-        lastChunkAt = Date.now(); // reset so next dot comes after another 12s
+        lastChunkAt = Date.now();
       }
     }, 4_000);
 
-    const attemptChat = async (retryCount = 0) => {
+    // Decide: Agent mode (with tool calling) vs plain chat
+    const useAgent = shouldUseAgentMode(messageTextWithAttachments);
+
+    if (useAgent) {
+      // ── Agent Loop: LLM can autonomously call DI tools ──
       chatAbortRef.current?.abort();
       chatAbortRef.current = new AbortController();
       try {
-        return await streamChatWithAI(messageTextWithAttachments, history, systemPrompt, (chunk) => {
-          lastChunkAt = Date.now();
-          setStreamingContent((prev) => prev + chunk);
-        }, { signal: chatAbortRef.current.signal });
-      } catch (error) {
-        const isTimeout = error?.name === 'AbortError' || /timed?\s*out/i.test(error?.message);
-        if (isTimeout && retryCount < 1) {
-          console.warn('[DSV] Chat timed out, retrying once...');
-          setStreamingContent((prev) => prev + '\n⏱️ Request timed out, retrying...\n');
-          return attemptChat(retryCount + 1);
+        const datasetProfileId = getDatasetProfileId(runtimeDatasetContext);
+        let datasetProfileRow = null;
+        if (datasetProfileId) {
+          try { datasetProfileRow = await datasetProfilesService.getById(datasetProfileId); } catch { /* ok */ }
         }
-        throw error;
-      }
-    };
 
-    try {
-      fullResult = await attemptChat();
-    } catch (error) {
-      console.error('AI call failed:', error);
-      if (isApiKeyConfigError(error?.message)) { aiErrorPayload = { title: 'AI service configuration required', message: 'Server-side AI keys are missing or invalid. Ask an admin to set Supabase Edge Function secrets.', ctaLabel: 'Show setup hint' }; }
-      else { fullResult = `❌ AI service temporarily unavailable\n\nError: ${error.message}`; }
-    } finally {
-      clearInterval(thinkingInterval);
+        const agentResult = await runAgentLoop({
+          message: messageTextWithAttachments,
+          conversationHistory: history,
+          systemPrompt,
+          toolContext: {
+            userId: user?.id,
+            datasetProfileRow,
+            datasetProfileId,
+          },
+          callbacks: {
+            onTextChunk: (chunk) => {
+              lastChunkAt = Date.now();
+              setStreamingContent((prev) => prev + chunk);
+            },
+            onToolCall: ({ name, args }) => {
+              lastChunkAt = Date.now();
+              setStreamingContent((prev) => prev + `\n🔧 Calling tool: **${name}**...\n`);
+            },
+            onToolResult: ({ name, success, error }) => {
+              lastChunkAt = Date.now();
+              if (success) {
+                setStreamingContent((prev) => prev + `✅ **${name}** completed\n\n`);
+              } else {
+                setStreamingContent((prev) => prev + `❌ **${name}** failed: ${error}\n\n`);
+              }
+            },
+            onThinking: (msg) => {
+              lastChunkAt = Date.now();
+            },
+          },
+          signal: chatAbortRef.current.signal,
+        });
+
+        fullResult = agentResult.text || '';
+        agentToolCalls = agentResult.toolCalls || [];
+      } catch (error) {
+        console.error('[DSV] Agent loop failed:', error);
+        if (isApiKeyConfigError(error?.message)) {
+          aiErrorPayload = { title: 'AI service configuration required', message: 'Server-side AI keys are missing or invalid. Ask an admin to set Supabase Edge Function secrets.', ctaLabel: 'Show setup hint' };
+        } else {
+          fullResult = `❌ AI agent error: ${error.message}`;
+        }
+      } finally {
+        clearInterval(thinkingInterval);
+      }
+    } else {
+      // ── Plain chat: simple text-in, text-out ──
+      const attemptChat = async (retryCount = 0) => {
+        chatAbortRef.current?.abort();
+        chatAbortRef.current = new AbortController();
+        try {
+          return await streamChatWithAI(messageTextWithAttachments, history, systemPrompt, (chunk) => {
+            lastChunkAt = Date.now();
+            setStreamingContent((prev) => prev + chunk);
+          }, { signal: chatAbortRef.current.signal });
+        } catch (error) {
+          const isTimeout = error?.name === 'AbortError' || /timed?\s*out/i.test(error?.message);
+          if (isTimeout && retryCount < 1) {
+            console.warn('[DSV] Chat timed out, retrying once...');
+            setStreamingContent((prev) => prev + '\n⏱️ Request timed out, retrying...\n');
+            return attemptChat(retryCount + 1);
+          }
+          throw error;
+        }
+      };
+
+      try {
+        fullResult = await attemptChat();
+      } catch (error) {
+        console.error('AI call failed:', error);
+        if (isApiKeyConfigError(error?.message)) { aiErrorPayload = { title: 'AI service configuration required', message: 'Server-side AI keys are missing or invalid. Ask an admin to set Supabase Edge Function secrets.', ctaLabel: 'Show setup hint' }; }
+        else { fullResult = `❌ AI service temporarily unavailable\n\nError: ${error.message}`; }
+      } finally {
+        clearInterval(thinkingInterval);
+      }
     }
 
     if (!aiErrorPayload && isApiKeyConfigError(fullResult)) {
@@ -2560,7 +2646,9 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
 
     const aiMessage = aiErrorPayload
       ? { role: 'ai', type: 'ai_error_card', payload: aiErrorPayload, timestamp: new Date().toISOString() }
-      : { role: 'ai', content: fullResult, timestamp: new Date().toISOString() };
+      : agentToolCalls.length > 0
+        ? { role: 'ai', type: 'agent_response', content: fullResult, payload: { toolCalls: agentToolCalls }, timestamp: new Date().toISOString() }
+        : { role: 'ai', content: fullResult, timestamp: new Date().toISOString() };
     const finalMessages = [...stagedMessages, aiMessage];
     const conversationTitleSeed = trimmedVisibleInput || resolvedAttachments[0]?.file_name || messageText;
     const newTitle = currentMessages.length <= 1 ? conversationTitleSeed.slice(0, 50) : currentConversation.title;

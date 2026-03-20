@@ -10,6 +10,13 @@ import { STEP_STATES } from '../stepStateMachine.js';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+// Known DB columns for ai_employee_runs — prevents Supabase errors from unknown fields
+const KNOWN_COLUMNS = new Set([
+  'status', 'di_run_id', 'artifact_refs', 'summary', 'error_message',
+  'started_at', 'ended_at', 'step_index', 'step_name',
+  'retry_count', 'max_retries', '_revision_instructions',
+]);
+
 function extractArtifactId(candidate) {
   if (!candidate) return null;
 
@@ -75,6 +82,12 @@ export async function createSteps(taskId, employeeId, steps) {
     .select();
 
   if (error) throw new Error(`[StepRepo] createSteps failed: ${error.message}`);
+  if (!data || data.length === 0) {
+    throw new Error(`[StepRepo] createSteps: INSERT returned 0 rows (expected ${rows.length}). Possible RLS policy blocking the insert.`);
+  }
+  if (data.length !== rows.length) {
+    console.warn(`[StepRepo] createSteps: expected ${rows.length} rows but got ${data.length}. Some inserts may have been blocked by RLS.`);
+  }
   return data;
 }
 
@@ -82,8 +95,14 @@ export async function createSteps(taskId, employeeId, steps) {
  * Update a step's status and optionally its result data.
  */
 export async function updateStep(stepId, updates) {
+  // Strip unknown columns to prevent Supabase schema-cache errors
+  const filtered = {};
+  for (const [key, value] of Object.entries(updates || {})) {
+    if (KNOWN_COLUMNS.has(key)) filtered[key] = value;
+  }
+
   const patch = {
-    ...updates,
+    ...filtered,
     ...(Object.prototype.hasOwnProperty.call(updates || {}, 'artifact_refs')
       ? { artifact_refs: normalizeArtifactRefsForStorage(updates.artifact_refs) }
       : {}),

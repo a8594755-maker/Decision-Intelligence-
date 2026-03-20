@@ -35,13 +35,23 @@ const ERROR_PATTERNS = [
   { re: /KeyError|IndexError|NameError|AttributeError.*DataFrame/i,     category: 'code_generation_failed' },
   { re: /function run|undefined is not|cannot read prop/i,               category: 'code_generation_failed' },
 
+  // Gate 1: Planner / LLM failures (before general patterns to avoid mis-classification)
+  { re: /no (?:executor|tool|handler) found|unknown tool|tool.+not.+(?:found|registered|exist)/i, category: 'tool_not_found' },
+  { re: /context.?(?:window|length|overflow)|token.?limit|max.?tokens|too many tokens/i,           category: 'context_overflow' },
+
+  // Gate 2: Orchestrator / dependency failures
+  { re: /artifact.+(?:null|undefined|missing)|dependency.+(?:missing|broken|failed)|prior.?step.+(?:failed|null)/i, category: 'dependency_chain_broken' },
+
+  // Gate 4: Infrastructure failures (must come before general timeout)
+  { re: /sse.+(?:disconnect|closed|lost)|EventSource|stream.+(?:ended|closed|aborted)/i,          category: 'sse_disconnected' },
+  { re: /edge.?function.+(?:timeout|timed)|supabase.+(?:timeout|504)|504 gateway/i,               category: 'edge_function_timeout' },
+
   // Resource limits → simplify
   { re: /timed?\s*out|timeout|execution timed/i,                        category: 'timeout' },
   { re: /output too large|too many bytes|payload too large/i,            category: 'output_too_large' },
 
   // Sandbox errors
   { re: /sandbox|worker error|Worker/i,                                  category: 'sandbox_error' },
-
 ];
 
 // ── Strategy selection ──────────────────────────────────────────────────────
@@ -88,6 +98,60 @@ export function chooseHealingStrategy(errorMessage, step, retryCount) {
       healingStrategy: 'block_immediately',
       modifications: {},
       reasoning: `Missing required data dependency — retrying won't help. The task needs a dataset profile or required input that was not provided.`,
+    };
+  }
+
+  // Gate 1: Tool not found / hallucinated → non-recoverable
+  if (category === 'tool_not_found') {
+    return {
+      errorCategory: category,
+      healingStrategy: 'block_immediately',
+      modifications: {},
+      reasoning: `Tool not found — the planner referenced a non-existent tool. Replanning required.`,
+    };
+  }
+
+  // Gate 1: Context overflow → simplify
+  if (category === 'context_overflow') {
+    return {
+      errorCategory: category,
+      healingStrategy: 'simplify_task',
+      modifications: {
+        simplifiedHint: 'Reduce input data size. Use dataset profile summary instead of raw rows. Limit context to key fields only.',
+      },
+      reasoning: `Context window exceeded — reducing input data to fit within token limits.`,
+    };
+  }
+
+  // Gate 2: Dependency chain broken → non-recoverable
+  if (category === 'dependency_chain_broken') {
+    return {
+      errorCategory: category,
+      healingStrategy: 'block_immediately',
+      modifications: {},
+      reasoning: `A prior step's artifact is missing or malformed — this step cannot proceed without its dependency.`,
+    };
+  }
+
+  // Gate 4: SSE disconnected → escalate (retry with reconnect)
+  if (category === 'sse_disconnected') {
+    return {
+      errorCategory: category,
+      healingStrategy: 'escalate_model',
+      modifications: {},
+      reasoning: `SSE connection lost — backend may still be running. Retrying with fresh connection.`,
+    };
+  }
+
+  // Gate 4: Edge function timeout → simplify
+  if (category === 'edge_function_timeout') {
+    return {
+      errorCategory: category,
+      healingStrategy: 'simplify_task',
+      modifications: {
+        simplifiedHint: 'Break into smaller sub-tasks. Reduce data payload sent to edge function. Consider chunked processing.',
+      },
+      reasoning: `Supabase Edge Function timed out — reducing payload size.`,
     };
   }
 

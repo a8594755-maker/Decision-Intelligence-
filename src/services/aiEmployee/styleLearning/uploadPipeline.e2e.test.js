@@ -195,6 +195,15 @@ describe('Upload Pipeline E2E — scripts/seed-data (95 files)', () => {
 
     expect(result.jobId).toBeTruthy();
     expect(result.profileCreated).toBe(true);
+    expect(result.compiledProfiles.length).toBeGreaterThan(0);
+    // Each compiled profile should have real data from the pipeline
+    for (const cp of result.compiledProfiles) {
+      expect(cp.doc_type).toBeTruthy();
+      expect(cp.profile_name).toBeTruthy();
+      expect(cp.status).toBe('active');
+      expect(cp.sample_count).toBeGreaterThan(0);
+      expect(cp.canonical_structure).toBeDefined();
+    }
     expect(result.errors.filter(e => e.stage === 'unknown')).toHaveLength(0);
     expect(progressStages.some(s => s.stage === 'complete')).toBe(true);
   });

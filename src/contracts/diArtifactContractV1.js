@@ -85,6 +85,8 @@ const V1_VALIDATORS = {
   risk_replay_metrics: validateObjectPayloadOnly,
   risk_inventory_projection: validateObjectPayloadOnly,
   risk_plan_csv: validateObjectPayloadOnly,
+  // AI Employee — error diagnosis artifact
+  error_diagnosis: validateObjectPayloadOnly,
   // Workflow B risk analysis artifacts
   risk_scores: validateObjectPayloadOnly,
   risk_scores_csv: validateObjectPayloadOnly,

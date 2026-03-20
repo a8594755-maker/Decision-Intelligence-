@@ -85,17 +85,52 @@ export default function OutputProfilesPage() {
   const [showUpload, setShowUpload] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
 
+  // ── localStorage fallback ─────────────────────────────────
+  const LOCAL_PROFILES_KEY = 'di_output_profiles_cache';
+
+  const readLocalProfiles = () => {
+    try {
+      return JSON.parse(localStorage.getItem(LOCAL_PROFILES_KEY) || '[]');
+    } catch { return []; }
+  };
+
+  const writeLocalProfiles = (profiles) => {
+    try {
+      localStorage.setItem(LOCAL_PROFILES_KEY, JSON.stringify(profiles));
+    } catch { /* quota exceeded — ignore */ }
+  };
+
   // ── Data Loading ──────────────────────────────────────────
   const loadProfiles = useCallback(async () => {
     setLoading(true);
     try {
       const filter = {};
       if (statusFilter) filter.status = statusFilter;
-      if (docTypeFilter) filter.doc_type = docTypeFilter;
+      if (docTypeFilter) filter.docType = docTypeFilter;
       const result = await listCompanyOutputProfiles(filter);
-      setProfiles(result || []);
+      if (result && result.length > 0) {
+        // DB has data — use it as source of truth and update cache
+        setProfiles(result);
+        writeLocalProfiles(result);
+      } else {
+        // DB returned empty — merge with existing state (don't overwrite local compiledProfiles)
+        setProfiles(prev => {
+          if (prev.length > 0) {
+            // Keep existing local profiles, persist them
+            writeLocalProfiles(prev);
+            return prev;
+          }
+          // No existing state either — try localStorage cache
+          return readLocalProfiles();
+        });
+      }
     } catch (err) {
       console.error('[OutputProfilesPage] Failed to load profiles:', err);
+      // Supabase unreachable — keep existing state or fall back to localStorage
+      setProfiles(prev => {
+        if (prev.length > 0) return prev;
+        return readLocalProfiles();
+      });
     } finally {
       setLoading(false);
     }
@@ -225,6 +260,19 @@ export default function OutputProfilesPage() {
           </button>
         </div>
       </div>
+
+      {/* ── Error Banner ── */}
+      {workerError && (
+        <div style={{
+          padding: '10px 14px', borderRadius: 8, marginBottom: 12,
+          background: '#fef2f2', border: '1px solid #fecaca',
+          display: 'flex', alignItems: 'center', gap: 8,
+          fontSize: 13, color: '#991b1b',
+        }}>
+          <AlertTriangle size={16} />
+          <span>Worker initialization failed: {workerError}. Upload and learning features are unavailable.</span>
+        </div>
+      )}
 
       {/* ── KPI Tiles (like Jasper Brand IQ overview) ── */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 20 }}>
@@ -473,37 +521,24 @@ export default function OutputProfilesPage() {
           onClose={() => setShowUpload(false)}
           onUploaded={(uploadSummary) => {
             setShowUpload(false);
-            // Try loading from DB first
-            loadExemplars();
-            loadProfiles();
-            // If Supabase is offline, inject local state from upload result
-            if (uploadSummary?.profileCreated) {
-              const localProfiles = (uploadSummary.files || []).reduce((acc, f) => {
-                const existing = acc.find(p => p.doc_type === f.docType);
-                if (!existing && f.docType !== 'auto') {
-                  acc.push({
-                    id: `local_${f.docType}_${Date.now()}`,
-                    doc_type: f.docType,
-                    profile_name: `${f.docTypeLabel} Baseline`,
-                    status: 'active',
-                    confidence: uploadSummary.profileCreated ? 0.7 : 0,
-                    version: 1,
-                    sample_count: uploadSummary.files.filter(ff => ff.docType === f.docType).length,
-                    _local: true,
-                  });
-                }
-                return acc;
-              }, []);
-              if (localProfiles.length) {
-                setProfiles(prev => {
-                  const merged = [...prev];
-                  for (const lp of localProfiles) {
-                    if (!merged.find(p => p.doc_type === lp.doc_type)) merged.push(lp);
+
+            // Use real compiled profiles from onboarding result (not guessed from filenames)
+            const compiled = uploadSummary?.compiledProfiles || [];
+            if (compiled.length > 0) {
+              setProfiles(prev => {
+                const merged = [...prev];
+                for (const cp of compiled) {
+                  if (!merged.find(p => p.doc_type === cp.doc_type && p.employee_id === cp.employee_id)) {
+                    merged.push(cp);
                   }
-                  return merged;
-                });
-              }
+                }
+                // Persist to localStorage so they survive page refresh even if DB is down
+                writeLocalProfiles(merged);
+                return merged;
+              });
             }
+
+            // Inject local exemplars from file list
             if (uploadSummary?.files?.length) {
               const localExemplars = uploadSummary.files.map((f, i) => ({
                 id: `local_ex_${Date.now()}_${i}`,
@@ -516,6 +551,10 @@ export default function OutputProfilesPage() {
               }));
               setExemplars(prev => [...prev, ...localExemplars]);
             }
+
+            // Try loading from DB (will merge/override local if successful)
+            loadExemplars();
+            loadProfiles();
           }}
         />
       )}

@@ -343,16 +343,34 @@ function StepDetailCard({ step, stepEvent, index, isActive }) {
             </div>
           )}
 
-          {/* Error */}
+          {/* Error + Diagnosis */}
           {hasError && (
             <div className="rounded-lg p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800">
               <div className="flex items-center gap-1.5 text-xs font-medium text-red-700 dark:text-red-400 mb-1">
                 <AlertTriangle className="w-3.5 h-3.5" />
-                Error
+                {details.diagnosis?.root_cause ? 'Diagnosis' : 'Error'}
               </div>
-              <p className="text-xs text-red-600 dark:text-red-300 font-mono break-all">
-                {(details.error || step.error || '').slice(0, 500)}
-              </p>
+              {details.diagnosis?.root_cause ? (
+                <>
+                  <p className="text-xs text-red-600 dark:text-red-300 mb-1.5">
+                    {details.diagnosis.root_cause}
+                  </p>
+                  {details.diagnosis.suggestions?.length > 0 && (
+                    <ul className="text-[10px] text-red-500 dark:text-red-400 space-y-0.5 ml-3 list-disc">
+                      {details.diagnosis.suggestions.map((s, i) => (
+                        <li key={i}>{s.detail}</li>
+                      ))}
+                    </ul>
+                  )}
+                  <p className="text-[9px] text-red-400 dark:text-red-500 font-mono mt-1.5 break-all">
+                    {(details.error || step.error || '').slice(0, 200)}
+                  </p>
+                </>
+              ) : (
+                <p className="text-xs text-red-600 dark:text-red-300 font-mono break-all">
+                  {(details.error || step.error || '').slice(0, 500)}
+                </p>
+              )}
             </div>
           )}
 

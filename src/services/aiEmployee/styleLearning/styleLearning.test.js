@@ -29,6 +29,12 @@ import { _testExports as composerExports } from './styleRetrievalComposer.js';
 // ─── Trust Metrics ───────────────────────────────────────────
 import { _testExports as trustExports } from './trustMetricsService.js';
 
+// ─── Company Output Profiles ─────────────────────────────────
+import {
+  _testExports as companyProfileExports,
+  listCompanyOutputProfiles,
+} from './companyOutputProfileService.js';
+
 // ─── Onboarding ──────────────────────────────────────────────
 import { _testExports as onboardingExports } from './onboardingService.js';
 
@@ -588,6 +594,130 @@ describe('policyIngestionService', () => {
 // ═══════════════════════════════════════════════════════════════
 // Onboarding Tests
 // ═══════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════
+// Company Output Profile Tests
+// ═══════════════════════════════════════════════════════════════
+
+describe('companyOutputProfileService', () => {
+  const { normalizeCandidateProfile, buildProfileInsert, mapCompanyProfileRowToOutputProfile } = companyProfileExports;
+
+  describe('normalizeCandidateProfile', () => {
+    it('fills missing fields from defaults', () => {
+      const result = normalizeCandidateProfile(
+        { profile_name: 'test' },
+        { docType: 'mbr_report', confidence: 0.8 },
+      );
+      expect(result.profile_name).toBe('test');
+      expect(result.confidence).toBe(0.8);
+    });
+
+    it('prefers candidate values over defaults', () => {
+      const result = normalizeCandidateProfile(
+        { confidence: 0.9 },
+        { confidence: 0.5 },
+      );
+      expect(result.confidence).toBe(0.9);
+    });
+  });
+
+  describe('buildProfileInsert', () => {
+    it('produces valid insert payload', () => {
+      const payload = buildProfileInsert({
+        scope: { employeeId: 'e1', docType: 'mbr_report', teamId: null },
+        version: 1,
+        candidateProfile: { profile_name: 'test', confidence: 0.7 },
+      });
+      expect(payload.employee_id).toBe('e1');
+      expect(payload.doc_type).toBe('mbr_report');
+      expect(payload.version).toBe(1);
+      expect(payload.confidence).toBe(0.7);
+    });
+  });
+
+  describe('mapCompanyProfileRowToOutputProfile', () => {
+    it('maps DB row to output profile shape', () => {
+      const row = {
+        id: 'abc', employee_id: 'e1', doc_type: 'mbr_report',
+        profile_name: 'MBR', status: 'active', version: 2,
+        confidence: 0.85, sample_count: 5,
+        canonical_structure: { sheets: 3 },
+      };
+      const out = mapCompanyProfileRowToOutputProfile(row);
+      expect(out.id).toBe('abc');
+      expect(out.docType).toBe('mbr_report');
+      expect(out.canonical.structure).toEqual({ sheets: 3 });
+      expect(out.source).toBe('company_output_profiles');
+    });
+  });
+
+  describe('listCompanyOutputProfiles', () => {
+    it('accepts doc_type as alias for docType', async () => {
+      const calls = [];
+      const mockDb = {
+        from: (table) => {
+          const chain = {
+            select: () => chain,
+            eq: (col, val) => { calls.push({ col, val }); return chain; },
+            is: () => chain,
+            order: () => chain,
+            then: (resolve) => resolve({ data: [{ id: '1', doc_type: 'mbr_report' }], error: null }),
+          };
+          // Make chain thenable (Supabase returns a PromiseLike)
+          return chain;
+        },
+      };
+      const result = await listCompanyOutputProfiles({ doc_type: 'mbr_report', db: mockDb });
+      expect(result).toHaveLength(1);
+      expect(calls.some(c => c.col === 'doc_type' && c.val === 'mbr_report')).toBe(true);
+    });
+
+    it('falls back to style_profiles when company_output_profiles is empty', async () => {
+      const tables = {};
+      const mockDb = {
+        from: (table) => {
+          const chain = {
+            select: () => chain,
+            eq: () => chain,
+            is: () => chain,
+            order: () => chain,
+            maybeSingle: () => Promise.resolve({ data: null, error: null }),
+            limit: () => ({
+              then: (resolve) => resolve({ data: [], error: null }),
+            }),
+            insert: (payload) => ({
+              select: () => ({
+                single: () => {
+                  const row = { id: 'bridged_1', ...payload };
+                  return Promise.resolve({ data: row, error: null });
+                },
+              }),
+            }),
+            update: () => ({
+              eq: () => Promise.resolve({ error: null }),
+            }),
+            then: (resolve) => {
+              if (table === 'company_output_profiles') {
+                return resolve({ data: [], error: null });
+              }
+              // style_profiles returns data
+              return resolve({
+                data: [{ id: 'sp1', employee_id: 'e1', doc_type: 'mbr_report', team_id: null, profile_name: 'MBR', sample_count: 5, confidence: 0.8, canonical_structure: {} }],
+                error: null,
+              });
+            },
+          };
+          return chain;
+        },
+      };
+
+      const result = await listCompanyOutputProfiles({ db: mockDb });
+      // Should have auto-bridged from style_profiles
+      expect(result.length).toBeGreaterThan(0);
+      expect(result[0].doc_type).toBe('mbr_report');
+    });
+  });
+});
 
 describe('onboardingService', () => {
   const { classifyDocType, groupFingerprints, ONBOARDING_STAGES } = onboardingExports;

@@ -1,6 +1,6 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
-type ProxyMode = 'gemini_generate' | 'deepseek_chat' | 'ai_chat' | 'di_prompt' | 'anthropic_chat' | 'openai_chat';
+type ProxyMode = 'gemini_generate' | 'deepseek_chat' | 'deepseek_chat_tools' | 'ai_chat' | 'di_prompt' | 'anthropic_chat' | 'openai_chat';
 
 interface ProxyRequestBody {
   mode?: ProxyMode;
@@ -765,6 +765,63 @@ const handleDeepSeekChat = async (payload: Record<string, unknown>) => {
   });
 };
 
+const handleDeepSeekChatTools = async (payload: Record<string, unknown>) => {
+  if (!DEEPSEEK_API_KEY) {
+    return jsonResponse({ error: 'DEEPSEEK_API_KEY is not configured on Edge Function.', code: 'missing_server_keys' }, 500);
+  }
+
+  const messages = payload?.messages;
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return jsonResponse({ error: 'Missing required field: messages (array)' }, 400);
+  }
+
+  const tools = Array.isArray(payload?.tools) ? payload.tools : undefined;
+  const model = String(payload?.model || DEFAULT_DEEPSEEK_MODEL).trim();
+  const temperature = toFiniteNumber(payload?.temperature, 0.3);
+  const maxOutputTokens = Math.max(64, Math.floor(toFiniteNumber(payload?.maxOutputTokens, 4096)));
+
+  const modelCandidates = Array.from(new Set(
+    [model, ...DEEPSEEK_DEFAULT_CANDIDATES]
+      .map((item) => String(item || '').trim())
+      .filter(Boolean),
+  ));
+
+  const requestBody: Record<string, unknown> = {
+    model,
+    messages,
+    temperature,
+    max_tokens: maxOutputTokens,
+  };
+  if (tools && tools.length > 0) {
+    requestBody.tools = tools;
+    requestBody.tool_choice = 'auto';
+  }
+
+  const request = await postDeepSeekWithModelFallback({
+    requestBody,
+    modelCandidates,
+  }) as Record<string, unknown>;
+
+  if (!request.ok) {
+    const status = Number(request.status || 500);
+    return jsonResponse(
+      { error: String(request.errorMessage || 'DeepSeek tool-calling request failed.'), code: 'deepseek_tools_failed' },
+      status >= 400 && status < 600 ? status : 500,
+    );
+  }
+
+  const response = request.response as Response;
+  const body = await parseJsonSafe(response);
+
+  // Return full OpenAI-format response so the client can handle tool_calls
+  return jsonResponse({
+    ok: true,
+    provider: 'deepseek',
+    model: String(request.model || model),
+    ...body,
+  });
+};
+
 const handleAiChat = async (payload: Record<string, unknown>) => {
   const message = String(payload?.message || '').trim();
   if (!message) return jsonResponse({ error: 'Missing required field: message' }, 400);
@@ -1037,6 +1094,7 @@ Deno.serve(async (req) => {
 
     if (mode === 'gemini_generate') return wrapCors(await handleGeminiGenerate(payload));
     if (mode === 'deepseek_chat') return wrapCors(await handleDeepSeekChat(payload));
+    if (mode === 'deepseek_chat_tools') return wrapCors(await handleDeepSeekChatTools(payload));
     if (mode === 'ai_chat') return wrapCors(await handleAiChat(payload));
     if (mode === 'di_prompt') return wrapCors(await handleDiPrompt(payload));
     if (mode === 'anthropic_chat') return wrapCors(await handleAnthropicChat(payload));

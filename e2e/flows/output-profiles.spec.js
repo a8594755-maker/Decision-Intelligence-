@@ -139,8 +139,10 @@ test.describe('Output Profiles Page', () => {
     await expect(learnBtn).toBeVisible();
     await learnBtn.click();
 
-    // Learning phase should start
-    await expect(page.locator('text=Running learning pipeline')).toBeVisible({ timeout: 10000 });
+    // Learning phase should start (or may complete instantly with mocked DB)
+    await expect(
+      page.locator('text=Running learning pipeline').or(page.locator('text=Learning Complete'))
+    ).toBeVisible({ timeout: 15000 });
 
     // Wait for completion (the pipeline processes 5 files — should finish within 30s)
     await expect(page.locator('text=Learning Complete')).toBeVisible({ timeout: 60000 });
@@ -151,10 +153,14 @@ test.describe('Output Profiles Page', () => {
     // Modal should auto-close after 2 seconds and show profiles
     await expect(page.locator('text=Drop all company deliverables here')).not.toBeVisible({ timeout: 10000 });
 
-    // Profile cards should now be visible (from local state injection)
-    // The page should show at least one active profile
-    const profileCards = page.locator('text=/Active Profiles|MBR|Weekly|QBR|Forecast|Risk/i');
-    await expect(profileCards.first()).toBeVisible({ timeout: 10000 });
+    // Profile cards appear after modal closes (2s delay + React re-render)
+    // Click Done button if visible to trigger close sooner
+    const doneBtn = page.getByRole('button', { name: 'Done' });
+    if (await doneBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
+      await doneBtn.click();
+    }
+    // Wait for profile cards to render
+    await expect(page.getByText('forecast_report_profile')).toBeVisible({ timeout: 20000 });
   });
 
   test('no STAGES.map crash on Learning tab', async ({ page }, testInfo) => {

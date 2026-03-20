@@ -92,11 +92,11 @@ export default function WorkOrderDraftCard({ draft, onConfirm, onCancel, onAttac
       {/* Data hints */}
       {draft.data_hints?.length > 0 && (
         <div className="mt-3 flex flex-wrap gap-2">
-          {draft.data_hints.map((hint) => {
+          {draft.data_hints.map((hint, idx) => {
             const Icon = DATA_HINT_ICON[hint] || FileText;
             return (
               <span
-                key={hint}
+                key={`${hint}_${idx}`}
                 className="inline-flex items-center gap-1 rounded-lg bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-300"
               >
                 <Icon className="h-3 w-3" />

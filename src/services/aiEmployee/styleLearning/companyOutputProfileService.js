@@ -2,6 +2,7 @@ import { supabase } from '../../supabaseClient.js';
 
 const PROFILE_TABLE = 'company_output_profiles';
 const PROPOSAL_TABLE = 'company_output_profile_proposals';
+const STYLE_PROFILES_TABLE = 'style_profiles';
 
 function firstDefined(...values) {
   return values.find((value) => value !== undefined && value !== null && String(value).trim() !== '') ?? null;
@@ -253,13 +254,15 @@ export async function listCompanyOutputProfiles({
   employeeId,
   teamId,
   docType,
+  doc_type,   // accept snake_case alias (callers may use either)
   status,
   db = supabase,
 } = {}) {
+  const resolvedDocType = docType || doc_type;
   let query = db.from(PROFILE_TABLE).select('*');
 
   if (employeeId) query = query.eq('employee_id', employeeId);
-  if (docType) query = query.eq('doc_type', docType);
+  if (resolvedDocType) query = query.eq('doc_type', resolvedDocType);
   if (teamId !== undefined) {
     query = teamId ? query.eq('team_id', teamId) : query.is('team_id', null);
   }
@@ -270,7 +273,42 @@ export async function listCompanyOutputProfiles({
     .order('version', { ascending: false });
 
   if (error) throw new Error(`listCompanyOutputProfiles failed: ${error.message}`);
-  return data || [];
+
+  if (data && data.length > 0) return data;
+
+  // ── Fallback: bridge from style_profiles ────────────────────
+  // Data lands in style_profiles first; the bridge step may have
+  // failed silently.  Read style_profiles and auto-create the
+  // company_output_profiles rows so subsequent loads hit the
+  // primary table.
+  try {
+    let fallbackQuery = db.from(STYLE_PROFILES_TABLE).select('*');
+    if (employeeId) fallbackQuery = fallbackQuery.eq('employee_id', employeeId);
+    if (resolvedDocType) fallbackQuery = fallbackQuery.eq('doc_type', resolvedDocType);
+
+    const { data: styleRows, error: styleErr } = await fallbackQuery;
+    if (styleErr || !styleRows?.length) return [];
+
+    const bridged = [];
+    for (const sp of styleRows) {
+      try {
+        const cop = await createProfileFromLegacyStyleProfile({
+          employeeId: sp.employee_id,
+          docType: sp.doc_type,
+          teamId: sp.team_id,
+          profileData: sp,
+          db,
+        });
+        if (cop) bridged.push(cop);
+      } catch (bridgeErr) {
+        console.warn('[listCompanyOutputProfiles] auto-bridge failed for', sp.doc_type, bridgeErr.message);
+      }
+    }
+    return bridged;
+  } catch (fallbackErr) {
+    console.warn('[listCompanyOutputProfiles] style_profiles fallback failed:', fallbackErr.message);
+    return [];
+  }
 }
 
 export async function createProfileFromLegacyStyleProfile({
@@ -279,13 +317,15 @@ export async function createProfileFromLegacyStyleProfile({
   teamId = null,
   legacyProfileId = null,
   actorUserId = null,
+  profileData = null,
   db = supabase,
   now = defaultNow,
 }) {
   const active = await getActiveCompanyOutputProfile({ employeeId, docType, teamId, db });
   if (active) return active;
 
-  const legacyProfile = await fetchLegacyStyleProfile({ employeeId, docType, teamId, legacyProfileId, db });
+  // Use provided in-memory profile data, or fall back to DB read
+  const legacyProfile = profileData || await fetchLegacyStyleProfile({ employeeId, docType, teamId, legacyProfileId, db });
   if (!legacyProfile) {
     throw new Error('Legacy style profile not found');
   }

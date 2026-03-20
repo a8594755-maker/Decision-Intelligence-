@@ -20,7 +20,7 @@
  */
 
 import { taskTransition, TASK_STATES, TASK_EVENTS, isTaskTerminal } from './taskStateMachine.js';
-import { stepTransition, STEP_STATES, STEP_EVENTS, isStepTerminal, isStepWaitingInput } from './stepStateMachine.js';
+import { stepTransition, STEP_STATES, STEP_EVENTS, isStepTerminal, isStepWaitingInput, isStepOnHold } from './stepStateMachine.js';
 import { employeeTransition, EMPLOYEE_STATES, EMPLOYEE_EVENTS } from './employeeStateMachine.js';
 
 import * as taskRepo from './persistence/taskRepo.js';
@@ -48,6 +48,7 @@ import { enforceApprovalGate } from '../approvalGateService.js';
 import { recordTaskValue } from '../roi/valueTrackingService.js';
 import { buildFullAuditTrail } from '../hardening/auditTrailService.js';
 import { isRalphLoopEnabled, runRalphLoop } from './ralphLoopAdapter.js';
+import { datasetProfilesService } from '../datasetProfilesService.js';
 import { evaluateRules } from '../policyRuleService.js';
 import { canExecuteTool, checkCapabilityPolicy } from '../toolPermissionGuard.js';
 
@@ -277,6 +278,19 @@ export async function approvePlan(taskId, userId) {
 
   eventBus.emit(EVENT_NAMES.TASK_STARTED, { taskId, userId });
 
+  // ── Propagate plan-level approval to all steps ──
+  // When the user clicks "Approve & Execute", they are explicitly approving
+  // all steps in the plan. Store this flag so the capability gate can skip
+  // the per-step approval check (task approve = capability approve).
+  try {
+    const ctx = active.input_context || {};
+    await taskRepo.updateTaskInputContext(taskId, {
+      ...ctx,
+      _plan_approved_by: userId,
+      _plan_approved_at: new Date().toISOString(),
+    }, active.version);
+  } catch { /* best-effort — capability gate will still work without this */ }
+
   // Start the tick loop
   _runTickLoop(taskId);
 }
@@ -384,6 +398,30 @@ export async function approveReview(taskId, userId, opts = {}) {
 
   // Only continue tick loop if the review was approved
   if (taskEvent === TASK_EVENTS.REVIEW_APPROVED) {
+    // Transition all review_hold steps back to pending so the tick loop can execute them.
+    // Also mark the task as plan-approved so the capability gate won't re-block them.
+    try {
+      const steps = await stepRepo.getSteps(taskId);
+      for (const s of steps) {
+        if (isStepOnHold(s.status)) {
+          const pendingStatus = stepTransition(s.status, STEP_EVENTS.REVIEW_APPROVED);
+          await stepRepo.updateStep(s.id, { status: pendingStatus, error_message: null });
+        }
+      }
+      // Mark plan as approved in input_context so capability gate skips
+      const latestTask = await taskRepo.getTask(taskId);
+      const ctx = latestTask.input_context || {};
+      if (!ctx._plan_approved_by) {
+        await taskRepo.updateTaskInputContext(taskId, {
+          ...ctx,
+          _plan_approved_by: userId,
+          _plan_approved_at: new Date().toISOString(),
+        }, latestTask.version);
+      }
+    } catch (err) {
+      console.warn('[Orchestrator] Failed to unblock review_hold steps (non-blocking):', err?.message);
+    }
+
     _runTickLoop(taskId);
   } else {
     // Rejected/needs_revision — emit failure event
@@ -476,8 +514,10 @@ export async function skipWaitingInputStep(taskId, _userId) {
  */
 export async function tick(taskId) {
   const task = await taskRepo.getTask(taskId);
+  console.log(`[Orchestrator] tick(${taskId}): task.status=${task.status}, plan_approved=${Boolean(task.input_context?._plan_approved_by)}`);
 
   if (isTaskTerminal(task.status)) {
+    console.log(`[Orchestrator] tick(${taskId}): task is terminal (${task.status}), skipping`);
     return { done: true };
   }
 
@@ -496,7 +536,41 @@ export async function tick(taskId) {
   // Find next step to execute
   const step = await stepRepo.getNextPendingStep(taskId);
   if (!step) {
+    // No pending steps — check if some are held or still pending (DB mismatch) vs all truly done
+    const allSteps = await stepRepo.getSteps(taskId);
+    console.log(`[Orchestrator] tick(${taskId}): getNextPendingStep=null, getSteps returned ${allSteps.length} rows: ${allSteps.map(s => `${s.step_name}:${s.status}`).join(', ') || '(empty)'}`);
+    const heldSteps = allSteps.filter(s => isStepOnHold(s.status));
+    const pendingSteps = allSteps.filter(s => s.status === STEP_STATES.PENDING || s.status === STEP_STATES.RETRYING);
+
+    if (heldSteps.length > 0) {
+      // Some/all steps are in review_hold — produce LLM diagnosis summary
+      console.log(`[Orchestrator] ${heldSteps.length}/${allSteps.length} steps held for task ${taskId} — generating diagnosis`);
+      await _diagnoseAllHeld(task, allSteps, heldSteps);
+      return { done: true, all_held: true };
+    }
+
+    if (pendingSteps.length > 0) {
+      // getNextPendingStep returned null but getSteps shows pending steps — DB query mismatch.
+      // Return the first pending step directly instead of falsely completing.
+      console.warn(`[Orchestrator] getNextPendingStep returned null but ${pendingSteps.length} steps are still pending — using fallback query`);
+      const fallbackStep = pendingSteps[0];
+      const result = await _executeStep(task, fallbackStep);
+      return { done: false, stepResult: result };
+    }
+
+    if (allSteps.length === 0) {
+      // No steps in DB at all — may be a timing/RLS issue. Do NOT mark complete.
+      console.warn(`[Orchestrator] No step rows found in DB for task ${taskId} — aborting tick (not completing)`);
+      return { done: true, error: 'No step rows found in database' };
+    }
+
     // All steps done — transition task to done
+    const nonTerminal = allSteps.filter(s => !isStepTerminal(s.status));
+    if (nonTerminal.length > 0) {
+      console.warn(`[Orchestrator] ${nonTerminal.length} steps not terminal but no pending — statuses: ${nonTerminal.map(s => `${s.step_name}:${s.status}`).join(', ')}`);
+      return { done: true, error: 'Steps in unexpected state' };
+    }
+
     console.log(`[Orchestrator] All steps complete for task ${taskId} — finishing`);
     await _completeTask(task);
     return { done: true };
@@ -670,8 +744,10 @@ async function _executeStep(task, step) {
       const stepAutonomy = await _getAutonomyLevel(task.employee_id);
 
       // Check approval requirement: hold step if policy requires approval
-      // and worker autonomy is below the auto-approve threshold
-      if (policy.approval_required && !_autonomyAtLeast(stepAutonomy, policy.auto_approve_at || 'A3') && !step._capability_approved) {
+      // and worker autonomy is below the auto-approve threshold.
+      // Skip if the user already approved the entire plan (task-level approve = capability approve).
+      const planApproved = Boolean(task.input_context?._plan_approved_by);
+      if (policy.approval_required && !_autonomyAtLeast(stepAutonomy, policy.auto_approve_at || 'A3') && !step._capability_approved && !planApproved) {
         const holdMsg = `Capability "${capClass}" requires approval (worker autonomy ${stepAutonomy} < auto-approve threshold ${policy.auto_approve_at})`;
         const holdPayload = {
           taskId: task.id, stepIndex: step.step_index, stepName: step.step_name,
@@ -925,6 +1001,21 @@ async function _executeStep(task, step) {
     priorStepResults,
     _memory_context: memoryContext,
   };
+
+  // ── Resolve datasetProfileRow from DB if only datasetProfileId is available ──
+  if (!inputData.datasetProfileRow && inputData.datasetProfileId) {
+    try {
+      const profileRow = await datasetProfilesService.getDatasetProfileById(
+        inputData.userId || task.input_context?.inputData?.userId,
+        inputData.datasetProfileId
+      );
+      if (profileRow) {
+        inputData.datasetProfileRow = profileRow;
+      }
+    } catch (err) {
+      console.warn('[Orchestrator] Failed to resolve datasetProfileRow from ID:', err.message);
+    }
+  }
 
   // ── Lazy context acquisition: resolve missing data on-demand ──
   if (stepDef.required_context?.length > 0) {
@@ -1203,13 +1294,17 @@ async function _handleStepFailure(task, step, errorMessage, stepDef = {}) {
       ended_at: new Date().toISOString(),
     });
 
+    // LLM-driven error diagnosis (best-effort, non-blocking)
+    const diagnosis = await _diagnoseFailure(step, errorMessage, task);
+
     const skipPayload = {
       taskId: task.id, stepIndex: step.step_index, stepName: step.step_name,
-      error: errorMessage, healing, skipped: true,
+      error: errorMessage, healing, skipped: true, diagnosis,
     };
     eventBus.emit(EVENT_NAMES.AGENT_STEP_FAILED, skipPayload);
+    if (diagnosis) eventBus.emit(EVENT_NAMES.AGENT_STEP_DIAGNOSED, { taskId: task.id, stepIndex: step.step_index, diagnosis });
     _publishSSE(task.id, { event_type: 'step_failed', ...skipPayload });
-    _writeFailureWorklog(task, step, errorMessage, healing);
+    _writeFailureWorklog(task, step, errorMessage, healing, diagnosis);
     return;
   }
 
@@ -1220,19 +1315,38 @@ async function _handleStepFailure(task, step, errorMessage, stepDef = {}) {
   task.version += 1;
   await _resetEmployee(task.employee_id);
 
+  // LLM-driven error diagnosis (best-effort, non-blocking)
+  const diagnosis = await _diagnoseFailure(step, errorMessage, task);
+
   const failPayload = {
     taskId: task.id, stepIndex: step.step_index, stepName: step.step_name,
-    error: errorMessage, healing,
+    error: errorMessage, healing, diagnosis,
   };
   eventBus.emit(EVENT_NAMES.AGENT_STEP_FAILED, failPayload);
   eventBus.emit(EVENT_NAMES.TASK_FAILED, { taskId: task.id, error: errorMessage });
+  if (diagnosis) eventBus.emit(EVENT_NAMES.AGENT_STEP_DIAGNOSED, { taskId: task.id, stepIndex: step.step_index, diagnosis });
   _publishSSE(task.id, { event_type: 'step_failed', ...failPayload });
-  _writeFailureWorklog(task, step, errorMessage, healing);
+  _writeFailureWorklog(task, step, errorMessage, healing, diagnosis);
 }
 
 // ── Internal: Worklog Helpers ─────────────────────────────────────────────────
 
-function _writeFailureWorklog(task, step, errorMessage, healing) {
+async function _diagnoseFailure(step, errorMessage, task) {
+  try {
+    const { diagnoseStepFailure } = await import('./errorDiagnosticService.js');
+    return await diagnoseStepFailure({
+      step,
+      errorMessage,
+      retryHistory: step._revision_instructions || [],
+      taskContext: task.input_context,
+    });
+  } catch (err) {
+    console.warn('[Orchestrator] Error diagnosis failed (non-blocking):', err?.message);
+    return null;
+  }
+}
+
+function _writeFailureWorklog(task, step, errorMessage, healing, diagnosis) {
   appendWorklog(task.employee_id, task.id, step.id, 'step_progress', {
     step_name: step.step_name,
     step_index: step.step_index,
@@ -1240,12 +1354,85 @@ function _writeFailureWorklog(task, step, errorMessage, healing) {
     error: errorMessage,
     retry_count: (step.retry_count || 0) + 1,
     healing_strategy: healing?.healingStrategy || null,
+    diagnosis: diagnosis || null,
   }).catch(() => { /* best-effort */ });
+}
+
+// ── Internal: All-Steps-Held Diagnosis ────────────────────────────────────────
+
+/**
+ * When all steps end up in review_hold (no pending steps remain), produce an
+ * LLM-driven diagnosis summarising why the task stalled, emit it via SSE so
+ * the UI can render a FailureReportCard, and write a worklog entry.
+ */
+async function _diagnoseAllHeld(task, allSteps, heldSteps) {
+  const heldErrors = heldSteps.map(s => ({
+    step_name: s.step_name,
+    step_index: s.step_index,
+    error: s.error_message || 'review_hold (no error message)',
+  }));
+
+  // Deduplicate: if every step has the same error, summarise once
+  const uniqueErrors = [...new Set(heldErrors.map(e => e.error))];
+  const combinedError = uniqueErrors.length === 1
+    ? `All ${heldSteps.length} steps blocked: ${uniqueErrors[0]}`
+    : heldErrors.map(e => `[${e.step_name}] ${e.error}`).join('\n');
+
+  // LLM diagnosis (best-effort)
+  let diagnosis = null;
+  try {
+    const { diagnoseStepFailure } = await import('./errorDiagnosticService.js');
+    diagnosis = await diagnoseStepFailure({
+      step: { step_name: '(all steps)', step_index: -1 },
+      errorMessage: combinedError,
+      retryHistory: [],
+      taskContext: task.input_context,
+    });
+  } catch (err) {
+    console.warn('[Orchestrator] All-held diagnosis failed (non-blocking):', err?.message);
+  }
+
+  const payload = {
+    taskId: task.id,
+    event_type: 'all_steps_held',
+    held_count: heldSteps.length,
+    total_count: allSteps.length,
+    errors: heldErrors,
+    diagnosis,
+    message: combinedError,
+  };
+
+  eventBus.emit(EVENT_NAMES.AGENT_STEP_BLOCKED, payload);
+  _publishSSE(task.id, payload);
+
+  // Worklog
+  try {
+    await appendWorklog(task.employee_id, task.id, null, 'task_lifecycle', {
+      event: 'all_steps_held',
+      held_count: heldSteps.length,
+      total_count: allSteps.length,
+      diagnosis: diagnosis || null,
+      message: combinedError,
+    });
+  } catch { /* best-effort */ }
 }
 
 // ── Internal: Task Completion ─────────────────────────────────────────────────
 
 async function _completeTask(task) {
+  // Final verification: ensure all steps are truly terminal before completing
+  const verifySteps = await stepRepo.getSteps(task.id);
+  const nonTerminal = verifySteps.filter(s => !isStepTerminal(s.status));
+  if (nonTerminal.length > 0) {
+    console.error(`[Orchestrator] _completeTask BLOCKED: ${nonTerminal.length} steps not terminal — ${nonTerminal.map(s => `${s.step_name}:${s.status}`).join(', ')}`);
+    return; // Do NOT mark task as done
+  }
+  if (verifySteps.length === 0) {
+    console.error(`[Orchestrator] _completeTask BLOCKED: no step rows found for task ${task.id}`);
+    return; // Do NOT mark task as done with 0 steps
+  }
+  console.log(`[Orchestrator] _completeTask: verified ${verifySteps.length} steps all terminal, completing task ${task.id}`);
+
   const nextStatus = taskTransition(task.status, TASK_EVENTS.ALL_STEPS_DONE);
   await taskRepo.updateTaskStatus(task.id, nextStatus, task.version);
   task.version += 1;

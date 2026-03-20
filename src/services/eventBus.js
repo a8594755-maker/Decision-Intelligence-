@@ -22,6 +22,8 @@ export const EVENT_NAMES = Object.freeze({
   AGENT_STEP_FAILED:     'agent:step_failed',
   AGENT_STEP_REVIEW:     'agent:step_review',
   AGENT_STEP_REVISION:   'agent:step_revision',
+  AGENT_STEP_DIAGNOSED:  'agent:step_diagnosed',
+  AGENT_STEP_BLOCKED:    'agent:step_blocked',
   AGENT_LOOP_DONE:       'agent:loop_done',
   AGENT_LOOP_ERROR:      'agent:loop_error',
 
