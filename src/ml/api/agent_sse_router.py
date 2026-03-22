@@ -131,6 +131,12 @@ async def publish_event(task_id: str, payload: StepEventPayload):
 # GET /sse/agent/{task_id}/events — SSE stream
 # ---------------------------------------------------------------------------
 
+@agent_sse_router.head("/agent/{task_id}/events")
+async def head_events(task_id: str):
+    """Pre-flight check for SSE endpoint reachability."""
+    return StreamingResponse(iter([]), media_type="text/event-stream", status_code=200)
+
+
 @agent_sse_router.get("/agent/{task_id}/events")
 async def stream_events(task_id: str, request: Request):
     """

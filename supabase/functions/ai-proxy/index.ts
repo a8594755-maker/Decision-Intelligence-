@@ -1,6 +1,6 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
-type ProxyMode = 'gemini_generate' | 'deepseek_chat' | 'deepseek_chat_tools' | 'ai_chat' | 'di_prompt' | 'anthropic_chat' | 'openai_chat';
+type ProxyMode = 'gemini_generate' | 'deepseek_chat' | 'deepseek_chat_tools' | 'ai_chat' | 'di_prompt' | 'anthropic_chat' | 'openai_chat' | 'openai_chat_tools';
 
 interface ProxyRequestBody {
   mode?: ProxyMode;
@@ -901,6 +901,62 @@ const handleOpenAIChat = async (payload: Record<string, unknown>) => {
   return jsonResponse({ ok: true, ...result });
 };
 
+const handleOpenAIChatTools = async (payload: Record<string, unknown>) => {
+  if (!OPENAI_API_KEY) {
+    return jsonResponse({ error: 'OPENAI_API_KEY is not configured on Edge Function.', code: 'missing_server_keys' }, 500);
+  }
+
+  const messages = payload?.messages;
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return jsonResponse({ error: 'Missing required field: messages (array)' }, 400);
+  }
+
+  const tools = Array.isArray(payload?.tools) ? payload.tools : undefined;
+  const model = String(payload?.model || DEFAULT_OPENAI_MODEL).trim();
+  const temperature = toFiniteNumber(payload?.temperature, 0.3);
+  const maxOutputTokens = Math.max(64, Math.floor(toFiniteNumber(payload?.maxOutputTokens, 4096)));
+
+  const modelCandidates = Array.from(new Set(
+    [model, ...OPENAI_DEFAULT_CANDIDATES]
+      .map((item) => String(item || '').trim())
+      .filter(Boolean),
+  ));
+
+  const requestBody: Record<string, unknown> = {
+    model,
+    messages,
+    temperature,
+    max_completion_tokens: maxOutputTokens,
+  };
+  if (tools && tools.length > 0) {
+    requestBody.tools = tools;
+    requestBody.tool_choice = 'auto';
+  }
+
+  const request = await postOpenAIWithModelFallback({
+    requestBody,
+    modelCandidates,
+  }) as Record<string, unknown>;
+
+  if (!request.ok) {
+    const status = Number(request.status || 500);
+    return jsonResponse(
+      { error: String(request.errorMessage || 'OpenAI tool-calling request failed.'), code: 'openai_tools_failed' },
+      status >= 400 && status < 600 ? status : 500,
+    );
+  }
+
+  const response = request.response as Response;
+  const body = await parseJsonSafe(response);
+
+  return jsonResponse({
+    ok: true,
+    provider: 'openai',
+    model: String(request.model || model),
+    ...body,
+  });
+};
+
 const handleDiPrompt = async (payload: Record<string, unknown>) => {
   const provider = String(payload?.provider || '').trim().toLowerCase();
   const prompt = String(payload?.prompt || '').trim();
@@ -1099,6 +1155,7 @@ Deno.serve(async (req) => {
     if (mode === 'di_prompt') return wrapCors(await handleDiPrompt(payload));
     if (mode === 'anthropic_chat') return wrapCors(await handleAnthropicChat(payload));
     if (mode === 'openai_chat') return wrapCors(await handleOpenAIChat(payload));
+    if (mode === 'openai_chat_tools') return wrapCors(await handleOpenAIChatTools(payload));
 
     return jsonResponse({ error: `Unsupported mode: ${mode}` }, 400, cors);
   } catch (error) {

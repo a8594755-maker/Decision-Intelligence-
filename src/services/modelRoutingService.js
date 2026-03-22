@@ -53,18 +53,21 @@ const DEFAULT_MODELS = [
   { provider: 'gemini',    model_name: 'gemini-2.5-flash-lite',  capability_tier: 'tier_c', cost_per_1k_input: 0.0001,   cost_per_1k_output: 0.0004,   max_context_tokens: 1048576, active: true },
 ];
 
+// NOTE: All policies pinned to GPT-5.4 (tier_a) during development.
+// TODO: Once stable, downgrade low-reasoning tasks (forecast, export, registered_tool) to tier_b/c.
 const DEFAULT_POLICIES = {
-  forecast:                { preferred_tier: 'tier_c', fallback_tier: 'tier_b', escalation_rules: { on_failure: 'tier_a', on_low_confidence: 'tier_b' } },
-  plan:                    { preferred_tier: 'tier_c', fallback_tier: 'tier_b', escalation_rules: { on_failure: 'tier_a', on_high_risk: 'tier_a' } },
-  risk:                    { preferred_tier: 'tier_c', fallback_tier: 'tier_b', escalation_rules: { on_failure: 'tier_a' } },
-  synthesize:              { preferred_tier: 'tier_c', fallback_tier: null,     escalation_rules: {} },
-  task_decomposition:      { preferred_tier: 'tier_a', fallback_tier: null,     preferred_model: 'gpt-5.4', escalation_rules: {} },
+  forecast:                { preferred_tier: 'tier_a', fallback_tier: 'tier_b', preferred_model: 'gpt-5.4', escalation_rules: {} },
+  plan:                    { preferred_tier: 'tier_a', fallback_tier: 'tier_b', preferred_model: 'gpt-5.4', escalation_rules: {} },
+  risk:                    { preferred_tier: 'tier_a', fallback_tier: 'tier_b', preferred_model: 'gpt-5.4', escalation_rules: {} },
+  synthesis:               { preferred_tier: 'tier_a', fallback_tier: 'tier_b', preferred_model: 'gpt-5.4', escalation_rules: {} },
+  synthesize:              { preferred_tier: 'tier_a', fallback_tier: 'tier_b', preferred_model: 'gpt-5.4', escalation_rules: {} },
+  task_decomposition:      { preferred_tier: 'tier_a', fallback_tier: 'tier_b', preferred_model: 'gpt-5.4', escalation_rules: {} },
   review:                  { preferred_tier: 'tier_a', fallback_tier: 'tier_b', preferred_model: 'gpt-5.4', escalation_rules: {} },
-  dynamic_tool_generation: { preferred_tier: 'tier_a', fallback_tier: 'tier_b', preferred_model: 'gpt-5.4', escalation_rules: { on_failure: 'tier_a' } },
-  registered_tool:         { preferred_tier: 'tier_c', fallback_tier: null,     escalation_rules: {} },
-  report:                  { preferred_tier: 'tier_b', fallback_tier: 'tier_c', escalation_rules: {} },
-  export:                  { preferred_tier: 'tier_c', fallback_tier: null,     escalation_rules: {} },
-  builtin_tool:            { preferred_tier: 'tier_b', fallback_tier: 'tier_c', escalation_rules: {} },
+  dynamic_tool_generation: { preferred_tier: 'tier_a', fallback_tier: 'tier_b', preferred_model: 'gpt-5.4', escalation_rules: {} },
+  registered_tool:         { preferred_tier: 'tier_a', fallback_tier: 'tier_b', preferred_model: 'gpt-5.4', escalation_rules: {} },
+  report:                  { preferred_tier: 'tier_a', fallback_tier: 'tier_b', preferred_model: 'gpt-5.4', escalation_rules: {} },
+  export:                  { preferred_tier: 'tier_a', fallback_tier: 'tier_b', preferred_model: 'gpt-5.4', escalation_rules: {} },
+  builtin_tool:            { preferred_tier: 'tier_a', fallback_tier: 'tier_b', preferred_model: 'gpt-5.4', escalation_rules: {} },
 };
 
 const LOCAL_RUNS_KEY = 'ai_employee_model_runs_v1';

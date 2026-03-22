@@ -25,6 +25,8 @@
 import { getToolDefinitions, getToolSummaryForPrompt, executeTool } from './chatToolAdapter.js';
 import { invokeAiProxy } from './aiProxyService.js';
 import { trackLlmUsage } from '../utils/llmUsageTracker.js';
+import { detectToolGap, detectProactiveGap } from './gapDetectionService.js';
+import { generateToolBlueprint } from './toolBlueprintGenerator.js';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -32,6 +34,8 @@ const MAX_AGENT_ITERATIONS = 8; // Prevent infinite loops
 const AGENT_TIMEOUT_MS = 300_000; // 5 minutes total for the full agent loop
 const DEEPSEEK_BASE_URL = String(import.meta.env.VITE_DI_DEEPSEEK_BASE_URL || 'https://api.deepseek.com').replace(/\/+$/, '');
 const DEEPSEEK_CHAT_MODEL = import.meta.env.VITE_DI_DEEPSEEK_MODEL || 'deepseek-chat';
+const AGENT_CHAT_MODEL = import.meta.env.VITE_DI_CHAT_MODEL || 'gpt-5.4';
+const AGENT_CHAT_PROVIDER = import.meta.env.VITE_DI_CHAT_PROVIDER || 'openai';
 const USE_EDGE_AI_PROXY = true;
 
 // ── Agent Loop ──────────────────────────────────────────────────────────────
@@ -49,6 +53,7 @@ const USE_EDGE_AI_PROXY = true;
  * @param {function} [params.callbacks.onToolCall] - Called when a tool is about to execute
  * @param {function} [params.callbacks.onToolResult] - Called when a tool finishes
  * @param {function} [params.callbacks.onThinking] - Called when agent is reasoning
+ * @param {function} [params.callbacks.onToolBlueprint] - Called when a tool gap is detected and a blueprint is generated
  * @param {AbortSignal} [params.signal] - Abort signal
  * @returns {Promise<AgentResult>}
  */
@@ -60,7 +65,7 @@ export async function runAgentLoop({
   callbacks = {},
   signal,
 }) {
-  const { onTextChunk, onToolCall, onToolResult, onThinking } = callbacks;
+  const { onTextChunk, onToolCall, onToolResult, onThinking, onToolBlueprint } = callbacks;
 
   // Build the tool definitions for the LLM
   const tools = getToolDefinitions();
@@ -74,12 +79,17 @@ export async function runAgentLoop({
     toolSummary,
     '',
     'IMPORTANT INSTRUCTIONS:',
+    '- When the user asks about data (customers, orders, products, sellers, payments, etc.), ALWAYS call query_sap_data with a SQL query. NEVER just describe SQL — execute it.',
+    '- Call query_sap_data ONCE per question. Do NOT call it again with test queries like "SELECT 1".',
+    '- SQL dialect is AlaSQL. Avoid reserved words as aliases: "total", "key", "value", "order", "group". Use descriptive aliases like "total_revenue", "order_count" instead.',
     '- When the user asks to run an analysis, forecast, plan, or any tool, call the appropriate function.',
-    '- Before calling a tool, briefly explain what you are going to do.',
-    '- After a tool returns results, summarize the key findings for the user.',
+    '- After a tool returns results, summarize the key findings for the user in a clear markdown table.',
     '- If a tool fails, explain the error and suggest alternatives.',
     '- You can chain multiple tools: e.g., run forecast first, then generate a plan.',
-    '- If you need data that is not available, ask the user to upload it.',
+    '- To forecast from SAP data, use forecast_from_sap (NOT run_forecast). It accepts a demand_sql parameter — write a SQL that returns (material_code, plant_id, time_bucket, demand_qty). If no SQL given, defaults to Olist orders. Olist data covers 2017-01 to 2018-08.',
+    '- If you need data that is not available, try query_sap_data first before asking the user to upload.',
+    '- Tools prefixed with "reg_" are user-approved registered tools. Use them when they match the task.',
+    '- If a tool fails due to data format mismatch, the system may auto-generate an adapter tool for the user to approve.',
     '- Always respond in the same language the user used.',
   ].join('\n');
 
@@ -128,23 +138,51 @@ export async function runAgentLoop({
 
     const latencyMs = Date.now() - t0;
 
-    // Case 1: LLM returns text (no tool calls) → we're done
+    // Case 1: LLM returns text (no tool calls)
     if (!response.tool_calls?.length) {
       const text = response.content || '';
-      finalText = text;
-      onTextChunk?.(text);
 
-      trackLlmUsage({
-        source: 'agent_loop',
-        model: DEEPSEEK_CHAT_MODEL,
-        provider: 'deepseek',
-        status: 'success',
-        latencyMs,
-        workflow: 'agent_chat',
-        promptTokens: response.usage?.prompt_tokens,
-        completionTokens: response.usage?.completion_tokens,
-      });
-      break;
+      // Fallback A: some models emit tool calls as JSON text instead of structured tool_calls.
+      const extracted = extractEmbeddedToolCall(text, tools);
+      if (extracted) {
+        console.info('[agentLoop] Extracted embedded tool call from text:', extracted.name);
+        response.tool_calls = [{
+          id: `embedded_${Date.now()}`,
+          type: 'function',
+          function: { name: extracted.name, arguments: JSON.stringify(extracted.args) },
+        }];
+        response.content = extracted.preamble || null;
+        // Fall through to Case 2 below
+
+      // Fallback B: LLM said "I'll query" but didn't actually call a tool.
+      // Push its response back and nudge it to actually execute.
+      } else if (i < 2 && looksLikeToolIntent(text)) {
+        console.info('[agentLoop] LLM stated intent without calling tool, nudging (iteration', i, ')');
+        // Stream the preamble text so user sees something
+        onTextChunk?.(text + '\n');
+        messages.push({ role: 'assistant', content: text });
+        messages.push({
+          role: 'user',
+          content: `IMPORTANT: You MUST call the query_sap_data function right now. Do not explain what you will do — just call it. For example: query_sap_data({"sql":"SELECT ..."})`,
+        });
+        continue;
+
+      } else {
+        finalText = text;
+        onTextChunk?.(text);
+
+        trackLlmUsage({
+          source: 'agent_loop',
+          model: DEEPSEEK_CHAT_MODEL,
+          provider: 'deepseek',
+          status: 'success',
+          latencyMs,
+          workflow: 'agent_chat',
+          promptTokens: response.usage?.prompt_tokens,
+          completionTokens: response.usage?.completion_tokens,
+        });
+        break;
+      }
     }
 
     // Case 2: LLM wants to call tools → execute them
@@ -191,6 +229,40 @@ export async function runAgentLoop({
         args: toolArgs,
         result: toolResult,
       });
+
+      // ── Gap Detection: if tool failed, check if we can auto-create a tool ──
+      if (!toolResult.success && i < MAX_AGENT_ITERATIONS - 2 && onToolBlueprint) {
+        const gap = detectToolGap({
+          taskDescription: message,
+          toolCallResult: toolResult,
+          toolName,
+          toolArgs,
+          availableTools: tools,
+        });
+
+        if (gap.hasGap) {
+          console.info('[agentLoop] Gap detected:', gap.gapType, gap.gapDescription);
+          onTextChunk?.(`\n🔍 Detected capability gap: **${gap.gapType}**\n💡 Generating tool blueprint...\n\n`);
+
+          try {
+            const blueprint = await generateToolBlueprint(gap);
+            console.info('[agentLoop] Blueprint generated:', blueprint.name);
+
+            // Return early with blueprint — DSV will handle the approval flow
+            return {
+              text: finalText || '',
+              toolCalls,
+              iterations: totalIterations,
+              isAgentResponse: true,
+              blueprint, // ← DSV checks this to show ToolBlueprintCard
+              gap,
+            };
+          } catch (blueprintErr) {
+            console.warn('[agentLoop] Blueprint generation failed:', blueprintErr?.message);
+            // Fall through — let the normal error flow handle it
+          }
+        }
+      }
 
       // Feed the tool result back into the conversation
       const resultContent = toolResult.success
@@ -241,71 +313,104 @@ async function callLLMWithTools(messages, tools, { signal } = {}) {
   // Try Edge Function (ai-proxy) first
   if (USE_EDGE_AI_PROXY) {
     try {
-      const result = await invokeAiProxy('deepseek_chat_tools', {
+      const toolsMode = AGENT_CHAT_PROVIDER === 'openai' ? 'openai_chat_tools'
+        : AGENT_CHAT_PROVIDER === 'anthropic' ? 'anthropic_chat_tools'
+        : 'deepseek_chat_tools';
+      console.info(`[agentLoop] Calling LLM (${toolsMode}, model=${AGENT_CHAT_MODEL}) with ${tools.length} tools:`, tools.map(t => t.function?.name));
+      const result = await invokeAiProxy(toolsMode, {
         messages,
         tools,
-        model: DEEPSEEK_CHAT_MODEL,
+        model: AGENT_CHAT_MODEL,
         temperature: 0.3, // Lower temperature for tool calls — more deterministic
         maxOutputTokens: 4096,
       }, { signal });
 
+      console.info('[agentLoop] LLM raw response keys:', Object.keys(result || {}));
+      console.info('[agentLoop] LLM choices[0].message:', JSON.stringify(result?.choices?.[0]?.message || result?.text || '(no choices)').slice(0, 500));
+
       // The ai-proxy should return the full OpenAI-format response
       if (result?.choices?.[0]?.message) {
+        const msg = result.choices[0].message;
+        console.info('[agentLoop] tool_calls in response:', msg.tool_calls?.length ?? 0, msg.tool_calls ? JSON.stringify(msg.tool_calls).slice(0, 300) : '');
         return {
-          ...result.choices[0].message,
+          ...msg,
           usage: result.usage,
         };
       }
       // Fallback: ai-proxy returned text only
       if (result?.text) {
+        console.warn('[agentLoop] ai-proxy returned text-only (no choices). text:', result.text.slice(0, 200));
         return { content: result.text, tool_calls: [], usage: result.usage };
       }
 
       throw new Error('Unexpected ai-proxy response format');
     } catch (err) {
-      console.warn('[agentLoop] ai-proxy failed, falling back to direct API:', err.message);
+      // NO FALLBACK: surface the error
+      throw err;
     }
   }
 
-  // Direct DeepSeek API call
-  const deepSeekApiKey = getDeepSeekApiKey();
-  if (!deepSeekApiKey) {
-    throw new Error('No DeepSeek API key configured. Set VITE_DEEPSEEK_API_KEY in environment or local settings.');
-  }
-
-  const response = await fetch(`${DEEPSEEK_BASE_URL}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${deepSeekApiKey}`,
-    },
-    body: JSON.stringify({
-      model: DEEPSEEK_CHAT_MODEL,
-      messages,
-      tools: tools.length > 0 ? tools : undefined,
-      tool_choice: 'auto',
-      temperature: 0.3,
-      max_tokens: 4096,
-    }),
-    signal,
-  });
-
-  if (!response.ok) {
-    const errData = await response.json().catch(() => ({}));
-    throw new Error(errData?.error?.message || `DeepSeek API error (${response.status})`);
-  }
-
-  const data = await response.json();
-  const msg = data.choices?.[0]?.message;
-
-  if (!msg) {
-    throw new Error('No message in DeepSeek response');
-  }
-
-  return { ...msg, usage: data.usage };
+  throw new Error('[callLLMWithTools] USE_EDGE_AI_PROXY is off and no direct API fallback is enabled.');
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
+
+/**
+ * Check if the LLM's text response indicates it *intended* to call a tool
+ * but didn't actually invoke one (e.g., "I'll query the data now", "讓我查詢").
+ */
+function looksLikeToolIntent(text) {
+  if (!text || typeof text !== 'string') return false;
+  const patterns = [
+    /正在查詢|我先查詢|讓我查|幫你查|我來查|先查一下/,
+    /let me (query|check|look up|run|fetch|search)/i,
+    /i('ll| will) (query|check|look up|run|fetch|search)/i,
+    /querying|looking up|searching|fetching/i,
+  ];
+  return patterns.some((re) => re.test(text));
+}
+
+/**
+ * Extract an embedded tool call from LLM text output.
+ * Some models output tool calls as JSON in text instead of structured tool_calls.
+ * Matches patterns like: {"tool":"query_sap_data","arguments":{...}}
+ */
+function extractEmbeddedToolCall(text, tools) {
+  if (!text || typeof text !== 'string') return null;
+
+  // Build a set of valid tool names for validation
+  const validNames = new Set(tools.map((t) => t.function?.name).filter(Boolean));
+
+  // Pattern 1: {"tool":"name","arguments":{...}}
+  const toolJsonPattern = /\{[^{}]*"tool"\s*:\s*"([^"]+)"[^{}]*"arguments"\s*:\s*(\{[^]*?\})\s*\}/;
+  const match1 = text.match(toolJsonPattern);
+  if (match1) {
+    const name = match1[1];
+    if (validNames.has(name)) {
+      try {
+        const args = JSON.parse(match1[2]);
+        const preamble = text.slice(0, match1.index).trim();
+        return { name, args, preamble };
+      } catch { /* parse failed, try next pattern */ }
+    }
+  }
+
+  // Pattern 2: function call notation — query_sap_data({"sql":"..."})
+  const funcPattern = /([a-z_]+)\s*\(\s*(\{[^]*?\})\s*\)/;
+  const match2 = text.match(funcPattern);
+  if (match2) {
+    const name = match2[1];
+    if (validNames.has(name)) {
+      try {
+        const args = JSON.parse(match2[2]);
+        const preamble = text.slice(0, match2.index).trim();
+        return { name, args, preamble };
+      } catch { /* parse failed */ }
+    }
+  }
+
+  return null;
+}
 
 /**
  * Get DeepSeek API key from environment or localStorage.
@@ -324,7 +429,7 @@ function getDeepSeekApiKey() {
  * Summarize a tool result to a reasonable size for feeding back to the LLM.
  * Large arrays get truncated to avoid blowing the context window.
  */
-function summarizeToolResult(result, maxItems = 20, maxDepth = 3) {
+function summarizeToolResult(result, maxItems = 20, maxDepth = 5) {
   if (!result || typeof result !== 'object') return result;
 
   function truncate(obj, depth) {
@@ -361,10 +466,17 @@ export function shouldUseAgentMode(message) {
   const lower = message.toLowerCase();
 
   // Strong signals: explicit requests to run something
+  // NOTE: \b does NOT work with CJK characters — use separate patterns for Chinese
   const strongSignals = [
-    /\b(run|execute|generate|compute|analyze|forecast|plan|simulate|比較|預測|計畫|分析|模擬|執行|產生)\b/i,
+    /\b(run|execute|generate|compute|analyze|forecast|plan|simulate)\b/i,
     /\b(what.?if|scenario|risk|negotiate|cost|revenue|bom|closed.?loop|supply)\b/i,
-    /\b(幫我|請|跑一下|做一個|建立|檢查)\b/,
+    /\b(SELECT|SQL|query|sap|master\s*data)\b/i,
+    /\btop\s*\d+/i,
+    // Chinese signals (no \b — word boundaries don't work with CJK)
+    /(比較|預測|計畫|分析|模擬|執行|產生)/,
+    /(幫我|請|跑一下|做一個|建立|檢查)/,
+    /(客戶|訂單|產品|賣家|付款|查詢|有哪些|列出|多少|統計|哪個)/,
+    /(供應商|物料|庫存|採購單|收貨|評論)/,
   ];
 
   return strongSignals.some((re) => re.test(lower));

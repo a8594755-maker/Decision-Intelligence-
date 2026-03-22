@@ -119,9 +119,9 @@ function ChatMessageBubble({ message, renderSpecialMessage, timestampText = '', 
                 </div>
               ) : null
             )}
-            {timestampText ? (
+            {(timestampText || (!isUser && message?.meta?.model)) ? (
               <p className={`mt-1 text-[11px] ${isAIEmployeeVariant ? (isUser ? 'text-slate-300 dark:text-slate-500' : 'text-slate-400') : isUser ? 'text-blue-100' : 'text-slate-400'}`}>
-                {timestampText}
+                {[timestampText, !isUser && message?.meta?.model ? `· ${message.meta.model}` : null].filter(Boolean).join(' ')}
               </p>
             ) : null}
           </div>

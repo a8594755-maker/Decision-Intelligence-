@@ -79,6 +79,10 @@ class ToolExecutionRequest(BaseModel):
     code: Optional[str] = None
     # Revision instructions from AI review
     revision_instructions: Optional[List[str]] = None
+    # Analysis mode: uses analysis-specific prompt + server-side dataset loading
+    analysis_mode: Optional[bool] = False
+    # Dataset source for analysis mode (e.g. "olist")
+    dataset: Optional[str] = None
 
 
 class ArtifactOut(BaseModel):
@@ -459,11 +463,160 @@ Return ONLY a JSON object (no markdown, no explanation):
 }"""
 
 
+# ---------------------------------------------------------------------------
+# Analysis-specific code generation prompt (Claude-style statistical analysis)
+# ---------------------------------------------------------------------------
+
+ANALYSIS_CODE_GEN_SYSTEM_PROMPT = """You are an expert statistical data analyst. Given a task description and a pre-loaded dataset (available as `tables` dict of DataFrames), generate Python code for comprehensive business analysis.
+
+CRITICAL RULES:
+1. Your code MUST define `run(input_data, prior_artifacts, tables)` where `tables` is a Dict[str, pd.DataFrame].
+   - `tables` keys: customers, orders, order_items, payments, reviews, products, sellers, geolocation, category_translation
+   - Use `tables["orders"]` etc. to access DataFrames directly — no file I/O needed.
+   - If `tables` is empty, fall back to `input_data["sheets"]`.
+2. Available libraries: pandas, numpy, json, re, math, datetime, collections, statistics, itertools, functools, scipy, scipy.stats
+3. DO NOT import os, sys, subprocess, importlib, shutil, or any I/O libraries.
+4. DO NOT use open(), exec(), eval(), __import__(), compile().
+
+ANALYSIS PATTERNS — use these proven techniques:
+
+A. BUSINESS TIER SEGMENTATION with pd.cut:
+   ```python
+   bins = [0, 500, 2000, 10000, 50000, float('inf')]
+   labels = ['Micro', 'Small', 'Medium', 'Large', 'Enterprise']
+   df['tier'] = pd.cut(df['revenue'], bins=bins, labels=labels)
+   tier_stats = df.groupby('tier', observed=True).agg(count=('id','count'), total=('revenue','sum'), avg=('revenue','mean'))
+   ```
+
+B. GINI COEFFICIENT (vectorized, no loops):
+   ```python
+   values = np.sort(df['revenue'].values.astype(float))
+   n = len(values)
+   index = np.arange(1, n + 1)
+   gini = (2 * np.sum(index * values) - (n + 1) * np.sum(values)) / (n * np.sum(values)) if np.sum(values) > 0 else 0
+   ```
+
+C. LORENZ CURVE DATA:
+   ```python
+   sorted_vals = np.sort(df['revenue'].values.astype(float))
+   cum_share = np.cumsum(sorted_vals) / sorted_vals.sum() * 100
+   pop_share = np.arange(1, len(sorted_vals) + 1) / len(sorted_vals) * 100
+   # Sample ~50 points for chart
+   indices = np.linspace(0, len(cum_share) - 1, 50).astype(int)
+   lorenz_data = [{"x": round(pop_share[i], 1), "y": round(cum_share[i], 1)} for i in indices]
+   lorenz_data.insert(0, {"x": 0, "y": 0})
+   ```
+
+D. MULTI-DIMENSIONAL GROUPBY + AGG (one groupby, many metrics):
+   ```python
+   stats = df.groupby('seller_id').agg(
+       total_revenue=('price', 'sum'),
+       order_count=('order_id', 'nunique'),
+       avg_price=('price', 'mean'),
+       avg_review=('review_score', 'mean'),
+       first_order=('order_purchase_timestamp', 'min'),
+   ).reset_index()
+   ```
+
+E. CORRELATION ANALYSIS:
+   ```python
+   from scipy import stats as sp
+   corr, pval = sp.pearsonr(df['metric_a'].dropna(), df['metric_b'].dropna())
+   ```
+
+F. CONCENTRATION METRICS:
+   ```python
+   sorted_desc = df.sort_values('revenue', ascending=False)
+   n = len(sorted_desc)
+   for pct in [1, 5, 10, 20]:
+       top_n = int(n * pct / 100)
+       share = sorted_desc.head(top_n)['revenue'].sum() / sorted_desc['revenue'].sum() * 100
+   ```
+
+OUTPUT FORMAT — return artifacts matching AnalysisResultCard shape:
+```python
+{
+    "result": {"analysisType": "seller_concentration", "title": "...", "summary": "..."},
+    "artifacts": [{
+        "type": "analysis_result",
+        "label": "Analysis Title",
+        "data": {
+            "analysisType": "seller_concentration",
+            "title": "Seller Revenue Concentration Analysis",
+            "summary": "One-paragraph executive summary with key numbers",
+            "metrics": {"Total Sellers": "2,970", "Gini Coefficient": "0.789", ...},
+            "charts": [
+                {"type": "lorenz", "title": "Lorenz Curve", "data": [{"x": 0, "y": 0}, ...], "xKey": "x", "yKey": "y", "gini": 0.789},
+                {"type": "bar", "title": "Revenue by Tier", "data": [...], "xKey": "tier", "yKey": "revenue"}
+            ],
+            "tables": [{"title": "Top 10 Sellers", "columns": ["Seller", "Revenue", "Orders"], "rows": [...]}],
+            "highlights": ["Top 1% sellers contribute 25% revenue", "Gini = 0.789 (high concentration)"],
+            "details": ["Additional observations..."],
+            "key_findings": [
+                {"finding": "Revenue is highly concentrated (Gini=0.789)", "severity": "high", "implication": "Platform depends on top sellers"}
+            ],
+            "anomalies": [
+                {"dimension": "state", "value": "BA", "metric": "avg_revenue", "actual": 15447, "context": "Only 18 sellers but highest avg revenue"}
+            ],
+            "recommendations": [
+                {"action": "Diversify seller base in underrepresented states", "priority": "P1"}
+            ],
+            "deep_dive_suggestions": [
+                {"id": "dd1", "label": "Seller Churn Analysis", "query": "Which sellers are declining in orders quarter-over-quarter?"},
+                {"id": "dd2", "label": "Category Concentration", "query": "How concentrated is revenue within each product category?"}
+            ]
+        }
+    }]
+}
+```
+
+CRITICAL NOTES:
+- Produce MULTIPLE artifacts if the analysis covers multiple dimensions.
+- Each artifact MUST have type="analysis_result" and follow the data shape above.
+- Charts: use type "lorenz" for Lorenz curves, "bar" for comparisons, "line" for trends, "pie" for composition, "histogram" for distributions.
+- For histogram charts: data = [{"bin": "0-100", "count": 45}, ...], xKey="bin", yKey="count".
+- metrics dict: keys are display labels, values are pre-formatted strings.
+- highlights: short badge-style strings (1 line each).
+- key_findings: include severity (high/medium/low) and business implication.
+- deep_dive_suggestions: actionable follow-up questions the user can click.
+- Keep string literals SHORT and ASCII-only. No Chinese/CJK in code — put those in output data only.
+- Handle missing values with .fillna() or .dropna().
+- Use pd.to_numeric(col, errors='coerce') for mixed types.
+- The run() function MUST return {"result": ..., "artifacts": [...]}.
+
+Return ONLY a JSON object (no markdown, no explanation):
+{
+  "code": "import pandas as pd\\nimport numpy as np\\n...",
+  "description": "Brief description of what the code does"
+}"""
+
+
+def _build_analysis_data_schema(table_schemas: dict) -> str:
+    """Build schema description for analysis mode using server-side loaded tables."""
+    parts = ["\n## Dataset Tables (pre-loaded as `tables` dict of DataFrames)"]
+    parts.append("Access via: `tables['table_name']` → pd.DataFrame")
+    for name, info in table_schemas.items():
+        row_count = info.get("row_count", "?")
+        cols = info.get("columns", [])
+        col_names = [c["name"] for c in cols]
+        parts.append(f"\n### tables['{name}'] ({row_count:,} rows)")
+        parts.append(f"Columns: {col_names}")
+        # Show dtype + sample for each column
+        for c in cols[:20]:
+            sample_str = ", ".join(c.get("sample", [])[:2])
+            parts.append(f"  - `{c['name']}` ({c['dtype']}): {sample_str}")
+    return "\n".join(parts)
+
+
 def _build_code_gen_prompt(request: ToolExecutionRequest) -> str:
     parts = [f"## Task\n{request.tool_hint}"]
 
+    # Analysis mode: show table schemas from server-side loaded data
+    if request.analysis_mode and hasattr(request, '_table_schemas') and request._table_schemas:
+        parts.append(_build_analysis_data_schema(request._table_schemas))
+
     # Data schema — show ALL columns with types and sample values
-    if request.input_data.get("sheets"):
+    elif request.input_data.get("sheets"):
         parts.append("\n## Input Data Schema")
         parts.append("Access via: `input_data['sheets']['SheetName']` → list of row dicts")
         sheets = request.input_data["sheets"]
@@ -584,10 +737,13 @@ def _validate_code(code: str) -> Optional[str]:
     return None
 
 
-def _execute_code(code: str, input_data: dict, prior_artifacts: dict) -> dict:
+def _execute_code(code: str, input_data: dict, prior_artifacts: dict, tables: Optional[Dict[str, Any]] = None) -> dict:
     """
     Execute Python code in a restricted namespace with pandas/numpy available.
     Returns { ok, result, artifacts, stdout, stderr, execution_ms }.
+
+    Args:
+        tables: Optional dict of pre-loaded DataFrames (for analysis mode).
     """
     import pandas as pd
     import numpy as np
@@ -714,7 +870,13 @@ def _execute_code(code: str, input_data: dict, prior_artifacts: dict) -> dict:
                     "execution_ms": int((time.time() - start) * 1000),
                 }
 
-            raw_result = run_fn(input_data, prior_artifacts)
+            # Pass tables if available (analysis mode)
+            import inspect
+            sig = inspect.signature(run_fn)
+            if len(sig.parameters) >= 3 and tables:
+                raw_result = run_fn(input_data, prior_artifacts, tables)
+            else:
+                raw_result = run_fn(input_data, prior_artifacts)
 
         execution_ms = int((time.time() - start) * 1000)
 
@@ -920,6 +1082,9 @@ async def execute_tool(request: ToolExecutionRequest):
     Execute a data processing tool:
     1. If code is provided, execute it directly
     2. Otherwise, call LLM to generate Python code, then execute
+
+    When analysis_mode=True, uses analysis-specific prompt and loads
+    dataset tables from server-side CSV cache.
     """
     start_time = time.time()
 
@@ -928,6 +1093,20 @@ async def execute_tool(request: ToolExecutionRequest):
     _used_provider = None
     _used_model = None
 
+    # Analysis mode: load dataset tables + attach schemas to request
+    _loaded_tables = None
+    if request.analysis_mode:
+        try:
+            from ml.api.dataset_loader import load_olist_tables, get_table_schemas
+            _loaded_tables = load_olist_tables()
+            request._table_schemas = get_table_schemas()
+            logger.info(f"[tool_executor] Analysis mode: loaded {len(_loaded_tables)} tables")
+        except Exception as e:
+            logger.warning(f"[tool_executor] Failed to load dataset tables: {e}")
+
+    # Select prompt based on mode
+    system_prompt = ANALYSIS_CODE_GEN_SYSTEM_PROMPT if request.analysis_mode else CODE_GEN_SYSTEM_PROMPT
+
     # Step 1: Generate code via LLM if not provided
     if not code:
         try:
@@ -935,7 +1114,7 @@ async def execute_tool(request: ToolExecutionRequest):
             _used_provider = llm_config.provider
             _used_model = llm_config.model or _default_model(llm_config.provider)
             prompt = _build_code_gen_prompt(request)
-            llm_response = await _call_llm(prompt, CODE_GEN_SYSTEM_PROMPT, llm_config)
+            llm_response = await _call_llm(prompt, system_prompt, llm_config)
             code = _extract_code_from_llm(llm_response)
 
             if not code:
@@ -970,7 +1149,7 @@ async def execute_tool(request: ToolExecutionRequest):
                 f"Keep all string literals on a single line.\n\n"
                 f"Original task:\n{request.tool_hint}"
             )
-            llm_response2 = await _call_llm(fix_prompt, CODE_GEN_SYSTEM_PROMPT, _pick_provider(request.llm_config))
+            llm_response2 = await _call_llm(fix_prompt, system_prompt, _pick_provider(request.llm_config))
             code2 = _extract_code_from_llm(llm_response2)
             if code2:
                 safety_error2 = _validate_code(code2)
@@ -992,7 +1171,7 @@ async def execute_tool(request: ToolExecutionRequest):
         )
 
     # Step 3: Execute code in sandbox (with runtime error retry)
-    exec_result = _execute_code(code, request.input_data, request.prior_artifacts)
+    exec_result = _execute_code(code, request.input_data, request.prior_artifacts, tables=_loaded_tables)
 
     # If execution failed with a runtime error, retry once with error context
     if not exec_result.get("ok") and not request.code:
@@ -1015,12 +1194,12 @@ async def execute_tool(request: ToolExecutionRequest):
                     f"- Keep string literals short and ASCII-only\n\n"
                     f"Original task:\n{request.tool_hint}"
                 )
-                llm_response2 = await _call_llm(fix_prompt, CODE_GEN_SYSTEM_PROMPT, _pick_provider(request.llm_config))
+                llm_response2 = await _call_llm(fix_prompt, system_prompt, _pick_provider(request.llm_config))
                 code2 = _extract_code_from_llm(llm_response2)
                 if code2:
                     safety2 = _validate_code(code2)
                     if not safety2:
-                        exec_result2 = _execute_code(code2, request.input_data, request.prior_artifacts)
+                        exec_result2 = _execute_code(code2, request.input_data, request.prior_artifacts, tables=_loaded_tables)
                         if exec_result2.get("ok"):
                             code = code2
                             exec_result = exec_result2

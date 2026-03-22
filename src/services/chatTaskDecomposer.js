@@ -67,6 +67,163 @@ const GENERAL_ANALYSIS_SIGNALS_ZH = [
  * 2. Contains multiple general analysis signals (data cleaning, KPI, dashboard, etc.)
  * 3. Mentions multiple business domains (sales + returns + inventory + marketing + support)
  */
+
+// ── Deep statistical analysis detection ─────────────────────────────────────
+// Signals for "broad then deep" Python analysis (Claude-style multi-step analytics).
+// These are more focused than general analysis — specifically requesting statistical depth.
+
+const DEEP_ANALYSIS_SIGNALS = [
+  // English — full phrases (each counts as 2 to auto-trigger)
+  'comprehensive analysis', 'full analysis', 'deep analysis', 'deep dive',
+  'panorama', 'end-to-end analysis', 'complete analysis', 'statistical analysis',
+  'concentration analysis', 'distribution analysis', 'correlation analysis',
+  'segmentation analysis',
+  // English — bare terms (need 2+ matches to trigger)
+  'gini', 'lorenz',
+  // Chinese — full phrases (each counts as 2 to auto-trigger)
+  '全面分析', '深度分析', '完整分析', '全景分析', '統計分析',
+  '集中度分析', '分布分析', '相關性分析', '分層分析',
+  // Chinese — compound terms (need 2+ matches to trigger)
+  '表現差異', '賣家表現', '客戶分群', '供應商評估',
+];
+
+/**
+ * Detect whether a message requests deep statistical analysis (broad-then-deep pattern).
+ * Triggers the two-step panorama + deep-dive pipeline using Python analysis.
+ */
+// Full phrases that are strong enough to trigger on their own (matchCount += 2)
+const STRONG_SIGNALS = new Set([
+  'comprehensive analysis', 'full analysis', 'deep analysis', 'deep dive',
+  'panorama', 'end-to-end analysis', 'complete analysis', 'statistical analysis',
+  '全面分析', '深度分析', '完整分析', '全景分析', '統計分析',
+  '集中度分析', '分布分析', '相關性分析', '分層分析',
+]);
+
+function _isDeepAnalysisRequest(msgLower) {
+  let matchCount = 0;
+  for (const signal of DEEP_ANALYSIS_SIGNALS) {
+    if (msgLower.includes(signal)) {
+      matchCount += STRONG_SIGNALS.has(signal) ? 2 : 1;
+    }
+  }
+  // Require 2+ to avoid single bare keyword triggering the full pipeline
+  return matchCount >= 2;
+}
+
+/**
+ * Build two-step "broad then deep" analysis pipeline.
+ * Step 1: Panorama scan across all dimensions.
+ * Step 2: Deep dive into top anomalies/patterns found in step 1.
+ */
+function _buildDeepAnalysisSteps(userMessage) {
+  return [
+    {
+      name: 'panorama_scan',
+      workflow_type: 'python_tool',
+      description: 'Run panorama analysis: dimension discovery, concentration metrics, cross-analysis, anomaly detection',
+      requires_review: false,
+      builtin_tool_id: 'run_python_analysis',
+      tool_hint: `Panorama Analysis Task (broad scan):
+User request: "${userMessage}"
+
+Using the pre-loaded tables dict, run a comprehensive panorama analysis:
+1. Identify all tables and their relationships (join keys).
+2. Build a master dataset by merging relevant tables (orders + items + sellers/customers + reviews).
+3. Identify dimensions (categorical columns) and measures (numeric columns).
+4. For the top 3 measures (by business importance: revenue, order count, review score):
+   a. Compute Gini coefficient and Lorenz curve data
+   b. Compute top-1%, top-5%, top-10%, top-20% concentration
+   c. Use pd.cut to create business tiers (4-5 tiers)
+   d. Cross-tabulate with top 2 dimensions (e.g. geography, category)
+5. Identify anomalies: values > 2 sigma from mean, unusual patterns.
+6. Compute key correlations between measures (scipy.stats.pearsonr).
+7. Output a comprehensive analysis_result artifact with charts (lorenz, bar, histogram), tables, metrics, key_findings, anomalies, and deep_dive_suggestions.
+
+IMPORTANT: Output deep_dive_suggestions with specific queries for the most interesting patterns found.`,
+      tool_id: null,
+      depends_on: [],
+      needs_dataset_profile: false,
+      input_args: { analysis_mode: true, dataset: 'olist' },
+    },
+    {
+      name: 'deep_dive',
+      workflow_type: 'python_tool',
+      description: 'Deep dive into top 3 anomalies/patterns from panorama scan',
+      requires_review: false,
+      builtin_tool_id: 'run_python_analysis',
+      tool_hint: `Deep Dive Analysis Task:
+Read the panorama_scan results from prior_artifacts["panorama_scan"].
+Extract the deep_dive_suggestions and anomalies from the analysis.
+
+Pick the top 3 most interesting patterns/anomalies and for each one:
+1. Run targeted statistical analysis (correlation, trend decomposition, segmentation).
+2. Compute additional metrics specific to that pattern.
+3. Generate specific, actionable recommendations.
+
+Output 2-3 separate analysis_result artifacts, each covering one deep-dive topic.
+Each artifact should have its own charts, metrics, key_findings, and recommendations.`,
+      tool_id: null,
+      depends_on: ['panorama_scan'],
+      needs_dataset_profile: false,
+      input_args: { analysis_mode: true, dataset: 'olist' },
+    },
+  ];
+}
+
+/**
+ * Fast-path: detect forecast/predict requests and return a single forecast_from_sap step.
+ * Avoids LLM decomposition entirely for these well-known patterns.
+ */
+function _tryForecastShortcut(userMessage) {
+  const lower = userMessage.toLowerCase();
+  const forecastSignals = ['預測', 'forecast', 'predict', '需求預測', 'demand forecast'];
+  const compareSignals = ['比對', '比較', 'compare', 'actual', '實際', 'accuracy', 'mape'];
+
+  const hasForecast = forecastSignals.some(s => lower.includes(s));
+  if (!hasForecast) return null;
+
+  // Don't shortcut if message contains other action keywords (plan, risk, export, cost, report, etc.)
+  // These need full decomposition into multiple steps.
+  const otherActionSignals = [
+    'plan', 'risk', 'export', 'excel', 'report', 'cost', 'revenue',
+    'negotiate', 'simulation', 'bom', 'explosion', 'replenish',
+    '計畫', '風險', '匯出', '報告', '成本', '補貨', '談判',
+  ];
+  const hasOtherActions = otherActionSignals.some(s => lower.includes(s));
+  if (hasOtherActions) return null;
+
+  const hasCompare = compareSignals.some(s => lower.includes(s));
+
+  // Detect model selection from user message
+  const modelMap = {
+    prophet: ['prophet'],
+    lightgbm: ['lightgbm', 'lgbm', 'gradient boosting'],
+    chronos: ['chronos'],
+    xgboost: ['xgboost', 'xgb'],
+    ets: ['ets', 'exponential smoothing'],
+    naive: ['naive', '天真'],
+  };
+  // Default to compare mode (run all models), unless user specifies a specific model
+  let forecast_model = 'compare';
+  for (const [model, keywords] of Object.entries(modelMap)) {
+    if (keywords.some(k => lower.includes(k))) {
+      forecast_model = model;
+      break;
+    }
+  }
+
+  return [{
+    name: 'forecast_from_sap',
+    workflow_type: 'builtin_tool',
+    description: `Run demand forecast${hasCompare ? ' and compare with actuals' : ''} using ${forecast_model} model.`,
+    builtin_tool_id: 'forecast_from_sap',
+    depends_on: [],
+    tool_hint: null,
+    needs_dataset_profile: false,
+    input_args: { forecast_model },
+  }];
+}
+
 function _isGeneralAnalysisRequest(msgLower) {
   const tokens = msgLower.split(/[\s,;:!?。，；：！？\n]+/).filter(Boolean);
 
@@ -133,7 +290,6 @@ The user uploaded a multi-sheet business data file. Your job:
       tool_id: null,
       builtin_tool_id: null,
       depends_on: [],
-      estimated_tier: 'tier_a',
       needs_dataset_profile: true,
     },
     {
@@ -158,7 +314,6 @@ Produce exactly 2 artifacts:
       tool_id: null,
       builtin_tool_id: null,
       depends_on: ['clean_data'],
-      estimated_tier: 'tier_a',
       needs_dataset_profile: false,
     },
     {
@@ -183,7 +338,6 @@ Produce exactly 2 artifacts:
       tool_id: null,
       builtin_tool_id: null,
       depends_on: ['calculate_kpis'],
-      estimated_tier: 'tier_a',
       needs_dataset_profile: false,
     },
   ];
@@ -237,6 +391,8 @@ TOOL_HINT RULES (for python_tool steps):
 
 10. If the user's request is vague or ambiguous (e.g. "分析資料", "analyze data", "generate report" without specifics), set needs_clarification=true and provide 2-4 short clarification questions. Criteria for vague: no specific metrics/KPIs mentioned, no output format specified, multiple possible approaches exist, less than 10 meaningful words.
 11. Even when needs_clarification=true, STILL provide your best-guess subtasks so the user can skip clarification if they want.
+12. PREFER FEWER STEPS. If a single builtin tool can do the whole job, use ONE step. For example, "forecast_from_sap" can query data, run forecast, AND compare actuals in a single call — do NOT split this into separate query/forecast/compare steps.
+13. For demand forecast tasks (預測, forecast, predict demand), use builtin_tool "forecast_from_sap" as a SINGLE step. It handles: SQL data query → forecast engine → actuals comparison → MAPE calculation. Do NOT add separate steps for data extraction, forecast, or comparison — the tool does it all.
 
 Respond with ONLY a JSON object (no markdown, no explanation):
 {
@@ -247,8 +403,7 @@ Respond with ONLY a JSON object (no markdown, no explanation):
       "description": "what this step does",
       "builtin_tool_id": "tool_id_or_null",
       "depends_on": ["prior_step_name"],
-      "tool_hint": "description for dynamic_tool, or null",
-      "estimated_tier": "tier_a|tier_b|tier_c"
+      "tool_hint": "description for dynamic_tool, or null"
     }
   ],
   "report_format": "xlsx|html|powerbi|null",
@@ -292,7 +447,6 @@ async function _tryLLMDecompose(userMessage, { employeeId } = {}) {
       tool_id: s.tool_id || null,
       builtin_tool_id: s.builtin_tool_id || null,
       depends_on: Array.isArray(s.depends_on) ? s.depends_on : [],
-      estimated_tier: s.estimated_tier || 'tier_c',
       needs_dataset_profile: false,
     }));
 
@@ -342,6 +496,22 @@ async function _tryLLMDecompose(userMessage, { employeeId } = {}) {
 export async function decomposeTask({ userMessage, sessionContext: _sessionContext = null, employeeId = null, userId: _userId = null }) {
   if (!userMessage || typeof userMessage !== 'string') {
     return _emptyDecomposition(userMessage);
+  }
+
+  // ── Fast-path: forecast requests → single forecast_from_sap step ──────
+  const forecastShortcut = _tryForecastShortcut(userMessage);
+  if (forecastShortcut) {
+    console.info('[chatTaskDecomposer] Fast-path: forecast request → single forecast_from_sap step');
+    return _finalize(forecastShortcut, userMessage, 'html', 0.95);
+  }
+
+  // ── Fast-path: deep analysis → broad-then-deep pipeline ───────────────
+  // Must come BEFORE LLM decomposition — otherwise LLM may ask clarification
+  // questions for requests that should just run the panorama scan directly.
+  if (_isDeepAnalysisRequest(userMessage.toLowerCase())) {
+    console.info('[chatTaskDecomposer] Fast-path: deep analysis request → broad-then-deep pipeline');
+    const deepSteps = _buildDeepAnalysisSteps(userMessage);
+    return _finalize(deepSteps, userMessage, null, 0.85);
   }
 
   // ── Try LLM-based decomposition first ──────────────────────────────────
@@ -437,7 +607,6 @@ export async function decomposeTask({ userMessage, sessionContext: _sessionConte
       tool_id: null,
       builtin_tool_id: null,
       depends_on: [],
-      estimated_tier: 'tier_a',
       needs_dataset_profile: true,
     });
   }
@@ -498,8 +667,7 @@ export async function decomposeTask({ userMessage, sessionContext: _sessionConte
         tool_id: null,
         builtin_tool_id: null,
         depends_on: [],
-        estimated_tier: 'tier_a',
-        needs_dataset_profile: true,
+          needs_dataset_profile: true,
       });
     }
   }
@@ -574,6 +742,20 @@ function _finalize(subtasks, userMessage, reportFormat, confidence, clarificatio
         }
       }
     }
+
+    // Dedup: if two steps share the same builtin_tool_id and neither depends on the other, keep first
+    const seenToolIds = new Map(); // builtin_tool_id → step name
+    subtasks = subtasks.filter(step => {
+      if (!step.builtin_tool_id) return true;
+      const existing = seenToolIds.get(step.builtin_tool_id);
+      if (!existing) { seenToolIds.set(step.builtin_tool_id, step.name); return true; }
+      // Keep both if one depends on the other (e.g. panorama_scan → deep_dive with same tool but different hints)
+      const hasDep = step.depends_on?.includes(existing)
+        || subtasks.find(s => s.name === existing)?.depends_on?.includes(step.name);
+      if (hasDep) return true;
+      console.info(`[chatTaskDecomposer] Dedup: removing step "${step.name}" (same tool as "${existing}": ${step.builtin_tool_id})`);
+      return false;
+    });
 
     // Sort: dependencies first
     subtasks.sort((a, b) => {

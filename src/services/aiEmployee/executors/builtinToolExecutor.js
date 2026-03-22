@@ -5,7 +5,7 @@
  * No state mutation, no DB calls, no event emission.
  */
 
-import { BUILTIN_TOOLS } from '../../builtinToolCatalog.js';
+import { BUILTIN_TOOLS, isPythonApiTool } from '../../builtinToolCatalog.js';
 
 function toImportPath(modulePath) {
   const normalized = modulePath.replace(/^\.\//, '');
@@ -31,6 +31,67 @@ export async function executeBuiltinTool(stepInput) {
   const catalogEntry = BUILTIN_TOOLS.find(t => t.id === toolId);
   if (!catalogEntry) {
     return { ok: false, artifacts: [], logs, error: `Tool '${toolId}' not found in catalog` };
+  }
+
+  // ── Python API tools → call specific ML API endpoint ──
+  if (isPythonApiTool(toolId)) {
+    const methodParts = (catalogEntry.method || '').match(/^(POST|GET|PUT|DELETE)\s+(.+)$/i);
+    if (!methodParts) {
+      return { ok: false, artifacts: [], logs, error: `Invalid __python_api__ method format: '${catalogEntry.method}'` };
+    }
+    const [, httpMethod, apiPath] = methodParts;
+    const ML_API_BASE = typeof import.meta !== 'undefined' && import.meta.env?.VITE_ML_API_URL
+      ? import.meta.env.VITE_ML_API_URL : 'http://localhost:8000';
+
+    logs.push(`[BuiltinExecutor] Calling Python API: ${httpMethod} ${ML_API_BASE}${apiPath} (tool: ${toolId})`);
+
+    try {
+      const args = {
+        userId: inputData.userId,
+        datasetProfileRow: inputData.datasetProfileRow,
+        settings: inputData.settings || {},
+        ...(inputData.priorArtifacts ? { priorArtifacts: inputData.priorArtifacts } : {}),
+        ...(inputData.sheets ? { sheets: inputData.sheets } : {}),
+        ...(step.input_args || {}),
+      };
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 180_000);
+      const resp = await fetch(`${ML_API_BASE}${apiPath}`, {
+        method: httpMethod,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(args),
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+
+      if (!resp.ok) {
+        const errText = await resp.text().catch(() => 'Unknown');
+        logs.push(`[BuiltinExecutor] Python API ${resp.status}: ${errText.slice(0, 200)}`);
+        return { ok: false, artifacts: [], logs, error: `Python API ${resp.status}: ${errText.slice(0, 200)}` };
+      }
+
+      const result = await resp.json();
+      const artifacts = result?.artifacts || result?.artifact_refs || [];
+      // Attach Python code to artifacts for UI transparency
+      if (result.code) {
+        const meta = {
+          code: result.code,
+          stdout: result.stdout || '',
+          execution_ms: result.execution_ms,
+          llm_model: result.llm_model,
+          engine: 'Python (pandas/numpy/scipy)',
+        };
+        for (const art of artifacts) {
+          art._executionMeta = meta;
+        }
+      }
+      logs.push(`[BuiltinExecutor] Python API completed. Artifacts: ${artifacts.length}`);
+      return { ok: true, artifacts, logs };
+    } catch (err) {
+      logs.push(`[BuiltinExecutor] Python API error: ${err.message}`);
+      return { ok: false, artifacts: [], logs, error: `Python API error: ${err.message}` };
+    }
   }
 
   logs.push(`[BuiltinExecutor] Loading module: ${catalogEntry.module}`);
@@ -59,10 +120,35 @@ export async function executeBuiltinTool(stepInput) {
       ...(step.input_args || {}),
     };
 
-    const result = await fn(args);
+    // Wrap analysis functions with methodology capture (SQL queries + data sources)
+    const isAnalysisTool = catalogEntry.output_artifacts?.includes('analysis_result');
+    let wrappedFn = fn;
+    if (isAnalysisTool && mod.withMethodology) {
+      wrappedFn = mod.withMethodology(fn);
+    }
+
+    const result = await wrappedFn(args);
+
+    // If the tool explicitly returned success: false, propagate as failure
+    if (result && result.success === false) {
+      const errMsg = result.error || result.hint || 'Tool returned success: false';
+      logs.push(`[BuiltinExecutor] Tool returned success=false: ${errMsg}`);
+      return { ok: false, artifacts: [], logs, error: errMsg };
+    }
 
     // Normalize result — DI engines return various shapes
-    const artifacts = result?.artifacts || result?.artifact_refs || [];
+    let artifacts = result?.artifacts || result?.artifact_refs || [];
+
+    // If no explicit artifacts but result has data, wrap it as a typed artifact
+    if (artifacts.length === 0 && result && typeof result === 'object') {
+      // Detect analysis_result shape (from olistAnalysisService, etc.)
+      const isAnalysisResult = result.analysisType && result.metrics;
+      artifacts = [{
+        artifact_type: isAnalysisResult ? 'analysis_result' : 'table',
+        label: result.title || catalogEntry.name || toolId,
+        data: result,
+      }];
+    }
     logs.push(`[BuiltinExecutor] Completed. Artifacts: ${artifacts.length}`);
 
     return { ok: true, artifacts, logs };

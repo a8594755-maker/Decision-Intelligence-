@@ -10,6 +10,8 @@
  */
 
 import React, { Suspense, lazy, useEffect, useRef } from 'react';
+import { envConfig } from '../config/environments';
+import FeatureGatePanel from '../components/dev/FeatureGatePanel';
 import { useSearchParams } from 'react-router-dom';
 import { CanvasProvider, useCanvas } from '../contexts/CanvasContext';
 import UnifiedWorkspaceLayout from '../components/canvas/UnifiedWorkspaceLayout';
@@ -87,6 +89,7 @@ export default function WorkspacePage() {
   return (
     <CanvasProvider>
       <WorkspaceInner />
+      {envConfig.enableDevTools && <FeatureGatePanel />}
     </CanvasProvider>
   );
 }

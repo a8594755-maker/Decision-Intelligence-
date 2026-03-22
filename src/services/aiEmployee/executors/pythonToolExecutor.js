@@ -92,11 +92,22 @@ export async function executePythonTool(stepInput) {
         return { ok: false, artifacts: [], logs, error: result.error || 'execute-tool returned ok=false' };
       }
 
-      return {
-        ok: true,
-        artifacts: result.artifacts || [],
-        logs,
-      };
+      // Attach execution metadata (code, model, timing) to artifacts for UI transparency
+      const artifacts = result.artifacts || [];
+      if (result.code) {
+        const meta = {
+          code: result.code,
+          stdout: result.stdout || '',
+          execution_ms: result.execution_ms,
+          llm_model: result.llm_model,
+          engine: 'Python (pandas/numpy/scipy)',
+        };
+        for (const art of artifacts) {
+          art._executionMeta = meta;
+        }
+      }
+
+      return { ok: true, artifacts, logs };
     } catch (err) {
       if (err.name === 'AbortError') {
         logs.push(`[PythonExecutor] Request timed out after ${FETCH_TIMEOUT_MS / 1000}s (attempt ${attempt + 1}/${MAX_RETRIES + 1})`);

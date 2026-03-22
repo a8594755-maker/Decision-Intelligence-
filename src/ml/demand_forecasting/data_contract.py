@@ -98,22 +98,29 @@ class SalesSeries:
     @classmethod
     def from_inline_history(cls, values: List[float], sku: str = "",
                             base_date: Optional[str] = None,
-                            last_date: Optional[str] = None) -> 'SalesSeries':
+                            last_date: Optional[str] = None,
+                            freq: str = 'D') -> 'SalesSeries':
         """
         從 inline_history 建立（API 常見場景）。
         必須提供 base_date 或 last_date 之一，否則日曆特徵必錯。
-        若都不提供，以「今天 - len(values) 天」為 fallback 並標記警告。
+        若都不提供，以「今天 - len(values) * freq」為 fallback 並標記警告。
+        freq: 'D' (daily), 'MS' (month start), 'W' (weekly)
         """
         n = len(values)
         if last_date:
             end = pd.Timestamp(last_date)
-            dates = pd.date_range(end=end, periods=n, freq='D')
+            dates = pd.date_range(end=end, periods=n, freq=freq)
         elif base_date:
-            dates = pd.date_range(start=base_date, periods=n, freq='D')
+            dates = pd.date_range(start=base_date, periods=n, freq=freq)
         else:
-            # Fallback：以今天為最後日期（可能不正確，但至少不崩）
+            # Fallback：以今天為最後日期
             end = pd.Timestamp.now().normalize()
-            dates = pd.date_range(end=end, periods=n, freq='D')
+            dates = pd.date_range(end=end, periods=n, freq=freq)
+        # Ensure date count matches value count (freq='MS' can cause off-by-one)
+        if len(dates) < n:
+            dates = pd.date_range(start=dates[0], periods=n, freq=freq)
+        elif len(dates) > n:
+            dates = dates[-n:]
 
         return cls(dates=dates.tolist(), values=values, sku=sku)
 

@@ -12,6 +12,11 @@ import { buildAttachmentPromptText } from './chatAttachmentService';
 
 const USE_EDGE_AI_PROXY = true;
 
+// ── Last-used model tracking (for UI display) ────────────────────────────────
+let _lastUsedModel = null;
+let _lastUsedProvider = null;
+export const getLastUsedModel = () => ({ model: _lastUsedModel, provider: _lastUsedProvider });
+
 // Using environment variable for API key (falls back to empty string)
 const DEFAULT_API_KEY = import.meta.env.VITE_GEMINI_API_KEY || "";
 const DEFAULT_GEMINI_MODEL = 'gemini-3-pro-preview';
@@ -374,8 +379,8 @@ export const callGeminiAPI = async (prompt, systemContext = "", options = {}) =>
         workflow: options?.workflow ?? null,
         promptId: options?.promptId ?? null,
       });
-      // Fall through to direct API instead of returning error
-      console.warn('[callGeminiAPI] Edge Function failed, falling back to direct API:', error?.message);
+      // NO FALLBACK: surface the error so we know what broke
+      throw error;
     }
   }
 
@@ -566,77 +571,12 @@ export const chatWithAI = async (message, conversationHistory = [], dataContext 
         latencyMs: Date.now() - t0,
         workflow: 'chat',
       });
-      // Fall through to direct API instead of returning error
-      console.warn('[chatWithAI] Edge Function failed, falling back to direct API:', error.message);
-    }
-  }
-
-  // Direct API path: DeepSeek (no Gemini fallback).
-  const deepSeekApiKey = getDeepSeekApiKey();
-  if (deepSeekApiKey) {
-    try {
-      acquireOrThrow('legacy_deepseek');
-    } catch (error) {
-      if (error instanceof RateLimitError) return error.message;
+      // NO FALLBACK: surface the error
       throw error;
     }
-    const t0 = Date.now();
-    try {
-      const request = await postDeepSeekWithModelFallback({
-        apiKey: deepSeekApiKey,
-        requestBody: {
-          model: DEFAULT_DEEPSEEK_CHAT_MODEL,
-          messages: buildDeepSeekMessages({
-            message,
-            conversationHistory,
-            systemPrompt: baseSystemContext
-          }),
-          temperature: 0.7,
-          max_tokens: 8192
-        }
-      });
-
-      if (!request.ok) {
-        const errorMessage = request.errorData?.error?.message || request.errorMessage || `DeepSeek request failed (${request.status || 'unknown'})`;
-        throw new Error(errorMessage);
-      }
-
-      const body = await request.response.json();
-      const usage = body?.usage;
-      const content = body?.choices?.[0]?.message?.content;
-      const text = typeof content === 'string'
-        ? content
-        : Array.isArray(content)
-          ? content.map((part) => part?.text || '').join('')
-          : '';
-      trackLlmUsage({
-        source: 'deepseek_api',
-        model: request.model,
-        provider: 'deepseek',
-        promptTokens: usage?.prompt_tokens ?? null,
-        completionTokens: usage?.completion_tokens ?? null,
-        totalTokens: usage?.total_tokens ?? null,
-        status: text ? 'success' : 'error',
-        latencyMs: Date.now() - t0,
-        workflow: 'chat',
-      });
-      if (text) return text;
-      throw new Error('DeepSeek returned empty content.');
-    } catch (error) {
-      trackLlmUsage({
-        source: 'deepseek_api',
-        model: DEFAULT_DEEPSEEK_CHAT_MODEL,
-        provider: 'deepseek',
-        status: 'error',
-        latencyMs: Date.now() - t0,
-        workflow: 'chat',
-      });
-      console.warn('[chatWithAI] DeepSeek failed:', error.message);
-      return `❌ DeepSeek 對話服務請求失敗\n\nError: ${error.message}`;
-    }
   }
 
-  return '❌ 未設定 DeepSeek API Key，無法進行對話。\n\n請在設定中加入 DeepSeek API Key。';
+  throw new Error('[chatWithAI] USE_EDGE_AI_PROXY is off and no direct API fallback is enabled.');
 };
 
 /**
@@ -964,20 +904,25 @@ export const streamChatWithAI = async (message, conversationHistory = [], system
   if (USE_EDGE_AI_PROXY) {
     const t0 = Date.now();
     try {
-      const result = await invokeAiProxy('deepseek_chat', {
+      const chatModel = import.meta.env.VITE_DI_CHAT_MODEL || 'gpt-5.4';
+      const chatProvider = import.meta.env.VITE_DI_CHAT_PROVIDER || 'openai';
+      const proxyMode = chatProvider === 'openai' ? 'openai_chat'
+        : chatProvider === 'anthropic' ? 'anthropic_chat'
+        : 'deepseek_chat';
+      const result = await invokeAiProxy(proxyMode, {
         message,
         conversationHistory,
         systemPrompt,
         temperature: 0.7,
         maxOutputTokens: 8192,
-        model: 'deepseek-chat'
+        model: chatModel,
       }, { signal: combinedSignal });
       const text = typeof result?.text === 'string' ? result.text : 'No response generated.';
       const usage = result?.usage;
       trackLlmUsage({
         source: 'ai_proxy',
-        model: 'deepseek-chat',
-        provider: 'deepseek',
+        model: chatModel,
+        provider: chatProvider,
         promptTokens: usage?.prompt_tokens ?? null,
         completionTokens: usage?.completion_tokens ?? null,
         totalTokens: usage?.total_tokens ?? null,
@@ -986,6 +931,7 @@ export const streamChatWithAI = async (message, conversationHistory = [], system
         workflow: 'chat',
       });
       streamTextToChunks(text, onChunk, 48);
+      _lastUsedModel = result?.model || chatModel; _lastUsedProvider = `${chatProvider} (ai-proxy)`;
       return text;
     } catch (error) {
       if (error instanceof RateLimitError) {
@@ -994,75 +940,18 @@ export const streamChatWithAI = async (message, conversationHistory = [], system
       }
       trackLlmUsage({
         source: 'ai_proxy',
-        model: 'deepseek-chat',
-        provider: 'deepseek',
+        model: import.meta.env.VITE_DI_CHAT_MODEL || 'gpt-5.4',
+        provider: import.meta.env.VITE_DI_CHAT_PROVIDER || 'openai',
         status: 'error',
         latencyMs: Date.now() - t0,
         workflow: 'chat',
       });
-      // Fall through to direct API instead of returning error
-      console.warn('[streamChatWithAI] Edge Function failed, falling back to direct API:', error?.message);
-    }
-  }
-
-  const deepSeekApiKey = getDeepSeekApiKey();
-  const geminiApiKey = getApiKey();
-  const noKeyWarning = "WARNING: No API key found. Add your DeepSeek API key (preferred) or Google AI API key in Settings.";
-
-  if (!deepSeekApiKey && !geminiApiKey) {
-    const fallback = `${noKeyWarning}\n\nDeepSeek: https://platform.deepseek.com/\nGoogle AI: https://ai.google.dev/`;
-    onChunk?.(fallback);
-    return fallback;
-  }
-
-  if (deepSeekApiKey) {
-    try {
-      acquireOrThrow('legacy_deepseek');
-    } catch (error) {
-      if (error instanceof RateLimitError) {
-        onChunk?.(error.message);
-        return error.message;
-      }
+      // NO FALLBACK: surface the error
       throw error;
     }
-    const t0ds = Date.now();
-    try {
-      const text = await streamDeepSeekChat({
-        apiKey: deepSeekApiKey,
-        message,
-        conversationHistory,
-        systemPrompt,
-        onChunk,
-        signal: combinedSignal
-      });
-      trackLlmUsage({
-        source: 'deepseek_api',
-        model: DEFAULT_DEEPSEEK_CHAT_MODEL,
-        provider: 'deepseek',
-        status: 'success',
-        latencyMs: Date.now() - t0ds,
-        workflow: 'chat',
-      });
-      return text;
-    } catch (error) {
-      trackLlmUsage({
-        source: 'deepseek_api',
-        model: DEFAULT_DEEPSEEK_CHAT_MODEL,
-        provider: 'deepseek',
-        status: 'error',
-        latencyMs: Date.now() - t0ds,
-        workflow: 'chat',
-      });
-      console.warn('[streamChatWithAI] DeepSeek streaming failed:', error.message);
-      const fallback = `❌ DeepSeek 串流對話請求失敗\n\nError: ${error.message}`;
-      onChunk?.(fallback);
-      return fallback;
-    }
   }
 
-  const fallback = '❌ 未設定 DeepSeek API Key，無法進行對話。\n\n請在設定中加入 DeepSeek API Key。';
-  onChunk?.(fallback);
-  return fallback;
+  throw new Error('[streamChatWithAI] USE_EDGE_AI_PROXY is off and no direct API fallback is enabled.');
   } finally {
     clearTimeout(timeoutId);
   }

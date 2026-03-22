@@ -181,3 +181,8 @@ class EventBus {
 
 export const eventBus = new EventBus();
 export default eventBus;
+
+// Dev-only: expose to console for manual event testing
+if (import.meta.env.DEV) {
+  window.__eventBus = eventBus;
+}

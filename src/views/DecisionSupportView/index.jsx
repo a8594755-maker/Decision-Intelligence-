@@ -14,8 +14,10 @@ import { setLocalTableData, TABLE_REGISTRY } from '../../services/liveDataQueryS
 import { createDatasetProfileFromSheets } from '../../services/datasetProfilingService';
 import { datasetProfilesService, registerLocalProfile } from '../../services/datasetProfilesService';
 import { reuseMemoryService } from '../../services/reuseMemoryService';
-import { streamChatWithAI } from '../../services/geminiAPI';
+import { streamChatWithAI, getLastUsedModel } from '../../services/geminiAPI';
 import { runAgentLoop, shouldUseAgentMode } from '../../services/chatAgentLoop';
+import { registerTool, approveTool } from '../../services/toolRegistryService';
+import { invalidateRegisteredToolsCache } from '../../services/chatToolAdapter';
 import { diResetService } from '../../services/diResetService';
 import {
   runPlanFromDatasetProfile,
@@ -31,6 +33,7 @@ import {
 import { buildSignature } from '../../utils/datasetSimilarity';
 import { buildReusePlan, applyContractTemplateToProfile } from '../../utils/reusePlanner';
 import { APP_NAME } from '../../config/branding';
+import { isCommandEnabled, getDisabledMessage } from '../../config/featureGateService';
 import { executeChatCanvasRun } from '../../services/chatCanvasWorkflowService';
 import CanvasPanel from '../../components/chat/CanvasPanel';
 import AgentExecutionPanel from '../../components/chat/AgentExecutionPanel';
@@ -53,6 +56,14 @@ import { looksLikeScenario } from '../../services/scenarioIntentParser';
 import { runScenarioFromChat } from '../../services/scenarioChatBridge';
 import { resolveActionToIntent } from '../../services/chatActionRegistry';
 import { handleParameterChange, handlePlanComparison, buildComparisonSummaryText } from '../../services/chatRefinementService';
+import {
+  analyzeRevenueTrend, analyzeCustomerRFM, analyzeDeliveryPerformance,
+  analyzeSellerScorecard, analyzeCategoryInsights, analyzeCustomerSatisfaction,
+  analyzePaymentBehavior, detectAndRunAnalysis, buildAnalysisInsightPrompt,
+  computeDerivedMetrics, computeCrossInsights, suggestDeepDives,
+} from '../../services/olistAnalysisService';
+import { generateAnalysisBlueprint, executeModule as executeBlueprintModule } from '../../services/analysisBlueprintService';
+import { handleDataQuery } from '../../services/sapQueryChatHandler.js';
 import { createAlertMonitor, buildAlertChatMessage, isAlertMonitorEnabled } from '../../services/alertMonitorService';
 import { batchApprove, batchReject } from '../../services/approvalWorkflowService';
 import { decomposeTask } from '../../services/chatTaskDecomposer';
@@ -150,19 +161,42 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
   const [agentExecPanelOpen, setAgentExecPanelOpen] = useState(false);
   const [agentExecSSETaskId, setAgentExecSSETaskId] = useState(null);
   const ralphAbortRef = useRef(null); // AbortController for Ralph Loop cancellation
+  const agentExecEventsRef = useRef([]); // Mirror of agentExecEvents for use in event handlers
   const [aiEmployeeDrawer, setAiEmployeeDrawer] = useState(null);
   const [delegatedWorker, setDelegatedWorker] = useState(null);
+
+  // Keep refs in sync with state — but never overwrite if ref is ahead (EventBus writes ref directly)
+  useEffect(() => {
+    if (agentExecEvents.length >= agentExecEventsRef.current.length) {
+      agentExecEventsRef.current = agentExecEvents;
+    }
+  }, [agentExecEvents]);
+  const agentExecTaskTitleRef = useRef('');
+  useEffect(() => { agentExecTaskTitleRef.current = agentExecTaskTitle; }, [agentExecTaskTitle]);
 
   // SSE connection for real-time agent step events (supplements onStepComplete callbacks)
   const agentSSE = useAgentSSE(agentExecSSETaskId, {
     enabled: agentExecPanelOpen && !!agentExecSSETaskId,
     onStepEvent: (stepEvent) => {
-      // Pipe SSE step events into the panel's event list
+      // Deduplicate against ref: skip if EventBus already recorded this step as completed
+      const alreadyCompleted = agentExecEventsRef.current.some(e =>
+        e.status === 'succeeded' && (e.step_name === stepEvent.step_name || e.step_index === stepEvent.step_index)
+      );
+      if (alreadyCompleted && stepEvent.status === 'succeeded') return;
+
+      // Pipe SSE step events into the panel's event list (update existing or append)
       setAgentExecEvents(prev => {
         const idx = prev.findIndex(e => e.step_name === stepEvent.step_name);
         if (idx >= 0) {
           const updated = [...prev];
           updated[idx] = { ...updated[idx], ...stepEvent };
+          return updated;
+        }
+        // Also check by step_index
+        const idxByIndex = prev.findIndex(e => e.step_index != null && e.step_index === stepEvent.step_index);
+        if (idxByIndex >= 0) {
+          const updated = [...prev];
+          updated[idxByIndex] = { ...updated[idxByIndex], ...stepEvent };
           return updated;
         }
         return [...prev, stepEvent];
@@ -361,15 +395,32 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
         });
       }),
       eventBus.on(EVENT_NAMES.AGENT_STEP_COMPLETED, ({ stepIndex, stepName, artifacts }) => {
-        setAgentExecEvents(prev => [...prev, { step_name: stepName, status: 'succeeded', step_index: stepIndex, artifacts }]);
+        // Deduplicate: skip if this step was already completed (by index OR name)
+        const isDup = agentExecEventsRef.current.some(e =>
+          e.status === 'succeeded' && (e.step_index === stepIndex || (stepName && e.step_name === stepName))
+        );
+        if (isDup) return;
+
+        const newEvent = { step_name: stepName, status: 'succeeded', step_index: stepIndex, artifacts };
+        agentExecEventsRef.current = [...agentExecEventsRef.current, newEvent]; // Sync ref immediately
+        setAgentExecEvents(prev => {
+          if (prev.some(e => e.status === 'succeeded' && (e.step_index === stepIndex || (stepName && e.step_name === stepName)))) return prev;
+          return [...prev, newEvent];
+        });
         setAgentExecLoopState(prev => {
           if (!prev?.steps) return prev;
           const steps = prev.steps.map((s, i) => i === stepIndex ? { ...s, status: 'succeeded', finished_at: new Date().toISOString() } : s);
           return { ...prev, steps };
         });
-        appendMessagesToCurrentConversation([{ role: 'ai', content: `Step "${stepName}": completed`, timestamp: new Date().toISOString() }]);
+        if (stepName) {
+          appendMessagesToCurrentConversation([{ role: 'ai', content: `Step "${stepName}": completed`, timestamp: new Date().toISOString() }]);
+        }
       }),
-      eventBus.on(EVENT_NAMES.AGENT_STEP_FAILED, ({ stepIndex, error, healing, willRetry }) => {
+      eventBus.on(EVENT_NAMES.AGENT_STEP_FAILED, ({ stepIndex, stepName, error, healing, willRetry }) => {
+        if (!willRetry) {
+          const failEvent = { step_name: stepName || `Step ${stepIndex}`, status: 'failed', step_index: stepIndex, error };
+          agentExecEventsRef.current = [...agentExecEventsRef.current, failEvent];
+        }
         const note = willRetry ? ` [retrying: ${healing?.healingStrategy}]` : '';
         setAgentExecLoopState(prev => {
           if (!prev?.steps) return prev;
@@ -400,8 +451,43 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
           timestamp: new Date().toISOString(),
         }]);
       }),
-      eventBus.on(EVENT_NAMES.TASK_COMPLETED, () => {
-        appendMessagesToCurrentConversation([{ role: 'ai', content: 'All steps completed. Head to Review to check the results.', timestamp: new Date().toISOString() }]);
+      eventBus.on(EVENT_NAMES.TASK_COMPLETED, ({ taskId } = {}) => {
+        // Build result summary from collected step events
+        // Deduplicate by BOTH step_name AND step_index (SSE vs EventBus may use different keys)
+        const stepEvents = agentExecEventsRef.current || [];
+        const seenNames = new Set();
+        const seenIndexes = new Set();
+        const completedSteps = stepEvents
+          .filter(e => e.status === 'succeeded' || e.status === 'failed')
+          .filter(e => {
+            const name = e.step_name;
+            const idx = e.step_index;
+            // Skip if we've seen this exact name OR this exact index
+            if (name && seenNames.has(name)) return false;
+            if (idx != null && seenIndexes.has(idx)) return false;
+            if (name) seenNames.add(name);
+            if (idx != null) seenIndexes.add(idx);
+            return true;
+          });
+
+        if (completedSteps.length > 0) {
+          appendMessagesToCurrentConversation([{
+            role: 'ai',
+            type: 'task_result_summary',
+            payload: {
+              taskId,
+              taskTitle: agentExecTaskTitleRef.current || '',
+              steps: completedSteps,
+            },
+            timestamp: new Date().toISOString(),
+          }]);
+        } else {
+          appendMessagesToCurrentConversation([{
+            role: 'ai',
+            content: 'All steps completed. You can view detailed results in the Review page.',
+            timestamp: new Date().toISOString(),
+          }]);
+        }
       }),
       eventBus.on(EVENT_NAMES.TASK_FAILED, ({ error }) => {
         appendMessagesToCurrentConversation([{ role: 'ai', content: `Task failed: ${error || 'Unknown error'}`, timestamp: new Date().toISOString() }]);
@@ -1766,6 +1852,110 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
     }
   }, [currentConversationId, activeDatasetContext, user?.id, updateCanvasState, appendMessagesToCurrentConversation, addNotification, currentConversation, currentMessages, setConversations]);
 
+  // ── LLM Insight Streamer for Analysis Results (v2 — with cross + derived) ──
+  const streamAnalysisInsightToChat = useCallback(async (analysisResult, userQuery, history) => {
+    try {
+      analysisResult._userQuery = userQuery || '';
+      const aType = analysisResult.analysisType;
+
+      // Layer 2: compute derived metrics + cross-analysis in parallel
+      setStreamingContent('Computing cross-analysis...');
+      const [derivedMetrics, crossInsights] = await Promise.all([
+        Promise.resolve(computeDerivedMetrics(aType, analysisResult)),
+        computeCrossInsights(aType).catch(() => ({ queries: [], summary: '' })),
+      ]);
+
+      // Layer 3: generate deep dive suggestions
+      const deepDives = suggestDeepDives(aType, analysisResult, derivedMetrics, crossInsights, userQuery);
+
+      // Build prompt with enriched data
+      const { systemPrompt: insightSystem, userPrompt: insightUser } = buildAnalysisInsightPrompt(analysisResult, derivedMetrics, crossInsights);
+      const insightHistory = [
+        ...(history || []).slice(-4),
+        { role: 'user', content: userQuery || 'Analyze this data' },
+      ];
+
+      // Stream LLM response
+      let insightText = '';
+      setStreamingContent('Generating AI insight report...');
+      await streamChatWithAI(insightUser, insightHistory, insightSystem, (chunk) => {
+        insightText += chunk;
+        setStreamingContent('Generating AI insight report...\n\n' + insightText);
+      });
+      setStreamingContent('');
+
+      if (insightText.trim()) {
+        const { model, provider } = getLastUsedModel();
+        let sections = null;
+        try {
+          let jsonStr = insightText.trim();
+          if (jsonStr.startsWith('```')) {
+            jsonStr = jsonStr.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
+          }
+          sections = JSON.parse(jsonStr);
+        } catch {
+          sections = null;
+        }
+        appendMessagesToCurrentConversation([{
+          role: 'ai',
+          type: 'analysis_insight',
+          payload: {
+            analysisType: aType,
+            sections: sections || {},
+            deepDives,
+            rawMarkdown: sections ? null : insightText.trim(),
+            model: model || 'unknown',
+            provider: provider || '',
+            generatedAt: new Date().toLocaleString(),
+          },
+          timestamp: new Date().toISOString(),
+        }]);
+      }
+    } catch (err) {
+      console.warn('[DSV] LLM analysis insight failed:', err?.message);
+      setStreamingContent('');
+    } finally {
+      setIsTyping(false);
+    }
+  }, [appendMessagesToCurrentConversation, setStreamingContent, setIsTyping]);
+
+  // ── Blueprint Execution Handlers ────────────────────────────────────────
+  const handleRunBlueprintModule = useCallback(async (module) => {
+    try {
+      const result = await executeBlueprintModule(module);
+      appendMessagesToCurrentConversation([{
+        role: 'ai',
+        type: 'analysis_result_card',
+        payload: result,
+        timestamp: new Date().toISOString()
+      }]);
+      // Optional: stream insight for single run
+      // streamAnalysisInsightToChat(result, module.title, updatedMessages);
+    } catch (err) {
+      console.error('Blueprint module execution failed:', err);
+      appendMessagesToCurrentConversation([{
+        role: 'ai',
+        content: `❌ Module "${module.title}" failed: ${err.message}`,
+        timestamp: new Date().toISOString()
+      }]);
+      throw err; // Propagate to card to show error state
+    }
+  }, [appendMessagesToCurrentConversation]);
+
+  const handleRunAllBlueprintModules = useCallback(async (modulesToRun) => {
+    // Process in chunks of 3 to avoid overwhelming the browser/API
+    const CHUNK_SIZE = 3;
+    for (let i = 0; i < modulesToRun.length; i += CHUNK_SIZE) {
+      const chunk = modulesToRun.slice(i, i + CHUNK_SIZE);
+      await Promise.allSettled(chunk.map(m => handleRunBlueprintModule(m)));
+    }
+    appendMessagesToCurrentConversation([{
+      role: 'ai',
+      content: '✅ All planned analysis modules completed.',
+      timestamp: new Date().toISOString()
+    }]);
+  }, [handleRunBlueprintModule, appendMessagesToCurrentConversation]);
+
   // ── Send handler ────────────────────────────────────────────────────────
   const handleSend = useCallback(async (eOrMessage) => {
     // Accept either an event (from form submit) or a string (from clarification callbacks)
@@ -1821,6 +2011,18 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
     const command = lower.split(/\s+/)[0];
     const messageTextWithAttachments = buildMessageWithAttachmentContext(messageText, resolvedAttachments);
 
+    // ── Feature gate for slash commands ──────────────────────────────────
+    if (command.startsWith('/') && !isCommandEnabled(command)) {
+      const featureName = command.replace(/^\//, '');
+      appendMessagesToCurrentConversation([{
+        role: 'ai',
+        content: getDisabledMessage(featureName),
+        timestamp: new Date().toISOString(),
+        meta: { command, gated: true },
+      }]);
+      setIsTyping(false); setStreamingContent(''); return;
+    }
+
     if (lower.startsWith('/reuse')) {
       const parts = trimmed.split(/\s+/);
       const mode = String(parts[1] || 'off').toLowerCase();
@@ -1836,6 +2038,22 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
       const forceRetrain = mode !== 'off';
       setConversationDatasetContext((prev) => ({ ...prev, [currentConversationId]: { ...(prev[currentConversationId] || {}), force_retrain: forceRetrain } }));
       appendMessagesToCurrentConversation([{ role: 'ai', content: forceRetrain ? 'Forecast retrain is forced for this conversation.' : 'Forecast retrain force is disabled.', timestamp: new Date().toISOString() }]);
+      setIsTyping(false); setStreamingContent(''); return;
+    }
+
+    if (command === '/blueprint' || command === '/分析藍圖') {
+      try {
+        appendMessagesToCurrentConversation([{ role: 'ai', content: 'Generating analysis blueprint...', timestamp: new Date().toISOString() }]);
+        const blueprint = await generateAnalysisBlueprint();
+        appendMessagesToCurrentConversation([{
+          role: 'ai',
+          type: 'analysis_blueprint_card',
+          payload: blueprint,
+          timestamp: new Date().toISOString()
+        }]);
+      } catch (err) {
+        appendMessagesToCurrentConversation([{ role: 'ai', content: `Blueprint generation failed: ${err.message}`, timestamp: new Date().toISOString() }]);
+      }
       setIsTyping(false); setStreamingContent(''); return;
     }
 
@@ -1873,6 +2091,122 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
       const parts = trimmed.split(/\s+/);
       const profileId = parts.length > 1 ? Number(parts[1]) : null;
       await executePlanFlow({ datasetProfileId: Number.isFinite(profileId) ? profileId : getDatasetProfileId(runtimeDatasetContext) });
+      setIsTyping(false); setStreamingContent(''); return;
+    }
+
+    // ── /blueprint or /分析藍圖 — AI examines data and designs analysis plan ──
+    if (lower.startsWith('/blueprint') || lower.startsWith('/分析藍圖') || /^(全面分析|分析這個資料|分析這份資料|analyze this data|comprehensive analysis)$/i.test(trimmed)) {
+      appendMessagesToCurrentConversation([{ role: 'ai', content: 'AI is examining the data schema and designing an analysis blueprint...', timestamp: new Date().toISOString() }]);
+      try {
+        const bp = await generateAnalysisBlueprint({ datasetProfile: runtimeDatasetContext });
+        appendMessagesToCurrentConversation([{ role: 'ai', type: 'analysis_blueprint_card', payload: bp, timestamp: new Date().toISOString() }]);
+      } catch (err) {
+        console.error('[Blueprint] Generation failed:', err);
+        appendMessagesToCurrentConversation([{ role: 'ai', content: `Analysis blueprint generation failed: ${err?.message || 'Unknown error'}. Please check console for details.`, timestamp: new Date().toISOString() }]);
+      }
+      setIsTyping(false); setStreamingContent(''); return;
+    }
+
+    // ── /analyze [type] — Run Olist data analysis directly ──
+    if (lower.startsWith('/analyze') || lower.startsWith('/analysis') || lower.startsWith('/query')) {
+      const subCmd = trimmed.split(/\s+/).slice(1).join(' ').trim().toLowerCase();
+      const ANALYSIS_MAP = {
+        revenue: analyzeRevenueTrend,
+        sales: analyzeRevenueTrend,
+        rfm: analyzeCustomerRFM,
+        customer: analyzeCustomerRFM,
+        delivery: analyzeDeliveryPerformance,
+        logistics: analyzeDeliveryPerformance,
+        seller: analyzeSellerScorecard,
+        vendor: analyzeSellerScorecard,
+        category: analyzeCategoryInsights,
+        product: analyzeCategoryInsights,
+        satisfaction: analyzeCustomerSatisfaction,
+        review: analyzeCustomerSatisfaction,
+        payment: analyzePaymentBehavior,
+      };
+
+      try {
+        if (subCmd === 'all') {
+          // Run all 7 analyses
+          appendMessagesToCurrentConversation([{ role: 'ai', content: 'Running all 7 Olist analyses...', timestamp: new Date().toISOString() }]);
+          const allFns = [analyzeRevenueTrend, analyzeCustomerRFM, analyzeDeliveryPerformance, analyzeSellerScorecard, analyzeCategoryInsights, analyzeCustomerSatisfaction, analyzePaymentBehavior];
+          for (const fn of allFns) {
+            try {
+              const result = await fn();
+              appendMessagesToCurrentConversation([{ role: 'ai', type: 'analysis_result_card', payload: result, timestamp: new Date().toISOString() }]);
+            } catch (err) {
+              appendMessagesToCurrentConversation([{ role: 'ai', content: `Analysis failed: ${err?.message}`, timestamp: new Date().toISOString() }]);
+            }
+          }
+        } else if (ANALYSIS_MAP[subCmd]) {
+          const result = await ANALYSIS_MAP[subCmd]();
+          appendMessagesToCurrentConversation([{ role: 'ai', type: 'analysis_result_card', payload: result, timestamp: new Date().toISOString() }]);
+          await streamAnalysisInsightToChat(result, subCmd, updatedMessages);
+        } else if (subCmd) {
+          // Try NL → structured analysis or SQL query, then fall back to agent loop
+          const analysisResult = await detectAndRunAnalysis(subCmd);
+          if (analysisResult) {
+            appendMessagesToCurrentConversation([{ role: 'ai', type: 'analysis_result_card', payload: analysisResult, timestamp: new Date().toISOString() }]);
+            await streamAnalysisInsightToChat(analysisResult, subCmd, updatedMessages);
+          } else {
+            const queryResult = await handleDataQuery(subCmd);
+            if (queryResult) {
+              appendMessagesToCurrentConversation([{ role: 'ai', type: 'sql_query_result', payload: queryResult, timestamp: new Date().toISOString() }]);
+            } else {
+              // No keyword match — route through agent loop for LLM-driven analysis
+              appendMessagesToCurrentConversation([{ role: 'ai', content: `Analyzing: "${subCmd}" via AI agent...`, timestamp: new Date().toISOString() }]);
+              try {
+                const datasetProfileId = getDatasetProfileId(runtimeDatasetContext);
+                let datasetProfileRow = null;
+                if (datasetProfileId) {
+                  try { datasetProfileRow = await datasetProfilesService.getById(datasetProfileId); } catch { /* ok */ }
+                }
+                const agentResult = await runAgentLoop({
+                  message: `Run data analysis: ${subCmd}. Use the available analyze_* tools (analyze_revenue, analyze_rfm, analyze_delivery, analyze_seller, analyze_category, analyze_satisfaction, analyze_payment) or query_sap_data as needed. Provide a clear summary of findings.`,
+                  conversationHistory: updatedMessages.slice(-6),
+                  systemPrompt,
+                  toolContext: { userId: user?.id, datasetProfileRow, datasetProfileId },
+                  callbacks: {
+                    onTextChunk: (chunk) => setStreamingContent((prev) => prev + chunk),
+                    onToolCall: ({ name }) => setStreamingContent((prev) => prev + `\n🔧 Running **${name}**...\n`),
+                    onToolResult: ({ name, success, error: err }) => {
+                      setStreamingContent((prev) => prev + (success ? `✅ **${name}** done\n` : `❌ **${name}** failed: ${err}\n`));
+                    },
+                  },
+                });
+                // Render analysis tool results as AnalysisResultCard, rest as agent_response
+                const toolCalls = agentResult.toolCalls || [];
+                const analysisCalls = toolCalls.filter((tc) => tc.name?.startsWith('analyze_') && tc.result?.success);
+                for (const tc of analysisCalls) {
+                  const payload = tc.result?.result;
+                  if (payload?.title || payload?.analysisType) {
+                    appendMessagesToCurrentConversation([{ role: 'ai', type: 'analysis_result_card', payload, timestamp: new Date().toISOString() }]);
+                  }
+                }
+                if (agentResult.text) {
+                  appendMessagesToCurrentConversation([{
+                    role: 'ai', type: 'agent_response', content: agentResult.text,
+                    payload: { toolCalls: toolCalls.filter((tc) => !analysisCalls.includes(tc)) },
+                    timestamp: new Date().toISOString(),
+                  }]);
+                }
+              } catch (agentErr) {
+                appendMessagesToCurrentConversation([{ role: 'ai', content: `Agent analysis failed: ${agentErr?.message || 'Unknown error'}`, timestamp: new Date().toISOString() }]);
+              }
+            }
+          }
+        } else {
+          // No subcommand — show help
+          appendMessagesToCurrentConversation([{
+            role: 'ai',
+            content: `**Available /analyze commands:**\n- \`/analyze revenue\` — Revenue & sales trend\n- \`/analyze rfm\` — Customer RFM segmentation\n- \`/analyze delivery\` — Delivery performance\n- \`/analyze seller\` — Seller scorecard\n- \`/analyze category\` — Category insights\n- \`/analyze satisfaction\` — Customer satisfaction\n- \`/analyze payment\` — Payment behavior\n- \`/analyze all\` — Run all 7 analyses\n- \`/query <question>\` — Natural language SQL query`,
+            timestamp: new Date().toISOString(),
+          }]);
+        }
+      } catch (analysisErr) {
+        appendMessagesToCurrentConversation([{ role: 'ai', content: `Analysis failed: ${analysisErr?.message || 'Unknown error'}`, timestamp: new Date().toISOString() }]);
+      }
       setIsTyping(false); setStreamingContent(''); return;
     }
 
@@ -2027,6 +2361,7 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
         const { taskId } = await submitPlan(plan, intakeEmployeeId, user?.id);
 
         setAgentExecEvents([]);
+        agentExecEventsRef.current = [];
         setAgentExecTaskTitle(`[Ralph] ${taskDescription.slice(0, 60)}`);
         setAgentExecPanelOpen(true);
         setAgentExecSSETaskId(taskId);
@@ -2158,6 +2493,39 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
       }
     }
 
+    // ── Natural language analysis: intercept before AI Employee mode ─────
+    // "analyze revenue trends", "分析營收" etc. should go through Olist analysis,
+    // not the Digital Worker task decomposition pipeline.
+    
+    // 1. Check for Blueprint intent (broad/comprehensive)
+    const BLUEPRINT_NL_RE = /\b(analyze this data|comprehensive analysis|full analysis|analysis plan|data blueprint|分析這份資料|全面分析|分析藍圖|數據分析規劃)\b/i;
+    if (BLUEPRINT_NL_RE.test(trimmed)) {
+      try {
+        appendMessagesToCurrentConversation([{ role: 'ai', content: 'Generating analysis blueprint...', timestamp: new Date().toISOString() }]);
+        const blueprint = await generateAnalysisBlueprint();
+        appendMessagesToCurrentConversation([{
+          role: 'ai',
+          type: 'analysis_blueprint_card',
+          payload: blueprint,
+          timestamp: new Date().toISOString()
+        }]);
+      } catch (err) {
+        appendMessagesToCurrentConversation([{ role: 'ai', content: `Blueprint generation failed: ${err.message}`, timestamp: new Date().toISOString() }]);
+      }
+      setIsTyping(false); setStreamingContent(''); return;
+    }
+
+    // 2. Check for Specific Analysis intent
+    const ANALYSIS_NL_RE = /\b(analy[sz]e|分析)\s+(revenue|sales|rfm|customer|deliver|logistics|seller|vendor|category|product|satisf|review|payment|營收|銷售|客戶|物流|配送|賣家|品類|滿意度|評分|付款)/i;
+    if (ANALYSIS_NL_RE.test(trimmed)) {
+      const analysisResult = await detectAndRunAnalysis(trimmed);
+      if (analysisResult) {
+        appendMessagesToCurrentConversation([{ role: 'ai', type: 'analysis_result_card', payload: analysisResult, timestamp: new Date().toISOString() }]);
+        await streamAnalysisInsightToChat(analysisResult, trimmed, updatedMessages);
+        setIsTyping(false); setStreamingContent(''); return;
+      }
+    }
+
     // ── AI Employee mode: task decomposition is the PRIMARY path ──────────
     // Every non-command, non-greeting message goes through the 5-phase workflow:
     //   Phase 1: Decompose → TaskPlanCard (human approval)
@@ -2208,7 +2576,7 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
                   role: 'ai', type: 'task_plan_card', payload: decomposition,
                   content: `I've broken this into ${decomposition.subtasks.length} step(s). Review and approve to let me start working.`,
                   timestamp: new Date().toISOString(),
-              _onApprove: async () => {
+              _onApprove: async (approvedDecomp) => {
                 try {
                   // ── v2 Orchestrator path ──────────────────────────────────
                   const assignedWorker = await getAssignedWorker();
@@ -2216,12 +2584,16 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
 
                   const inputData = buildTaskInputData(runtimeDatasetContext, resolvedAttachments);
 
+                  // Use approved decomposition (may have user-selected model) or fallback to original
+                  const finalDecomp = approvedDecomp || decomposition;
+
                   // Normalize decomposed steps into plan format
-                  const steps = (decomposition.subtasks || []).map((s, i) => ({
+                  const steps = (finalDecomp.subtasks || []).map((s, i) => ({
                     name: s.name || s.step_name || `step_${i}`,
                     tool_hint: s.tool_hint || s.description || s.name,
                     tool_type: s.workflow_type || s.tool_type || 'python_tool',
                     builtin_tool_id: s.builtin_tool_id || null,
+                    input_args: s.input_args || {},
                     review_checkpoint: s.review_checkpoint || false,
                   }));
 
@@ -2239,6 +2611,7 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
 
                   // Open execution dashboard
                   setAgentExecEvents([]);
+                  agentExecEventsRef.current = [];
                   setAgentExecTaskTitle(messageText.slice(0, 80));
                   setAgentExecPanelOpen(true);
                   setAgentExecSSETaskId(taskId);
@@ -2447,15 +2820,17 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
                 payload: decomposition,
                 content: `Task decomposed into ${decomposition.subtasks.length} step(s). Please review and approve.`,
                 timestamp: new Date().toISOString(),
-                _onApprove: async () => {
+                _onApprove: async (approvedDecomp) => {
                   try {
                     const inputData = buildTaskInputData(runtimeDatasetContext, resolvedAttachments);
 
-                    const steps = (decomposition.subtasks || []).map((s, i) => ({
+                    const finalDecomp = approvedDecomp || decomposition;
+                    const steps = (finalDecomp.subtasks || []).map((s, i) => ({
                       name: s.name || s.step_name || `step_${i}`,
                       tool_hint: s.tool_hint || s.description || s.name,
                       tool_type: s.workflow_type || s.tool_type || 'python_tool',
                       builtin_tool_id: s.builtin_tool_id || null,
+                      input_args: s.input_args || {},
                       review_checkpoint: s.review_checkpoint || false,
                     }));
 
@@ -2483,6 +2858,7 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
                     const { taskId } = await submitPlan(plan, assignedWorker.id, user?.id);
 
                     setAgentExecEvents([]);
+                    agentExecEventsRef.current = [];
                     setAgentExecTaskTitle(effectiveMessage.slice(0, 80));
                     setAgentExecPanelOpen(true);
                     setAgentExecSSETaskId(taskId);
@@ -2519,6 +2895,7 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
           },
           appendMessage: (msg) => appendMessagesToCurrentConversation([msg]),
           onNoDataset: () => appendMessagesToCurrentConversation([{ role: 'ai', content: 'Please upload a dataset first. You can drag and drop a CSV or XLSX file into the chat.', timestamp: new Date().toISOString() }]),
+          streamAnalysisInsight: (analysisResult, userQuery) => streamAnalysisInsightToChat(analysisResult, userQuery, stagedMessages),
         };
 
         const result = await routeIntent(parsedIntent, sessionCtx.context, intentHandlers, { userId: user?.id, conversationId: currentConversationId, datasetProfileId: getDatasetProfileId(runtimeDatasetContext) });
@@ -2550,7 +2927,10 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
     }, 4_000);
 
     // Decide: Agent mode (with tool calling) vs plain chat
-    const useAgent = shouldUseAgentMode(messageTextWithAttachments);
+    // Also use agent mode if recent conversation used tools (follow-up questions)
+    const recentMessages = stagedMessages.slice(-5);
+    const recentlyUsedTools = recentMessages.some((m) => m.type === 'agent_response');
+    const useAgent = shouldUseAgentMode(messageTextWithAttachments) || recentlyUsedTools;
 
     if (useAgent) {
       // ── Agent Loop: LLM can autonomously call DI tools ──
@@ -2598,6 +2978,105 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
 
         fullResult = agentResult.text || '';
         agentToolCalls = agentResult.toolCalls || [];
+
+        // ── Auto-Tool-Creation: if agent detected a gap and generated a blueprint ──
+        if (agentResult.blueprint) {
+          const blueprint = agentResult.blueprint;
+          const originalMsg = messageTextWithAttachments;
+
+          // Add a tool_blueprint_card message for user approval
+          const blueprintMessage = {
+            role: 'ai',
+            type: 'tool_blueprint_card',
+            payload: blueprint,
+            timestamp: new Date().toISOString(),
+            _originalMessage: originalMsg,
+            _onApprove: async (bp) => {
+              try {
+                // 1. Register the tool
+                const tool = await registerTool({
+                  name: bp.name,
+                  description: bp.description,
+                  category: bp.category || 'transform',
+                  code: bp.code,
+                  inputSchema: bp.inputSchema || {},
+                  outputSchema: bp.outputSchema || {},
+                  approvedBy: user?.id,
+                  tags: bp.tags || [],
+                });
+
+                // 2. Approve it (sets quality_score so findToolByHint can find it)
+                await approveTool(tool.id, user?.id, 0.85);
+
+                // 3. Invalidate cache so the tool shows up in next agent loop
+                await invalidateRegisteredToolsCache();
+
+                // 4. Notify user
+                appendMessagesToCurrentConversation([
+                  {
+                    role: 'ai',
+                    content: `✅ Tool **${bp.name}** has been registered and approved. Retrying your original request...`,
+                    timestamp: new Date().toISOString(),
+                  },
+                ]);
+
+                // 5. Retry the original message (which will now find the registered tool)
+                // Small delay to let the UI update
+                setTimeout(() => {
+                  const inputEl = document.querySelector('[data-chat-input]');
+                  if (inputEl) {
+                    // Trigger re-send via the input
+                    const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+                      window.HTMLTextAreaElement.prototype, 'value'
+                    )?.set;
+                    nativeInputValueSetter?.call(inputEl, originalMsg);
+                    inputEl.dispatchEvent(new Event('input', { bubbles: true }));
+                  }
+                }, 500);
+              } catch (err) {
+                console.error('[DSV] Tool registration failed:', err);
+                appendMessagesToCurrentConversation([
+                  {
+                    role: 'ai',
+                    content: `❌ Failed to register tool: ${err.message}`,
+                    timestamp: new Date().toISOString(),
+                  },
+                ]);
+              }
+            },
+            _onReject: () => {
+              appendMessagesToCurrentConversation([
+                {
+                  role: 'ai',
+                  content: '🚫 Tool blueprint rejected. You can ask me to try a different approach.',
+                  timestamp: new Date().toISOString(),
+                },
+              ]);
+            },
+          };
+
+          // Replace the normal AI message with the blueprint card
+          clearInterval(thinkingInterval);
+          setStreamingContent('');
+          setIsTyping(false);
+          const stagedWithBlueprint = [
+            ...stagedMessages,
+            // Include any partial agent text as a regular message
+            ...(fullResult ? [{
+              role: 'ai',
+              type: 'agent_response',
+              content: fullResult,
+              payload: { toolCalls: agentToolCalls },
+              timestamp: new Date().toISOString(),
+            }] : []),
+            blueprintMessage,
+          ];
+          const conversationTitleSeed = trimmedVisibleInput || messageTextWithAttachments;
+          const newTitle = currentMessages.length <= 1 ? conversationTitleSeed.slice(0, 50) : currentConversation.title;
+          const updatedConversation = { ...currentConversation, title: newTitle, messages: stagedWithBlueprint, updated_at: new Date().toISOString() };
+          setConversations((prev) => prev.map((c) => c.id === currentConversationId ? updatedConversation : c));
+          return; // Skip the normal message flow below
+        }
       } catch (error) {
         console.error('[DSV] Agent loop failed:', error);
         if (isApiKeyConfigError(error?.message)) {
@@ -2644,11 +3123,12 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
       aiErrorPayload = { title: 'AI service configuration required', message: 'Server-side AI keys are missing or invalid. Ask an admin to set Supabase Edge Function secrets.', ctaLabel: 'Show setup hint' };
     }
 
+    const _llmMeta = getLastUsedModel();
     const aiMessage = aiErrorPayload
       ? { role: 'ai', type: 'ai_error_card', payload: aiErrorPayload, timestamp: new Date().toISOString() }
       : agentToolCalls.length > 0
-        ? { role: 'ai', type: 'agent_response', content: fullResult, payload: { toolCalls: agentToolCalls }, timestamp: new Date().toISOString() }
-        : { role: 'ai', content: fullResult, timestamp: new Date().toISOString() };
+        ? { role: 'ai', type: 'agent_response', content: fullResult, payload: { toolCalls: agentToolCalls }, timestamp: new Date().toISOString(), meta: { model: _llmMeta.model, provider: _llmMeta.provider } }
+        : { role: 'ai', content: fullResult, timestamp: new Date().toISOString(), meta: { model: _llmMeta.model, provider: _llmMeta.provider } };
     const finalMessages = [...stagedMessages, aiMessage];
     const conversationTitleSeed = trimmedVisibleInput || resolvedAttachments[0]?.file_name || messageText;
     const newTitle = currentMessages.length <= 1 ? conversationTitleSeed.slice(0, 50) : currentConversation.title;
@@ -2795,6 +3275,7 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
       handleContractConfirmation, handleApplyReuseSuggestion, handleReviewReuseSuggestion,
       handleRiskReplanDecision: planExec.handleRiskReplanDecision, handleConfigureApiKey,
       handleGenerateNegotiationOptions, handleApplyNegotiationOption, handleNegotiationAction, updateCanvasState, sessionCtx, batchApprove, batchReject,
+      handleRunBlueprintModule, handleRunAllBlueprintModules,
       handleSaveToToolLibrary: (tool) => {
         addNotification?.(`Tool "${tool?.name || tool?.id || 'unknown'}" saved to library.`, 'success');
       },
@@ -2810,6 +3291,17 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
         } catch (err) {
           console.error('[DSV] Decision review resolution failed:', err);
           addNotification?.(`Review failed: ${err.message}`, 'error');
+        }
+      },
+      onDeepDive: (deepDiveItem) => {
+        // Deep dive button clicked — inject the query as user input
+        if (deepDiveItem?.query) {
+          setInput(deepDiveItem.query);
+          // Auto-submit after a tick
+          setTimeout(() => {
+            const form = document.querySelector('[data-chat-form]');
+            if (form) form.dispatchEvent(new Event('submit', { bubbles: true }));
+          }, 100);
         }
       },
       handleDecisionBundleAction: (actionId) => {

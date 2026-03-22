@@ -69,22 +69,26 @@ const DI_GEMINI_MODEL_CANDIDATES = Array.from(new Set(
 
 const DEFAULT_DI_DEEPSEEK_MODEL = import.meta.env.VITE_DI_DEEPSEEK_MODEL || 'deepseek-chat';
 
+// ── Unified LLM provider (configurable via env) ─────────────────────────────
+const DI_UNIFIED_PROVIDER = import.meta.env.VITE_DI_CHAT_PROVIDER || 'openai';
+const DI_UNIFIED_MODEL = import.meta.env.VITE_DI_CHAT_MODEL || 'gpt-5.4';
+
 const PROMPT_PROVIDER = Object.freeze({
-  [DI_PROMPT_IDS.DATA_PROFILER]: 'gemini',
-  [DI_PROMPT_IDS.SCHEMA_MAPPING]: 'gemini',
-  [DI_PROMPT_IDS.WORKFLOW_A_READINESS]: 'gemini',
-  [DI_PROMPT_IDS.REPORT_SUMMARY]: 'deepseek',
-  [DI_PROMPT_IDS.BLOCKING_QUESTIONS]: 'deepseek',
-  [DI_PROMPT_IDS.INTENT_PARSER]: 'deepseek'
+  [DI_PROMPT_IDS.DATA_PROFILER]: DI_UNIFIED_PROVIDER,
+  [DI_PROMPT_IDS.SCHEMA_MAPPING]: DI_UNIFIED_PROVIDER,
+  [DI_PROMPT_IDS.WORKFLOW_A_READINESS]: DI_UNIFIED_PROVIDER,
+  [DI_PROMPT_IDS.REPORT_SUMMARY]: DI_UNIFIED_PROVIDER,
+  [DI_PROMPT_IDS.BLOCKING_QUESTIONS]: DI_UNIFIED_PROVIDER,
+  [DI_PROMPT_IDS.INTENT_PARSER]: DI_UNIFIED_PROVIDER,
 });
 
 const PROMPT_DEFAULT_MODEL = Object.freeze({
-  [DI_PROMPT_IDS.DATA_PROFILER]: DI_GEMINI_MODEL,
-  [DI_PROMPT_IDS.SCHEMA_MAPPING]: DI_GEMINI_MODEL,
-  [DI_PROMPT_IDS.WORKFLOW_A_READINESS]: DI_GEMINI_MODEL,
-  [DI_PROMPT_IDS.REPORT_SUMMARY]: DEFAULT_DI_DEEPSEEK_MODEL,
-  [DI_PROMPT_IDS.BLOCKING_QUESTIONS]: DEFAULT_DI_DEEPSEEK_MODEL,
-  [DI_PROMPT_IDS.INTENT_PARSER]: DEFAULT_DI_DEEPSEEK_MODEL
+  [DI_PROMPT_IDS.DATA_PROFILER]: DI_UNIFIED_MODEL,
+  [DI_PROMPT_IDS.SCHEMA_MAPPING]: DI_UNIFIED_MODEL,
+  [DI_PROMPT_IDS.WORKFLOW_A_READINESS]: DI_UNIFIED_MODEL,
+  [DI_PROMPT_IDS.REPORT_SUMMARY]: DI_UNIFIED_MODEL,
+  [DI_PROMPT_IDS.BLOCKING_QUESTIONS]: DI_UNIFIED_MODEL,
+  [DI_PROMPT_IDS.INTENT_PARSER]: DI_UNIFIED_MODEL,
 });
 const STRICT_JSON_PROMPTS = new Set([
   DI_PROMPT_IDS.DATA_PROFILER,
@@ -203,30 +207,58 @@ const callDeepSeekDirect = async ({ prompt, model, temperature = 0.15, maxOutput
 };
 
 const callDeepSeekPrompt = async ({ prompt, model, temperature = 0.15, maxOutputTokens = 4096 }) => {
-  // Try Edge Function with timeout, fall back to direct API
+  // Edge Function only — NO fallback to direct API
   const t0 = performance.now();
-  if (DEEPSEEK_API_KEY) {
-    try {
-      const response = await withTimeout(
-        (signal) => invokeAiProxy('di_prompt', {
-          provider: 'deepseek',
-          prompt,
-          model,
-          temperature,
-          maxOutputTokens
-        }, { signal }),
-        EDGE_FN_TIMEOUT_MS
-      );
-      const text = typeof response?.text === 'string' ? response.text : '';
-      if (!text) throw new Error('AI proxy returned empty DeepSeek content.');
-      console.info(`[diModelRouter] DeepSeek via Edge Function OK in ${Math.round(performance.now() - t0)}ms`);
-      return { text, model: response?.model || model };
-    } catch (proxyError) {
-      console.warn(`[diModelRouter] DeepSeek Edge Function failed after ${Math.round(performance.now() - t0)}ms, trying direct API:`, proxyError.message);
-      return callDeepSeekDirect({ prompt, model, temperature, maxOutputTokens });
-    }
-  }
-  return callDeepSeekDirect({ prompt, model, temperature, maxOutputTokens });
+  const response = await withTimeout(
+    (signal) => invokeAiProxy('di_prompt', {
+      provider: 'deepseek',
+      prompt,
+      model,
+      temperature,
+      maxOutputTokens
+    }, { signal }),
+    EDGE_FN_TIMEOUT_MS
+  );
+  const text = typeof response?.text === 'string' ? response.text : '';
+  if (!text) throw new Error('AI proxy returned empty DeepSeek content.');
+  console.info(`[diModelRouter] DeepSeek via Edge Function OK in ${Math.round(performance.now() - t0)}ms`);
+  return { text, model: response?.model || model };
+};
+
+const callOpenAIPrompt = async ({ prompt, model, temperature = 0.15, maxOutputTokens = 4096 }) => {
+  const t0 = performance.now();
+  const response = await withTimeout(
+    (signal) => invokeAiProxy('di_prompt', {
+      provider: 'openai',
+      prompt,
+      model,
+      temperature,
+      maxOutputTokens,
+    }, { signal }),
+    EDGE_FN_TIMEOUT_MS
+  );
+  const text = typeof response?.text === 'string' ? response.text : '';
+  if (!text) throw new Error('AI proxy returned empty OpenAI content.');
+  console.info(`[diModelRouter] OpenAI via Edge Function OK in ${Math.round(performance.now() - t0)}ms`);
+  return { text, model: response?.model || model };
+};
+
+const callAnthropicPrompt = async ({ prompt, model, temperature = 0.15, maxOutputTokens = 4096 }) => {
+  const t0 = performance.now();
+  const response = await withTimeout(
+    (signal) => invokeAiProxy('di_prompt', {
+      provider: 'anthropic',
+      prompt,
+      model,
+      temperature,
+      maxOutputTokens,
+    }, { signal }),
+    EDGE_FN_TIMEOUT_MS
+  );
+  const text = typeof response?.text === 'string' ? response.text : '';
+  if (!text) throw new Error('AI proxy returned empty Anthropic content.');
+  console.info(`[diModelRouter] Anthropic via Edge Function OK in ${Math.round(performance.now() - t0)}ms`);
+  return { text, model: response?.model || model };
 };
 
 export const runDiPrompt = async ({
@@ -240,22 +272,20 @@ export const runDiPrompt = async ({
     throw new Error(`No DI provider route configured for prompt: ${promptId}`);
   }
 
-  const model = PROMPT_DEFAULT_MODEL[promptId] || (provider === 'gemini' ? DI_GEMINI_MODEL : DEFAULT_DI_DEEPSEEK_MODEL);
+  const model = PROMPT_DEFAULT_MODEL[promptId] || DI_UNIFIED_MODEL;
   const promptText = toPromptText(promptId, input);
 
-  const result = provider === 'gemini'
-    ? await callGeminiPrompt({
-        prompt: promptText,
-        model,
-        temperature,
-        maxOutputTokens
-      })
-    : await callDeepSeekPrompt({
-        prompt: promptText,
-        model,
-        temperature,
-        maxOutputTokens
-      });
+  const callPrompt = provider === 'gemini' ? callGeminiPrompt
+    : provider === 'openai' ? callOpenAIPrompt
+    : provider === 'anthropic' ? callAnthropicPrompt
+    : callDeepSeekPrompt;
+
+  const result = await callPrompt({
+    prompt: promptText,
+    model,
+    temperature,
+    maxOutputTokens,
+  });
 
   const strictJson = STRICT_JSON_PROMPTS.has(promptId);
   const parsed = extractAiJson(result.text, { strict: strictJson });

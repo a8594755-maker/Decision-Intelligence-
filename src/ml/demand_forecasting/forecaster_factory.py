@@ -99,17 +99,24 @@ class ForecasterStrategy:
     def _get_sales_series(self, sku: str, erp_connector: ERPConnector = None,
                           inline_history: Optional[List[float]] = None,
                           base_date: Optional[str] = None,
-                          last_date: Optional[str] = None) -> SalesSeries:
+                          last_date: Optional[str] = None,
+                          granularity: Optional[str] = None) -> SalesSeries:
         """
         P0-1.1: 取得帶日期的 SalesSeries（不再丟掉日期）。
         inline_history 場景必須提供 base_date 或 last_date，否則日曆特徵可能錯位。
+        granularity: 'day'|'week'|'month' — maps to pandas freq for correct date generation.
         """
+        # Map granularity to pandas freq code
+        freq_map = {'day': 'D', 'week': 'W', 'month': 'MS'}
+        freq = freq_map.get(granularity, 'D')
+
         if inline_history is not None:
             return SalesSeries.from_inline_history(
                 values=[float(v) for v in inline_history],
                 sku=sku,
                 base_date=base_date,
                 last_date=last_date,
+                freq=freq,
             )
         if erp_connector is None:
             raise ValueError("Either erp_connector or inline_history must be provided")
@@ -162,9 +169,11 @@ class ProphetStrategy(ForecasterStrategy):
             sales_sequence = self._get_sales_sequence(sku, erp_connector, inline_history)
             n = len(sales_sequence)
 
-            # Prophet 需要较多数据点
-            if n < 14:
-                raise ValueError(f"Prophet requires at least 14 data points, got {n}")
+            # Prophet minimum data points — 14 for daily, 6 for monthly
+            granularity = kwargs.get('granularity', 'day')
+            min_points = 6 if granularity == 'month' else 14
+            if n < min_points:
+                raise ValueError(f"Prophet requires at least {min_points} data points ({granularity}), got {n}")
 
             # ── 真实推论模式：载入 .json 模型 ──
             if self._model is not None:
@@ -233,23 +242,33 @@ class ProphetStrategy(ForecasterStrategy):
         }
 
     def _predict_fallback(self, sales_sequence: list, horizon_days: int, n: int) -> Dict:
-        """统计回退（无 .json 模型时）"""
+        """统计回退（无 .json 模型时）— damped trend for growth datasets"""
         arr = np.array(sales_sequence)
-        mean_val = float(np.mean(arr))
-        std_val = float(np.std(arr)) if n > 1 else mean_val * 0.1
+        std_val = float(np.std(arr)) if n > 1 else float(np.mean(arr)) * 0.1
 
-        if n >= 10:
-            recent = np.mean(sales_sequence[-5:])
-            older = np.mean(sales_sequence[:5])
-            trend_per_day = (recent - older) / max(n, 1)
+        # Use recent values as base (not full average) to capture current level
+        recent_window = min(3, n)
+        base_val = float(np.mean(arr[-recent_window:]))
+
+        # Damped trend: compare halves, then decay each step (standard Holt-Winters approach)
+        DAMPING = 0.5
+        if n >= 6:
+            half = n // 2
+            recent_half = float(np.mean(arr[-half:]))
+            older_half = float(np.mean(arr[:half]))
+            trend_per_step = (recent_half - older_half) / half
         else:
-            trend_per_day = 0
+            trend_per_step = 0
 
-        # P0-1.5: 確定性 fallback（不加隨機噪聲）
-        predictions = [max(0, mean_val + trend_per_day * i) for i in range(horizon_days)]
+        # P0-1.5: 確定性 fallback（不加隨機噪聲）— damped trend accumulation
+        predictions = []
+        cumulative_trend = 0
+        for i in range(horizon_days):
+            cumulative_trend += trend_per_step * (DAMPING ** (i + 1))
+            predictions.append(max(0, base_val + cumulative_trend))
         ci = [[max(0, p - 1.645 * std_val), p + 1.645 * std_val] for p in predictions]
         p10, p90 = _scale_ci_to_quantiles(predictions, ci)
-        risk_score = min(100, max(0, float(std_val / (mean_val + 1e-6) * 100)))
+        risk_score = min(100, max(0, float(std_val / (base_val + 1e-6) * 100)))
 
         return {
             "success": True,
@@ -302,23 +321,27 @@ class LightGBMStrategy(ForecasterStrategy):
 
     def predict(self, sku: str, erp_connector: ERPConnector = None, horizon_days: int = 30, inline_history: Optional[List[float]] = None, **kwargs) -> Dict:
         try:
+            granularity = kwargs.get('granularity', 'day')
             # P0-1.1: 建立帶日期的 SalesSeries
             series = self._get_sales_series(
                 sku, erp_connector, inline_history,
                 base_date=kwargs.get('base_date'),
                 last_date=kwargs.get('last_date'),
+                granularity=granularity,
             )
             sales_sequence = series.to_values_list()
             n = series.n
 
-            if n < 10:
-                raise ValueError(f"LightGBM requires at least 10 data points, got {n}")
+            min_points = 6 if granularity == 'month' else 10
+            if n < min_points:
+                raise ValueError(f"LightGBM requires at least {min_points} data points ({granularity}), got {n}")
 
             # ── 真实推论模式：载入 .pkl 模型 ──
-            if self._model is not None:
+            # Real model is trained on daily features (day_of_week, etc.) — only use for daily data
+            if self._model is not None and granularity != 'month':
                 return self._predict_real(sales_sequence, horizon_days, n, series=series)
 
-            # ── 统计回退模式（未训练时）──
+            # ── 统计回退模式（未训练 or 月頻資料）──
             return self._predict_fallback(sales_sequence, horizon_days, n)
 
         except Exception as e:
@@ -403,23 +426,43 @@ class LightGBMStrategy(ForecasterStrategy):
         }
 
     def _predict_fallback(self, sales_sequence: list, horizon_days: int, n: int) -> Dict:
-        """统计回退（无 .pkl 模型时）"""
+        """统计回退（无 .pkl 模型时）— exponential smoothing (differentiates from Prophet's linear trend)"""
         arr = np.array(sales_sequence)
-        rolling_mean = float(np.mean(arr[-7:])) if n >= 7 else float(np.mean(arr))
-        rolling_std = float(np.std(arr[-7:])) if n >= 7 else float(np.std(arr))
 
-        if n >= 14:
-            recent_half = np.mean(arr[-n//2:])
-            older_half = np.mean(arr[:n//2])
-            trend = (recent_half - older_half) / max(n, 1)
+        # LightGBM fallback: Exponential Weighted Moving Average (EWM) as base
+        # Forward pass: start from oldest, accumulate toward newest → recent values get highest weight
+        ALPHA = 0.3  # smoothing factor — higher = more weight on recent
+        ewm_base = float(arr[0])
+        for i in range(1, len(arr)):
+            ewm_base = ALPHA * arr[i] + (1 - ALPHA) * ewm_base
+        base_val = ewm_base
+
+        rolling_std = float(np.std(arr[-min(7, n):])) if n > 1 else base_val * 0.1
+
+        # Trend: weighted linear regression on last half (more robust than half-mean comparison)
+        DAMPING = 0.7  # less damping than Prophet (0.5) — LightGBM trusts recent trend more
+        if n >= 6:
+            window = min(n, 8)
+            recent = arr[-window:]
+            x = np.arange(window, dtype=float)
+            weights = np.array([ALPHA ** (window - 1 - i) for i in range(window)])
+            w_sum = weights.sum()
+            w_mean_x = np.sum(weights * x) / w_sum
+            w_mean_y = np.sum(weights * recent) / w_sum
+            trend = float(np.sum(weights * (x - w_mean_x) * (recent - w_mean_y)) /
+                          (np.sum(weights * (x - w_mean_x) ** 2) + 1e-9))
         else:
             trend = 0
 
-        # P0-1.5: 確定性 fallback（不加隨機噪聲）
-        predictions = [max(0, rolling_mean + trend * i) for i in range(horizon_days)]
+        # Deterministic fallback — damped trend with higher persistence
+        predictions = []
+        cumulative_trend = 0
+        for i in range(horizon_days):
+            cumulative_trend += trend * (DAMPING ** (i + 1))
+            predictions.append(max(0, base_val + cumulative_trend))
         ci = [[max(0, p - 1.645 * rolling_std), p + 1.645 * rolling_std] for p in predictions]
         p10, p90 = _scale_ci_to_quantiles(predictions, ci)
-        risk_score = min(100, max(0, float(rolling_std / (rolling_mean + 1e-6) * 80)))
+        risk_score = min(100, max(0, float(rolling_std / (base_val + 1e-6) * 80)))
 
         return {
             "success": True,
@@ -455,43 +498,64 @@ class ChronosStrategy(ForecasterStrategy):
                 raise ValueError(f"Chronos requires at least 3 data points, got {n}")
             
             arr = np.array(sales_sequence)
-            mean_val = float(np.mean(arr))
-            std_val = float(np.std(arr)) if n > 1 else mean_val * 0.2
-            
-            # Chronos 对序列形状敏感：检测近期变化
-            if n >= 5:
-                recent_trend = arr[-1] - arr[-min(5, n)]
-                recent_momentum = recent_trend / min(5, n)
+            # Use recent values as base (not full average) to capture growth
+            recent_window = min(3, n)
+            base_val = float(np.mean(arr[-recent_window:]))
+            std_val = float(np.std(arr)) if n > 1 else base_val * 0.2
+
+            # Trend: compare recent half vs older half
+            if n >= 6:
+                half = n // 2
+                recent_half = float(np.mean(arr[-half:]))
+                older_half = float(np.mean(arr[:half]))
+                trend_per_step = (recent_half - older_half) / half
+            elif n >= 3:
+                recent_trend = arr[-1] - arr[0]
+                trend_per_step = recent_trend / max(n - 1, 1)
             else:
-                recent_momentum = 0
-            
-            # 检测异常事件（最后一个点是否偏离均值 >2倍标准差）
+                trend_per_step = 0
+
+            # 检测异常事件（最后一个点是否偏离 recent base >2倍标准差）
             last_val = arr[-1]
-            is_anomaly = abs(last_val - mean_val) > 2 * std_val if std_val > 0 else False
-            
-            # Chronos 更激进：如果检测到异常，会认为趋势可能延续
+            is_anomaly = abs(last_val - base_val) > 2 * std_val if std_val > 0 else False
+
+            # Chronos: damped trend with slight noise for realism
+            DAMPING = 0.5
             if is_anomaly:
-                # 异常事件后，Chronos 认为新趋势可能持续（用衰减）
-                anomaly_weight = 0.6  # 衰减因子
+                anomaly_weight = 0.6
                 base = last_val
                 predictions = []
+                cumulative_trend = 0
                 for i in range(horizon_days):
                     decay = anomaly_weight ** (i + 1)
-                    pred = mean_val + (base - mean_val) * decay + recent_momentum * (i + 1) * 0.3
+                    cumulative_trend += trend_per_step * (DAMPING ** (i + 1))
+                    pred = base_val + (base - base_val) * decay + cumulative_trend
                     predictions.append(max(0, pred + np.random.normal(0, std_val * 0.15)))
             else:
-                # 正常模式：基于序列动量
-                predictions = [max(0, mean_val + recent_momentum * (i + 1) + np.random.normal(0, std_val * 0.2)) for i in range(horizon_days)]
-            
+                predictions = []
+                cumulative_trend = 0
+                for i in range(horizon_days):
+                    cumulative_trend += trend_per_step * (DAMPING ** (i + 1))
+                    predictions.append(max(0, base_val + cumulative_trend + np.random.normal(0, std_val * 0.1)))
+
             # 置信区间：Chronos 多次采样模拟
             num_samples = 10
             all_samples = []
             for _ in range(num_samples):
                 if is_anomaly:
-                    sample = [max(0, mean_val + (last_val - mean_val) * (anomaly_weight ** (i+1)) + np.random.normal(0, std_val * 0.4)) for i in range(horizon_days)]
+                    sample_ct = 0
+                    sample = []
+                    for i in range(horizon_days):
+                        sample_ct += trend_per_step * (DAMPING ** (i+1))
+                        sample.append(max(0, base_val + (last_val - base_val) * (anomaly_weight ** (i+1)) + sample_ct + np.random.normal(0, std_val * 0.4)))
+                    all_samples.append(sample)
                 else:
-                    sample = [max(0, mean_val + recent_momentum * (i+1) + np.random.normal(0, std_val * 0.35)) for i in range(horizon_days)]
-                all_samples.append(sample)
+                    sample_ct = 0
+                    sample = []
+                    for i in range(horizon_days):
+                        sample_ct += trend_per_step * (DAMPING ** (i+1))
+                        sample.append(max(0, base_val + sample_ct + np.random.normal(0, std_val * 0.25)))
+                    all_samples.append(sample)
             
             all_samples_arr = np.array(all_samples)
             lower_bound = np.percentile(all_samples_arr, 10, axis=0).tolist()
@@ -655,20 +719,27 @@ class XGBoostStrategy(ForecasterStrategy):
 
     def _predict_fallback(self, sales_sequence: list, horizon_days: int, n: int) -> Dict:
         arr = np.array(sales_sequence)
-        rolling_mean = float(np.mean(arr[-7:])) if n >= 7 else float(np.mean(arr))
-        rolling_std = float(np.std(arr[-7:])) if n >= 7 else float(np.std(arr))
+        recent_window = min(3, n)
+        base_val = float(np.mean(arr[-recent_window:]))
+        rolling_std = float(np.std(arr[-min(7, n):])) if n > 1 else base_val * 0.1
 
-        if n >= 14:
-            recent_half = np.mean(arr[-n//2:])
-            older_half = np.mean(arr[:n//2])
-            trend = (recent_half - older_half) / max(n, 1)
+        DAMPING = 0.5
+        if n >= 6:
+            half = n // 2
+            recent_half = float(np.mean(arr[-half:]))
+            older_half = float(np.mean(arr[:half]))
+            trend = (recent_half - older_half) / half
         else:
             trend = 0
 
-        predictions = [max(0, rolling_mean + trend * i) for i in range(horizon_days)]
+        predictions = []
+        cumulative_trend = 0
+        for i in range(horizon_days):
+            cumulative_trend += trend * (DAMPING ** (i + 1))
+            predictions.append(max(0, base_val + cumulative_trend))
         ci = [[max(0, p - 1.645 * rolling_std), p + 1.645 * rolling_std] for p in predictions]
         p10, p90 = _scale_ci_to_quantiles(predictions, ci)
-        risk_score = min(100, max(0, float(rolling_std / (rolling_mean + 1e-6) * 80)))
+        risk_score = min(100, max(0, float(rolling_std / (base_val + 1e-6) * 80)))
 
         return {
             "success": True,
@@ -832,6 +903,7 @@ class ForecasterFactory:
         erp_connector: ERPConnector = None,
         horizon_days: int = 30,
         inline_history: Optional[List[float]] = None,
+        granularity: Optional[str] = None,
     ) -> Optional[Dict]:
         """
         PR-E: Try to predict using the PROD pointer from the lifecycle registry.
@@ -941,6 +1013,7 @@ class ForecasterFactory:
         horizon_days: int = 30,
         inline_history: Optional[List[float]] = None,
         champion_dir: str = "",
+        granularity: Optional[str] = None,
     ) -> Optional[Dict]:
         """
         Try to predict using a trained champion artifact.
@@ -1209,7 +1282,8 @@ class ForecasterFactory:
                             erp_connector: ERPConnector = None,
                             horizon_days: int = 30,
                             preferred_model: Optional[str] = None,
-                            inline_history: Optional[List[float]] = None) -> Dict:
+                            inline_history: Optional[List[float]] = None,
+                            granularity: Optional[str] = None) -> Dict:
         """带回退机制的预测"""
 
         # Ensemble race when auto mode and sufficient data
@@ -1252,7 +1326,7 @@ class ForecasterFactory:
         for model_type in fallback_order:
             try:
                 strategy = self.get_strategy(model_type)
-                result = strategy.predict(sku, erp_connector, horizon_days, inline_history=inline_history)
+                result = strategy.predict(sku, erp_connector, horizon_days, inline_history=inline_history, granularity=granularity)
                 
                 if result["success"]:
                     results.append(result)

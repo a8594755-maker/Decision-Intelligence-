@@ -136,6 +136,19 @@ const ACTIONS = [
     mapToIntent: () => null, // Opens scenario matrix view
   },
 
+  // ── Data Analysis ──
+  {
+    id: 'run_data_analysis',
+    label: 'Data Analysis',
+    icon: 'BarChart3',
+    category: 'analysis',
+    guard: () => true, // Always available — uses built-in Olist data
+    mapToIntent: () => ({
+      intent: 'QUERY_DATA',
+      entities: { freeform_query: 'run comprehensive data analysis' },
+    }),
+  },
+
   // ── Simulation ──
   {
     id: 'run_simulation',
@@ -214,6 +227,8 @@ const ACTIONS = [
 
 // ── Registry API ─────────────────────────────────────────────────────────────
 
+import { isActionEnabled } from '../config/featureGateService';
+
 const _actionMap = new Map(ACTIONS.map(a => [a.id, a]));
 
 /**
@@ -233,6 +248,7 @@ export function getAction(actionId) {
 export function getAvailableActions(chatContext) {
   return ACTIONS.filter(action => {
     try {
+      if (!isActionEnabled(action.id)) return false;
       return action.guard(chatContext);
     } catch {
       return false;

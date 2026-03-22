@@ -18,18 +18,31 @@ const STEP_TIME_ESTIMATES = {
   builtin_tool:    { min: 5, max: 20, label: '5-20s' },
 };
 
-const TIER_TOKEN_COST = {
-  tier_a: 0.015,  // ~$0.015 per step (Opus-class)
-  tier_b: 0.003,  // ~$0.003 per step (Sonnet-class)
-  tier_c: 0.0003, // ~$0.0003 per step (Haiku-class)
-};
+const COST_PER_STEP = 0.003; // ~$0.003 per step (unified model)
+
+// Forecast model options for the selector
+const FORECAST_MODELS = [
+  { value: 'compare',  label: 'Compare All (Prophet + LightGBM + Chronos)' },
+  { value: 'auto',     label: 'Auto (best fit)' },
+  { value: 'prophet',  label: 'Prophet' },
+  { value: 'lightgbm', label: 'LightGBM' },
+  { value: 'chronos',  label: 'Chronos' },
+  { value: 'xgboost',  label: 'XGBoost' },
+  { value: 'ets',      label: 'ETS' },
+  { value: 'naive',    label: 'Naive (JS built-in)' },
+];
 
 function estimateStepTime(workflowType) {
   return STEP_TIME_ESTIMATES[workflowType] || { min: 5, max: 15, label: '5-15s' };
 }
 
-function estimateStepCost(tier) {
-  return TIER_TOKEN_COST[tier] || TIER_TOKEN_COST.tier_b;
+function hasForecastStep(subtasks) {
+  return subtasks.some(s => s.builtin_tool_id === 'forecast_from_sap');
+}
+
+function getInitialModel(subtasks) {
+  const step = subtasks.find(s => s.builtin_tool_id === 'forecast_from_sap');
+  return step?.input_args?.forecast_model || 'compare';
 }
 
 /**
@@ -48,6 +61,21 @@ export default function TaskPlanCard({ decomposition, onApprove, onCancel, onEdi
   }
 
   const { subtasks, confidence, estimated_cost, report_format, needs_dynamic_tool } = decomposition;
+  const showModelSelector = hasForecastStep(subtasks);
+  const [selectedModel, setSelectedModel] = useState(() => getInitialModel(subtasks));
+
+  // Build patched decomposition with selected model injected into forecast step
+  function getApprovalDecomposition() {
+    if (!showModelSelector) return decomposition;
+    return {
+      ...decomposition,
+      subtasks: subtasks.map(s =>
+        s.builtin_tool_id === 'forecast_from_sap'
+          ? { ...s, input_args: { ...(s.input_args || {}), forecast_model: selectedModel } }
+          : s
+      ),
+    };
+  }
 
   // Calculate totals
   const totalTimeRange = subtasks.reduce((acc, step) => {
@@ -55,15 +83,7 @@ export default function TaskPlanCard({ decomposition, onApprove, onCancel, onEdi
     return { min: acc.min + est.min, max: acc.max + est.max };
   }, { min: 0, max: 0 });
 
-  const totalCost = estimated_cost ?? subtasks.reduce((acc, step) => {
-    return acc + estimateStepCost(step.estimated_tier);
-  }, 0);
-
-  const tierColors = {
-    tier_a: { bg: 'rgba(239, 68, 68, 0.1)', text: '#dc2626', border: 'rgba(239, 68, 68, 0.3)' },
-    tier_b: { bg: 'rgba(245, 158, 11, 0.1)', text: '#d97706', border: 'rgba(245, 158, 11, 0.3)' },
-    tier_c: { bg: 'rgba(16, 185, 129, 0.1)', text: '#059669', border: 'rgba(16, 185, 129, 0.3)' },
-  };
+  const totalCost = estimated_cost ?? subtasks.length * COST_PER_STEP;
 
   const workflowIcons = {
     forecast: '\u{1F4CA}',
@@ -135,12 +155,41 @@ export default function TaskPlanCard({ decomposition, onApprove, onCancel, onEdi
         </div>
       </div>
 
+      {/* ── Model selector (for forecast tasks) ── */}
+      {showModelSelector && (
+        <div style={{
+          padding: '10px 16px',
+          borderBottom: '1px solid var(--border-default, #e2e8f0)',
+          display: 'flex', alignItems: 'center', gap: 10,
+        }}>
+          <span style={{ fontSize: 13, color: 'var(--text-secondary, #64748b)', whiteSpace: 'nowrap' }}>
+            Forecast Model
+          </span>
+          <select
+            value={selectedModel}
+            onChange={(e) => setSelectedModel(e.target.value)}
+            disabled={disabled}
+            style={{
+              flex: 1, maxWidth: 220,
+              padding: '6px 10px', borderRadius: 6,
+              border: '1px solid var(--border-default, #d1d5db)',
+              background: 'var(--surface-card, #fff)',
+              fontSize: 13, color: 'var(--text-primary, #1e293b)',
+              cursor: disabled ? 'not-allowed' : 'pointer',
+              outline: 'none',
+            }}
+          >
+            {FORECAST_MODELS.map(m => (
+              <option key={m.value} value={m.value}>{m.label}</option>
+            ))}
+          </select>
+        </div>
+      )}
+
       {/* ── Step list ── */}
       <div style={{ padding: '8px 12px' }}>
         {subtasks.slice(0, expanded ? undefined : 5).map((step, i) => {
           const timeEst = estimateStepTime(step.workflow_type);
-          const costEst = estimateStepCost(step.estimated_tier);
-          const tier = tierColors[step.estimated_tier] || tierColors.tier_b;
 
           return (
             <div key={step.name || i} style={{
@@ -185,22 +234,6 @@ export default function TaskPlanCard({ decomposition, onApprove, onCancel, onEdi
                 ~{timeEst.label}
               </span>
 
-              {/* Cost */}
-              <span style={{ fontSize: 10, color: 'var(--text-muted, #94a3b8)', whiteSpace: 'nowrap' }}>
-                ${costEst.toFixed(4)}
-              </span>
-
-              {/* Tier badge */}
-              {step.estimated_tier && (
-                <span style={{
-                  fontSize: 10, padding: '2px 7px', borderRadius: 10,
-                  background: tier.bg, color: tier.text,
-                  border: `1px solid ${tier.border}`,
-                  fontWeight: 600, whiteSpace: 'nowrap',
-                }}>
-                  {step.estimated_tier.replace('tier_', '').toUpperCase()}
-                </span>
-              )}
 
               {/* Review indicator */}
               {step.requires_review && (
@@ -255,7 +288,7 @@ export default function TaskPlanCard({ decomposition, onApprove, onCancel, onEdi
         )}
         {onEdit && (
           <button
-            onClick={() => onEdit(decomposition)}
+            onClick={() => onEdit(getApprovalDecomposition())}
             disabled={disabled}
             style={{
               padding: '8px 16px', borderRadius: 8,
@@ -271,7 +304,7 @@ export default function TaskPlanCard({ decomposition, onApprove, onCancel, onEdi
           </button>
         )}
         <button
-          onClick={() => typeof onApprove === 'function' ? onApprove(decomposition) : console.warn('[TaskPlanCard] onApprove is not a function — message may have been restored from cache')}
+          onClick={() => typeof onApprove === 'function' ? onApprove(getApprovalDecomposition()) : console.warn('[TaskPlanCard] onApprove is not a function — message may have been restored from cache')}
           disabled={disabled}
           style={{
             padding: '8px 20px', borderRadius: 8,

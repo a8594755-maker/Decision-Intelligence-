@@ -133,7 +133,7 @@ class RateLimiter:
         Create rate limiter based on environment.
         Uses Redis if DI_REDIS_URL is set, otherwise in-process.
         """
-        max_requests = int(os.getenv("DI_RATE_LIMIT_PER_MINUTE", "30"))
+        max_requests = int(os.getenv("DI_RATE_LIMIT_PER_MINUTE", "120"))
         redis_url = os.getenv("DI_REDIS_URL", "")
 
         if redis_url:

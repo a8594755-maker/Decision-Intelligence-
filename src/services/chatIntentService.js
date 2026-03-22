@@ -7,6 +7,9 @@
 
 import { runDiPrompt, DI_PROMPT_IDS } from './diModelRouterService';
 import { recordIntent } from './sessionContextService';
+import { isIntentEnabled, getDisabledMessage } from '../config/featureGateService';
+import { handleDataQuery } from './sapQueryChatHandler.js';
+import { detectAndRunAnalysis, buildAnalysisInsightPrompt } from './olistAnalysisService.js';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -28,7 +31,7 @@ const EXECUTION_INTENTS = new Set([
 // ── Local Fast-Path Intent Detection ─────────────────────────────────────────
 // Skip expensive LLM call for messages that are clearly general chat.
 
-const ACTION_KEYWORDS = /\b(run|execute|plan|forecast|optimize|approval|approve|reject|compare|what.?if|scenario|simulate|digital.?twin|change|set|update|budget|service.?level|horizon|risk|workflow|assign|task|create|generate|build|make|produce|分析|執行|預測|比較|審批|核准|否決|模擬|情境|任務|生成|建立|製作|指派)\b/i;
+const ACTION_KEYWORDS = /\b(run|execute|plan|forecast|optimize|approval|approve|reject|compare|what.?if|scenario|simulate|digital.?twin|change|set|update|budget|service.?level|horizon|risk|workflow|assign|task|create|generate|build|make|produce|revenue|rfm|delivery|seller|category|satisfaction|payment|query|analyze|analysis|分析|執行|預測|比較|審批|核准|否決|模擬|情境|任務|生成|建立|製作|指派|營收|客戶|物流|配送|賣家|品類|滿意度|評分|付款)\b/i;
 
 /**
  * Returns true if the message likely needs LLM-powered intent parsing.
@@ -84,8 +87,9 @@ export async function parseIntent({ userMessage, sessionContext, domainContext }
 
     return parsed;
   } catch (error) {
-    console.warn('[chatIntentService] Intent parsing failed, falling back to GENERAL_CHAT:', error?.message);
-    return fallbackIntent(userMessage);
+    // NO FALLBACK: surface the error so we know intent parsing broke
+    console.error('[chatIntentService] Intent parsing FAILED:', error?.message);
+    throw error;
   }
 }
 
@@ -132,6 +136,19 @@ function fallbackIntent(userMessage) {
 export async function routeIntent(parsedIntent, sessionContext, handlers, options = {}) {
   const { intent, confidence, entities } = parsedIntent;
   const { userId, conversationId, datasetProfileId } = options;
+
+  // ── Feature gate check ──────────────────────────────────────────────────
+  if (!isIntentEnabled(intent)) {
+    if (handlers.appendMessage) {
+      handlers.appendMessage({
+        role: 'ai',
+        content: getDisabledMessage(intent),
+        timestamp: new Date().toISOString(),
+        meta: { intent, gated: true },
+      });
+    }
+    return { handled: true, intent };
+  }
 
   // Below confidence threshold → fall through to general chat
   if (confidence < CONFIDENCE_THRESHOLD && intent !== 'GENERAL_CHAT') {
@@ -259,9 +276,55 @@ export async function routeIntent(parsedIntent, sessionContext, handlers, option
       }
       return { handled: true, intent };
 
-    case 'QUERY_DATA':
-      // Fall through to general chat with enriched context
-      return { handled: false, intent };
+    case 'QUERY_DATA': {
+      const userQuery = entities.freeform_query || '';
+      // Check for deep/comprehensive analysis → route to ASSIGN_TASK for broad-then-deep decomposition
+      const deepAnalysisSignals = /全面分析|深度分析|完整分析|全景分析|統計分析|集中度分析|comprehensive analysis|full analysis|deep analysis|deep dive|panorama|statistical analysis|concentration analysis/i;
+      if (deepAnalysisSignals.test(userMessage)) {
+        console.info('[chatIntentService] QUERY_DATA rerouted to ASSIGN_TASK for deep analysis');
+        if (handlers.assignTask) {
+          await handlers.assignTask(userMessage);
+        }
+        return { handled: true, intent: 'ASSIGN_TASK' };
+      }
+      // Try structured analysis first (RFM, delivery, seller, etc.)
+      const analysisResult = await detectAndRunAnalysis(userQuery);
+      if (analysisResult) {
+        if (handlers.appendMessage) {
+          handlers.appendMessage({
+            role: 'ai',
+            type: 'analysis_result_card',
+            payload: analysisResult,
+            timestamp: new Date().toISOString(),
+            meta: { intent, confidence },
+          });
+        }
+        // Stream LLM insight report with data citations (non-blocking)
+        if (handlers.streamAnalysisInsight) {
+          handlers.streamAnalysisInsight(analysisResult, userQuery).catch((err) => {
+            console.warn('[chatIntentService] LLM insight generation failed:', err?.message);
+          });
+        }
+        return { handled: true, intent };
+      }
+      // Fallback: NL → SQL query
+      try {
+        const queryResult = await handleDataQuery(userQuery);
+        if (handlers.appendMessage && queryResult) {
+          handlers.appendMessage({
+            role: 'ai',
+            type: 'sql_query_result',
+            payload: queryResult,
+            timestamp: new Date().toISOString(),
+            meta: { intent, confidence },
+          });
+        }
+        return { handled: true, intent };
+      } catch (queryErr) {
+        console.error('[chatIntentService] QUERY_DATA handler failed:', queryErr?.message);
+        return { handled: false, intent };
+      }
+    }
 
     case 'GENERAL_CHAT':
     default:

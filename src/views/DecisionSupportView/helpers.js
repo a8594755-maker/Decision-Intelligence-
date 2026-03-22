@@ -736,13 +736,60 @@ Be concise, data-driven, and actionable.\n\n`;
     prompt += '\nWhen answering plan questions, reference these binding constraints and objective terms explicitly.\n';
   }
 
-  prompt += '\nWhite-box rule: never invent numeric outputs. If exact values are unavailable, say what evidence is missing.';
+  prompt += `\n## Enterprise Data (Always Available via SQL)
+You have direct access to ALL enterprise data via the **query_sap_data** tool. Two datasets are available:
+
+### Dataset A: Olist E-Commerce (Brazilian market — CSV)
+| Table | SAP Equiv | Key Columns | Rows |
+|-------|-----------|-------------|------|
+| customers | KNA1 | customer_id, customer_city, customer_state | ~99K |
+| orders | VBAK | order_id, customer_id, order_status, timestamps | ~99K |
+| order_items | VBAP | order_id, product_id, seller_id, price, freight_value | ~112K |
+| payments | BSEG | order_id, payment_type, payment_installments, payment_value | ~103K |
+| reviews | QM | order_id, review_score, review_comment_message | ~104K |
+| products | MARA | product_id, product_category_name, weight, dimensions | ~32K |
+| sellers | LFA1 | seller_id, seller_city, seller_state | ~3K |
+| geolocation | ADRC | zip_code_prefix, lat, lng, city, state | ~1M |
+| category_translation | T023T | product_category_name, product_category_name_english | 71 |
+
+### Dataset B: DI Operations (Supply chain — Supabase)
+| Table | SAP Equiv | Key Columns |
+|-------|-----------|-------------|
+| suppliers | LFA1 | supplier_code, supplier_name, status |
+| materials | MARA | material_code, material_name, category, uom |
+| inventory_snapshots | MARD | material_code, plant_id, onhand_qty, safety_stock |
+| po_open_lines | EKPO | po_number, material_code, plant_id, open_qty, status |
+| goods_receipts | MKPF | supplier_name, material_code, qty, is_on_time |
+
+**CRITICAL**: When the user asks about ANY data, you MUST call **query_sap_data** with a SQL SELECT query. NEVER just describe SQL — execute it directly.
+Use **list_sap_tables** to show table schemas if the user asks what data is available.
+You can JOIN across both datasets. Always clarify which dataset the results come from.
+`;
+
+  prompt += '\nWhite-box rule: never invent numeric outputs. If exact values are unavailable, use query_sap_data to look them up.';
   return prompt;
 }
 
 export function isExecutionIntent(text = '') {
   const lowered = String(text || '').toLowerCase();
   return EXECUTION_KEYWORDS.some((keyword) => lowered.includes(keyword));
+}
+
+/**
+ * Check if a message looks like a data query that should use the SAP fast-path.
+ * Matches: SQL keywords, data entity names (EN/ZH), "how many", "list", "show me", etc.
+ */
+export function looksLikeDataQuery(text = '') {
+  if (!text) return false;
+  const lower = text.toLowerCase();
+  const patterns = [
+    /\bSELECT\b/i,
+    /\b(客戶|訂單|產品|賣家|供應商|物料|庫存|採購|付款|評論|收貨)\b/,
+    /\b(有哪些|列出|多少|幾個|查詢|統計|排名|top\s*\d+)\b/,
+    /\b(customers?|orders?|products?|sellers?|suppliers?|materials?|inventory|payments?|reviews?)\b/i,
+    /\b(how many|list all|show me|count|which|what are|query)\b/i,
+  ];
+  return patterns.some((re) => re.test(lower));
 }
 
 // ── Session storage helpers ─────────────────────────────────────────

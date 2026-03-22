@@ -13,6 +13,9 @@ import PlanTableCard from '../../components/chat/PlanTableCard';
 import InventoryProjectionCard from '../../components/chat/InventoryProjectionCard';
 import PlanExceptionsCard from '../../components/chat/PlanExceptionsCard';
 import BomBottlenecksCard from '../../components/chat/BomBottlenecksCard';
+import SqlQueryBlock from '../../components/chat/SqlQueryBlock';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import RiskSummaryCard from '../../components/chat/RiskSummaryCard';
 import RiskExceptionsCard from '../../components/chat/RiskExceptionsCard';
 import RiskDrilldownCard from '../../components/chat/RiskDrilldownCard';
@@ -57,6 +60,11 @@ import WorkOrderDraftCard from '../../components/chat/WorkOrderDraftCard';
 import SupplierEventCard from '../../components/chat/SupplierEventCard';
 import AuditTimelineCard from '../../components/chat/AuditTimelineCard';
 import DecisionReviewPanel from '../../components/review/DecisionReviewPanel';
+import ToolBlueprintCard from '../../components/chat/ToolBlueprintCard';
+import TaskResultSummaryCard from '../../components/chat/TaskResultSummaryCard';
+import AnalysisResultCard from '../../components/chat/AnalysisResultCard';
+import AnalysisBlueprintCard from '../../components/chat/AnalysisBlueprintCard';
+import AnalysisInsightCard from '../../components/chat/AnalysisInsightCard';
 import { toPositiveRunId } from './helpers.js';
 
 /**
@@ -454,13 +462,32 @@ export default function MessageCardRenderer({ message, handlers, state }) {
   }
   if (message.type === 'agent_response') {
     const toolCalls = message.payload?.toolCalls || [];
+    const sqlCalls = toolCalls.filter((tc) => tc.name === 'query_sap_data' || tc.name === 'list_sap_tables');
+    // Analysis tool calls get rich card rendering instead of generic summary
+    const analysisCalls = toolCalls.filter((tc) => tc.name?.startsWith('analyze_') && tc.result?.success && (tc.result?.result?.title || tc.result?.result?.analysisType));
+    const analysisCallIds = new Set(analysisCalls.map((tc) => tc.id || tc.name));
+    const otherCalls = toolCalls.filter((tc) => tc.name !== 'query_sap_data' && tc.name !== 'list_sap_tables' && !analysisCallIds.has(tc.id || tc.name));
     return (
       <div className="space-y-3">
-        {toolCalls.length > 0 && (
+        {/* Analysis results — rendered as rich AnalysisResultCard */}
+        {analysisCalls.map((tc, i) => (
+          <AnalysisResultCard key={tc.id || `analysis-${i}`} payload={tc.result.result} />
+        ))}
+        {/* SQL query blocks — collapsible with code display */}
+        {sqlCalls.map((tc, i) => (
+          <SqlQueryBlock
+            key={tc.id || `sql-${i}`}
+            sql={tc.args?.sql}
+            result={tc.result}
+            toolName={tc.name === 'list_sap_tables' ? 'List SAP Tables' : 'SQL Query'}
+          />
+        ))}
+        {/* Other tool calls — compact summary */}
+        {otherCalls.length > 0 && (
           <div className="bg-slate-800/50 rounded-lg p-3 border border-slate-700/50">
-            <div className="text-xs font-medium text-slate-400 mb-2">Agent executed {toolCalls.length} tool{toolCalls.length > 1 ? 's' : ''}:</div>
+            <div className="text-xs font-medium text-slate-400 mb-2">Agent executed {otherCalls.length} tool{otherCalls.length > 1 ? 's' : ''}:</div>
             <div className="space-y-1.5">
-              {toolCalls.map((tc, i) => (
+              {otherCalls.map((tc, i) => (
                 <div key={tc.id || i} className="flex items-center gap-2 text-xs">
                   <span className={tc.result?.success ? 'text-green-400' : 'text-red-400'}>
                     {tc.result?.success ? '✅' : '❌'}
@@ -475,7 +502,9 @@ export default function MessageCardRenderer({ message, handlers, state }) {
           </div>
         )}
         {message.content && (
-          <div className="whitespace-pre-wrap text-sm text-slate-200">{message.content}</div>
+          <div className="prose prose-sm max-w-none dark:prose-invert text-sm text-slate-800 dark:text-slate-100">
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
+          </div>
         )}
       </div>
     );
@@ -582,6 +611,18 @@ export default function MessageCardRenderer({ message, handlers, state }) {
   if (message.type === 'tool_registry_card') {
     return <ToolRegistryCard tool={message.payload} onSave={handlers.handleSaveToToolLibrary} />;
   }
+  if (message.type === 'tool_blueprint_card') {
+    return (
+      <ToolBlueprintCard
+        blueprint={message.payload}
+        onApprove={message._onApprove}
+        onReject={message._onReject}
+      />
+    );
+  }
+  if (message.type === 'task_result_summary') {
+    return <TaskResultSummaryCard payload={message.payload} />;
+  }
   if (message.type === 'audit_timeline_card') {
     return (
       <AuditTimelineCard
@@ -602,6 +643,54 @@ export default function MessageCardRenderer({ message, handlers, state }) {
         onResolve={(resolution) => handlers.handleDecisionReviewResolution?.(resolution)}
       />
     );
+  }
+  if (message.type === 'sql_query_result') {
+    const { sql, result, summary } = message.payload || {};
+    return (
+      <div className="space-y-2">
+        <SqlQueryBlock sql={sql} result={result} toolName="Data Query" />
+        {summary && (
+          <div className="text-sm text-slate-600 dark:text-slate-300 whitespace-pre-wrap">
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{summary}</ReactMarkdown>
+          </div>
+        )}
+      </div>
+    );
+  }
+  if (message.type === 'analysis_result_card') {
+    const p = message.payload || {};
+    const hasInsights = p.key_findings?.length || p.recommendations?.length || p.deep_dive_suggestions?.length;
+    if (hasInsights) {
+      // Composite: AnalysisResultCard (metrics/charts) + AnalysisInsightCard (findings/deep-dive)
+      // Map Python analysis output shape → AnalysisInsightCard expected shape
+      const insightPayload = {
+        sections: {
+          key_findings: p.key_findings?.map(f => `**${f.finding}** — ${f.implication || ''} _(${f.severity || 'info'})_`).join('\n\n'),
+          recommendations: p.recommendations?.map(r => `**[${r.priority || 'P2'}]** ${r.action}`).join('\n\n'),
+          risk_alerts: p.anomalies?.map(a => `**${a.dimension}/${a.value}**: ${a.metric} = ${a.actual} ${a.context ? `(${a.context})` : ''}`).join('\n\n'),
+        },
+        deepDives: p.deep_dive_suggestions || [],
+      };
+      return (
+        <div className="space-y-3">
+          <AnalysisResultCard payload={p} />
+          <AnalysisInsightCard payload={insightPayload} onDeepDive={handlers?.onDeepDive} />
+        </div>
+      );
+    }
+    return <AnalysisResultCard payload={p} />;
+  }
+  if (message.type === 'analysis_blueprint_card') {
+    return (
+      <AnalysisBlueprintCard
+        blueprint={message.payload}
+        onRunModule={handlers.handleRunBlueprintModule}
+        onRunAll={handlers.handleRunAllBlueprintModules}
+      />
+    );
+  }
+  if (message.type === 'analysis_insight') {
+    return <AnalysisInsightCard payload={message.payload} onDeepDive={handlers?.onDeepDive} />;
   }
   if (message.type === 'unified_approval_card') {
     return (

@@ -208,6 +208,32 @@ app.include_router(tool_executor_router)
 app.include_router(report_generator_router)
 app.include_router(claude_proxy_router)
 
+# Dataset loader — server-side CSV loading for Python analysis
+from ml.api.dataset_loader import load_olist_tables, get_table_schemas, get_table_summary, invalidate_cache
+
+@app.post("/load-dataset")
+async def load_dataset(body: dict = {}):
+    """Load dataset tables into memory and return schema summary."""
+    source = body.get("source", "olist")
+    tables = body.get("tables", None)
+    if source != "olist":
+        return {"ok": False, "error": f"Unknown source: {source}. Only 'olist' is supported."}
+    try:
+        loaded = load_olist_tables(tables=tables)
+        summary = get_table_summary()
+        return {"ok": True, "source": source, "tables_loaded": list(loaded.keys()), "summary": summary}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+@app.get("/dataset-schema")
+async def dataset_schema():
+    """Return column metadata for all loaded tables."""
+    try:
+        summary = get_table_summary()
+        return {"ok": True, **summary}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
 # Agent SSE — real-time step progress streaming
 from ml.api.agent_sse_router import agent_sse_router
 app.include_router(agent_sse_router)
@@ -436,6 +462,7 @@ class ForecastRequest(BaseModel):
     includeComparison: bool = True  # 是否包含模型比较
     userPreference: Optional[str] = None  # 用户偏好模型
     history: Optional[List[float]] = None  # 直接传入的历史数据序列（压力测试/离线模式）
+    granularity: Optional[str] = None  # "day", "week", "month" — inferred from data if None
     async_mode: bool = Field(default=False, alias="async")
     userId: Optional[str] = None
     datasetProfileId: Optional[int] = None
@@ -806,7 +833,7 @@ async def demand_forecast(request: ForecastRequest, raw_request: Request = None)
                         }
                     },
                     horizon=request.horizonDays,
-                    granularity="day",
+                    granularity=request.granularity or "day",
                     max_attempts=request.maxAttempts,
                     workload={
                         "forecast_series": len(request.history or []),
@@ -843,11 +870,13 @@ async def demand_forecast(request: ForecastRequest, raw_request: Request = None)
                 }
         
         # 2. PR-E: Try PROD pointer first, then PR-B champion, then fallback
+        _granularity = request.granularity or "day"
         result = forecaster_factory.predict_with_prod_pointer(
             request.materialCode,
             erp_connector if inline_history is None else None,
             request.horizonDays,
             inline_history=inline_history,
+            granularity=_granularity,
         )
 
         if result is None:
@@ -856,6 +885,7 @@ async def demand_forecast(request: ForecastRequest, raw_request: Request = None)
                 erp_connector if inline_history is None else None,
                 request.horizonDays,
                 inline_history=inline_history,
+                granularity=_granularity,
             )
 
         if result is None:
@@ -864,7 +894,8 @@ async def demand_forecast(request: ForecastRequest, raw_request: Request = None)
                 erp_connector if inline_history is None else None,
                 request.horizonDays,
                 request.modelType or request.userPreference,
-                inline_history=inline_history
+                inline_history=inline_history,
+                granularity=_granularity,
             )
 
         result = _coerce_forecast_result(
