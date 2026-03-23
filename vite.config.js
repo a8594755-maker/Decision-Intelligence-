@@ -10,6 +10,7 @@ function manualChunks(id) {
     if (normalized.includes('/reactflow/')) return 'vendor-flow'
     if (normalized.includes('/xlsx/')) return 'vendor-xlsx'
     if (normalized.includes('/@supabase/supabase-js/')) return 'vendor-supabase'
+    if (normalized.includes('/@duckdb/duckdb-wasm/')) return 'vendor-duckdb'
     return undefined
   }
 

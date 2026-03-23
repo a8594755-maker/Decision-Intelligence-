@@ -441,12 +441,64 @@ function AnalysisMeta({ meta }) {
   );
 }
 
+function ReportHtmlBlock({ art }) {
+  const [showPreview, setShowPreview] = useState(false);
+  const html = art?.data?.html || (typeof art?.data === 'string' ? art.data : null);
+  const filename = art?.data?.filename || art?.label || 'report.html';
+
+  const handleDownload = () => {
+    if (!html) return;
+    const blob = new Blob([html], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  if (!html) return null;
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-2">
+        <FileText className="w-4 h-4 text-blue-500" />
+        <span className="text-sm font-medium text-gray-700 dark:text-gray-300">{filename}</span>
+        <button
+          onClick={handleDownload}
+          className="ml-auto text-xs px-2 py-1 rounded bg-blue-100 text-blue-700 hover:bg-blue-200 dark:bg-blue-900/40 dark:text-blue-300 dark:hover:bg-blue-900/60 transition-colors"
+        >
+          Download
+        </button>
+        <button
+          onClick={() => setShowPreview(p => !p)}
+          className="text-xs px-2 py-1 rounded bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600 transition-colors"
+        >
+          {showPreview ? 'Hide Preview' : 'Preview'}
+        </button>
+      </div>
+      {showPreview && (
+        <iframe
+          srcDoc={html}
+          sandbox="allow-same-origin"
+          className="w-full h-96 rounded border border-gray-200 dark:border-gray-700 bg-white"
+          title={filename}
+        />
+      )}
+    </div>
+  );
+}
+
 function ArtifactRenderer({ art }) {
   const data = getArtifactData(art);
   const label = getArtifactLabel(art);
 
   if (isMetadataArtifact(art)) {
     return <MetadataBadge art={art} />;
+  }
+  // HTML report → render as downloadable/viewable report
+  if (getArtifactType(art) === 'report_html') {
+    return <ReportHtmlBlock art={art} />;
   }
   // Rich analysis result → delegate to AnalysisResultCard (metrics, charts, tables)
   if (isAnalysisResultArtifact(art)) {
@@ -491,6 +543,11 @@ export default function TaskResultSummaryCard({ payload }) {
         if (!art || typeof art !== 'object') continue;
         // analysis_result artifacts have object data (not array)
         if (isAnalysisResultArtifact(art)) {
+          arts.push({ art, stepName: step.step_name });
+          continue;
+        }
+        // report_html artifacts are always renderable
+        if (getArtifactType(art) === 'report_html') {
           arts.push({ art, stepName: step.step_name });
           continue;
         }

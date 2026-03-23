@@ -102,6 +102,8 @@ const V1_VALIDATORS = {
   topology_graph: validateObjectPayloadOnly,
   // Plan comparison artifact (risk-aware vs base)
   plan_comparison: validateObjectPayloadOnly,
+  // Data learning — auto-generated dataset profile
+  data_profile: validateObjectPayloadOnly,
 };
 
 const MAX_ISSUES = 50;

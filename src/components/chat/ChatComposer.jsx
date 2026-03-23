@@ -1,5 +1,5 @@
 import React, { memo, useState, useMemo } from 'react';
-import { FileText, Loader2, Paperclip, Send, Table2, X } from 'lucide-react';
+import { Brain, FileText, Loader2, Paperclip, Send, Table2, X } from 'lucide-react';
 import { CHAT_ATTACHMENT_ACCEPT, formatAttachmentSize } from '../../services/chatAttachmentService';
 
 const STATUS_TONE_CLASSES = {
@@ -10,6 +10,8 @@ const STATUS_TONE_CLASSES = {
 };
 
 const SLASH_COMMANDS = [
+  { cmd: '/think', desc: 'Force full thinking mode for this message' },
+  { cmd: '/think light', desc: 'Force lightweight thinking mode' },
   { cmd: '/ralph-loop', desc: 'Start Ralph Loop autonomous task execution' },
   { cmd: '/ralph-stop', desc: 'Stop a running Ralph Loop' },
   { cmd: '/forecast', desc: 'Run demand forecast on uploaded data' },
@@ -43,6 +45,8 @@ function ChatComposer({
   onRemoveAttachment,
   status = null,
   variant = 'default',
+  thinkingEnabled = false,
+  onToggleThinkingEnabled,
 }) {
   const isAIEmployeeVariant = variant === 'ai_employee';
   const statusTone = STATUS_TONE_CLASSES[status?.tone || 'neutral'] || STATUS_TONE_CLASSES.neutral;
@@ -171,6 +175,25 @@ function ChatComposer({
           </div>
         ) : null}
 
+        {typeof onToggleThinkingEnabled === 'function' ? (
+          <div className="mb-2 flex items-center justify-end">
+            <button
+              type="button"
+              onClick={onToggleThinkingEnabled}
+              disabled={isTyping || isUploading}
+              className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] font-medium transition-colors disabled:opacity-50 ${
+                thinkingEnabled
+                  ? 'border-blue-300 bg-blue-50 text-blue-700 dark:border-blue-700 dark:bg-blue-950/40 dark:text-blue-300'
+                  : 'border-slate-200 bg-white text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300'
+              }`}
+              title={thinkingEnabled ? 'Thinking mode is forced on for this conversation' : 'Thinking mode follows automatic routing for this conversation'}
+            >
+              <Brain className="h-3.5 w-3.5" />
+              <span>{thinkingEnabled ? 'Thinking On' : 'Thinking Auto'}</span>
+            </button>
+          </div>
+        ) : null}
+
         {/* Slash command autocomplete menu */}
         {showSlashMenu && (
           <div className="mb-2 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg dark:border-slate-700 dark:bg-slate-800">
@@ -206,20 +229,24 @@ function ChatComposer({
             </div>
           ) : null}
 
-          <button
-            type="button"
-            className={`absolute left-2.5 p-2 text-slate-500 transition-colors disabled:opacity-50 ${
-              isAIEmployeeVariant
-                ? 'bottom-2.5 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800'
-                : 'top-2.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700'
-            }`}
-            onClick={onFilePicker}
-            disabled={isUploading}
-            data-testid="attach-button"
-            title="Attach files"
-          >
-            {isUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Paperclip className="w-4 h-4" />}
-          </button>
+          <div className={`absolute left-2.5 flex items-center gap-0.5 ${
+            isAIEmployeeVariant ? 'bottom-2.5' : 'top-2.5'
+          }`}>
+            <button
+              type="button"
+              className={`p-2 text-slate-500 transition-colors disabled:opacity-50 ${
+                isAIEmployeeVariant
+                  ? 'rounded-full hover:bg-slate-100 dark:hover:bg-slate-800'
+                  : 'rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700'
+              }`}
+              onClick={onFilePicker}
+              disabled={isUploading}
+              data-testid="attach-button"
+              title="Attach files"
+            >
+              {isUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Paperclip className="w-4 h-4" />}
+            </button>
+          </div>
 
           <textarea
             ref={textareaRef}
@@ -231,8 +258,8 @@ function ChatComposer({
             placeholder={isDragOver ? 'Drop files to attach...' : isAIEmployeeVariant ? 'Message your worker' : 'Message Decision-Intelligence'}
             className={`w-full resize-none overflow-hidden bg-transparent text-sm outline-none ${
               isAIEmployeeVariant
-                ? 'rounded-[26px] pl-12 pr-16 py-4 text-[15px] leading-6 text-slate-800 dark:text-slate-100 placeholder:text-slate-400'
-                : 'rounded-2xl pl-12 pr-12 py-3'
+                ? 'rounded-[26px] pl-[72px] pr-16 py-4 text-[15px] leading-6 text-slate-800 dark:text-slate-100 placeholder:text-slate-400'
+                : 'pl-12 rounded-2xl pr-12 py-3'
             }`}
             style={{ minHeight: '52px', maxHeight: '180px' }}
           />
@@ -263,7 +290,7 @@ function ChatComposer({
             <span>Attach spreadsheets or documents (max 50MB total)</span>
           )}
           <span className="text-slate-300">•</span>
-          <span>Commands: /forecast, /plan, /workflowA, /ralph-loop, /reuse off, /retrain</span>
+          <span>Commands: /think, /forecast, /plan, /workflowA, /ralph-loop, /reuse off, /retrain</span>
           <span className="text-slate-300">•</span>
           <span>Enter to send, Shift+Enter for newline</span>
         </div>

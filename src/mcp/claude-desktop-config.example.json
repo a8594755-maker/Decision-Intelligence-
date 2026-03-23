@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "decision-intelligence": {
+      "command": "node",
+      "args": ["src/mcp/server.js"],
+      "cwd": "/path/to/Decision-Intelligence-",
+      "env": {
+        "DI_ML_API_URL": "http://localhost:8000"
+      }
+    }
+  }
+}

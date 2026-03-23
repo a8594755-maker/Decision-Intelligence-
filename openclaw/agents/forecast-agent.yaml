@@ -1,0 +1,60 @@
+# ForecastBot — Demand Forecasting Specialist
+# Decision-Intelligence OpenClaw Agent Configuration
+
+name: ForecastBot
+identity: >
+  You are a supply chain demand forecasting specialist powered by Decision Intelligence.
+  You help users forecast demand using time-series models (Prophet, LightGBM, Chronos),
+  analyze forecast accuracy, and support closed-loop re-planning.
+  You speak English and Traditional Chinese (繁體中文).
+
+skills:
+  - demand-forecast
+  - full-pipeline
+
+channel_bindings:
+  slack:
+    channels:
+      - "#demand-planning"
+      - "#forecast-review"
+      - "#supply-chain-ops"
+    mention_trigger: "@ForecastBot"
+  discord:
+    channels:
+      - "demand-planning"
+      - "forecast"
+  telegram:
+    trigger_words:
+      - "/forecast"
+      - "/predict"
+
+memory:
+  provider: local
+  context_window: 20
+  persistent: true
+
+workspace:
+  mcp_servers:
+    - name: di-mcp-server
+      command: "python"
+      args: ["-m", "ml.api.mcp_server"]
+      env:
+        DI_API_BASE: "${DI_API_BASE:-http://localhost:8000}"
+        DI_AGENT_ROLE: "forecast"
+        DI_AUTH_HEADER: "x-di-server"
+        DI_AUTH_VALUE: "true"
+
+behavior:
+  # When asked about topics outside forecasting
+  handoff_rules:
+    - pattern: "risk|supplier risk|delay|overdue"
+      target: RiskBot
+      message: "For risk analysis, let me connect you with @RiskBot."
+    - pattern: "negotiate|procurement|order|cost"
+      target: ProcureBot
+      message: "For procurement and negotiation, @ProcureBot can help."
+
+  # Response preferences
+  language: auto  # Detect from user message
+  chart_format: markdown_table  # Slack-compatible
+  max_response_length: 2000

@@ -5,6 +5,20 @@ import {
   buildSystemBrainPrompt,
   buildWorkflowAReadinessPrompt
 } from '../prompts/diJsonContracts';
+import {
+  buildAgentAnswerContractPrompt,
+  buildAgentCandidateJudgePrompt,
+  buildAgentBriefReviewPrompt,
+  buildAgentBriefSynthesisPrompt,
+  buildAgentQaCrossReviewPrompt,
+  buildAgentQaRepairSynthesisPrompt,
+  buildAgentQaSelfReviewPrompt,
+  validateAgentBrief,
+  validateAgentCandidateJudge,
+  validateAgentBriefReview,
+  validateAgentQaReview,
+  validateAnswerContract,
+} from '../prompts/agentResponsePrompt';
 import { buildIntentParserPrompt, validateIntentContract } from '../prompts/intentParserPrompt';
 import { extractAiJson } from '../utils/aiMappingHelper';
 import { invokeAiProxy } from './aiProxyService';
@@ -33,7 +47,14 @@ export const DI_PROMPT_IDS = Object.freeze({
   WORKFLOW_A_READINESS: 'prompt_3_workflow_a_readiness',
   REPORT_SUMMARY: 'prompt_4_report_summary',
   BLOCKING_QUESTIONS: 'prompt_5_blocking_questions',
-  INTENT_PARSER: 'prompt_6_intent_parser'
+  INTENT_PARSER: 'prompt_6_intent_parser',
+  AGENT_ANSWER_CONTRACT: 'prompt_7_agent_answer_contract',
+  AGENT_BRIEF_SYNTHESIS: 'prompt_8_agent_brief_synthesis',
+  AGENT_BRIEF_REVIEW: 'prompt_9_agent_brief_review',
+  AGENT_QA_SELF_REVIEW: 'prompt_10_agent_qa_self_review',
+  AGENT_QA_CROSS_REVIEW: 'prompt_11_agent_qa_cross_review',
+  AGENT_QA_REPAIR_SYNTHESIS: 'prompt_12_agent_qa_repair_synthesis',
+  AGENT_CANDIDATE_JUDGE: 'prompt_13_agent_candidate_judge',
 });
 
 const DEFAULT_DI_GEMINI_MODEL = 'gemini-3.1-pro-preview';
@@ -72,6 +93,11 @@ const DEFAULT_DI_DEEPSEEK_MODEL = import.meta.env.VITE_DI_DEEPSEEK_MODEL || 'dee
 // ── Unified LLM provider (configurable via env) ─────────────────────────────
 const DI_UNIFIED_PROVIDER = import.meta.env.VITE_DI_CHAT_PROVIDER || 'openai';
 const DI_UNIFIED_MODEL = import.meta.env.VITE_DI_CHAT_MODEL || 'gpt-5.4';
+const DI_AGENT_QA_REVIEW_PROVIDER = import.meta.env.VITE_DI_AGENT_QA_REVIEW_PROVIDER || 'gemini';
+const DI_AGENT_QA_REVIEW_MODEL = import.meta.env.VITE_DI_AGENT_QA_REVIEW_MODEL
+  || import.meta.env.VITE_DI_GEMINI_MODEL
+  || import.meta.env.VITE_GEMINI_MODEL
+  || 'gemini-3.1-pro-preview';
 
 const PROMPT_PROVIDER = Object.freeze({
   [DI_PROMPT_IDS.DATA_PROFILER]: DI_UNIFIED_PROVIDER,
@@ -80,6 +106,13 @@ const PROMPT_PROVIDER = Object.freeze({
   [DI_PROMPT_IDS.REPORT_SUMMARY]: DI_UNIFIED_PROVIDER,
   [DI_PROMPT_IDS.BLOCKING_QUESTIONS]: DI_UNIFIED_PROVIDER,
   [DI_PROMPT_IDS.INTENT_PARSER]: DI_UNIFIED_PROVIDER,
+  [DI_PROMPT_IDS.AGENT_ANSWER_CONTRACT]: DI_UNIFIED_PROVIDER,
+  [DI_PROMPT_IDS.AGENT_BRIEF_SYNTHESIS]: DI_UNIFIED_PROVIDER,
+  [DI_PROMPT_IDS.AGENT_BRIEF_REVIEW]: DI_UNIFIED_PROVIDER,
+  [DI_PROMPT_IDS.AGENT_QA_SELF_REVIEW]: DI_UNIFIED_PROVIDER,
+  [DI_PROMPT_IDS.AGENT_QA_CROSS_REVIEW]: DI_AGENT_QA_REVIEW_PROVIDER,
+  [DI_PROMPT_IDS.AGENT_QA_REPAIR_SYNTHESIS]: DI_UNIFIED_PROVIDER,
+  [DI_PROMPT_IDS.AGENT_CANDIDATE_JUDGE]: DI_AGENT_QA_REVIEW_PROVIDER,
 });
 
 const PROMPT_DEFAULT_MODEL = Object.freeze({
@@ -89,12 +122,26 @@ const PROMPT_DEFAULT_MODEL = Object.freeze({
   [DI_PROMPT_IDS.REPORT_SUMMARY]: DI_UNIFIED_MODEL,
   [DI_PROMPT_IDS.BLOCKING_QUESTIONS]: DI_UNIFIED_MODEL,
   [DI_PROMPT_IDS.INTENT_PARSER]: DI_UNIFIED_MODEL,
+  [DI_PROMPT_IDS.AGENT_ANSWER_CONTRACT]: DI_UNIFIED_MODEL,
+  [DI_PROMPT_IDS.AGENT_BRIEF_SYNTHESIS]: DI_UNIFIED_MODEL,
+  [DI_PROMPT_IDS.AGENT_BRIEF_REVIEW]: DI_UNIFIED_MODEL,
+  [DI_PROMPT_IDS.AGENT_QA_SELF_REVIEW]: DI_UNIFIED_MODEL,
+  [DI_PROMPT_IDS.AGENT_QA_CROSS_REVIEW]: DI_AGENT_QA_REVIEW_MODEL,
+  [DI_PROMPT_IDS.AGENT_QA_REPAIR_SYNTHESIS]: DI_UNIFIED_MODEL,
+  [DI_PROMPT_IDS.AGENT_CANDIDATE_JUDGE]: DI_AGENT_QA_REVIEW_MODEL,
 });
 const STRICT_JSON_PROMPTS = new Set([
   DI_PROMPT_IDS.DATA_PROFILER,
   DI_PROMPT_IDS.SCHEMA_MAPPING,
   DI_PROMPT_IDS.WORKFLOW_A_READINESS,
-  DI_PROMPT_IDS.INTENT_PARSER
+  DI_PROMPT_IDS.INTENT_PARSER,
+  DI_PROMPT_IDS.AGENT_ANSWER_CONTRACT,
+  DI_PROMPT_IDS.AGENT_BRIEF_SYNTHESIS,
+  DI_PROMPT_IDS.AGENT_BRIEF_REVIEW,
+  DI_PROMPT_IDS.AGENT_QA_SELF_REVIEW,
+  DI_PROMPT_IDS.AGENT_QA_CROSS_REVIEW,
+  DI_PROMPT_IDS.AGENT_QA_REPAIR_SYNTHESIS,
+  DI_PROMPT_IDS.AGENT_CANDIDATE_JUDGE,
 ]);
 
 const isPlainObject = (value) => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -133,6 +180,30 @@ const validatePromptContract = (promptId, parsed) => {
     return validateIntentContract(parsed);
   }
 
+  if (promptId === DI_PROMPT_IDS.AGENT_ANSWER_CONTRACT) {
+    return validateAnswerContract(parsed);
+  }
+
+  if (promptId === DI_PROMPT_IDS.AGENT_BRIEF_SYNTHESIS) {
+    return validateAgentBrief(parsed);
+  }
+
+  if (promptId === DI_PROMPT_IDS.AGENT_BRIEF_REVIEW) {
+    return validateAgentBriefReview(parsed);
+  }
+
+  if (promptId === DI_PROMPT_IDS.AGENT_QA_SELF_REVIEW || promptId === DI_PROMPT_IDS.AGENT_QA_CROSS_REVIEW) {
+    return validateAgentQaReview(parsed);
+  }
+
+  if (promptId === DI_PROMPT_IDS.AGENT_QA_REPAIR_SYNTHESIS) {
+    return validateAgentBrief(parsed);
+  }
+
+  if (promptId === DI_PROMPT_IDS.AGENT_CANDIDATE_JUDGE) {
+    return validateAgentCandidateJudge(parsed);
+  }
+
   return true;
 };
 
@@ -157,6 +228,13 @@ const toPromptText = (promptId, input) => {
   if (promptId === DI_PROMPT_IDS.REPORT_SUMMARY) return buildDecisionIntelligenceReportPrompt(input);
   if (promptId === DI_PROMPT_IDS.BLOCKING_QUESTIONS) return buildBlockingQuestionPrompt(input);
   if (promptId === DI_PROMPT_IDS.INTENT_PARSER) return buildIntentParserPrompt(input);
+  if (promptId === DI_PROMPT_IDS.AGENT_ANSWER_CONTRACT) return buildAgentAnswerContractPrompt(input);
+  if (promptId === DI_PROMPT_IDS.AGENT_CANDIDATE_JUDGE) return buildAgentCandidateJudgePrompt(input);
+  if (promptId === DI_PROMPT_IDS.AGENT_BRIEF_SYNTHESIS) return buildAgentBriefSynthesisPrompt(input);
+  if (promptId === DI_PROMPT_IDS.AGENT_BRIEF_REVIEW) return buildAgentBriefReviewPrompt(input);
+  if (promptId === DI_PROMPT_IDS.AGENT_QA_SELF_REVIEW) return buildAgentQaSelfReviewPrompt(input);
+  if (promptId === DI_PROMPT_IDS.AGENT_QA_CROSS_REVIEW) return buildAgentQaCrossReviewPrompt(input);
+  if (promptId === DI_PROMPT_IDS.AGENT_QA_REPAIR_SYNTHESIS) return buildAgentQaRepairSynthesisPrompt(input);
   throw new Error(`Unsupported DI prompt id: ${promptId}`);
 };
 
@@ -265,14 +343,16 @@ export const runDiPrompt = async ({
   promptId,
   input,
   temperature = 0.15,
-  maxOutputTokens = 4096
+  maxOutputTokens = 4096,
+  providerOverride = '',
+  modelOverride = '',
 }) => {
-  const provider = PROMPT_PROVIDER[promptId];
+  const provider = String(providerOverride || PROMPT_PROVIDER[promptId] || '').trim();
   if (!provider) {
     throw new Error(`No DI provider route configured for prompt: ${promptId}`);
   }
 
-  const model = PROMPT_DEFAULT_MODEL[promptId] || DI_UNIFIED_MODEL;
+  const model = String(modelOverride || PROMPT_DEFAULT_MODEL[promptId] || DI_UNIFIED_MODEL).trim();
   const promptText = toPromptText(promptId, input);
 
   const callPrompt = provider === 'gemini' ? callGeminiPrompt

@@ -121,6 +121,104 @@ export const invokeAiProxy = async (mode, payload = {}, { signal, timeoutMs = AI
   return data;
 };
 
+/**
+ * Invoke AI proxy in SSE streaming mode.
+ * Reads the event stream and calls onDelta for each parsed chunk.
+ *
+ * @param {string} mode - ai-proxy mode (e.g. 'openai_chat_tools_stream')
+ * @param {object} payload - Request payload
+ * @param {object} options
+ * @param {AbortSignal} [options.signal]
+ * @param {number} [options.timeoutMs]
+ * @param {function} options.onDelta - Called with each parsed SSE data object
+ */
+export const invokeAiProxyStream = async (mode, payload = {}, { signal, timeoutMs = AI_PROXY_TIMEOUT_MS, onDelta } = {}) => {
+  acquireOrThrow('ai_proxy');
+
+  if (!EDGE_FN_URL) {
+    throw new Error('Edge Function URL not configured. Check VITE_SUPABASE_URL.');
+  }
+
+  const timeoutController = new AbortController();
+  const timeoutId = setTimeout(() => timeoutController.abort(new Error(`AI proxy stream timed out after ${timeoutMs}ms`)), timeoutMs);
+  const effectiveSignal = signal
+    ? (AbortSignal.any
+        ? AbortSignal.any([signal, timeoutController.signal])
+        : (() => { const c = new AbortController(); const onAbort = () => c.abort(); signal.addEventListener('abort', onAbort, { once: true }); timeoutController.signal.addEventListener('abort', onAbort, { once: true }); return c.signal; })())
+    : timeoutController.signal;
+
+  const accessToken = getStoredAccessToken();
+  const headers = {
+    'Content-Type': 'application/json',
+    'apikey': SUPABASE_ANON_KEY,
+  };
+  if (accessToken) {
+    headers['Authorization'] = `Bearer ${accessToken}`;
+  }
+
+  const t0 = performance.now();
+  console.info(`[aiProxy] Calling Edge Function stream (mode=${mode})...`);
+
+  let res;
+  try {
+    res = await fetch(EDGE_FN_URL, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ mode, payload }),
+      signal: effectiveSignal,
+    });
+  } catch (err) {
+    clearTimeout(timeoutId);
+    throw err;
+  }
+
+  const elapsed = Math.round(performance.now() - t0);
+
+  if (!res.ok) {
+    clearTimeout(timeoutId);
+    let message = `Edge Function stream failed (${res.status})`;
+    try {
+      const errPayload = await res.json();
+      if (errPayload?.error) message = String(errPayload.error);
+    } catch { /* ignore */ }
+    throw new Error(message);
+  }
+
+  console.info(`[aiProxy] Stream connected in ${elapsed}ms — reading SSE events...`);
+
+  try {
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+
+      // SSE events are separated by double newlines
+      const events = buffer.split('\n\n');
+      buffer = events.pop(); // Keep incomplete event in buffer
+
+      for (const event of events) {
+        const dataLine = event.split('\n').find((l) => l.startsWith('data: '));
+        if (!dataLine) continue;
+        const data = dataLine.slice(6); // Remove "data: " prefix
+        if (data === '[DONE]') return;
+
+        try {
+          const parsed = JSON.parse(data);
+          onDelta?.(parsed);
+        } catch { /* skip malformed JSON */ }
+      }
+    }
+  } finally {
+    clearTimeout(timeoutId);
+    console.info(`[aiProxy] Stream completed in ${Math.round(performance.now() - t0)}ms`);
+  }
+};
+
 export const streamTextToChunks = (text, onChunk, chunkSize = 48) => {
   if (typeof onChunk !== 'function') return;
   const content = String(text || '');
@@ -133,5 +231,6 @@ export const streamTextToChunks = (text, onChunk, chunkSize = 48) => {
 
 export default {
   invokeAiProxy,
+  invokeAiProxyStream,
   streamTextToChunks,
 };

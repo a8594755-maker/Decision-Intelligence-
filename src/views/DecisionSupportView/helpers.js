@@ -703,7 +703,7 @@ export async function loadDomainContext(userId, supabase) {
   return ctx;
 }
 
-export function buildSystemPrompt(domainCtx, activeDatasetContext) {
+export function buildSystemPrompt(domainCtx, activeDatasetContext, dataProfile = null, insights = null) {
   let prompt = `You are **${ASSISTANT_NAME}**, an expert supply-chain AI.
 Answer in the same language the user writes in. Use Markdown formatting (tables, bold, lists) for clarity.
 Be concise, data-driven, and actionable.\n\n`;
@@ -736,10 +736,18 @@ Be concise, data-driven, and actionable.\n\n`;
     prompt += '\nWhen answering plan questions, reference these binding constraints and objective terms explicitly.\n';
   }
 
-  prompt += `\n## Enterprise Data (Always Available via SQL)
-You have direct access to ALL enterprise data via the **query_sap_data** tool. Two datasets are available:
+  // ── Enterprise Data section ──
+  prompt += '\n## Enterprise Data (Always Available via SQL)\n';
+  prompt += 'You have direct access to ALL enterprise data via the **query_sap_data** tool. Two datasets are available:\n\n';
 
-### Dataset A: Olist E-Commerce (Brazilian market — CSV)
+  // Dataset A: Use dynamic profile digest if available, otherwise fall back to static.
+  // dataProfile should already be a pre-built digest string (from buildProfileDigest()).
+  if (dataProfile) {
+    prompt += '### Dataset A: Olist E-Commerce (Brazilian market — CSV)\n';
+    prompt += (typeof dataProfile === 'string' ? dataProfile : JSON.stringify(dataProfile));
+    prompt += '\n';
+  } else {
+    prompt += `### Dataset A: Olist E-Commerce (Brazilian market — CSV)
 | Table | SAP Equiv | Key Columns | Rows |
 |-------|-----------|-------------|------|
 | customers | KNA1 | customer_id, customer_city, customer_state | ~99K |
@@ -751,8 +759,10 @@ You have direct access to ALL enterprise data via the **query_sap_data** tool. T
 | sellers | LFA1 | seller_id, seller_city, seller_state | ~3K |
 | geolocation | ADRC | zip_code_prefix, lat, lng, city, state | ~1M |
 | category_translation | T023T | product_category_name, product_category_name_english | 71 |
+`;
+  }
 
-### Dataset B: DI Operations (Supply chain — Supabase)
+  prompt += `\n### Dataset B: DI Operations (Supply chain — Supabase)
 | Table | SAP Equiv | Key Columns |
 |-------|-----------|-------------|
 | suppliers | LFA1 | supplier_code, supplier_name, status |
@@ -760,8 +770,16 @@ You have direct access to ALL enterprise data via the **query_sap_data** tool. T
 | inventory_snapshots | MARD | material_code, plant_id, onhand_qty, safety_stock |
 | po_open_lines | EKPO | po_number, material_code, plant_id, open_qty, status |
 | goods_receipts | MKPF | supplier_name, material_code, qty, is_on_time |
+`;
 
-**CRITICAL**: When the user asks about ANY data, you MUST call **query_sap_data** with a SQL SELECT query. NEVER just describe SQL — execute it directly.
+  // Accumulated data insights — helps Agent write better SQL, NOT skip queries
+  if (insights?.length > 0) {
+    prompt += '\n### Data Hints (from previous queries — use these to write better SQL, but ALWAYS re-query for exact numbers)\n';
+    prompt += insights.map(i => `- ${i.fact}`).join('\n');
+    prompt += '\n';
+  }
+
+  prompt += `\n**CRITICAL**: When the user asks about ANY data, you MUST call **query_sap_data** with a SQL SELECT query. NEVER just describe SQL — execute it directly.
 Use **list_sap_tables** to show table schemas if the user asks what data is available.
 You can JOIN across both datasets. Always clarify which dataset the results come from.
 `;

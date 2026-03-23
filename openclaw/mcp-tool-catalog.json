@@ -1,0 +1,3175 @@
+{
+  "_generated": "2026-03-22T06:44:36.868Z",
+  "_source": "src/services/builtinToolCatalog.js",
+  "_description": "Auto-generated MCP tool catalog for OpenClaw integration. Do not edit manually.",
+  "version": "1.0.0",
+  "tool_count": 57,
+  "categories": [
+    "core_planning",
+    "risk",
+    "scenario",
+    "negotiation",
+    "cost_revenue",
+    "bom",
+    "utility",
+    "analytics",
+    "governance",
+    "data_access",
+    "monitoring"
+  ],
+  "tools": [
+    {
+      "name": "di_run_forecast",
+      "description": "Run time-series demand forecast with P10/P50/P90 quantiles from historical demand data.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "userId": {
+            "type": "string",
+            "description": "string"
+          },
+          "datasetProfileRow": {
+            "type": "object",
+            "description": "object (from datasetProfilesService)"
+          },
+          "horizonPeriods": {
+            "type": "number",
+            "description": "number|null (forecast horizon)"
+          },
+          "settings": {
+            "type": "object",
+            "description": "object (optional overrides)"
+          }
+        },
+        "required": [
+          "userId",
+          "datasetProfileRow"
+        ]
+      },
+      "_di_meta": {
+        "tool_id": "run_forecast",
+        "category": "core_planning",
+        "tier": "tier_c",
+        "module": "./chatForecastService",
+        "method": "runForecastFromDatasetProfile",
+        "routing_target": "mcp-intake",
+        "depends_on": [],
+        "output_artifacts": [
+          "forecast_series",
+          "forecast_csv",
+          "metrics"
+        ],
+        "required_datasets": [
+          "demand_fg"
+        ],
+        "needs_dataset_profile": true,
+        "keywords_en": [
+          "forecast",
+          "predict",
+          "demand",
+          "projection",
+          "trend"
+        ],
+        "keywords_zh": [
+          "預測",
+          "需求",
+          "趨勢",
+          "預估"
+        ]
+      }
+    },
+    {
+      "name": "di_run_plan",
+      "description": "Generate optimized replenishment/procurement plan using MIP solver or heuristic. Requires forecast.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "userId": {
+            "type": "string",
+            "description": "string"
+          },
+          "datasetProfileRow": {
+            "type": "object",
+            "description": "object"
+          },
+          "riskMode": {
+            "type": "string",
+            "description": "'on'|'off' (default 'off')"
+          },
+          "scenarioOverrides": {
+            "type": "object",
+            "description": "object|null"
+          },
+          "settings": {
+            "type": "object",
+            "description": "object (optional)"
+          }
+        },
+        "required": [
+          "userId",
+          "datasetProfileRow"
+        ]
+      },
+      "_di_meta": {
+        "tool_id": "run_plan",
+        "category": "core_planning",
+        "tier": "tier_c",
+        "module": "./chatPlanningService",
+        "method": "runPlanFromDatasetProfile",
+        "routing_target": "mcp-intake",
+        "depends_on": [
+          "run_forecast"
+        ],
+        "output_artifacts": [
+          "plan_table",
+          "plan_csv",
+          "inventory_projection",
+          "solver_meta",
+          "constraint_check",
+          "replay_metrics"
+        ],
+        "required_datasets": [
+          "demand_fg"
+        ],
+        "needs_dataset_profile": true,
+        "keywords_en": [
+          "plan",
+          "replenish",
+          "reorder",
+          "procurement",
+          "order",
+          "optimize",
+          "restock"
+        ],
+        "keywords_zh": [
+          "計畫",
+          "補貨",
+          "訂單",
+          "採購",
+          "補充",
+          "最佳化"
+        ]
+      }
+    },
+    {
+      "name": "di_run_risk_analysis",
+      "description": "Compute supplier risk scores from PO and receipt data. Identifies high-risk materials/suppliers.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "userId": {
+            "type": "string",
+            "description": "string"
+          },
+          "datasetProfileRow": {
+            "type": "object",
+            "description": "object"
+          }
+        },
+        "required": [
+          "userId",
+          "datasetProfileRow"
+        ]
+      },
+      "_di_meta": {
+        "tool_id": "run_risk_analysis",
+        "category": "risk",
+        "tier": "tier_c",
+        "module": "./chatRiskService",
+        "method": "computeRiskArtifactsFromDatasetProfile",
+        "routing_target": "mcp-intake",
+        "depends_on": [],
+        "output_artifacts": [
+          "risk_scores",
+          "report_json"
+        ],
+        "required_datasets": [
+          "po_open_lines"
+        ],
+        "needs_dataset_profile": true,
+        "keywords_en": [
+          "risk",
+          "assess",
+          "threat",
+          "supplier risk",
+          "delay",
+          "overdue"
+        ],
+        "keywords_zh": [
+          "風險",
+          "評估",
+          "威脅",
+          "供應商風險",
+          "延遲"
+        ]
+      }
+    },
+    {
+      "name": "di_run_risk_adjustments",
+      "description": "Transform risk scores into solver parameter adjustments (lead time extensions, dual sourcing, demand uplift).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "riskScores": {
+            "type": "array",
+            "description": "array (from risk analysis)"
+          },
+          "supplierKpis": {
+            "type": "object",
+            "description": "object|null"
+          },
+          "inventory": {
+            "type": "array",
+            "description": "array|null"
+          }
+        },
+        "required": [
+          "riskScores"
+        ]
+      },
+      "_di_meta": {
+        "tool_id": "run_risk_adjustments",
+        "category": "risk",
+        "tier": "tier_c",
+        "module": "./riskAdjustmentsService",
+        "method": "computeRiskAdjustments",
+        "routing_target": "mcp-intake",
+        "depends_on": [
+          "run_risk_analysis"
+        ],
+        "output_artifacts": [
+          "risk_adjustments"
+        ],
+        "required_datasets": [],
+        "needs_dataset_profile": false,
+        "keywords_en": [
+          "risk adjust",
+          "risk aware",
+          "safety stock",
+          "lead time buffer",
+          "dual source"
+        ],
+        "keywords_zh": [
+          "風險調整",
+          "安全庫存",
+          "前置時間緩衝",
+          "雙源"
+        ]
+      }
+    },
+    {
+      "name": "di_run_risk_aware_plan",
+      "description": "Run replenishment plan with risk mode enabled — extends lead times, increases safety stock for high-risk items.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "userId": {
+            "type": "string",
+            "description": "string"
+          },
+          "datasetProfileRow": {
+            "type": "object",
+            "description": "object"
+          },
+          "riskMode": {
+            "type": "string",
+            "description": "'on' (forced)"
+          },
+          "settings": {
+            "type": "object",
+            "description": "object"
+          }
+        },
+        "required": [
+          "userId",
+          "datasetProfileRow",
+          "riskMode",
+          "settings"
+        ]
+      },
+      "_di_meta": {
+        "tool_id": "run_risk_aware_plan",
+        "category": "core_planning",
+        "tier": "tier_c",
+        "module": "./chatPlanningService",
+        "method": "runPlanFromDatasetProfile",
+        "routing_target": "mcp-intake",
+        "depends_on": [
+          "run_forecast",
+          "run_risk_analysis"
+        ],
+        "output_artifacts": [
+          "risk_plan_table",
+          "risk_solver_meta",
+          "risk_replay_metrics",
+          "risk_inventory_projection",
+          "plan_comparison"
+        ],
+        "required_datasets": [
+          "demand_fg"
+        ],
+        "needs_dataset_profile": true,
+        "keywords_en": [
+          "risk plan",
+          "risk aware plan",
+          "safe plan",
+          "conservative plan"
+        ],
+        "keywords_zh": [
+          "風險計畫",
+          "保守計畫",
+          "安全計畫"
+        ]
+      }
+    },
+    {
+      "name": "di_run_scenario",
+      "description": "Execute a what-if scenario with parameter overrides (budget, service level, demand multiplier, lead time delta).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "userId": {
+            "type": "string",
+            "description": "string"
+          },
+          "scenario": {
+            "type": "object",
+            "description": "object ({ base_run_id, overrides })"
+          },
+          "onProgress": {
+            "type": "string",
+            "description": "function|null"
+          }
+        },
+        "required": [
+          "userId",
+          "scenario"
+        ]
+      },
+      "_di_meta": {
+        "tool_id": "run_scenario",
+        "category": "scenario",
+        "tier": "tier_c",
+        "module": "./scenarioEngine",
+        "method": "runScenario",
+        "routing_target": "mcp-intake",
+        "depends_on": [
+          "run_plan"
+        ],
+        "output_artifacts": [
+          "scenario_comparison"
+        ],
+        "required_datasets": [],
+        "needs_dataset_profile": false,
+        "keywords_en": [
+          "scenario",
+          "what if",
+          "what-if",
+          "simulate",
+          "sensitivity",
+          "stress test"
+        ],
+        "keywords_zh": [
+          "情境",
+          "假設",
+          "模擬",
+          "壓力測試",
+          "敏感度"
+        ]
+      }
+    },
+    {
+      "name": "di_run_batch_scenarios",
+      "description": "Run up to 6 what-if scenarios in parallel and compare results side by side.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "userId": {
+            "type": "string",
+            "description": "string"
+          },
+          "baseRunId": {
+            "type": "number",
+            "description": "number|string"
+          },
+          "scenarios": {
+            "type": "array",
+            "description": "array (max 6)"
+          }
+        },
+        "required": [
+          "userId",
+          "baseRunId",
+          "scenarios"
+        ]
+      },
+      "_di_meta": {
+        "tool_id": "run_batch_scenarios",
+        "category": "scenario",
+        "tier": "tier_c",
+        "module": "./chatScenarioBatchService",
+        "method": "batchRunScenarios",
+        "routing_target": "mcp-intake",
+        "depends_on": [
+          "run_plan"
+        ],
+        "output_artifacts": [
+          "scenario_comparison"
+        ],
+        "required_datasets": [],
+        "needs_dataset_profile": false,
+        "keywords_en": [
+          "batch scenario",
+          "compare scenarios",
+          "multiple scenarios",
+          "scenario matrix"
+        ],
+        "keywords_zh": [
+          "批量情境",
+          "情境比較",
+          "多情境"
+        ]
+      }
+    },
+    {
+      "name": "di_run_negotiation",
+      "description": "Run full negotiation loop: generate options, CFR game theory enrichment, evaluate & rank, produce recommendation.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "userId": {
+            "type": "string",
+            "description": "string"
+          },
+          "planRunId": {
+            "type": "number",
+            "description": "number|string"
+          },
+          "datasetProfileRow": {
+            "type": "object",
+            "description": "object"
+          }
+        },
+        "required": [
+          "userId",
+          "planRunId",
+          "datasetProfileRow"
+        ]
+      },
+      "_di_meta": {
+        "tool_id": "run_negotiation",
+        "category": "negotiation",
+        "tier": "tier_b",
+        "module": "./negotiation/negotiationOrchestrator",
+        "method": "runNegotiation",
+        "routing_target": "mcp-intake",
+        "depends_on": [
+          "run_plan"
+        ],
+        "output_artifacts": [
+          "negotiation_options",
+          "negotiation_evaluation",
+          "negotiation_report",
+          "cfr_param_adjustment"
+        ],
+        "required_datasets": [],
+        "needs_dataset_profile": true,
+        "keywords_en": [
+          "negotiate",
+          "negotiation",
+          "bargain",
+          "supplier negotiation",
+          "infeasible",
+          "trade-off"
+        ],
+        "keywords_zh": [
+          "談判",
+          "協商",
+          "供應商談判",
+          "不可行",
+          "權衡"
+        ]
+      }
+    },
+    {
+      "name": "di_run_bom_explosion",
+      "description": "Explode Bill of Materials to compute component-level demand from finished goods demand.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "demandFgRows": {
+            "type": "array",
+            "description": "array (finished goods demand)"
+          },
+          "bomEdgesRows": {
+            "type": "array",
+            "description": "array (BOM structure)"
+          },
+          "options": {
+            "type": "object",
+            "description": "object (config)"
+          }
+        },
+        "required": [
+          "demandFgRows",
+          "bomEdgesRows",
+          "options"
+        ]
+      },
+      "_di_meta": {
+        "tool_id": "run_bom_explosion",
+        "category": "bom",
+        "tier": "tier_c",
+        "module": "./bomExplosionService",
+        "method": "executeBomExplosion",
+        "routing_target": "mcp-intake",
+        "depends_on": [
+          "run_forecast"
+        ],
+        "output_artifacts": [
+          "bom_explosion",
+          "component_plan_table",
+          "component_plan_csv",
+          "bottlenecks"
+        ],
+        "required_datasets": [
+          "bom"
+        ],
+        "needs_dataset_profile": true,
+        "keywords_en": [
+          "bom",
+          "bill of materials",
+          "explosion",
+          "component",
+          "multi-echelon",
+          "sub-assembly"
+        ],
+        "keywords_zh": [
+          "物料清單",
+          "BOM",
+          "展開",
+          "零件",
+          "子裝配",
+          "多階"
+        ]
+      }
+    },
+    {
+      "name": "di_run_cost_forecast",
+      "description": "Project procurement costs based on plan quantities and cost rules (margin markup, landed cost, etc.).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "userId": {
+            "type": "string",
+            "description": "string"
+          },
+          "sourceRunId": {
+            "type": "number",
+            "description": "number|string (plan run ID)"
+          },
+          "options": {
+            "type": "object",
+            "description": "object"
+          }
+        },
+        "required": [
+          "userId",
+          "sourceRunId",
+          "options"
+        ]
+      },
+      "_di_meta": {
+        "tool_id": "run_cost_forecast",
+        "category": "cost_revenue",
+        "tier": "tier_c",
+        "module": "./costForecastService",
+        "method": "runCostForecast",
+        "routing_target": "mcp-intake",
+        "depends_on": [
+          "run_plan"
+        ],
+        "output_artifacts": [
+          "cost_forecast"
+        ],
+        "required_datasets": [],
+        "needs_dataset_profile": false,
+        "keywords_en": [
+          "cost",
+          "cost forecast",
+          "procurement cost",
+          "spend",
+          "budget forecast"
+        ],
+        "keywords_zh": [
+          "成本",
+          "成本預測",
+          "採購成本",
+          "支出",
+          "預算"
+        ]
+      }
+    },
+    {
+      "name": "di_run_revenue_forecast",
+      "description": "Forecast revenue and margin-at-risk from BOM plan and revenue rules.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "userId": {
+            "type": "string",
+            "description": "string"
+          },
+          "sourceBomRunId": {
+            "type": "number",
+            "description": "number|string"
+          },
+          "options": {
+            "type": "object",
+            "description": "object"
+          }
+        },
+        "required": [
+          "userId",
+          "sourceBomRunId",
+          "options"
+        ]
+      },
+      "_di_meta": {
+        "tool_id": "run_revenue_forecast",
+        "category": "cost_revenue",
+        "tier": "tier_c",
+        "module": "./revenueForecastService",
+        "method": "runRevenueForecast",
+        "routing_target": "mcp-intake",
+        "depends_on": [
+          "run_bom_explosion"
+        ],
+        "output_artifacts": [
+          "revenue_forecast"
+        ],
+        "required_datasets": [],
+        "needs_dataset_profile": false,
+        "keywords_en": [
+          "revenue",
+          "margin",
+          "profit",
+          "p&l",
+          "margin at risk",
+          "revenue forecast"
+        ],
+        "keywords_zh": [
+          "營收",
+          "毛利",
+          "利潤",
+          "損益",
+          "營收預測"
+        ]
+      }
+    },
+    {
+      "name": "di_run_cost_analysis",
+      "description": "Analyze operational cost breakdown and detect cost anomalies from historical cost data.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "userId": {
+            "type": "string",
+            "description": "string"
+          },
+          "date": {
+            "type": "string",
+            "description": "string|null (YYYY-MM-DD)"
+          }
+        },
+        "required": [
+          "userId"
+        ]
+      },
+      "_di_meta": {
+        "tool_id": "run_cost_analysis",
+        "category": "cost_revenue",
+        "tier": "tier_c",
+        "module": "./costAnalysisService",
+        "method": "analyzeCostStructure",
+        "routing_target": "mcp-intake",
+        "depends_on": [],
+        "output_artifacts": [],
+        "required_datasets": [],
+        "needs_dataset_profile": false,
+        "keywords_en": [
+          "cost analysis",
+          "cost breakdown",
+          "anomaly",
+          "cost structure",
+          "spend analysis"
+        ],
+        "keywords_zh": [
+          "成本分析",
+          "成本結構",
+          "異常",
+          "支出分析"
+        ]
+      }
+    },
+    {
+      "name": "di_run_closed_loop",
+      "description": "Re-forecast and re-plan after actual consumption data arrives. Continuous improvement loop.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "userId": {
+            "type": "string",
+            "description": "string"
+          },
+          "datasetProfileRow": {
+            "type": "object",
+            "description": "object"
+          },
+          "forecastRunId": {
+            "type": "number",
+            "description": "number|string"
+          },
+          "forecastBundle": {
+            "type": "object",
+            "description": "object"
+          }
+        },
+        "required": [
+          "userId",
+          "datasetProfileRow",
+          "forecastRunId",
+          "forecastBundle"
+        ]
+      },
+      "_di_meta": {
+        "tool_id": "run_closed_loop",
+        "category": "core_planning",
+        "tier": "tier_c",
+        "module": "./closed_loop/closedLoopRunner",
+        "method": "runClosedLoop",
+        "routing_target": "mcp-intake",
+        "depends_on": [
+          "run_forecast",
+          "run_plan"
+        ],
+        "output_artifacts": [
+          "forecast_series",
+          "plan_table",
+          "replay_metrics"
+        ],
+        "required_datasets": [
+          "demand_fg"
+        ],
+        "needs_dataset_profile": true,
+        "keywords_en": [
+          "closed loop",
+          "re-plan",
+          "replan",
+          "feedback",
+          "actual vs forecast",
+          "recalibrate"
+        ],
+        "keywords_zh": [
+          "閉環",
+          "重新計畫",
+          "回饋",
+          "校準",
+          "實際對比"
+        ]
+      }
+    },
+    {
+      "name": "di_run_risk_score",
+      "description": "Compute quantitative risk scores per material/supplier from forecast and historical data.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "userId": {
+            "type": "string",
+            "description": "string"
+          },
+          "forecastRunId": {
+            "type": "number",
+            "description": "number|string"
+          },
+          "options": {
+            "type": "object",
+            "description": "object"
+          }
+        },
+        "required": [
+          "userId",
+          "forecastRunId",
+          "options"
+        ]
+      },
+      "_di_meta": {
+        "tool_id": "run_risk_score",
+        "category": "risk",
+        "tier": "tier_c",
+        "module": "./riskScoreService",
+        "method": "runRiskScoreCalculation",
+        "routing_target": "mcp-intake",
+        "depends_on": [
+          "run_forecast"
+        ],
+        "output_artifacts": [
+          "risk_scores"
+        ],
+        "required_datasets": [],
+        "needs_dataset_profile": false,
+        "keywords_en": [
+          "risk score",
+          "score risk",
+          "quantify risk",
+          "risk metric"
+        ],
+        "keywords_zh": [
+          "風險分數",
+          "風險量化",
+          "風險指標"
+        ]
+      }
+    },
+    {
+      "name": "di_run_supply_forecast",
+      "description": "Predict supplier delivery quantities, lead time distributions, and capacity constraints.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "params": {
+            "type": "object",
+            "description": "object (supplier data)"
+          },
+          "services": {
+            "type": "object",
+            "description": "object"
+          }
+        },
+        "required": [
+          "params",
+          "services"
+        ]
+      },
+      "_di_meta": {
+        "tool_id": "run_supply_forecast",
+        "category": "core_planning",
+        "tier": "tier_c",
+        "module": "./supplyForecastService",
+        "method": "runSupplyForecast",
+        "routing_target": "mcp-intake",
+        "depends_on": [],
+        "output_artifacts": [
+          "supply_forecast"
+        ],
+        "required_datasets": [
+          "po_open_lines"
+        ],
+        "needs_dataset_profile": true,
+        "keywords_en": [
+          "supply forecast",
+          "supplier forecast",
+          "delivery prediction",
+          "capacity",
+          "lead time forecast"
+        ],
+        "keywords_zh": [
+          "供應預測",
+          "供應商預測",
+          "交貨預測",
+          "產能",
+          "前置時間預測"
+        ]
+      }
+    },
+    {
+      "name": "di_run_plan_comparison",
+      "description": "Compare current plan against approved baseline — detect KPI drift, added/removed SKUs, quantity changes.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "baselineKpis": {
+            "type": "object",
+            "description": "object"
+          },
+          "currentKpis": {
+            "type": "object",
+            "description": "object"
+          },
+          "baselineRunId": {
+            "type": "number",
+            "description": "number|string"
+          },
+          "currentRunId": {
+            "type": "number",
+            "description": "number|string"
+          }
+        },
+        "required": [
+          "baselineKpis",
+          "currentKpis",
+          "baselineRunId",
+          "currentRunId"
+        ]
+      },
+      "_di_meta": {
+        "tool_id": "run_plan_comparison",
+        "category": "utility",
+        "tier": "tier_c",
+        "module": "./baselineCompareService",
+        "method": "buildBaselineComparison",
+        "routing_target": "mcp-intake",
+        "depends_on": [],
+        "output_artifacts": [
+          "plan_baseline_comparison"
+        ],
+        "required_datasets": [],
+        "needs_dataset_profile": false,
+        "keywords_en": [
+          "compare",
+          "baseline",
+          "drift",
+          "plan comparison",
+          "delta",
+          "difference"
+        ],
+        "keywords_zh": [
+          "比較",
+          "基線",
+          "偏移",
+          "計畫比較",
+          "差異"
+        ]
+      }
+    },
+    {
+      "name": "di_run_ml_forecast",
+      "description": "Advanced ML forecast using Prophet/LightGBM/Chronos models via Python API.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "historical_data": {
+            "type": "array",
+            "description": "array"
+          },
+          "horizon": {
+            "type": "number",
+            "description": "number"
+          },
+          "model": {
+            "type": "string",
+            "description": "'prophet'|'lightgbm'|'chronos'|'auto'"
+          }
+        },
+        "required": [
+          "historical_data",
+          "horizon",
+          "model"
+        ]
+      },
+      "_di_meta": {
+        "tool_id": "run_ml_forecast",
+        "category": "core_planning",
+        "tier": "tier_b",
+        "module": "__python_api__",
+        "method": "POST /demand-forecast",
+        "routing_target": "POST /demand-forecast",
+        "depends_on": [],
+        "output_artifacts": [
+          "forecast_series",
+          "metrics"
+        ],
+        "required_datasets": [
+          "demand_fg"
+        ],
+        "needs_dataset_profile": true,
+        "keywords_en": [
+          "ml forecast",
+          "machine learning",
+          "prophet",
+          "lightgbm",
+          "chronos",
+          "advanced forecast"
+        ],
+        "keywords_zh": [
+          "機器學習預測",
+          "進階預測",
+          "ML預測"
+        ]
+      }
+    },
+    {
+      "name": "di_run_lp_solver",
+      "description": "Linear programming / mixed-integer solver for replenishment optimization via Python API.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "demand_rows": {
+            "type": "array",
+            "description": "array"
+          },
+          "inventory_rows": {
+            "type": "array",
+            "description": "array"
+          },
+          "constraints": {
+            "type": "object",
+            "description": "object"
+          },
+          "objective": {
+            "type": "object",
+            "description": "object"
+          }
+        },
+        "required": [
+          "demand_rows",
+          "inventory_rows",
+          "constraints",
+          "objective"
+        ]
+      },
+      "_di_meta": {
+        "tool_id": "run_lp_solver",
+        "category": "core_planning",
+        "tier": "tier_b",
+        "module": "__python_api__",
+        "method": "POST /replenishment-plan",
+        "routing_target": "POST /replenishment-plan",
+        "depends_on": [
+          "run_forecast"
+        ],
+        "output_artifacts": [
+          "plan_table",
+          "solver_meta"
+        ],
+        "required_datasets": [],
+        "needs_dataset_profile": false,
+        "keywords_en": [
+          "solver",
+          "linear programming",
+          "lp",
+          "mip",
+          "optimization",
+          "mathematical programming"
+        ],
+        "keywords_zh": [
+          "求解器",
+          "線性規劃",
+          "數學規劃",
+          "最佳化"
+        ]
+      }
+    },
+    {
+      "name": "di_run_simulation",
+      "description": "Monte Carlo simulation of supply chain scenarios with stochastic demand and lead times.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "plan_data": {
+            "type": "object",
+            "description": "object"
+          },
+          "scenarios": {
+            "type": "number",
+            "description": "number (iterations)"
+          },
+          "chaos_intensity": {
+            "type": "number",
+            "description": "number|null"
+          }
+        },
+        "required": [
+          "plan_data",
+          "scenarios"
+        ]
+      },
+      "_di_meta": {
+        "tool_id": "run_simulation",
+        "category": "scenario",
+        "tier": "tier_b",
+        "module": "__python_api__",
+        "method": "POST /run-simulation",
+        "routing_target": "POST /run-simulation",
+        "depends_on": [
+          "run_plan"
+        ],
+        "output_artifacts": [
+          "simulation_results"
+        ],
+        "required_datasets": [],
+        "needs_dataset_profile": false,
+        "keywords_en": [
+          "simulation",
+          "monte carlo",
+          "digital twin",
+          "stochastic",
+          "probabilistic"
+        ],
+        "keywords_zh": [
+          "模擬",
+          "蒙特卡洛",
+          "數位雙生",
+          "隨機",
+          "機率"
+        ]
+      }
+    },
+    {
+      "name": "di_run_stockout_causal_graph",
+      "description": "Build a 5-Whys causal graph tracing stockout symptoms back to root causes (demand underforecast, late deliveries, stale data).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "stockoutItems": {
+            "type": "array",
+            "description": "array (items with gap_qty, days_to_stockout)"
+          },
+          "replayMetrics": {
+            "type": "object",
+            "description": "object|null"
+          },
+          "solverResult": {
+            "type": "object",
+            "description": "object|null"
+          },
+          "riskScores": {
+            "type": "array",
+            "description": "array"
+          },
+          "forecastMetrics": {
+            "type": "object",
+            "description": "object|null"
+          },
+          "planRunId": {
+            "type": "string",
+            "description": "string|null"
+          }
+        },
+        "required": [
+          "stockoutItems",
+          "riskScores"
+        ]
+      },
+      "_di_meta": {
+        "tool_id": "run_stockout_causal_graph",
+        "category": "analytics",
+        "tier": "tier_a",
+        "module": "./causalGraphService",
+        "method": "buildStockoutCausalGraph",
+        "routing_target": "mcp-intake",
+        "depends_on": [
+          "run_plan"
+        ],
+        "output_artifacts": [
+          "causal_graph"
+        ],
+        "required_datasets": [],
+        "needs_dataset_profile": false,
+        "keywords_en": [
+          "root cause",
+          "causal",
+          "why",
+          "stockout cause",
+          "5 whys",
+          "diagnosis",
+          "explain stockout"
+        ],
+        "keywords_zh": [
+          "根因分析",
+          "因果",
+          "五個為什麼",
+          "缺貨原因",
+          "診斷"
+        ]
+      }
+    },
+    {
+      "name": "di_run_infeasibility_causal_graph",
+      "description": "Build a causal graph explaining why the solver returned infeasible — conflicting constraints, capacity limits, budget too tight.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "constraintCheck": {
+            "type": "object",
+            "description": "object (from constraintChecker)"
+          },
+          "solverResult": {
+            "type": "object",
+            "description": "object"
+          },
+          "riskScores": {
+            "type": "array",
+            "description": "array"
+          },
+          "planRunId": {
+            "type": "string",
+            "description": "string|null"
+          }
+        },
+        "required": [
+          "constraintCheck",
+          "solverResult",
+          "riskScores"
+        ]
+      },
+      "_di_meta": {
+        "tool_id": "run_infeasibility_causal_graph",
+        "category": "analytics",
+        "tier": "tier_a",
+        "module": "./causalGraphService",
+        "method": "buildInfeasibilityCausalGraph",
+        "routing_target": "mcp-intake",
+        "depends_on": [
+          "run_plan"
+        ],
+        "output_artifacts": [
+          "causal_graph"
+        ],
+        "required_datasets": [],
+        "needs_dataset_profile": false,
+        "keywords_en": [
+          "infeasible",
+          "infeasibility",
+          "why infeasible",
+          "constraint conflict",
+          "root cause infeasible"
+        ],
+        "keywords_zh": [
+          "不可行",
+          "不可行原因",
+          "約束衝突",
+          "根因"
+        ]
+      }
+    },
+    {
+      "name": "di_get_supplier_kpi_summary",
+      "description": "Retrieve supplier performance metrics: on-time delivery, defect rate, price volatility, and overall score.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "userId": {
+            "type": "string",
+            "description": "string"
+          },
+          "supplierId": {
+            "type": "string",
+            "description": "string|null (all suppliers if null)"
+          }
+        },
+        "required": [
+          "userId"
+        ]
+      },
+      "_di_meta": {
+        "tool_id": "get_supplier_kpi_summary",
+        "category": "analytics",
+        "tier": "tier_b",
+        "module": "./supplierKpiService",
+        "method": "getSupplierKpiSummary",
+        "routing_target": "mcp-intake",
+        "depends_on": [],
+        "output_artifacts": [
+          "supplier_kpi_summary"
+        ],
+        "required_datasets": [],
+        "needs_dataset_profile": false,
+        "keywords_en": [
+          "supplier kpi",
+          "supplier performance",
+          "on-time",
+          "defect rate",
+          "supplier score",
+          "vendor evaluation"
+        ],
+        "keywords_zh": [
+          "供應商KPI",
+          "供應商績效",
+          "準時率",
+          "缺陷率",
+          "供應商評分"
+        ]
+      }
+    },
+    {
+      "name": "di_get_supplier_rankings",
+      "description": "Rank suppliers by composite score (delivery, quality, cost). Identify top/bottom performers.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "userId": {
+            "type": "string",
+            "description": "string"
+          },
+          "limit": {
+            "type": "number",
+            "description": "number (default 10)"
+          }
+        },
+        "required": [
+          "userId"
+        ]
+      },
+      "_di_meta": {
+        "tool_id": "get_supplier_rankings",
+        "category": "analytics",
+        "tier": "tier_b",
+        "module": "./supplierKpiService",
+        "method": "getSupplierRankings",
+        "routing_target": "mcp-intake",
+        "depends_on": [],
+        "output_artifacts": [
+          "supplier_kpi_summary"
+        ],
+        "required_datasets": [],
+        "needs_dataset_profile": false,
+        "keywords_en": [
+          "supplier ranking",
+          "rank supplier",
+          "best supplier",
+          "worst supplier",
+          "supplier comparison"
+        ],
+        "keywords_zh": [
+          "供應商排名",
+          "供應商比較",
+          "最佳供應商",
+          "最差供應商"
+        ]
+      }
+    },
+    {
+      "name": "di_analyze_risk_for_replan",
+      "description": "Evaluate whether risk scores warrant a re-plan. Identifies high/critical-risk SKUs and recommends solver parameter adjustments.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "riskScores": {
+            "type": "array",
+            "description": "array (from risk analysis)"
+          },
+          "config": {
+            "type": "object",
+            "description": "object|null (threshold overrides)"
+          }
+        },
+        "required": [
+          "riskScores"
+        ]
+      },
+      "_di_meta": {
+        "tool_id": "analyze_risk_for_replan",
+        "category": "risk",
+        "tier": "tier_a",
+        "module": "./riskClosedLoopService",
+        "method": "analyzeRiskForReplan",
+        "routing_target": "mcp-intake",
+        "depends_on": [
+          "run_risk_analysis"
+        ],
+        "output_artifacts": [
+          "risk_replan_recommendation"
+        ],
+        "required_datasets": [],
+        "needs_dataset_profile": false,
+        "keywords_en": [
+          "risk replan",
+          "replan",
+          "should replan",
+          "risk trigger",
+          "risk closed loop"
+        ],
+        "keywords_zh": [
+          "風險重規劃",
+          "是否重規劃",
+          "風險觸發",
+          "風險閉環"
+        ]
+      }
+    },
+    {
+      "name": "di_run_war_room",
+      "description": "Multi-agent war room session: planner, risk analyst, negotiator, and approver agents analyze a plan collaboratively and produce findings/recommendations.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "userId": {
+            "type": "string",
+            "description": "string"
+          },
+          "planRunId": {
+            "type": "string",
+            "description": "string"
+          },
+          "trigger": {
+            "type": "string",
+            "description": "string (e.g. infeasible, high_risk, manual)"
+          },
+          "solverResult": {
+            "type": "object",
+            "description": "object"
+          },
+          "constraintCheck": {
+            "type": "object",
+            "description": "object"
+          },
+          "replayMetrics": {
+            "type": "object",
+            "description": "object"
+          },
+          "riskScores": {
+            "type": "array",
+            "description": "array"
+          }
+        },
+        "required": [
+          "userId",
+          "planRunId",
+          "trigger",
+          "solverResult",
+          "constraintCheck",
+          "replayMetrics",
+          "riskScores"
+        ]
+      },
+      "_di_meta": {
+        "tool_id": "run_war_room",
+        "category": "governance",
+        "tier": "tier_a",
+        "module": "./warRoomOrchestrator",
+        "method": "runWarRoom",
+        "routing_target": "mcp-intake",
+        "depends_on": [
+          "run_plan"
+        ],
+        "output_artifacts": [
+          "war_room_session"
+        ],
+        "required_datasets": [],
+        "needs_dataset_profile": false,
+        "keywords_en": [
+          "war room",
+          "collaborative",
+          "multi-agent",
+          "joint analysis",
+          "cross-functional review"
+        ],
+        "keywords_zh": [
+          "作戰室",
+          "協作分析",
+          "多智能體",
+          "聯合分析",
+          "跨職能審查"
+        ]
+      }
+    },
+    {
+      "name": "di_request_plan_approval",
+      "description": "Submit a replenishment plan for governance approval. Creates an approval request with audit trail.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "runId": {
+            "type": "string",
+            "description": "string"
+          },
+          "userId": {
+            "type": "string",
+            "description": "string"
+          },
+          "payload": {
+            "type": "object",
+            "description": "object (plan summary)"
+          },
+          "reason": {
+            "type": "string",
+            "description": "string"
+          },
+          "note": {
+            "type": "string",
+            "description": "string"
+          }
+        },
+        "required": [
+          "runId",
+          "userId",
+          "payload",
+          "reason",
+          "note"
+        ]
+      },
+      "_di_meta": {
+        "tool_id": "request_plan_approval",
+        "category": "governance",
+        "tier": "tier_b",
+        "module": "./planGovernanceService",
+        "method": "requestPlanApproval",
+        "routing_target": "mcp-intake",
+        "depends_on": [
+          "run_plan"
+        ],
+        "output_artifacts": [
+          "approval_request"
+        ],
+        "required_datasets": [],
+        "needs_dataset_profile": false,
+        "keywords_en": [
+          "approve",
+          "approval",
+          "governance",
+          "sign off",
+          "submit for approval",
+          "plan approval"
+        ],
+        "keywords_zh": [
+          "審批",
+          "核准",
+          "治理",
+          "提交審批",
+          "計畫審批"
+        ]
+      }
+    },
+    {
+      "name": "di_run_plan_commit",
+      "description": "Commit an approved replenishment plan to the system of record. Creates governance audit trail.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "plan_id": {
+            "type": "string",
+            "description": "string"
+          },
+          "approved_by": {
+            "type": "string",
+            "description": "string"
+          },
+          "commit_note": {
+            "type": "string",
+            "description": "string|null"
+          }
+        },
+        "required": [
+          "plan_id",
+          "approved_by"
+        ]
+      },
+      "_di_meta": {
+        "tool_id": "run_plan_commit",
+        "category": "governance",
+        "tier": "tier_b",
+        "module": "__python_api__",
+        "method": "POST /replenishment-plan/commit",
+        "routing_target": "POST /replenishment-plan/commit",
+        "depends_on": [
+          "run_plan"
+        ],
+        "output_artifacts": [
+          "plan_commit_receipt"
+        ],
+        "required_datasets": [],
+        "needs_dataset_profile": false,
+        "keywords_en": [
+          "commit",
+          "finalize",
+          "lock plan",
+          "execute plan",
+          "plan commit"
+        ],
+        "keywords_zh": [
+          "提交",
+          "確認",
+          "鎖定計畫",
+          "執行計畫",
+          "計畫提交"
+        ]
+      }
+    },
+    {
+      "name": "di_query_live_data",
+      "description": "Query real-time data from Supabase tables (suppliers, materials, inventory, POs). Supports filtering, sorting, pagination.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "userId": {
+            "type": "string",
+            "description": "string"
+          },
+          "tableName": {
+            "type": "string",
+            "description": "string (suppliers|materials|inventory_snapshots|...)"
+          },
+          "filters": {
+            "type": "object",
+            "description": "object|null"
+          },
+          "sort": {
+            "type": "object",
+            "description": "object|null ({ column, ascending })"
+          },
+          "page": {
+            "type": "number",
+            "description": "number (default 1)"
+          },
+          "pageSize": {
+            "type": "number",
+            "description": "number (default 50)"
+          }
+        },
+        "required": [
+          "userId",
+          "tableName"
+        ]
+      },
+      "_di_meta": {
+        "tool_id": "query_live_data",
+        "category": "data_access",
+        "tier": "tier_b",
+        "module": "./liveDataQueryService",
+        "method": "queryTable",
+        "routing_target": "mcp-intake",
+        "depends_on": [],
+        "output_artifacts": [],
+        "required_datasets": [],
+        "needs_dataset_profile": false,
+        "keywords_en": [
+          "query",
+          "data",
+          "erp",
+          "live data",
+          "table",
+          "browse data",
+          "lookup",
+          "database"
+        ],
+        "keywords_zh": [
+          "查詢",
+          "數據",
+          "ERP",
+          "即時資料",
+          "表格",
+          "瀏覽",
+          "數據庫"
+        ]
+      }
+    },
+    {
+      "name": "di_list_available_tables",
+      "description": "Get the list of all queryable ERP/DI tables with their columns and filter options.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "_di_meta": {
+        "tool_id": "list_available_tables",
+        "category": "data_access",
+        "tier": "tier_a",
+        "module": "./liveDataQueryService",
+        "method": "getAvailableTables",
+        "routing_target": "mcp-intake",
+        "depends_on": [],
+        "output_artifacts": [],
+        "required_datasets": [],
+        "needs_dataset_profile": false,
+        "keywords_en": [
+          "tables",
+          "available data",
+          "data sources",
+          "schema",
+          "what data"
+        ],
+        "keywords_zh": [
+          "表格",
+          "可用資料",
+          "數據源",
+          "結構",
+          "有什麼資料"
+        ]
+      }
+    },
+    {
+      "name": "di_query_sap_data",
+      "description": "Execute SQL queries on enterprise data. Dataset A (Olist E-Commerce): customers, orders, order_items, payments, reviews, products, sellers, geolocation, category_translation. Dataset B (DI Operations): suppliers, materials, inventory_snapshots, po_open_lines, goods_receipts. Supports full SQL SELECT with WHERE, JOIN, GROUP BY, ORDER BY, LIMIT.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "sql": {
+            "type": "string",
+            "description": "string (SQL SELECT query to execute against SAP master data tables)"
+          }
+        },
+        "required": [
+          "sql"
+        ]
+      },
+      "_di_meta": {
+        "tool_id": "query_sap_data",
+        "category": "data_access",
+        "tier": "tier_b",
+        "module": "./sapDataQueryService",
+        "method": "executeQuery",
+        "routing_target": "mcp-intake",
+        "depends_on": [],
+        "output_artifacts": [],
+        "required_datasets": [],
+        "needs_dataset_profile": false,
+        "keywords_en": [
+          "sql",
+          "sap",
+          "master data",
+          "query",
+          "select",
+          "customers",
+          "orders",
+          "products",
+          "sellers",
+          "payments",
+          "reviews",
+          "geolocation",
+          "suppliers",
+          "materials",
+          "inventory",
+          "purchase orders"
+        ],
+        "keywords_zh": [
+          "SQL",
+          "SAP",
+          "主檔",
+          "查詢",
+          "客戶",
+          "訂單",
+          "產品",
+          "賣家",
+          "付款",
+          "評論",
+          "供應商",
+          "物料",
+          "庫存",
+          "採購單"
+        ]
+      }
+    },
+    {
+      "name": "di_list_sap_tables",
+      "description": "Show all available SAP master data tables with their columns, row counts, and SAP transaction equivalents.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "_di_meta": {
+        "tool_id": "list_sap_tables",
+        "category": "data_access",
+        "tier": "tier_a",
+        "module": "./sapDataQueryService",
+        "method": "getSchema",
+        "routing_target": "mcp-intake",
+        "depends_on": [],
+        "output_artifacts": [],
+        "required_datasets": [],
+        "needs_dataset_profile": false,
+        "keywords_en": [
+          "sap tables",
+          "sap schema",
+          "master data tables",
+          "sap structure"
+        ],
+        "keywords_zh": [
+          "SAP表格",
+          "SAP結構",
+          "主檔表格",
+          "SAP資料"
+        ]
+      }
+    },
+    {
+      "name": "di_forecast_from_sap",
+      "description": "Run demand forecast from ANY data in SAP tables via SQL. Provide a demand_sql that returns columns (material_code, plant_id, time_bucket, demand_qty) — the tool handles profiling, forecasting, and comparison. If no SQL given, defaults to Olist orders grouped by category. Works with any dataset loaded into the SQL engine.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "demand_sql": {
+            "type": "string",
+            "description": "string (optional SQL returning material_code, plant_id, time_bucket, demand_qty columns. If omitted, uses Olist default query)"
+          },
+          "actuals_sql": {
+            "type": "string",
+            "description": "string (optional SQL for actual data to compare against forecast)"
+          },
+          "training_start": {
+            "type": "string",
+            "description": "string (YYYY-MM start, for default SQL only, default '2017-01')"
+          },
+          "training_end": {
+            "type": "string",
+            "description": "string (YYYY-MM end, for default SQL only, default '2017-12')"
+          },
+          "forecast_months": {
+            "type": "number",
+            "description": "number (months to forecast, default 6)"
+          },
+          "compare_actuals": {
+            "type": "boolean",
+            "description": "boolean (compare with actual data, default true)"
+          },
+          "group_by": {
+            "type": "string",
+            "description": "string ('category' or 'seller_state', for default SQL only, default 'category')"
+          },
+          "top_n": {
+            "type": "number",
+            "description": "number (top N groups by volume, default 15)"
+          },
+          "forecast_model": {
+            "type": "string",
+            "description": "string (ML model to use: 'auto', 'prophet', 'lightgbm', 'chronos', 'xgboost', 'ets', 'naive'. Default 'auto')"
+          }
+        }
+      },
+      "_di_meta": {
+        "tool_id": "forecast_from_sap",
+        "category": "core_planning",
+        "tier": "tier_b",
+        "module": "./sapForecastBridgeService",
+        "method": "forecastFromSapData",
+        "routing_target": "mcp-intake",
+        "depends_on": [],
+        "output_artifacts": [
+          "forecast_series",
+          "metrics"
+        ],
+        "required_datasets": [],
+        "needs_dataset_profile": false,
+        "keywords_en": [
+          "forecast",
+          "predict",
+          "olist",
+          "sap",
+          "demand",
+          "compare",
+          "actual",
+          "2016",
+          "2017",
+          "backtest",
+          "accuracy"
+        ],
+        "keywords_zh": [
+          "預測",
+          "預報",
+          "Olist",
+          "SAP",
+          "需求",
+          "比對",
+          "實際",
+          "準確度",
+          "回測"
+        ]
+      }
+    },
+    {
+      "name": "di_analyze_revenue",
+      "description": "Analyze monthly revenue trends, AOV, freight ratio, and top categories from Olist e-commerce data.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "_di_meta": {
+        "tool_id": "analyze_revenue",
+        "category": "analytics",
+        "tier": "tier_b",
+        "module": "./olistAnalysisService",
+        "method": "analyzeRevenueTrend",
+        "routing_target": "mcp-intake",
+        "depends_on": [],
+        "output_artifacts": [
+          "analysis_result"
+        ],
+        "required_datasets": [],
+        "needs_dataset_profile": false,
+        "keywords_en": [
+          "revenue",
+          "sales trend",
+          "aov",
+          "average order value",
+          "turnover",
+          "gmv",
+          "monthly revenue",
+          "sales analysis"
+        ],
+        "keywords_zh": [
+          "營收",
+          "銷售趨勢",
+          "客單價",
+          "銷售額",
+          "月營收",
+          "營業額",
+          "銷售分析"
+        ]
+      }
+    },
+    {
+      "name": "di_analyze_rfm",
+      "description": "Segment customers by Recency, Frequency, and Monetary value. Identifies Champions, Loyal, Potential, At-Risk, and Lost segments.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "_di_meta": {
+        "tool_id": "analyze_rfm",
+        "category": "analytics",
+        "tier": "tier_b",
+        "module": "./olistAnalysisService",
+        "method": "analyzeCustomerRFM",
+        "routing_target": "mcp-intake",
+        "depends_on": [],
+        "output_artifacts": [
+          "analysis_result"
+        ],
+        "required_datasets": [],
+        "needs_dataset_profile": false,
+        "keywords_en": [
+          "rfm",
+          "customer segment",
+          "retention",
+          "repurchase",
+          "churn",
+          "cohort",
+          "customer value",
+          "customer analysis"
+        ],
+        "keywords_zh": [
+          "rfm",
+          "客戶分群",
+          "留存",
+          "回購",
+          "流失",
+          "客群",
+          "客戶價值",
+          "客戶分析"
+        ]
+      }
+    },
+    {
+      "name": "di_analyze_delivery",
+      "description": "Analyze delivery on-time rate, delay distribution, average delivery days, and performance by state.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "_di_meta": {
+        "tool_id": "analyze_delivery",
+        "category": "analytics",
+        "tier": "tier_b",
+        "module": "./olistAnalysisService",
+        "method": "analyzeDeliveryPerformance",
+        "routing_target": "mcp-intake",
+        "depends_on": [],
+        "output_artifacts": [
+          "analysis_result"
+        ],
+        "required_datasets": [],
+        "needs_dataset_profile": false,
+        "keywords_en": [
+          "delivery",
+          "logistics",
+          "shipping",
+          "on-time",
+          "delay",
+          "lead time",
+          "sla",
+          "delivery performance"
+        ],
+        "keywords_zh": [
+          "配送",
+          "物流",
+          "準時率",
+          "延遲",
+          "出貨",
+          "到貨",
+          "配送績效",
+          "物流分析"
+        ]
+      }
+    },
+    {
+      "name": "di_analyze_seller",
+      "description": "Rank sellers by revenue, orders, and review scores. Show geographic concentration and top performers.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "_di_meta": {
+        "tool_id": "analyze_seller",
+        "category": "analytics",
+        "tier": "tier_b",
+        "module": "./olistAnalysisService",
+        "method": "analyzeSellerScorecard",
+        "routing_target": "mcp-intake",
+        "depends_on": [],
+        "output_artifacts": [
+          "analysis_result"
+        ],
+        "required_datasets": [],
+        "needs_dataset_profile": false,
+        "keywords_en": [
+          "seller",
+          "vendor",
+          "merchant",
+          "seller score",
+          "seller performance",
+          "supplier rank",
+          "seller analysis"
+        ],
+        "keywords_zh": [
+          "賣家",
+          "供應商",
+          "績效",
+          "出貨速度",
+          "商家",
+          "賣家分析",
+          "賣家績效"
+        ]
+      }
+    },
+    {
+      "name": "di_analyze_category",
+      "description": "Analyze product category performance: revenue distribution, Pareto analysis, growth rates, and seasonality.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "_di_meta": {
+        "tool_id": "analyze_category",
+        "category": "analytics",
+        "tier": "tier_b",
+        "module": "./olistAnalysisService",
+        "method": "analyzeCategoryInsights",
+        "routing_target": "mcp-intake",
+        "depends_on": [],
+        "output_artifacts": [
+          "analysis_result"
+        ],
+        "required_datasets": [],
+        "needs_dataset_profile": false,
+        "keywords_en": [
+          "category",
+          "product mix",
+          "sku analysis",
+          "seasonal",
+          "pareto",
+          "product analysis",
+          "category analysis"
+        ],
+        "keywords_zh": [
+          "品類",
+          "商品分析",
+          "季節性",
+          "成長率",
+          "產品類別",
+          "品類分析",
+          "商品類別"
+        ]
+      }
+    },
+    {
+      "name": "di_analyze_satisfaction",
+      "description": "Analyze review score distribution, delivery-satisfaction correlation, and response times.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "_di_meta": {
+        "tool_id": "analyze_satisfaction",
+        "category": "analytics",
+        "tier": "tier_b",
+        "module": "./olistAnalysisService",
+        "method": "analyzeCustomerSatisfaction",
+        "routing_target": "mcp-intake",
+        "depends_on": [],
+        "output_artifacts": [
+          "analysis_result"
+        ],
+        "required_datasets": [],
+        "needs_dataset_profile": false,
+        "keywords_en": [
+          "satisfaction",
+          "review score",
+          "nps",
+          "csat",
+          "rating",
+          "review",
+          "sentiment",
+          "customer satisfaction"
+        ],
+        "keywords_zh": [
+          "滿意度",
+          "評分",
+          "評論",
+          "好評",
+          "差評",
+          "客訴",
+          "顧客滿意度"
+        ]
+      }
+    },
+    {
+      "name": "di_analyze_payment",
+      "description": "Analyze payment method distribution, credit card installment patterns, and transaction values.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "_di_meta": {
+        "tool_id": "analyze_payment",
+        "category": "analytics",
+        "tier": "tier_b",
+        "module": "./olistAnalysisService",
+        "method": "analyzePaymentBehavior",
+        "routing_target": "mcp-intake",
+        "depends_on": [],
+        "output_artifacts": [
+          "analysis_result"
+        ],
+        "required_datasets": [],
+        "needs_dataset_profile": false,
+        "keywords_en": [
+          "payment",
+          "installment",
+          "credit card",
+          "boleto",
+          "voucher",
+          "payment analysis",
+          "payment behavior"
+        ],
+        "keywords_zh": [
+          "付款",
+          "分期",
+          "信用卡",
+          "支付方式",
+          "付款行為",
+          "付款分析"
+        ]
+      }
+    },
+    {
+      "name": "di_generate_proactive_alerts",
+      "description": "Generate proactive supply chain alerts: stockout risk, expedite recommendations, dual-source suggestions from risk scores.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "riskScores": {
+            "type": "array",
+            "description": "array"
+          },
+          "stockoutData": {
+            "type": "array",
+            "description": "array"
+          },
+          "configOverrides": {
+            "type": "object",
+            "description": "object|null"
+          }
+        },
+        "required": [
+          "riskScores",
+          "stockoutData"
+        ]
+      },
+      "_di_meta": {
+        "tool_id": "generate_proactive_alerts",
+        "category": "monitoring",
+        "tier": "tier_a",
+        "module": "./proactiveAlertService",
+        "method": "generateAlerts",
+        "routing_target": "mcp-intake",
+        "depends_on": [
+          "run_risk_analysis"
+        ],
+        "output_artifacts": [
+          "proactive_alerts"
+        ],
+        "required_datasets": [],
+        "needs_dataset_profile": false,
+        "keywords_en": [
+          "alert",
+          "proactive",
+          "early warning",
+          "notification",
+          "stockout alert",
+          "expedite"
+        ],
+        "keywords_zh": [
+          "預警",
+          "主動",
+          "早期預警",
+          "通知",
+          "缺貨預警",
+          "加急"
+        ]
+      }
+    },
+    {
+      "name": "di_generate_daily_summary",
+      "description": "Generate a daily summary of digital worker activity: tasks completed, failed, cost, KPIs.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "employeeId": {
+            "type": "string",
+            "description": "string"
+          },
+          "date": {
+            "type": "string",
+            "description": "Date|null (default: today)"
+          }
+        },
+        "required": [
+          "employeeId"
+        ]
+      },
+      "_di_meta": {
+        "tool_id": "generate_daily_summary",
+        "category": "monitoring",
+        "tier": "tier_b",
+        "module": "./dailySummaryService",
+        "method": "generateDailySummary",
+        "routing_target": "mcp-intake",
+        "depends_on": [],
+        "output_artifacts": [
+          "daily_summary"
+        ],
+        "required_datasets": [],
+        "needs_dataset_profile": false,
+        "keywords_en": [
+          "daily summary",
+          "daily report",
+          "today summary",
+          "work summary",
+          "status report"
+        ],
+        "keywords_zh": [
+          "每日摘要",
+          "每日報告",
+          "今日摘要",
+          "工作摘要",
+          "狀態報告"
+        ]
+      }
+    },
+    {
+      "name": "di_fetch_external_signals",
+      "description": "Fetch external macro signals (GDELT geopolitical events, supply chain news, currency moves) or load demo scenarios.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "enableGdelt": {
+            "type": "boolean",
+            "description": "boolean (default false)"
+          },
+          "enableReddit": {
+            "type": "boolean",
+            "description": "boolean (default false)"
+          },
+          "enableCurrency": {
+            "type": "boolean",
+            "description": "boolean (default false)"
+          },
+          "enableLive": {
+            "type": "boolean",
+            "description": "boolean (default false)"
+          },
+          "demoScenario": {
+            "type": "string",
+            "description": "string|null (semiconductor_fire|suez_blockage|china_rare_earth|eu_steel_tariff)"
+          }
+        }
+      },
+      "_di_meta": {
+        "tool_id": "fetch_external_signals",
+        "category": "monitoring",
+        "tier": "tier_b",
+        "module": "./externalSignalAdapters",
+        "method": "fetchAllSignals",
+        "routing_target": "mcp-intake",
+        "depends_on": [],
+        "output_artifacts": [
+          "macro_oracle_signals"
+        ],
+        "required_datasets": [],
+        "needs_dataset_profile": false,
+        "keywords_en": [
+          "macro",
+          "oracle",
+          "gdelt",
+          "geopolitical",
+          "external signal",
+          "news",
+          "currency",
+          "commodity"
+        ],
+        "keywords_zh": [
+          "宏觀",
+          "外部信號",
+          "地緣政治",
+          "新聞",
+          "貨幣",
+          "大宗商品"
+        ]
+      }
+    },
+    {
+      "name": "di_analyze_step_failure",
+      "description": "Diagnose why an agent loop step failed and suggest healing strategy (retry, simplify, model escalation, skip).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string",
+            "description": "Error|string"
+          },
+          "step": {
+            "type": "object",
+            "description": "object (step definition)"
+          },
+          "retryCount": {
+            "type": "number",
+            "description": "number"
+          }
+        },
+        "required": [
+          "error",
+          "step",
+          "retryCount"
+        ]
+      },
+      "_di_meta": {
+        "tool_id": "analyze_step_failure",
+        "category": "monitoring",
+        "tier": "tier_a",
+        "module": "./selfHealingService",
+        "method": "analyzeStepFailure",
+        "routing_target": "mcp-intake",
+        "depends_on": [],
+        "output_artifacts": [],
+        "required_datasets": [],
+        "needs_dataset_profile": false,
+        "keywords_en": [
+          "self healing",
+          "diagnose",
+          "failure",
+          "error analysis",
+          "retry strategy",
+          "heal"
+        ],
+        "keywords_zh": [
+          "自修復",
+          "診斷",
+          "故障",
+          "錯誤分析",
+          "重試策略"
+        ]
+      }
+    },
+    {
+      "name": "di_run_digital_twin_simulation",
+      "description": "Run a supply chain digital twin simulation with configurable scenario and chaos intensity.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "scenario": {
+            "type": "string",
+            "description": "string (default: normal)"
+          },
+          "seed": {
+            "type": "number",
+            "description": "number (default: 42)"
+          },
+          "durationDays": {
+            "type": "number",
+            "description": "number|null"
+          },
+          "chaosIntensity": {
+            "type": "number",
+            "description": "number|null"
+          }
+        }
+      },
+      "_di_meta": {
+        "tool_id": "run_digital_twin_simulation",
+        "category": "scenario",
+        "tier": "tier_c",
+        "module": "./digitalTwinService",
+        "method": "runSimulation",
+        "routing_target": "mcp-intake",
+        "depends_on": [],
+        "output_artifacts": [
+          "simulation_results"
+        ],
+        "required_datasets": [],
+        "needs_dataset_profile": false,
+        "keywords_en": [
+          "digital twin",
+          "twin simulation",
+          "supply chain simulation",
+          "what if simulation"
+        ],
+        "keywords_zh": [
+          "數位雙生模擬",
+          "供應鏈模擬",
+          "雙生模擬"
+        ]
+      }
+    },
+    {
+      "name": "di_run_digital_twin_optimization",
+      "description": "Optimize supply chain parameters (reorder points, safety stock) using the digital twin simulator.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "scenario": {
+            "type": "string",
+            "description": "string (default: normal)"
+          },
+          "seed": {
+            "type": "number",
+            "description": "number (default: 42)"
+          },
+          "nTrials": {
+            "type": "number",
+            "description": "number (default: 30)"
+          },
+          "method": {
+            "type": "string",
+            "description": "string (random)"
+          },
+          "minFillRate": {
+            "type": "number",
+            "description": "number (default: 0.95)"
+          }
+        },
+        "required": [
+          "method"
+        ]
+      },
+      "_di_meta": {
+        "tool_id": "run_digital_twin_optimization",
+        "category": "scenario",
+        "tier": "tier_c",
+        "module": "./digitalTwinService",
+        "method": "runOptimization",
+        "routing_target": "mcp-intake",
+        "depends_on": [],
+        "output_artifacts": [
+          "optimization_results"
+        ],
+        "required_datasets": [],
+        "needs_dataset_profile": false,
+        "keywords_en": [
+          "optimize parameters",
+          "twin optimize",
+          "parameter search",
+          "auto-tune"
+        ],
+        "keywords_zh": [
+          "參數最佳化",
+          "雙生最佳化",
+          "參數搜索",
+          "自動調參"
+        ]
+      }
+    },
+    {
+      "name": "di_run_digital_twin_comparison",
+      "description": "Compare multiple supply chain strategies side-by-side using the digital twin simulator.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "scenario": {
+            "type": "string",
+            "description": "string (default: normal)"
+          },
+          "seed": {
+            "type": "number",
+            "description": "number (default: 42)"
+          },
+          "strategies": {
+            "type": "array",
+            "description": "array|null"
+          }
+        }
+      },
+      "_di_meta": {
+        "tool_id": "run_digital_twin_comparison",
+        "category": "scenario",
+        "tier": "tier_c",
+        "module": "./digitalTwinService",
+        "method": "runComparison",
+        "routing_target": "mcp-intake",
+        "depends_on": [],
+        "output_artifacts": [
+          "simulation_comparison"
+        ],
+        "required_datasets": [],
+        "needs_dataset_profile": false,
+        "keywords_en": [
+          "strategy comparison",
+          "twin compare",
+          "compare strategies"
+        ],
+        "keywords_zh": [
+          "策略比較",
+          "雙生比較",
+          "比較策略"
+        ]
+      }
+    },
+    {
+      "name": "di_run_digital_twin_reoptimization",
+      "description": "Analyze simulation results and derive constraint tightening for solver re-optimization.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "simResult": {
+            "type": "object",
+            "description": "object (from runSimulation)"
+          },
+          "originalPlan": {
+            "type": "object",
+            "description": "object|null"
+          },
+          "config": {
+            "type": "object",
+            "description": "object|null"
+          }
+        },
+        "required": [
+          "simResult"
+        ]
+      },
+      "_di_meta": {
+        "tool_id": "run_digital_twin_reoptimization",
+        "category": "scenario",
+        "tier": "tier_c",
+        "module": "./digitalTwinService",
+        "method": "runReoptimization",
+        "routing_target": "mcp-intake",
+        "depends_on": [
+          "run_digital_twin_simulation"
+        ],
+        "output_artifacts": [
+          "reoptimization_results"
+        ],
+        "required_datasets": [],
+        "needs_dataset_profile": false,
+        "keywords_en": [
+          "reoptimize",
+          "reoptimization",
+          "simulation feedback",
+          "constraint tightening"
+        ],
+        "keywords_zh": [
+          "重新最佳化",
+          "模擬回饋",
+          "約束收緊"
+        ]
+      }
+    },
+    {
+      "name": "di_run_inventory_projection",
+      "description": "Project future inventory levels by material/plant using forecast demand, open POs, and current stock. Identifies stockout risks.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "userId": {
+            "type": "string",
+            "description": "string"
+          },
+          "forecastRunId": {
+            "type": "string",
+            "description": "string"
+          },
+          "timeBuckets": {
+            "type": "array",
+            "description": "array (string[])"
+          },
+          "plantId": {
+            "type": "string",
+            "description": "string|null"
+          }
+        },
+        "required": [
+          "userId",
+          "forecastRunId",
+          "timeBuckets"
+        ]
+      },
+      "_di_meta": {
+        "tool_id": "run_inventory_projection",
+        "category": "core_planning",
+        "tier": "tier_b",
+        "module": "./inventoryProjectionService",
+        "method": "loadInventoryProjection",
+        "routing_target": "mcp-intake",
+        "depends_on": [
+          "run_forecast"
+        ],
+        "output_artifacts": [
+          "inventory_projection"
+        ],
+        "required_datasets": [
+          "demand_fg"
+        ],
+        "needs_dataset_profile": false,
+        "keywords_en": [
+          "inventory projection",
+          "inventory level",
+          "stock level",
+          "days of supply",
+          "inventory forecast"
+        ],
+        "keywords_zh": [
+          "庫存預測",
+          "庫存水位",
+          "存貨水準",
+          "供應天數"
+        ]
+      }
+    },
+    {
+      "name": "di_generate_report",
+      "description": "Generate an HTML/XLSX report from accumulated task artifacts with optional narrative and revision log.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "format": {
+            "type": "string",
+            "description": "'html'|'xlsx' (default 'html')"
+          },
+          "artifacts": {
+            "type": "object",
+            "description": "object (prior step artifacts)"
+          },
+          "taskMeta": {
+            "type": "object",
+            "description": "object ({ id, title })"
+          },
+          "narrative": {
+            "type": "string",
+            "description": "string|null"
+          },
+          "revisionLog": {
+            "type": "array",
+            "description": "array|null"
+          },
+          "runId": {
+            "type": "string",
+            "description": "string"
+          }
+        },
+        "required": [
+          "artifacts",
+          "taskMeta",
+          "runId"
+        ]
+      },
+      "_di_meta": {
+        "tool_id": "generate_report",
+        "category": "utility",
+        "tier": "tier_b",
+        "module": "./reportGeneratorService",
+        "method": "generateReport",
+        "routing_target": "mcp-intake",
+        "depends_on": [],
+        "output_artifacts": [
+          "report_html"
+        ],
+        "required_datasets": [],
+        "needs_dataset_profile": false,
+        "keywords_en": [
+          "report",
+          "generate report",
+          "html report",
+          "xlsx report",
+          "document"
+        ],
+        "keywords_zh": [
+          "報告",
+          "生成報告",
+          "HTML報告",
+          "XLSX報告",
+          "文件"
+        ]
+      }
+    },
+    {
+      "name": "di_run_sku_analysis",
+      "description": "Deep analysis for a single SKU: trend decomposition, seasonality, anomalies, forecast accuracy.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "sku_id": {
+            "type": "string",
+            "description": "string"
+          },
+          "historical_data": {
+            "type": "array",
+            "description": "array"
+          },
+          "options": {
+            "type": "object",
+            "description": "object|null"
+          }
+        },
+        "required": [
+          "sku_id",
+          "historical_data"
+        ]
+      },
+      "_di_meta": {
+        "tool_id": "run_sku_analysis",
+        "category": "analytics",
+        "tier": "tier_b",
+        "module": "__python_api__",
+        "method": "POST /analyze-sku",
+        "routing_target": "POST /analyze-sku",
+        "depends_on": [],
+        "output_artifacts": [
+          "sku_analysis"
+        ],
+        "required_datasets": [
+          "demand_fg"
+        ],
+        "needs_dataset_profile": true,
+        "keywords_en": [
+          "sku analysis",
+          "item analysis",
+          "deep dive",
+          "sku detail",
+          "material analysis"
+        ],
+        "keywords_zh": [
+          "SKU分析",
+          "單品分析",
+          "深度分析",
+          "物料分析"
+        ]
+      }
+    },
+    {
+      "name": "di_run_backtest",
+      "description": "Backtest forecast models against historical data to evaluate accuracy (MAE, MAPE, RMSE).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "historical_data": {
+            "type": "array",
+            "description": "array"
+          },
+          "models": {
+            "type": "array",
+            "description": "array|null"
+          },
+          "holdout_periods": {
+            "type": "number",
+            "description": "number (default 3)"
+          }
+        },
+        "required": [
+          "historical_data"
+        ]
+      },
+      "_di_meta": {
+        "tool_id": "run_backtest",
+        "category": "analytics",
+        "tier": "tier_b",
+        "module": "__python_api__",
+        "method": "POST /backtest",
+        "routing_target": "POST /backtest",
+        "depends_on": [],
+        "output_artifacts": [
+          "backtest_results"
+        ],
+        "required_datasets": [
+          "demand_fg"
+        ],
+        "needs_dataset_profile": true,
+        "keywords_en": [
+          "backtest",
+          "forecast accuracy",
+          "model evaluation",
+          "historical test",
+          "holdout test"
+        ],
+        "keywords_zh": [
+          "回測",
+          "預測準確度",
+          "模型評估",
+          "歷史測試"
+        ]
+      }
+    },
+    {
+      "name": "di_run_model_training",
+      "description": "Train or retrain a forecast model (Prophet/LightGBM) on new data.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "historical_data": {
+            "type": "array",
+            "description": "array"
+          },
+          "model": {
+            "type": "string",
+            "description": "'prophet'|'lightgbm'|'auto'"
+          },
+          "hyperparameters": {
+            "type": "object",
+            "description": "object|null"
+          }
+        },
+        "required": [
+          "historical_data",
+          "model"
+        ]
+      },
+      "_di_meta": {
+        "tool_id": "run_model_training",
+        "category": "core_planning",
+        "tier": "tier_c",
+        "module": "__python_api__",
+        "method": "POST /train-model",
+        "routing_target": "POST /train-model",
+        "depends_on": [],
+        "output_artifacts": [
+          "model_artifact"
+        ],
+        "required_datasets": [
+          "demand_fg"
+        ],
+        "needs_dataset_profile": true,
+        "keywords_en": [
+          "train",
+          "retrain",
+          "model training",
+          "fit model",
+          "learn"
+        ],
+        "keywords_zh": [
+          "訓練",
+          "重新訓練",
+          "模型訓練",
+          "擬合"
+        ]
+      }
+    },
+    {
+      "name": "di_run_feature_importance",
+      "description": "Compute feature importance scores for forecast model explainability.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "historical_data": {
+            "type": "array",
+            "description": "array"
+          },
+          "model": {
+            "type": "string",
+            "description": "string"
+          },
+          "top_n": {
+            "type": "number",
+            "description": "number (default 10)"
+          }
+        },
+        "required": [
+          "historical_data",
+          "model"
+        ]
+      },
+      "_di_meta": {
+        "tool_id": "run_feature_importance",
+        "category": "analytics",
+        "tier": "tier_b",
+        "module": "__python_api__",
+        "method": "POST /feature-importance",
+        "routing_target": "POST /feature-importance",
+        "depends_on": [
+          "run_ml_forecast"
+        ],
+        "output_artifacts": [
+          "feature_importance"
+        ],
+        "required_datasets": [
+          "demand_fg"
+        ],
+        "needs_dataset_profile": true,
+        "keywords_en": [
+          "feature importance",
+          "explainability",
+          "model explain",
+          "shap",
+          "important features"
+        ],
+        "keywords_zh": [
+          "特徵重要性",
+          "可解釋性",
+          "模型解釋",
+          "重要特徵"
+        ]
+      }
+    },
+    {
+      "name": "di_run_drift_check",
+      "description": "Detect distribution drift between training data and recent actuals. Flags when model retraining is needed.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "reference_data": {
+            "type": "array",
+            "description": "array"
+          },
+          "current_data": {
+            "type": "array",
+            "description": "array"
+          },
+          "method": {
+            "type": "string",
+            "description": "'ks'|'psi'|'auto' (default 'auto')"
+          }
+        },
+        "required": [
+          "reference_data",
+          "current_data"
+        ]
+      },
+      "_di_meta": {
+        "tool_id": "run_drift_check",
+        "category": "monitoring",
+        "tier": "tier_b",
+        "module": "__python_api__",
+        "method": "POST /drift-check",
+        "routing_target": "POST /drift-check",
+        "depends_on": [],
+        "output_artifacts": [
+          "drift_report"
+        ],
+        "required_datasets": [
+          "demand_fg"
+        ],
+        "needs_dataset_profile": true,
+        "keywords_en": [
+          "drift",
+          "data drift",
+          "concept drift",
+          "model drift",
+          "distribution shift",
+          "retrain needed"
+        ],
+        "keywords_zh": [
+          "漂移",
+          "數據漂移",
+          "概念漂移",
+          "模型漂移",
+          "分佈偏移"
+        ]
+      }
+    },
+    {
+      "name": "di_run_stress_test",
+      "description": "Stress test the supply chain with extreme scenarios: demand spikes, supplier failures, lead time extensions.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "base_forecast": {
+            "type": "array",
+            "description": "array"
+          },
+          "stress_scenarios": {
+            "type": "array",
+            "description": "array"
+          },
+          "options": {
+            "type": "object",
+            "description": "object|null"
+          }
+        },
+        "required": [
+          "base_forecast",
+          "stress_scenarios"
+        ]
+      },
+      "_di_meta": {
+        "tool_id": "run_stress_test",
+        "category": "scenario",
+        "tier": "tier_c",
+        "module": "__python_api__",
+        "method": "POST /stress-test",
+        "routing_target": "POST /stress-test",
+        "depends_on": [
+          "run_ml_forecast"
+        ],
+        "output_artifacts": [
+          "stress_test_results"
+        ],
+        "required_datasets": [
+          "demand_fg"
+        ],
+        "needs_dataset_profile": true,
+        "keywords_en": [
+          "stress test",
+          "extreme scenario",
+          "worst case",
+          "resilience test",
+          "shock test"
+        ],
+        "keywords_zh": [
+          "壓力測試",
+          "極端情境",
+          "最壞情況",
+          "韌性測試",
+          "衝擊測試"
+        ]
+      }
+    },
+    {
+      "name": "di_run_python_analysis",
+      "description": "Advanced statistical analysis with pandas/numpy/scipy. Supports Gini coefficient, Lorenz curves, correlation analysis, business-tier segmentation (pd.cut), cross-dimensional groupby, concentration metrics, and distribution analysis. Works on any loaded dataset with automatic column discovery.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "tool_hint": {
+            "type": "string",
+            "description": "string (analysis task description)"
+          },
+          "analysis_mode": {
+            "type": "boolean",
+            "description": "boolean (always true)"
+          },
+          "dataset": {
+            "type": "string",
+            "description": "'olist' (default)"
+          }
+        },
+        "required": [
+          "tool_hint",
+          "analysis_mode"
+        ]
+      },
+      "_di_meta": {
+        "tool_id": "run_python_analysis",
+        "category": "analytics",
+        "tier": "tier_b",
+        "module": "__python_api__",
+        "method": "POST /execute-tool",
+        "routing_target": "POST /execute-tool",
+        "depends_on": [],
+        "output_artifacts": [
+          "analysis_result"
+        ],
+        "required_datasets": [],
+        "needs_dataset_profile": false,
+        "keywords_en": [
+          "analysis",
+          "gini",
+          "lorenz",
+          "correlation",
+          "distribution",
+          "concentration",
+          "statistical",
+          "segmentation",
+          "tier analysis",
+          "cross-dimensional",
+          "pandas analysis",
+          "deep analysis",
+          "comprehensive analysis",
+          "full analysis",
+          "panorama",
+          "seller analysis",
+          "customer analysis",
+          "revenue analysis",
+          "performance analysis"
+        ],
+        "keywords_zh": [
+          "分析",
+          "基尼",
+          "洛倫茲",
+          "相關性",
+          "分布",
+          "集中度",
+          "統計",
+          "分層",
+          "交叉分析",
+          "全面分析",
+          "深度分析",
+          "完整分析",
+          "全景分析",
+          "賣家分析",
+          "客戶分析",
+          "營收分析",
+          "表現分析"
+        ]
+      }
+    },
+    {
+      "name": "di_excel_mbr_workbook",
+      "description": "Generate a formatted Monthly Business Review Excel workbook (.xlsx) from prior analysis artifacts. Creates 6 sheets: Cover, KPIs, Cleaned Data, Data Issues, Analysis, Dashboard. Opens the file in Excel and uploads to storage.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "task_id": {
+            "type": "string",
+            "description": "string"
+          },
+          "step_results": {
+            "type": "array",
+            "description": "array (prior step results with artifacts)"
+          },
+          "title": {
+            "type": "string",
+            "description": "string|null (custom workbook title)"
+          },
+          "open_file": {
+            "type": "boolean",
+            "description": "boolean (default true — opens in Excel desktop)"
+          }
+        },
+        "required": [
+          "task_id",
+          "step_results"
+        ]
+      },
+      "_di_meta": {
+        "tool_id": "excel_mbr_workbook",
+        "category": "utility",
+        "tier": "tier_c",
+        "module": "__python_api__",
+        "method": "POST /agent/generate-excel",
+        "routing_target": "POST /agent/generate-excel",
+        "depends_on": [],
+        "output_artifacts": [
+          "excel_workbook"
+        ],
+        "required_datasets": [],
+        "needs_dataset_profile": false,
+        "keywords_en": [
+          "excel",
+          "workbook",
+          "xlsx",
+          "mbr",
+          "monthly report",
+          "spreadsheet",
+          "export excel"
+        ],
+        "keywords_zh": [
+          "Excel",
+          "工作簿",
+          "月報",
+          "匯出",
+          "試算表",
+          "報表匯出"
+        ]
+      }
+    }
+  ]
+}

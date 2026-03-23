@@ -1,0 +1,122 @@
+# NemoClaw Privacy Router Policy
+# Decision-Intelligence Supply Chain Plugin
+#
+# Defines routing rules for the NemoClaw Privacy Router:
+# - Which data stays on-device (processed by local Nemotron models)
+# - Which data can be sent to cloud LLMs (Claude, GPT, etc.)
+# - Anonymization rules for intermediate data
+
+version: "1.0"
+name: "di-privacy-policy"
+
+# ── Model routing rules ──────────────────────────────────────────────────────
+
+routing_rules:
+  # Rule 1: Supplier pricing data → on-device only
+  - name: supplier_pricing
+    description: "Supplier unit costs and contract terms never leave device"
+    trigger:
+      data_contains_any:
+        - "unit_cost"
+        - "unit_price"
+        - "contract_terms"
+        - "price_break"
+        - "discount_rate"
+    action:
+      route_to: on_device
+      model_preference: "nemotron"  # NVIDIA Nemotron for local processing
+      fallback: block               # If no local model → don't send anywhere
+
+  # Rule 2: Negotiation strategy → on-device only
+  - name: negotiation_data
+    description: "CFR game theory results and negotiation positions are competitive intelligence"
+    trigger:
+      data_contains_any:
+        - "negotiation_position"
+        - "cfr_strategy"
+        - "batna"
+        - "reservation_price"
+        - "opening_offer"
+    action:
+      route_to: on_device
+      model_preference: "nemotron"
+      fallback: block
+
+  # Rule 3: Forecast analysis → cloud allowed (aggregated data)
+  - name: forecast_analysis
+    description: "Aggregated demand forecasts are safe for cloud processing"
+    trigger:
+      tool_name_matches: "di_run_forecast|di_run_ml_forecast|di_forecast_from_sap"
+    action:
+      route_to: cloud
+      model_preference: "claude-sonnet"  # Best for analytical reasoning
+      anonymize_fields:
+        - "material_description"  # Replace with generic labels
+
+  # Rule 4: Risk scoring → cloud allowed (computed metrics only)
+  - name: risk_scoring
+    description: "Risk scores are computed values, not raw sensitive data"
+    trigger:
+      tool_name_matches: "di_run_risk_analysis|di_run_risk_score"
+    action:
+      route_to: cloud
+      model_preference: "claude-sonnet"
+      strip_fields:
+        - "supplier_name"  # Remove before sending
+
+  # Rule 5: General analysis → cloud with anonymization
+  - name: general_analysis
+    description: "General analytics can use cloud models with anonymization"
+    trigger:
+      tool_name_matches: "di_run_python_analysis|di_analyze_*"
+    action:
+      route_to: cloud
+      model_preference: "claude-sonnet"
+      anonymize_fields:
+        - "supplier_name"
+        - "buyer_name"
+        - "plant_name"
+
+  # Rule 6: Default → on-device (conservative)
+  - name: default
+    description: "When in doubt, keep data on-device"
+    trigger:
+      always: true
+    action:
+      route_to: on_device
+      model_preference: "nemotron"
+      fallback: cloud_with_anonymization
+
+# ── Anonymization strategies ─────────────────────────────────────────────────
+
+anonymization:
+  strategies:
+    # Replace supplier names with generic labels
+    supplier_name:
+      method: pseudonymize
+      format: "Supplier_{hash_4}"  # e.g., "Supplier_A3F2"
+
+    # Replace buyer names with role
+    buyer_name:
+      method: generalize
+      value: "[Buyer]"
+
+    # Replace plant names with region
+    plant_name:
+      method: generalize
+      pattern: "Plant_{region}"
+
+    # Replace material descriptions with category
+    material_description:
+      method: generalize
+      value: "[Material]"
+
+# ── Cost/performance preferences ─────────────────────────────────────────────
+
+preferences:
+  # Prefer local models for cost savings when data sensitivity is low
+  cost_optimization: true
+  # Maximum acceptable latency for on-device processing (ms)
+  max_local_latency_ms: 30000
+  # Fall back to cloud if local model quality is insufficient
+  quality_threshold: 0.8

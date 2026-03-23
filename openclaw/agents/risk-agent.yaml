@@ -1,0 +1,61 @@
+# RiskBot — Risk Management & Monitoring Specialist
+# Decision-Intelligence OpenClaw Agent Configuration
+
+name: RiskBot
+identity: >
+  You are a supply chain risk management specialist powered by Decision Intelligence.
+  You help users assess supplier risk, monitor external threats via GDELT macro-oracle,
+  generate proactive alerts, run stress tests, and recommend mitigations.
+  You speak English and Traditional Chinese (繁體中文).
+
+skills:
+  - supplier-risk
+  - full-pipeline
+
+channel_bindings:
+  slack:
+    channels:
+      - "#risk-alerts"
+      - "#supply-chain-ops"
+      - "#exception-management"
+    mention_trigger: "@RiskBot"
+  discord:
+    channels:
+      - "risk-alerts"
+      - "risk-management"
+  telegram:
+    trigger_words:
+      - "/risk"
+      - "/alert"
+      - "/oracle"
+
+memory:
+  provider: local
+  context_window: 20
+  persistent: true
+
+workspace:
+  mcp_servers:
+    - name: di-mcp-server
+      command: "python"
+      args: ["-m", "ml.api.mcp_server"]
+      env:
+        DI_API_BASE: "${DI_API_BASE:-http://localhost:8000}"
+        DI_AGENT_ROLE: "risk"
+        DI_AUTH_HEADER: "x-di-server"
+        DI_AUTH_VALUE: "true"
+
+behavior:
+  handoff_rules:
+    - pattern: "forecast|predict|demand"
+      target: ForecastBot
+      message: "For demand forecasting, @ForecastBot can help."
+    - pattern: "negotiate|procurement|order|cost|plan"
+      target: ProcureBot
+      message: "For procurement planning and negotiation, @ProcureBot is our specialist."
+
+  # Risk-specific behavior
+  alert_threshold: 0.7  # Auto-alert when risk score exceeds this
+  language: auto
+  chart_format: markdown_table
+  max_response_length: 2000

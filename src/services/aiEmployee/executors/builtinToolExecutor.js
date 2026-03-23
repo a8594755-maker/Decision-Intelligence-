@@ -53,6 +53,10 @@ export async function executeBuiltinTool(stepInput) {
         ...(inputData.priorArtifacts ? { priorArtifacts: inputData.priorArtifacts } : {}),
         ...(inputData.sheets ? { sheets: inputData.sheets } : {}),
         ...(step.input_args || {}),
+        // SSE context for real-time code display during execution
+        task_id: stepInput.taskId || null,
+        step_name: step.name || null,
+        step_index: stepInput.stepIndex ?? null,
       };
 
       const controller = new AbortController();
@@ -87,7 +91,16 @@ export async function executeBuiltinTool(stepInput) {
         }
       }
       logs.push(`[BuiltinExecutor] Python API completed. Artifacts: ${artifacts.length}`);
-      return { ok: true, artifacts, logs };
+      return {
+        ok: true, artifacts, logs,
+        code: result.code || null,
+        code_language: 'python',
+        stdout: result.stdout || null,
+        stderr: result.stderr || null,
+        execution_ms: result.execution_ms,
+        llm_model: result.llm_model,
+        llm_provider: result.llm_provider,
+      };
     } catch (err) {
       logs.push(`[BuiltinExecutor] Python API error: ${err.message}`);
       return { ok: false, artifacts: [], logs, error: `Python API error: ${err.message}` };
@@ -141,13 +154,23 @@ export async function executeBuiltinTool(stepInput) {
 
     // If no explicit artifacts but result has data, wrap it as a typed artifact
     if (artifacts.length === 0 && result && typeof result === 'object') {
-      // Detect analysis_result shape (from olistAnalysisService, etc.)
-      const isAnalysisResult = result.analysisType && result.metrics;
-      artifacts = [{
-        artifact_type: isAnalysisResult ? 'analysis_result' : 'table',
-        label: result.title || catalogEntry.name || toolId,
-        data: result,
-      }];
+      // Detect report shape (from reportGeneratorService.generateReport)
+      if (result.blob && result.format && result.filename) {
+        artifacts = [{
+          artifact_type: result.format === 'html' ? 'report_html' : 'report_file',
+          label: result.filename,
+          data: { html: result.blob, filename: result.filename, format: result.format },
+          artifact_ref: result.artifact_ref || null,
+        }];
+      } else {
+        // Detect analysis_result shape
+        const isAnalysisResult = result.analysisType && result.metrics;
+        artifacts = [{
+          artifact_type: isAnalysisResult ? 'analysis_result' : 'table',
+          label: result.title || catalogEntry.name || toolId,
+          data: result,
+        }];
+      }
     }
     logs.push(`[BuiltinExecutor] Completed. Artifacts: ${artifacts.length}`);
 

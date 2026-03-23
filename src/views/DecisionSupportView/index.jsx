@@ -15,7 +15,7 @@ import { createDatasetProfileFromSheets } from '../../services/datasetProfilingS
 import { datasetProfilesService, registerLocalProfile } from '../../services/datasetProfilesService';
 import { reuseMemoryService } from '../../services/reuseMemoryService';
 import { streamChatWithAI, getLastUsedModel } from '../../services/geminiAPI';
-import { runAgentLoop, shouldUseAgentMode } from '../../services/chatAgentLoop';
+import { runAgentLoop } from '../../services/chatAgentLoop';
 import { registerTool, approveTool } from '../../services/toolRegistryService';
 import { invalidateRegisteredToolsCache } from '../../services/chatToolAdapter';
 import { diResetService } from '../../services/diResetService';
@@ -56,14 +56,13 @@ import { looksLikeScenario } from '../../services/scenarioIntentParser';
 import { runScenarioFromChat } from '../../services/scenarioChatBridge';
 import { resolveActionToIntent } from '../../services/chatActionRegistry';
 import { handleParameterChange, handlePlanComparison, buildComparisonSummaryText } from '../../services/chatRefinementService';
-import {
-  analyzeRevenueTrend, analyzeCustomerRFM, analyzeDeliveryPerformance,
-  analyzeSellerScorecard, analyzeCategoryInsights, analyzeCustomerSatisfaction,
-  analyzePaymentBehavior, detectAndRunAnalysis, buildAnalysisInsightPrompt,
-  computeDerivedMetrics, computeCrossInsights, suggestDeepDives,
-} from '../../services/olistAnalysisService';
 import { generateAnalysisBlueprint, executeModule as executeBlueprintModule } from '../../services/analysisBlueprintService';
-import { handleDataQuery } from '../../services/sapQueryChatHandler.js';
+import { buildAgentPresentationPayload, resolveAgentAnswerContract } from '../../services/agentResponsePresentationService.js';
+import { judgeAgentCandidates } from '../../services/agentCandidateJudgeService.js';
+import { resolveAgentExecutionStrategy } from '../../services/agentExecutionStrategyService.js';
+import { buildDirectAnalysisAgentPrompt, resolveDirectAnalysisRequest } from '../../services/directAnalysisService.js';
+import { parseManualThinkingDirective, resolveChatThinkingPolicy } from '../../services/chatThinkingPolicyService.js';
+
 import { createAlertMonitor, buildAlertChatMessage, isAlertMonitorEnabled } from '../../services/alertMonitorService';
 import { batchApprove, batchReject } from '../../services/approvalWorkflowService';
 import { decomposeTask } from '../../services/chatTaskDecomposer';
@@ -120,9 +119,136 @@ import MessageCardRenderer from './MessageCardRenderer.jsx';
 
 const tableAvailable = initTableAvailability();
 const conversationsDb = tableAvailable ? supabase : null;
+const PRIMARY_AGENT_PROVIDER = import.meta.env.VITE_DI_CHAT_PROVIDER || 'openai';
+const PRIMARY_AGENT_MODEL = import.meta.env.VITE_DI_CHAT_MODEL || 'gpt-5.4';
+const SECONDARY_AGENT_PROVIDER = import.meta.env.VITE_DI_AGENT_SECONDARY_PROVIDER || 'anthropic';
+const SECONDARY_AGENT_MODEL = import.meta.env.VITE_DI_AGENT_SECONDARY_MODEL || 'claude-opus-4-6';
 
 // Module-level cache for inline raw rows — survives HMR state resets
 const _rawRowsCache = new Map();
+
+function createLinkedAbortController(parentSignal) {
+  const controller = new AbortController();
+  if (!parentSignal) return controller;
+  if (parentSignal.aborted) {
+    controller.abort(parentSignal.reason);
+    return controller;
+  }
+  const forwardAbort = () => controller.abort(parentSignal.reason);
+  parentSignal.addEventListener('abort', forwardAbort, { once: true });
+  return controller;
+}
+
+function resolveCandidateFailureStatus(error) {
+  const message = getErrorMessage(error);
+  return /timed?\s*out/i.test(message) ? 'timed_out' : 'failed';
+}
+
+function buildFailedCandidate({
+  candidateId,
+  label,
+  tone,
+  provider,
+  model,
+  status,
+  failedReason,
+  startedAt,
+  finishedAt,
+  durationMs,
+}) {
+  const normalizedReason = String(failedReason || 'Unknown error').trim() || 'Unknown error';
+  const summary = status === 'timed_out'
+    ? `${label || candidateId || 'Candidate'} timed out: ${normalizedReason}`
+    : `${label || candidateId || 'Candidate'} failed: ${normalizedReason}`;
+
+  return {
+    candidateId,
+    label,
+    tone,
+    provider,
+    model,
+    status,
+    startedAt,
+    finishedAt,
+    durationMs,
+    failedReason: normalizedReason,
+    result: null,
+    presentation: {
+      brief: null,
+      trace: {
+        failed_attempts: [{
+          id: `${candidateId || 'candidate'}-failure`,
+          name: label || candidateId || 'Candidate',
+          error: normalizedReason,
+          summary,
+        }],
+        successful_queries: [],
+        raw_narrative: '',
+      },
+      qa: null,
+    },
+  };
+}
+
+function buildOrchestrationCandidateMeta(candidate) {
+  if (!candidate) return null;
+  return {
+    candidateId: candidate.candidateId,
+    status: candidate.status || 'completed',
+    startedAt: candidate.startedAt || null,
+    finishedAt: candidate.finishedAt || null,
+    durationMs: Number.isFinite(candidate.durationMs) ? candidate.durationMs : null,
+    failedReason: candidate.failedReason || null,
+  };
+}
+
+function buildBlockedAgentQa(candidates = []) {
+  const issues = candidates
+    .map((candidate) => {
+      const reason = String(candidate?.failedReason || '').trim();
+      if (!reason) return null;
+      return `${candidate?.label || candidate?.candidateId || 'Candidate'}: ${reason}`;
+    })
+    .filter(Boolean);
+
+  return {
+    status: 'warning',
+    score: 0,
+    pass_threshold: 8,
+    blockers: ['No candidate produced a valid answer.'],
+    issues: issues.length > 0 ? issues : ['Both candidate runs failed before producing a valid answer.'],
+    repair_instructions: [],
+    dimension_scores: {
+      correctness: 0,
+      completeness: 0,
+      evidence_alignment: 0,
+      visualization_fit: 0,
+      caveat_quality: 0,
+      clarity: 0,
+    },
+    reviewers: [],
+    repair_attempted: false,
+  };
+}
+
+function buildBlockedTrace(candidates = []) {
+  return {
+    failed_attempts: candidates
+      .map((candidate, index) => {
+        const reason = String(candidate?.failedReason || '').trim();
+        if (!reason) return null;
+        return {
+          id: `${candidate?.candidateId || 'candidate'}-${index}`,
+          name: candidate?.label || candidate?.candidateId || 'Candidate',
+          error: reason,
+          summary: reason,
+        };
+      })
+      .filter(Boolean),
+    successful_queries: [],
+    raw_narrative: '',
+  };
+}
 
 export default function DecisionSupportView({ user, addNotification, mode = 'di', activeWorkerId = null, activeWorkerLabel = null }) {
   const isAIEmployeeMode = mode === 'ai_employee';
@@ -131,11 +257,77 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
   const [pendingAttachments, setPendingAttachments] = useState([]);
   const [isTyping, setIsTyping] = useState(false);
   const [streamingContent, setStreamingContent] = useState('');
+  const [thinkingSteps, setThinkingSteps] = useState([]);
+  const thinkingStepsRef = useRef([]);
+  const thinkingAgentCountersRef = useRef({});
   const [domainContext, setDomainContext] = useState(null);
   const [contextLoading, setContextLoading] = useState(false);
   const [isUploadingDataset, setIsUploadingDataset] = useState(false);
   const [isDragOverUpload, setIsDragOverUpload] = useState(false);
   const [uploadStatusText, setUploadStatusText] = useState('');
+
+  const clearThinkingSteps = useCallback(() => {
+    thinkingStepsRef.current = [];
+    thinkingAgentCountersRef.current = {};
+    setThinkingSteps([]);
+  }, []);
+
+  const appendThinkingStep = useCallback((data) => {
+    if (!data || typeof data === 'string' || !data.content) return;
+
+    setThinkingSteps((prev) => {
+      const last = prev[prev.length - 1];
+      let next;
+      if (
+        data.type === 'preamble'
+        && last?.step === data.step
+        && last?.type === 'preamble'
+        && (last?.agentKey || 'default') === (data?.agentKey || 'default')
+      ) {
+        next = [...prev.slice(0, -1), { ...last, ...data, content: last.content + data.content }];
+      } else {
+        next = [...prev, { ...data, timestamp: Date.now() }];
+      }
+      thinkingStepsRef.current = next;
+      return next;
+    });
+  }, []);
+
+  const appendAgentThinkingNote = useCallback((meta, content) => {
+    const normalized = String(content || '').trim();
+    if (!normalized) return;
+    const key = meta?.agentKey || 'default';
+    const nextStep = (thinkingAgentCountersRef.current[key] || 0) + 1;
+    thinkingAgentCountersRef.current[key] = nextStep;
+    appendThinkingStep({
+      step: nextStep,
+      type: 'summary',
+      content: normalized,
+      ...meta,
+    });
+  }, [appendThinkingStep]);
+
+  const buildThinkingTraceMessage = useCallback(() => {
+    const steps = (thinkingStepsRef.current || [])
+      .map((step) => ({
+        ...step,
+        content: typeof step?.content === 'string' ? step.content.trim() : '',
+      }))
+      .filter((step) => step.content);
+
+    if (steps.length === 0) return null;
+
+    return {
+      role: 'ai',
+      type: 'thinking_trace_card',
+      payload: {
+        steps,
+        completed: true,
+        defaultCollapsed: true,
+      },
+      timestamp: new Date().toISOString(),
+    };
+  }, []);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => {
     try {
       return localStorage.getItem(`${SIDEBAR_COLLAPSED_KEY_PREFIX}${userStorageSuffix}`) === '1';
@@ -164,6 +356,10 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
   const agentExecEventsRef = useRef([]); // Mirror of agentExecEvents for use in event handlers
   const [aiEmployeeDrawer, setAiEmployeeDrawer] = useState(null);
   const [delegatedWorker, setDelegatedWorker] = useState(null);
+
+  // ── Data Learning: profile + insights ─────────────────────────────────
+  const [dataProfileDigest, setDataProfileDigest] = useState(null);
+  const [dataInsights, setDataInsights] = useState(null);
 
   // Keep refs in sync with state — but never overwrite if ref is ahead (EventBus writes ref directly)
   useEffect(() => {
@@ -338,6 +534,25 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
     handleDeleteConversation,
   } = convManager;
 
+  const currentConversationThinkingMode = currentConversationId
+    ? (conversationDatasetContext[currentConversationId]?.manual_thinking_mode || null)
+    : null;
+  const isThinkingToggleEnabled = currentConversationThinkingMode === 'full';
+
+  const handleToggleThinkingEnabled = useCallback(() => {
+    if (!currentConversationId) return;
+    setConversationDatasetContext((prev) => {
+      const currentMode = prev[currentConversationId]?.manual_thinking_mode;
+      return {
+        ...prev,
+        [currentConversationId]: {
+          ...(prev[currentConversationId] || {}),
+          manual_thinking_mode: currentMode === 'full' ? null : 'full',
+        },
+      };
+    });
+  }, [currentConversationId, setConversationDatasetContext]);
+
   const getDatasetProfileId = useCallback((datasetContext) => {
     const numericId = Number(datasetContext?.dataset_profile_id);
     return Number.isFinite(numericId) ? numericId : null;
@@ -394,14 +609,14 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
           return { ...prev, steps };
         });
       }),
-      eventBus.on(EVENT_NAMES.AGENT_STEP_COMPLETED, ({ stepIndex, stepName, artifacts }) => {
+      eventBus.on(EVENT_NAMES.AGENT_STEP_COMPLETED, ({ stepIndex, stepName, artifacts, code, code_language, stdout, stderr }) => {
         // Deduplicate: skip if this step was already completed (by index OR name)
         const isDup = agentExecEventsRef.current.some(e =>
           e.status === 'succeeded' && (e.step_index === stepIndex || (stepName && e.step_name === stepName))
         );
         if (isDup) return;
 
-        const newEvent = { step_name: stepName, status: 'succeeded', step_index: stepIndex, artifacts };
+        const newEvent = { step_name: stepName, status: 'succeeded', step_index: stepIndex, artifacts, code, code_language, stdout, stderr };
         agentExecEventsRef.current = [...agentExecEventsRef.current, newEvent]; // Sync ref immediately
         setAgentExecEvents(prev => {
           if (prev.some(e => e.status === 'succeeded' && (e.step_index === stepIndex || (stepName && e.step_name === stepName)))) return prev;
@@ -603,6 +818,28 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
       .catch(() => setDomainContext(null))
       .finally(() => setContextLoading(false));
   }, [user?.id]);
+
+  // Data Learning: fetch profile + load insights on mount (non-blocking)
+  useEffect(() => {
+    // Load accumulated insights
+    import('../../services/dataInsightService.js').then(({ getInsights }) => {
+      const all = getInsights();
+      if (all.length > 0) setDataInsights(all);
+    }).catch(() => {});
+
+    // Load data profile
+    import('../../services/dataLearningService.js').then(({ fetchDataProfile, getCachedProfile, buildProfileDigest }) => {
+      const cached = getCachedProfile();
+      if (cached) {
+        setDataProfileDigest(buildProfileDigest(cached));
+        console.info('[DSV] Data profile loaded from cache');
+      }
+      // Always try fresh fetch in background
+      fetchDataProfile().then(profile => {
+        if (profile) setDataProfileDigest(buildProfileDigest(profile));
+      });
+    }).catch(err => console.warn('[DSV] Data profile load skipped:', err.message));
+  }, []);
 
   // SmartOps 2.0: Proactive alert monitor
   useEffect(() => {
@@ -806,8 +1043,8 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
 
   const systemPrompt = useMemo(() => {
     if (!domainContext) return '';
-    return buildSystemPrompt(domainContext, activeDatasetContext);
-  }, [domainContext, activeDatasetContext]);
+    return buildSystemPrompt(domainContext, activeDatasetContext, dataProfileDigest, dataInsights);
+  }, [domainContext, activeDatasetContext, dataProfileDigest, dataInsights]);
 
   // ── Canvas run helpers ──────────────────────────────────────────────────
   const markCanvasRunStarted = useCallback((label) => {
@@ -1852,72 +2089,369 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
     }
   }, [currentConversationId, activeDatasetContext, user?.id, updateCanvasState, appendMessagesToCurrentConversation, addNotification, currentConversation, currentMessages, setConversations]);
 
-  // ── LLM Insight Streamer for Analysis Results (v2 — with cross + derived) ──
-  const streamAnalysisInsightToChat = useCallback(async (analysisResult, userQuery, history) => {
-    try {
-      analysisResult._userQuery = userQuery || '';
-      const aType = analysisResult.analysisType;
+  const runDirectAnalysisAgent = useCallback(async ({ query, history = [], runtimeDatasetContext, attachments = [] }) => {
+    chatAbortRef.current?.abort();
+    chatAbortRef.current = new AbortController();
 
-      // Layer 2: compute derived metrics + cross-analysis in parallel
-      setStreamingContent('Computing cross-analysis...');
-      const [derivedMetrics, crossInsights] = await Promise.all([
-        Promise.resolve(computeDerivedMetrics(aType, analysisResult)),
-        computeCrossInsights(aType).catch(() => ({ queries: [], summary: '' })),
-      ]);
-
-      // Layer 3: generate deep dive suggestions
-      const deepDives = suggestDeepDives(aType, analysisResult, derivedMetrics, crossInsights, userQuery);
-
-      // Build prompt with enriched data
-      const { systemPrompt: insightSystem, userPrompt: insightUser } = buildAnalysisInsightPrompt(analysisResult, derivedMetrics, crossInsights);
-      const insightHistory = [
-        ...(history || []).slice(-4),
-        { role: 'user', content: userQuery || 'Analyze this data' },
-      ];
-
-      // Stream LLM response
-      let insightText = '';
-      setStreamingContent('Generating AI insight report...');
-      await streamChatWithAI(insightUser, insightHistory, insightSystem, (chunk) => {
-        insightText += chunk;
-        setStreamingContent('Generating AI insight report...\n\n' + insightText);
-      });
-      setStreamingContent('');
-
-      if (insightText.trim()) {
-        const { model, provider } = getLastUsedModel();
-        let sections = null;
-        try {
-          let jsonStr = insightText.trim();
-          if (jsonStr.startsWith('```')) {
-            jsonStr = jsonStr.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
-          }
-          sections = JSON.parse(jsonStr);
-        } catch {
-          sections = null;
-        }
-        appendMessagesToCurrentConversation([{
-          role: 'ai',
-          type: 'analysis_insight',
-          payload: {
-            analysisType: aType,
-            sections: sections || {},
-            deepDives,
-            rawMarkdown: sections ? null : insightText.trim(),
-            model: model || 'unknown',
-            provider: provider || '',
-            generatedAt: new Date().toLocaleString(),
-          },
-          timestamp: new Date().toISOString(),
-        }]);
-      }
-    } catch (err) {
-      console.warn('[DSV] LLM analysis insight failed:', err?.message);
-      setStreamingContent('');
-    } finally {
-      setIsTyping(false);
+    const datasetProfileId = getDatasetProfileId(runtimeDatasetContext);
+    let datasetProfileRow = null;
+    if (datasetProfileId) {
+      try { datasetProfileRow = await datasetProfilesService.getById(datasetProfileId); } catch { /* ok */ }
     }
-  }, [appendMessagesToCurrentConversation, setStreamingContent, setIsTyping]);
+
+    const runAgentCandidatePass = async ({
+      candidateId,
+      label,
+      tone,
+      provider,
+      model,
+      agentMessage,
+      userMessage,
+      conversationHistory,
+      toolContext,
+      answerContract,
+      mode,
+      signal,
+      streamToUser = false,
+    }) => {
+      const agentMeta = {
+        agentKey: candidateId,
+        agentLabel: label,
+        agentTone: tone,
+        provider,
+        model,
+      };
+
+      const result = await runAgentLoop({
+        message: agentMessage,
+        conversationHistory,
+        systemPrompt,
+        toolContext,
+        answerContract,
+        callbacks: {
+          onTextChunk: streamToUser ? (chunk) => setStreamingContent((prev) => prev + chunk) : undefined,
+          onToolCall: streamToUser ? ({ name }) => setStreamingContent((prev) => prev + `\n🔧 Running **${name}**...\n`) : undefined,
+          onToolResult: streamToUser ? ({ name, success, error: err }) => {
+            setStreamingContent((prev) => prev + (success ? `✅ **${name}** done\n` : `❌ **${name}** failed: ${err}\n`));
+          } : undefined,
+          onThinking: (data) => appendThinkingStep({ ...data, ...agentMeta }),
+        },
+        signal,
+        mode,
+        agentProvider: provider,
+        agentModel: model,
+      });
+
+      const presentation = await buildAgentPresentationPayload({
+        userMessage,
+        toolCalls: result.toolCalls || [],
+        finalAnswerText: result.text || '',
+        mode,
+        answerContract,
+        forceCrossReview: strategy.mustJudge,
+      });
+
+      appendAgentThinkingNote(
+        { ...agentMeta, status: 'completed' },
+        presentation?.brief?.summary || presentation?.brief?.headline || result.text || `${label} completed.`,
+      );
+
+      return {
+        candidateId,
+        label,
+        tone,
+        provider: result?.provider || provider,
+        model: result?.model || model,
+        result,
+        presentation,
+      };
+    };
+
+    const runSettledCandidatePass = async (config) => {
+      const startedAt = new Date().toISOString();
+      const startedMs = Date.now();
+      const candidateController = createLinkedAbortController(chatAbortRef.current?.signal);
+
+      try {
+        const candidate = await runAgentCandidatePass({
+          ...config,
+          signal: candidateController.signal,
+        });
+        const finishedAt = new Date().toISOString();
+        return {
+          ...candidate,
+          status: 'completed',
+          startedAt,
+          finishedAt,
+          durationMs: Date.now() - startedMs,
+          failedReason: null,
+        };
+      } catch (error) {
+        const finishedAt = new Date().toISOString();
+        const status = resolveCandidateFailureStatus(error);
+        const failedReason = getErrorMessage(error);
+        const failureCandidate = buildFailedCandidate({
+          candidateId: config.candidateId,
+          label: config.label,
+          tone: config.tone,
+          provider: config.provider,
+          model: config.model,
+          status,
+          failedReason,
+          startedAt,
+          finishedAt,
+          durationMs: Date.now() - startedMs,
+        });
+
+        appendAgentThinkingNote({
+          agentKey: config.candidateId,
+          agentLabel: config.label,
+          agentTone: config.tone,
+          provider: config.provider,
+          model: config.model,
+          status,
+        }, failureCandidate.failedReason);
+
+        return failureCandidate;
+      }
+    };
+
+    const buildCompetitivePayload = ({
+      winner = null,
+      alternative = null,
+      judgeDecision = null,
+      answerContract,
+      strategy,
+      candidates = [],
+    }) => {
+      const payloadCandidates = candidates.length > 0 ? candidates : [winner, alternative].filter(Boolean);
+      const winnerTrace = winner?.presentation?.trace || null;
+      const blockedTrace = buildBlockedTrace(payloadCandidates);
+      return {
+        toolCalls: winner?.result?.toolCalls || [],
+        brief: winner?.presentation?.brief || null,
+        trace: winnerTrace || blockedTrace,
+        answerContract: winner?.presentation?.answerContract || answerContract || null,
+        review: winner?.presentation?.review || null,
+        qa: winner?.presentation?.qa || buildBlockedAgentQa(payloadCandidates),
+        candidates: payloadCandidates.map((candidate) => ({
+          candidateId: candidate.candidateId,
+          label: candidate.label,
+          provider: candidate.provider,
+          model: candidate.model,
+          tone: candidate.tone,
+          status: candidate.status || 'completed',
+          startedAt: candidate.startedAt || null,
+          finishedAt: candidate.finishedAt || null,
+          durationMs: Number.isFinite(candidate.durationMs) ? candidate.durationMs : null,
+          failedReason: candidate.failedReason || null,
+          brief: candidate.presentation?.brief || null,
+          trace: candidate.presentation?.trace || null,
+          qa: candidate.presentation?.qa || null,
+        })),
+        judgeDecision: judgeDecision ? {
+          ...judgeDecision,
+          winnerLabel: winner?.label || '',
+          winnerProvider: winner?.provider || '',
+          winnerModel: winner?.model || '',
+          triggerReasons: strategy?.triggerReasons || [],
+        } : null,
+        orchestration: {
+          mode: strategy?.dualGenerate ? 'parallel_dual' : 'single',
+          triggerReasons: strategy?.triggerReasons || [],
+          candidates: payloadCandidates.map(buildOrchestrationCandidateMeta).filter(Boolean),
+        },
+      };
+    };
+
+    clearThinkingSteps();
+    const answerContract = await resolveAgentAnswerContract({
+      userMessage: query,
+      mode: 'analysis',
+    });
+    const toolContext = {
+      userId: user?.id,
+      datasetProfileRow,
+      datasetProfileId,
+      datasetInputData: buildTaskInputData(runtimeDatasetContext, attachments),
+    };
+    const strategy = resolveAgentExecutionStrategy({
+      userMessage: query,
+      answerContract,
+      mode: 'analysis',
+      hasAttachments: attachments.length > 0,
+    });
+
+    let selectedCandidate;
+    let alternativeCandidate = null;
+    let judgeDecision = null;
+    let candidatePool = [];
+
+    if (strategy.dualGenerate) {
+      setStreamingContent('🧠 Running primary agent...\n🧪 Running challenger agent...\n');
+      const primaryConfig = {
+        candidateId: 'primary',
+        label: 'Primary Agent',
+        tone: 'primary',
+        provider: PRIMARY_AGENT_PROVIDER,
+        model: PRIMARY_AGENT_MODEL,
+        agentMessage: buildDirectAnalysisAgentPrompt(query),
+        userMessage: query,
+        conversationHistory: history.slice(-6),
+        toolContext,
+        answerContract,
+        mode: 'analysis',
+      };
+      const secondaryConfig = {
+        candidateId: 'secondary',
+        label: 'Challenger Agent',
+        tone: 'secondary',
+        provider: SECONDARY_AGENT_PROVIDER,
+        model: SECONDARY_AGENT_MODEL,
+        agentMessage: `${buildDirectAnalysisAgentPrompt(query)}\n\nProduce an independently reasoned alternative answer. Do not mirror another agent.`,
+        userMessage: query,
+        conversationHistory: history.slice(-6),
+        toolContext,
+        answerContract,
+        mode: 'analysis',
+      };
+      const [primarySettled, secondarySettled] = await Promise.allSettled([
+        runSettledCandidatePass(primaryConfig),
+        runSettledCandidatePass(secondaryConfig),
+      ]);
+      const primaryCandidate = primarySettled.status === 'fulfilled'
+        ? primarySettled.value
+        : buildFailedCandidate({
+          candidateId: primaryConfig.candidateId,
+          label: primaryConfig.label,
+          tone: primaryConfig.tone,
+          provider: primaryConfig.provider,
+          model: primaryConfig.model,
+          status: resolveCandidateFailureStatus(primarySettled.reason),
+          failedReason: getErrorMessage(primarySettled.reason),
+          startedAt: null,
+          finishedAt: new Date().toISOString(),
+          durationMs: null,
+        });
+      const secondaryCandidate = secondarySettled.status === 'fulfilled'
+        ? secondarySettled.value
+        : buildFailedCandidate({
+          candidateId: secondaryConfig.candidateId,
+          label: secondaryConfig.label,
+          tone: secondaryConfig.tone,
+          provider: secondaryConfig.provider,
+          model: secondaryConfig.model,
+          status: resolveCandidateFailureStatus(secondarySettled.reason),
+          failedReason: getErrorMessage(secondarySettled.reason),
+          startedAt: null,
+          finishedAt: new Date().toISOString(),
+          durationMs: null,
+        });
+      const settledCandidates = [primaryCandidate, secondaryCandidate];
+      candidatePool = settledCandidates;
+
+      setStreamingContent((prev) => `${prev}\n${primaryCandidate.status === 'completed' ? '✅' : '❌'} Primary agent ${primaryCandidate.status === 'completed' ? 'completed' : primaryCandidate.status === 'timed_out' ? 'timed out' : 'failed'}\n${secondaryCandidate.status === 'completed' ? '✅' : '❌'} Challenger agent ${secondaryCandidate.status === 'completed' ? 'completed' : secondaryCandidate.status === 'timed_out' ? 'timed out' : 'failed'}\n`);
+
+      const completedCandidates = settledCandidates.filter((candidate) => candidate.status === 'completed');
+
+      if (completedCandidates.length > 0) {
+        setStreamingContent((prev) => prev + '\n⚖️ Running judge...\n');
+        judgeDecision = await judgeAgentCandidates({
+          userMessage: query,
+          answerContract,
+          primaryCandidate,
+          secondaryCandidate,
+        });
+
+        appendAgentThinkingNote({
+          agentKey: 'judge',
+          agentLabel: 'Judge',
+          agentTone: 'judge',
+          provider: judgeDecision?.reviewer?.provider || '',
+          model: judgeDecision?.reviewer?.model || '',
+          status: 'completed',
+        }, [judgeDecision?.summary, ...(judgeDecision?.rationale || [])].filter(Boolean).join('\n'));
+
+        const judgedWinner = settledCandidates.find((candidate) =>
+          candidate?.candidateId === judgeDecision?.winnerCandidateId && candidate?.status === 'completed'
+        );
+        selectedCandidate = judgedWinner || completedCandidates[0];
+        alternativeCandidate = settledCandidates.find((candidate) => candidate?.candidateId !== selectedCandidate?.candidateId) || null;
+      } else {
+        judgeDecision = {
+          winnerCandidateId: null,
+          summary: 'Both candidate runs failed before producing a valid answer.',
+          rationale: settledCandidates.map((candidate) => `${candidate.label}: ${candidate.failedReason || 'Unknown error'}`),
+          loserIssues: [],
+          confidence: 0,
+          reviewer: {
+            provider: 'orchestrator',
+            model: 'parallel_dual',
+          },
+          degraded: true,
+        };
+        appendAgentThinkingNote({
+          agentKey: 'judge',
+          agentLabel: 'Judge',
+          agentTone: 'judge',
+          provider: 'orchestrator',
+          model: 'parallel_dual',
+          status: 'failed',
+        }, judgeDecision.summary);
+        selectedCandidate = null;
+        alternativeCandidate = null;
+      }
+    } else {
+      const startedAt = new Date().toISOString();
+      const startedMs = Date.now();
+      selectedCandidate = await runAgentCandidatePass({
+        candidateId: 'primary',
+        label: 'Primary Agent',
+        tone: 'primary',
+        provider: PRIMARY_AGENT_PROVIDER,
+        model: PRIMARY_AGENT_MODEL,
+        agentMessage: buildDirectAnalysisAgentPrompt(query),
+        userMessage: query,
+        conversationHistory: history.slice(-6),
+        toolContext,
+        answerContract,
+        mode: 'analysis',
+        signal: chatAbortRef.current.signal,
+        streamToUser: true,
+      });
+      selectedCandidate = {
+        ...selectedCandidate,
+        status: 'completed',
+        startedAt,
+        finishedAt: new Date().toISOString(),
+        durationMs: Date.now() - startedMs,
+        failedReason: null,
+      };
+      candidatePool = [selectedCandidate];
+    }
+
+    const thinkingTraceMessage = buildThinkingTraceMessage();
+    clearThinkingSteps();
+    appendMessagesToCurrentConversation([
+      ...(thinkingTraceMessage ? [thinkingTraceMessage] : []),
+      {
+        role: 'ai',
+        type: 'agent_response',
+        content: selectedCandidate?.result?.text || judgeDecision?.summary || '',
+        payload: buildCompetitivePayload({
+          winner: selectedCandidate,
+          alternative: alternativeCandidate,
+          judgeDecision,
+          answerContract,
+          strategy,
+          candidates: candidatePool,
+        }),
+        timestamp: new Date().toISOString(),
+      },
+    ]);
+
+    return selectedCandidate?.result || null;
+  }, [appendAgentThinkingNote, appendMessagesToCurrentConversation, appendThinkingStep, buildTaskInputData, buildThinkingTraceMessage, clearThinkingSteps, getDatasetProfileId, systemPrompt, user?.id]);
 
   // ── Blueprint Execution Handlers ────────────────────────────────────────
   const handleRunBlueprintModule = useCallback(async (module) => {
@@ -1930,7 +2464,6 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
         timestamp: new Date().toISOString()
       }]);
       // Optional: stream insight for single run
-      // streamAnalysisInsightToChat(result, module.title, updatedMessages);
     } catch (err) {
       console.error('Blueprint module execution failed:', err);
       appendMessagesToCurrentConversation([{
@@ -1963,8 +2496,18 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
     const overrideMessage = typeof eOrMessage === 'string' ? eOrMessage : null;
     const visibleInput = String(overrideMessage || input || '');
     const trimmedVisibleInput = visibleInput.trim();
+    const thinkingDirective = parseManualThinkingDirective(trimmedVisibleInput);
+    const effectiveVisibleInput = thinkingDirective.cleanedMessage || '';
     const attachmentsToSend = overrideMessage ? [] : pendingAttachments;
-    if ((!trimmedVisibleInput && attachmentsToSend.length === 0) || !currentConversationId) return;
+    if ((thinkingDirective.isDirective && !effectiveVisibleInput && attachmentsToSend.length === 0)) {
+      appendMessagesToCurrentConversation([{
+        role: 'ai',
+        content: 'Usage: `/think <question>` for full thinking, or `/think light <question>` for lightweight thinking.',
+        timestamp: new Date().toISOString(),
+      }]);
+      return;
+    }
+    if ((!effectiveVisibleInput && attachmentsToSend.length === 0) || !currentConversationId) return;
 
     setIsTyping(true);
     setStreamingContent('');
@@ -1974,7 +2517,7 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
       const attachmentFallbackText = attachmentsToSend.length > 0
         ? 'Please inspect the attached files and use them as context for this request.'
         : '';
-      const messageText = trimmedVisibleInput || attachmentFallbackText;
+      const messageText = effectiveVisibleInput || attachmentFallbackText;
 
       let runtimeDatasetContext = activeDatasetContext;
       let resolvedAttachments = [];
@@ -1988,7 +2531,7 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
 
       const userMessage = {
         role: 'user',
-        content: trimmedVisibleInput,
+        content: effectiveVisibleInput,
         attachments: resolvedAttachments.length > 0 ? resolvedAttachments : undefined,
         timestamp: new Date().toISOString(),
       };
@@ -2006,10 +2549,12 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
           : conversation
       ));
 
-      const trimmed = String(trimmedVisibleInput || '').trim();
+      const trimmed = String(effectiveVisibleInput || '').trim();
     const lower = trimmed.toLowerCase();
     const command = lower.split(/\s+/)[0];
     const messageTextWithAttachments = buildMessageWithAttachmentContext(messageText, resolvedAttachments);
+    const effectiveThinkingMode = thinkingDirective.isDirective ? thinkingDirective.mode : currentConversationThinkingMode;
+    const forceFullThinking = effectiveThinkingMode === 'full';
 
     // ── Feature gate for slash commands ──────────────────────────────────
     if (command.startsWith('/') && !isCommandEnabled(command)) {
@@ -2107,105 +2652,25 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
       setIsTyping(false); setStreamingContent(''); return;
     }
 
-    // ── /analyze [type] — Run Olist data analysis directly ──
+    // ── /analyze [query] — Route to Python analysis engine ──
     if (lower.startsWith('/analyze') || lower.startsWith('/analysis') || lower.startsWith('/query')) {
-      const subCmd = trimmed.split(/\s+/).slice(1).join(' ').trim().toLowerCase();
-      const ANALYSIS_MAP = {
-        revenue: analyzeRevenueTrend,
-        sales: analyzeRevenueTrend,
-        rfm: analyzeCustomerRFM,
-        customer: analyzeCustomerRFM,
-        delivery: analyzeDeliveryPerformance,
-        logistics: analyzeDeliveryPerformance,
-        seller: analyzeSellerScorecard,
-        vendor: analyzeSellerScorecard,
-        category: analyzeCategoryInsights,
-        product: analyzeCategoryInsights,
-        satisfaction: analyzeCustomerSatisfaction,
-        review: analyzeCustomerSatisfaction,
-        payment: analyzePaymentBehavior,
-      };
-
-      try {
-        if (subCmd === 'all') {
-          // Run all 7 analyses
-          appendMessagesToCurrentConversation([{ role: 'ai', content: 'Running all 7 Olist analyses...', timestamp: new Date().toISOString() }]);
-          const allFns = [analyzeRevenueTrend, analyzeCustomerRFM, analyzeDeliveryPerformance, analyzeSellerScorecard, analyzeCategoryInsights, analyzeCustomerSatisfaction, analyzePaymentBehavior];
-          for (const fn of allFns) {
-            try {
-              const result = await fn();
-              appendMessagesToCurrentConversation([{ role: 'ai', type: 'analysis_result_card', payload: result, timestamp: new Date().toISOString() }]);
-            } catch (err) {
-              appendMessagesToCurrentConversation([{ role: 'ai', content: `Analysis failed: ${err?.message}`, timestamp: new Date().toISOString() }]);
-            }
-          }
-        } else if (ANALYSIS_MAP[subCmd]) {
-          const result = await ANALYSIS_MAP[subCmd]();
-          appendMessagesToCurrentConversation([{ role: 'ai', type: 'analysis_result_card', payload: result, timestamp: new Date().toISOString() }]);
-          await streamAnalysisInsightToChat(result, subCmd, updatedMessages);
-        } else if (subCmd) {
-          // Try NL → structured analysis or SQL query, then fall back to agent loop
-          const analysisResult = await detectAndRunAnalysis(subCmd);
-          if (analysisResult) {
-            appendMessagesToCurrentConversation([{ role: 'ai', type: 'analysis_result_card', payload: analysisResult, timestamp: new Date().toISOString() }]);
-            await streamAnalysisInsightToChat(analysisResult, subCmd, updatedMessages);
-          } else {
-            const queryResult = await handleDataQuery(subCmd);
-            if (queryResult) {
-              appendMessagesToCurrentConversation([{ role: 'ai', type: 'sql_query_result', payload: queryResult, timestamp: new Date().toISOString() }]);
-            } else {
-              // No keyword match — route through agent loop for LLM-driven analysis
-              appendMessagesToCurrentConversation([{ role: 'ai', content: `Analyzing: "${subCmd}" via AI agent...`, timestamp: new Date().toISOString() }]);
-              try {
-                const datasetProfileId = getDatasetProfileId(runtimeDatasetContext);
-                let datasetProfileRow = null;
-                if (datasetProfileId) {
-                  try { datasetProfileRow = await datasetProfilesService.getById(datasetProfileId); } catch { /* ok */ }
-                }
-                const agentResult = await runAgentLoop({
-                  message: `Run data analysis: ${subCmd}. Use the available analyze_* tools (analyze_revenue, analyze_rfm, analyze_delivery, analyze_seller, analyze_category, analyze_satisfaction, analyze_payment) or query_sap_data as needed. Provide a clear summary of findings.`,
-                  conversationHistory: updatedMessages.slice(-6),
-                  systemPrompt,
-                  toolContext: { userId: user?.id, datasetProfileRow, datasetProfileId },
-                  callbacks: {
-                    onTextChunk: (chunk) => setStreamingContent((prev) => prev + chunk),
-                    onToolCall: ({ name }) => setStreamingContent((prev) => prev + `\n🔧 Running **${name}**...\n`),
-                    onToolResult: ({ name, success, error: err }) => {
-                      setStreamingContent((prev) => prev + (success ? `✅ **${name}** done\n` : `❌ **${name}** failed: ${err}\n`));
-                    },
-                  },
-                });
-                // Render analysis tool results as AnalysisResultCard, rest as agent_response
-                const toolCalls = agentResult.toolCalls || [];
-                const analysisCalls = toolCalls.filter((tc) => tc.name?.startsWith('analyze_') && tc.result?.success);
-                for (const tc of analysisCalls) {
-                  const payload = tc.result?.result;
-                  if (payload?.title || payload?.analysisType) {
-                    appendMessagesToCurrentConversation([{ role: 'ai', type: 'analysis_result_card', payload, timestamp: new Date().toISOString() }]);
-                  }
-                }
-                if (agentResult.text) {
-                  appendMessagesToCurrentConversation([{
-                    role: 'ai', type: 'agent_response', content: agentResult.text,
-                    payload: { toolCalls: toolCalls.filter((tc) => !analysisCalls.includes(tc)) },
-                    timestamp: new Date().toISOString(),
-                  }]);
-                }
-              } catch (agentErr) {
-                appendMessagesToCurrentConversation([{ role: 'ai', content: `Agent analysis failed: ${agentErr?.message || 'Unknown error'}`, timestamp: new Date().toISOString() }]);
-              }
-            }
-          }
-        } else {
-          // No subcommand — show help
-          appendMessagesToCurrentConversation([{
-            role: 'ai',
-            content: `**Available /analyze commands:**\n- \`/analyze revenue\` — Revenue & sales trend\n- \`/analyze rfm\` — Customer RFM segmentation\n- \`/analyze delivery\` — Delivery performance\n- \`/analyze seller\` — Seller scorecard\n- \`/analyze category\` — Category insights\n- \`/analyze satisfaction\` — Customer satisfaction\n- \`/analyze payment\` — Payment behavior\n- \`/analyze all\` — Run all 7 analyses\n- \`/query <question>\` — Natural language SQL query`,
-            timestamp: new Date().toISOString(),
-          }]);
+      const subCmd = trimmed.split(/\s+/).slice(1).join(' ').trim();
+      if (!subCmd) {
+        appendMessagesToCurrentConversation([{
+          role: 'ai',
+          content: '**Usage:** `/analyze <your question>`\n\nExample: `/analyze seller performance`, `/analyze revenue trend by category`',
+          timestamp: new Date().toISOString(),
+        }]);
+      } else {
+        try {
+          await runDirectAnalysisAgent({
+            query: subCmd,
+            history: updatedMessages,
+            runtimeDatasetContext,
+          });
+        } catch (analysisErr) {
+          appendMessagesToCurrentConversation([{ role: 'ai', content: `Analysis failed: ${analysisErr?.message || 'Unknown error'}`, timestamp: new Date().toISOString() }]);
         }
-      } catch (analysisErr) {
-        appendMessagesToCurrentConversation([{ role: 'ai', content: `Analysis failed: ${analysisErr?.message || 'Unknown error'}`, timestamp: new Date().toISOString() }]);
       }
       setIsTyping(false); setStreamingContent(''); return;
     }
@@ -2515,15 +2980,19 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
       setIsTyping(false); setStreamingContent(''); return;
     }
 
-    // 2. Check for Specific Analysis intent
-    const ANALYSIS_NL_RE = /\b(analy[sz]e|分析)\s+(revenue|sales|rfm|customer|deliver|logistics|seller|vendor|category|product|satisf|review|payment|營收|銷售|客戶|物流|配送|賣家|品類|滿意度|評分|付款)/i;
-    if (ANALYSIS_NL_RE.test(trimmed)) {
-      const analysisResult = await detectAndRunAnalysis(trimmed);
-      if (analysisResult) {
-        appendMessagesToCurrentConversation([{ role: 'ai', type: 'analysis_result_card', payload: analysisResult, timestamp: new Date().toISOString() }]);
-        await streamAnalysisInsightToChat(analysisResult, trimmed, updatedMessages);
-        setIsTyping(false); setStreamingContent(''); return;
-      }
+    const directAnalysisInputData = buildTaskInputData(runtimeDatasetContext, resolvedAttachments);
+    const hasUploadedAnalysisData = Boolean(
+      directAnalysisInputData.sheets && Object.keys(directAnalysisInputData.sheets).length > 0
+    );
+    const directAnalysis = resolveDirectAnalysisRequest(trimmed, { hasUploadedData: hasUploadedAnalysisData });
+    if (directAnalysis) {
+      await runDirectAnalysisAgent({
+        query: trimmed,
+        history: updatedMessages,
+        runtimeDatasetContext,
+        attachments: resolvedAttachments,
+      });
+      setIsTyping(false); setStreamingContent(''); return;
     }
 
     // ── AI Employee mode: task decomposition is the PRIMARY path ──────────
@@ -2560,9 +3029,15 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
                     content: 'Before I start, let me ask a few questions to make sure I deliver exactly what you need.',
                     timestamp: new Date().toISOString(),
                     _onSubmit: async (answers) => {
-                      const enrichedMessage = `${userMessage}\n\nUser preferences:\n${
-                        answers.map((a, i) => `- ${decomposition.clarification_questions[i]}: ${a || '(no preference)'}`).join('\n')
-                      }`;
+                      // Structured answers: [{ field, value, type, question }]
+                      const preferences = (Array.isArray(answers) ? answers : [])
+                        .filter(a => a.value && (Array.isArray(a.value) ? a.value.length > 0 : true))
+                        .map(a => {
+                          const val = Array.isArray(a.value) ? a.value.join(', ') : a.value;
+                          return `- ${a.question || a.field}: ${val}`;
+                        })
+                        .join('\n');
+                      const enrichedMessage = `${userMessage}\n\nUser preferences:\n${preferences || '(no preferences specified)'}\n[proceed without further clarification]`;
                       _runDecomposeAndExecute(enrichedMessage);
                     },
                     _onSkip: () => {
@@ -2576,6 +3051,7 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
                   role: 'ai', type: 'task_plan_card', payload: decomposition,
                   content: `I've broken this into ${decomposition.subtasks.length} step(s). Review and approve to let me start working.`,
                   timestamp: new Date().toISOString(),
+              _approveContext: { title: messageText.slice(0, 120), description: decomposition.original_instruction || messageText, source_type: 'chat' },
               _onApprove: async (approvedDecomp) => {
                 try {
                   // ── v2 Orchestrator path ──────────────────────────────────
@@ -2820,6 +3296,15 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
                 payload: decomposition,
                 content: `Task decomposed into ${decomposition.subtasks.length} step(s). Please review and approve.`,
                 timestamp: new Date().toISOString(),
+                _approveContext: {
+                  title: intakeWorkOrder?.title || effectiveMessage.slice(0, 120),
+                  description: decomposition.original_instruction || effectiveMessage,
+                  source_type: intakeWorkOrder?.source || 'chat',
+                  priority: intakeWorkOrder?.priority,
+                  due_at: intakeWorkOrder?.sla?.due_at,
+                  owner_hint: intakeWorkOrder?.owner_hint,
+                  dedup_key: intakeWorkOrder?.dedup_key,
+                },
                 _onApprove: async (approvedDecomp) => {
                   try {
                     const inputData = buildTaskInputData(runtimeDatasetContext, resolvedAttachments);
@@ -2895,7 +3380,6 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
           },
           appendMessage: (msg) => appendMessagesToCurrentConversation([msg]),
           onNoDataset: () => appendMessagesToCurrentConversation([{ role: 'ai', content: 'Please upload a dataset first. You can drag and drop a CSV or XLSX file into the chat.', timestamp: new Date().toISOString() }]),
-          streamAnalysisInsight: (analysisResult, userQuery) => streamAnalysisInsightToChat(analysisResult, userQuery, stagedMessages),
         };
 
         const result = await routeIntent(parsedIntent, sessionCtx.context, intentHandlers, { userId: user?.id, conversationId: currentConversationId, datasetProfileId: getDatasetProfileId(runtimeDatasetContext) });
@@ -2915,6 +3399,8 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
     let fullResult = '';
     let aiErrorPayload = null;
     let agentToolCalls = []; // track tool calls from agent loop
+    let agentPayload = null;
+    let completedThinkingTraceMessage = null;
 
     // --- "Still thinking" heartbeat: show dots every 12s if no chunks arrive ---
     let lastChunkAt = Date.now();
@@ -2930,58 +3416,381 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
     // Also use agent mode if recent conversation used tools (follow-up questions)
     const recentMessages = stagedMessages.slice(-5);
     const recentlyUsedTools = recentMessages.some((m) => m.type === 'agent_response');
-    const useAgent = shouldUseAgentMode(messageTextWithAttachments) || recentlyUsedTools;
+    const agentCandidateInputData = buildTaskInputData(runtimeDatasetContext, resolvedAttachments);
+    const thinkingPolicy = resolveChatThinkingPolicy(messageTextWithAttachments, {
+      hasRecentToolUse: recentlyUsedTools,
+      hasUploadedData: Boolean(
+        agentCandidateInputData?.sheets
+        && Object.keys(agentCandidateInputData.sheets).length > 0
+      ),
+      manualModeOverride: thinkingDirective.isDirective ? thinkingDirective.mode : currentConversationThinkingMode,
+    });
+    const useAgent = thinkingPolicy.mode === 'full';
 
     if (useAgent) {
       // ── Agent Loop: LLM can autonomously call DI tools ──
       chatAbortRef.current?.abort();
       chatAbortRef.current = new AbortController();
+      clearThinkingSteps();
       try {
         const datasetProfileId = getDatasetProfileId(runtimeDatasetContext);
         let datasetProfileRow = null;
         if (datasetProfileId) {
           try { datasetProfileRow = await datasetProfilesService.getById(datasetProfileId); } catch { /* ok */ }
         }
-
-        const agentResult = await runAgentLoop({
-          message: messageTextWithAttachments,
-          conversationHistory: history,
-          systemPrompt,
-          toolContext: {
-            userId: user?.id,
-            datasetProfileRow,
-            datasetProfileId,
-          },
-          callbacks: {
-            onTextChunk: (chunk) => {
-              lastChunkAt = Date.now();
-              setStreamingContent((prev) => prev + chunk);
-            },
-            onToolCall: ({ name, args }) => {
-              lastChunkAt = Date.now();
-              setStreamingContent((prev) => prev + `\n🔧 Calling tool: **${name}**...\n`);
-            },
-            onToolResult: ({ name, success, error }) => {
-              lastChunkAt = Date.now();
-              if (success) {
-                setStreamingContent((prev) => prev + `✅ **${name}** completed\n\n`);
-              } else {
-                setStreamingContent((prev) => prev + `❌ **${name}** failed: ${error}\n\n`);
-              }
-            },
-            onThinking: (msg) => {
-              lastChunkAt = Date.now();
-            },
-          },
-          signal: chatAbortRef.current.signal,
+        const answerContract = await resolveAgentAnswerContract({
+          userMessage: messageTextWithAttachments,
+          mode: 'default',
+        });
+        const toolContext = {
+          userId: user?.id,
+          datasetProfileRow,
+          datasetProfileId,
+          datasetInputData: buildTaskInputData(runtimeDatasetContext, resolvedAttachments),
+        };
+        const strategy = resolveAgentExecutionStrategy({
+          userMessage: messageTextWithAttachments,
+          answerContract,
+          mode: 'default',
+          hasAttachments: resolvedAttachments.length > 0,
         });
 
-        fullResult = agentResult.text || '';
-        agentToolCalls = agentResult.toolCalls || [];
+        const runAgentCandidatePass = async ({
+          candidateId,
+          label,
+          tone,
+          provider,
+          model,
+          agentMessage,
+          userMessage,
+          conversationHistory,
+          toolContext,
+          answerContract,
+          mode,
+          signal,
+          streamToUser = false,
+        }) => {
+          const agentMeta = {
+            agentKey: candidateId,
+            agentLabel: label,
+            agentTone: tone,
+            provider,
+            model,
+          };
+
+          const result = await runAgentLoop({
+            message: agentMessage,
+            conversationHistory,
+            systemPrompt,
+            toolContext,
+            answerContract,
+            callbacks: {
+              onTextChunk: streamToUser ? (chunk) => {
+                lastChunkAt = Date.now();
+                setStreamingContent((prev) => prev + chunk);
+              } : undefined,
+              onToolCall: streamToUser ? ({ name }) => {
+                lastChunkAt = Date.now();
+                setStreamingContent((prev) => prev + `\n🔧 Calling tool: **${name}**...\n`);
+              } : undefined,
+              onToolResult: streamToUser ? ({ name, success, error }) => {
+                lastChunkAt = Date.now();
+                if (success) {
+                  setStreamingContent((prev) => prev + `✅ **${name}** completed\n\n`);
+                } else {
+                  setStreamingContent((prev) => prev + `❌ **${name}** failed: ${error}\n\n`);
+                }
+              } : undefined,
+              onThinking: (data) => {
+                lastChunkAt = Date.now();
+                appendThinkingStep({ ...data, ...agentMeta });
+              },
+            },
+            signal,
+            mode,
+            agentProvider: provider,
+            agentModel: model,
+          });
+
+          const presentation = await buildAgentPresentationPayload({
+            userMessage,
+            toolCalls: result.toolCalls || [],
+            finalAnswerText: result.text || '',
+            mode,
+            answerContract,
+            forceCrossReview: strategy.mustJudge,
+          });
+
+          appendAgentThinkingNote(
+            { ...agentMeta, status: 'completed' },
+            presentation?.brief?.summary || presentation?.brief?.headline || result.text || `${label} completed.`,
+          );
+
+          return {
+            candidateId,
+            label,
+            tone,
+            provider: result?.provider || provider,
+            model: result?.model || model,
+            result,
+            presentation,
+          };
+        };
+
+        const runSettledCandidatePass = async (config) => {
+          const startedAt = new Date().toISOString();
+          const startedMs = Date.now();
+          const candidateController = createLinkedAbortController(chatAbortRef.current?.signal);
+
+          try {
+            const candidate = await runAgentCandidatePass({
+              ...config,
+              signal: candidateController.signal,
+            });
+            const finishedAt = new Date().toISOString();
+            return {
+              ...candidate,
+              status: 'completed',
+              startedAt,
+              finishedAt,
+              durationMs: Date.now() - startedMs,
+              failedReason: null,
+            };
+          } catch (error) {
+            const finishedAt = new Date().toISOString();
+            const status = resolveCandidateFailureStatus(error);
+            const failedReason = getErrorMessage(error);
+            const failureCandidate = buildFailedCandidate({
+              candidateId: config.candidateId,
+              label: config.label,
+              tone: config.tone,
+              provider: config.provider,
+              model: config.model,
+              status,
+              failedReason,
+              startedAt,
+              finishedAt,
+              durationMs: Date.now() - startedMs,
+            });
+
+            appendAgentThinkingNote({
+              agentKey: config.candidateId,
+              agentLabel: config.label,
+              agentTone: config.tone,
+              provider: config.provider,
+              model: config.model,
+              status,
+            }, failureCandidate.failedReason);
+
+            return failureCandidate;
+          }
+        };
+
+        const buildCompetitivePayload = ({ winner = null, alternative = null, judgeDecision = null, candidates = [] }) => {
+          const payloadCandidates = candidates.length > 0 ? candidates : [winner, alternative].filter(Boolean);
+          const winnerTrace = winner?.presentation?.trace || null;
+          return {
+            toolCalls: winner?.result?.toolCalls || [],
+            brief: winner?.presentation?.brief || null,
+            trace: winnerTrace || buildBlockedTrace(payloadCandidates),
+            answerContract: winner?.presentation?.answerContract || answerContract || null,
+            review: winner?.presentation?.review || null,
+            qa: winner?.presentation?.qa || buildBlockedAgentQa(payloadCandidates),
+            candidates: payloadCandidates.map((candidate) => ({
+              candidateId: candidate.candidateId,
+              label: candidate.label,
+              provider: candidate.provider,
+              model: candidate.model,
+              tone: candidate.tone,
+              status: candidate.status || 'completed',
+              startedAt: candidate.startedAt || null,
+              finishedAt: candidate.finishedAt || null,
+              durationMs: Number.isFinite(candidate.durationMs) ? candidate.durationMs : null,
+              failedReason: candidate.failedReason || null,
+              brief: candidate.presentation?.brief || null,
+              trace: candidate.presentation?.trace || null,
+              qa: candidate.presentation?.qa || null,
+            })),
+            judgeDecision: judgeDecision ? {
+              ...judgeDecision,
+              winnerLabel: winner?.label || '',
+              winnerProvider: winner?.provider || '',
+              winnerModel: winner?.model || '',
+              triggerReasons: strategy?.triggerReasons || [],
+            } : null,
+            orchestration: {
+              mode: strategy?.dualGenerate ? 'parallel_dual' : 'single',
+              triggerReasons: strategy?.triggerReasons || [],
+              candidates: payloadCandidates.map(buildOrchestrationCandidateMeta).filter(Boolean),
+            },
+          };
+        };
+
+        let selectedCandidate;
+        let alternativeCandidate = null;
+        let judgeDecision = null;
+        let candidatePool = [];
+
+        if (strategy.dualGenerate) {
+          lastChunkAt = Date.now();
+          setStreamingContent('🧠 Running primary agent...\n🧪 Running challenger agent...\n');
+          const primaryConfig = {
+            candidateId: 'primary',
+            label: 'Primary Agent',
+            tone: 'primary',
+            provider: PRIMARY_AGENT_PROVIDER,
+            model: PRIMARY_AGENT_MODEL,
+            agentMessage: messageTextWithAttachments,
+            userMessage: messageTextWithAttachments,
+            conversationHistory: history,
+            toolContext,
+            answerContract,
+            mode: 'default',
+          };
+          const secondaryConfig = {
+            candidateId: 'secondary',
+            label: 'Challenger Agent',
+            tone: 'secondary',
+            provider: SECONDARY_AGENT_PROVIDER,
+            model: SECONDARY_AGENT_MODEL,
+            agentMessage: `${messageTextWithAttachments}\n\nProvide an independently reasoned alternative answer. Do not mirror another agent.`,
+            userMessage: messageTextWithAttachments,
+            conversationHistory: history,
+            toolContext,
+            answerContract,
+            mode: 'default',
+          };
+          const [primarySettled, secondarySettled] = await Promise.allSettled([
+            runSettledCandidatePass(primaryConfig),
+            runSettledCandidatePass(secondaryConfig),
+          ]);
+          const primaryCandidate = primarySettled.status === 'fulfilled'
+            ? primarySettled.value
+            : buildFailedCandidate({
+              candidateId: primaryConfig.candidateId,
+              label: primaryConfig.label,
+              tone: primaryConfig.tone,
+              provider: primaryConfig.provider,
+              model: primaryConfig.model,
+              status: resolveCandidateFailureStatus(primarySettled.reason),
+              failedReason: getErrorMessage(primarySettled.reason),
+              startedAt: null,
+              finishedAt: new Date().toISOString(),
+              durationMs: null,
+            });
+          const secondaryCandidate = secondarySettled.status === 'fulfilled'
+            ? secondarySettled.value
+            : buildFailedCandidate({
+              candidateId: secondaryConfig.candidateId,
+              label: secondaryConfig.label,
+              tone: secondaryConfig.tone,
+              provider: secondaryConfig.provider,
+              model: secondaryConfig.model,
+              status: resolveCandidateFailureStatus(secondarySettled.reason),
+              failedReason: getErrorMessage(secondarySettled.reason),
+              startedAt: null,
+              finishedAt: new Date().toISOString(),
+              durationMs: null,
+            });
+          const settledCandidates = [primaryCandidate, secondaryCandidate];
+          candidatePool = settledCandidates;
+
+          lastChunkAt = Date.now();
+          setStreamingContent((prev) => `${prev}\n${primaryCandidate.status === 'completed' ? '✅' : '❌'} Primary agent ${primaryCandidate.status === 'completed' ? 'completed' : primaryCandidate.status === 'timed_out' ? 'timed out' : 'failed'}\n${secondaryCandidate.status === 'completed' ? '✅' : '❌'} Challenger agent ${secondaryCandidate.status === 'completed' ? 'completed' : secondaryCandidate.status === 'timed_out' ? 'timed out' : 'failed'}\n`);
+
+          const completedCandidates = settledCandidates.filter((candidate) => candidate.status === 'completed');
+
+          if (completedCandidates.length > 0) {
+            lastChunkAt = Date.now();
+            setStreamingContent((prev) => prev + '\n⚖️ Running judge...\n');
+            judgeDecision = await judgeAgentCandidates({
+              userMessage: messageTextWithAttachments,
+              answerContract,
+              primaryCandidate,
+              secondaryCandidate,
+            });
+
+            appendAgentThinkingNote({
+              agentKey: 'judge',
+              agentLabel: 'Judge',
+              agentTone: 'judge',
+              provider: judgeDecision?.reviewer?.provider || '',
+              model: judgeDecision?.reviewer?.model || '',
+              status: 'completed',
+            }, [judgeDecision?.summary, ...(judgeDecision?.rationale || [])].filter(Boolean).join('\n'));
+
+            const judgedWinner = settledCandidates.find((candidate) =>
+              candidate?.candidateId === judgeDecision?.winnerCandidateId && candidate?.status === 'completed'
+            );
+            selectedCandidate = judgedWinner || completedCandidates[0];
+            alternativeCandidate = settledCandidates.find((candidate) => candidate?.candidateId !== selectedCandidate?.candidateId) || null;
+          } else {
+            judgeDecision = {
+              winnerCandidateId: null,
+              summary: 'Both candidate runs failed before producing a valid answer.',
+              rationale: settledCandidates.map((candidate) => `${candidate.label}: ${candidate.failedReason || 'Unknown error'}`),
+              loserIssues: [],
+              confidence: 0,
+              reviewer: {
+                provider: 'orchestrator',
+                model: 'parallel_dual',
+              },
+              degraded: true,
+            };
+            appendAgentThinkingNote({
+              agentKey: 'judge',
+              agentLabel: 'Judge',
+              agentTone: 'judge',
+              provider: 'orchestrator',
+              model: 'parallel_dual',
+              status: 'failed',
+            }, judgeDecision.summary);
+            selectedCandidate = null;
+            alternativeCandidate = null;
+          }
+        } else {
+          const startedAt = new Date().toISOString();
+          const startedMs = Date.now();
+          selectedCandidate = await runAgentCandidatePass({
+            candidateId: 'primary',
+            label: 'Primary Agent',
+            tone: 'primary',
+            provider: PRIMARY_AGENT_PROVIDER,
+            model: PRIMARY_AGENT_MODEL,
+            agentMessage: messageTextWithAttachments,
+            userMessage: messageTextWithAttachments,
+            conversationHistory: history,
+            toolContext,
+            answerContract,
+            mode: 'default',
+            signal: chatAbortRef.current.signal,
+            streamToUser: true,
+          });
+          selectedCandidate = {
+            ...selectedCandidate,
+            status: 'completed',
+            startedAt,
+            finishedAt: new Date().toISOString(),
+            durationMs: Date.now() - startedMs,
+            failedReason: null,
+          };
+          candidatePool = [selectedCandidate];
+        }
+
+        fullResult = selectedCandidate?.result?.text || judgeDecision?.summary || '';
+        agentToolCalls = selectedCandidate?.result?.toolCalls || [];
+        agentPayload = buildCompetitivePayload({
+          winner: selectedCandidate,
+          alternative: alternativeCandidate,
+          judgeDecision,
+          candidates: candidatePool,
+        });
+        completedThinkingTraceMessage = buildThinkingTraceMessage();
+        clearThinkingSteps();
 
         // ── Auto-Tool-Creation: if agent detected a gap and generated a blueprint ──
-        if (agentResult.blueprint) {
-          const blueprint = agentResult.blueprint;
+        if (selectedCandidate?.result?.blueprint) {
+          const blueprint = selectedCandidate.result.blueprint;
           const originalMsg = messageTextWithAttachments;
 
           // Add a tool_blueprint_card message for user approval
@@ -3061,12 +3870,13 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
           setIsTyping(false);
           const stagedWithBlueprint = [
             ...stagedMessages,
+            ...(completedThinkingTraceMessage ? [completedThinkingTraceMessage] : []),
             // Include any partial agent text as a regular message
             ...(fullResult ? [{
               role: 'ai',
               type: 'agent_response',
               content: fullResult,
-              payload: { toolCalls: agentToolCalls },
+              payload: agentPayload || { toolCalls: agentToolCalls },
               timestamp: new Date().toISOString(),
             }] : []),
             blueprintMessage,
@@ -3086,9 +3896,20 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
         }
       } finally {
         clearInterval(thinkingInterval);
+        // Refresh accumulated insights after agent loop (insights may have been added)
+        import('../../services/dataInsightService.js')
+          .then(({ getInsights }) => { const all = getInsights(); if (all.length > 0) setDataInsights(all); })
+          .catch(() => {});
       }
     } else {
       // ── Plain chat: simple text-in, text-out ──
+      if (thinkingPolicy.mode === 'light') {
+        thinkingStepsRef.current = thinkingPolicy.steps || [];
+        setThinkingSteps(thinkingPolicy.steps || []);
+      } else {
+        clearThinkingSteps();
+      }
+
       const attemptChat = async (retryCount = 0) => {
         chatAbortRef.current?.abort();
         chatAbortRef.current = new AbortController();
@@ -3127,9 +3948,13 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
     const aiMessage = aiErrorPayload
       ? { role: 'ai', type: 'ai_error_card', payload: aiErrorPayload, timestamp: new Date().toISOString() }
       : agentToolCalls.length > 0
-        ? { role: 'ai', type: 'agent_response', content: fullResult, payload: { toolCalls: agentToolCalls }, timestamp: new Date().toISOString(), meta: { model: _llmMeta.model, provider: _llmMeta.provider } }
+        ? { role: 'ai', type: 'agent_response', content: fullResult, payload: agentPayload || { toolCalls: agentToolCalls }, timestamp: new Date().toISOString(), meta: { model: _llmMeta.model, provider: _llmMeta.provider } }
         : { role: 'ai', content: fullResult, timestamp: new Date().toISOString(), meta: { model: _llmMeta.model, provider: _llmMeta.provider } };
-    const finalMessages = [...stagedMessages, aiMessage];
+    if (!completedThinkingTraceMessage) {
+      completedThinkingTraceMessage = buildThinkingTraceMessage();
+    }
+    clearThinkingSteps();
+    const finalMessages = [...stagedMessages, ...(completedThinkingTraceMessage ? [completedThinkingTraceMessage] : []), aiMessage];
     const conversationTitleSeed = trimmedVisibleInput || resolvedAttachments[0]?.file_name || messageText;
     const newTitle = currentMessages.length <= 1 ? conversationTitleSeed.slice(0, 50) : currentConversation.title;
     const updatedConversation = { ...currentConversation, title: newTitle, messages: finalMessages, updated_at: new Date().toISOString() };
@@ -3144,7 +3969,7 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
       setIsTyping(false); setStreamingContent('');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [input, pendingAttachments, currentConversationId, currentMessages, currentConversation, systemPrompt, user?.id, activeDatasetContext, handleCanvasRun, appendMessagesToCurrentConversation, executeForecastFlow, executePlanFlow, executeWorkflowFlow, executeWorkflowAFlow, executeWorkflowBFlow, executeDigitalTwinFlow, handleRunTopology, topologyRunId, setConversations, setConversationDatasetContext, setLatestPlanRunId, getAssignedWorker, getDatasetProfileId, buildTaskInputData, buildMessageWithAttachmentContext, resolveAttachmentsForSend]);
+  }, [input, pendingAttachments, currentConversationId, currentMessages, currentConversation, systemPrompt, user?.id, activeDatasetContext, handleCanvasRun, appendMessagesToCurrentConversation, executeForecastFlow, executePlanFlow, executeWorkflowFlow, executeWorkflowAFlow, executeWorkflowBFlow, executeDigitalTwinFlow, handleRunTopology, topologyRunId, setConversations, setConversationDatasetContext, setLatestPlanRunId, getAssignedWorker, getDatasetProfileId, buildTaskInputData, buildMessageWithAttachmentContext, resolveAttachmentsForSend, runDirectAnalysisAgent, appendThinkingStep, buildThinkingTraceMessage, clearThinkingSteps, currentConversationThinkingMode]);
 
   const handleKeyDown = useCallback((e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(e); } }, [handleSend]);
 
@@ -3276,6 +4101,65 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
       handleRiskReplanDecision: planExec.handleRiskReplanDecision, handleConfigureApiKey,
       handleGenerateNegotiationOptions, handleApplyNegotiationOption, handleNegotiationAction, updateCanvasState, sessionCtx, batchApprove, batchReject,
       handleRunBlueprintModule, handleRunAllBlueprintModules,
+      handleTaskPlanApprove: async (approvedDecomp, message) => {
+        try {
+          const ctx = message?._approveContext || {};
+          const decomp = approvedDecomp || message?.payload;
+          if (!decomp?.subtasks?.length) {
+            addNotification?.('No task plan to approve.', 'error');
+            return;
+          }
+          const inputData = buildTaskInputData(activeDatasetContext, []);
+          const steps = (decomp.subtasks || []).map((s, i) => ({
+            name: s.name || s.step_name || `step_${i}`,
+            tool_hint: s.tool_hint || s.description || s.name,
+            tool_type: s.workflow_type || s.tool_type || 'python_tool',
+            builtin_tool_id: s.builtin_tool_id || null,
+            input_args: s.input_args || {},
+            review_checkpoint: s.review_checkpoint || false,
+          }));
+          const plan = {
+            title: ctx.title || decomp.original_instruction?.slice(0, 120) || 'Untitled task',
+            description: ctx.description || decomp.original_instruction || '',
+            steps,
+            inputData,
+            taskMeta: {
+              source_type: ctx.source_type || 'chat',
+              ...(ctx.priority && { priority: ctx.priority }),
+              ...(ctx.due_at && { due_at: ctx.due_at }),
+              ...(ctx.owner_hint && { owner_hint: ctx.owner_hint }),
+              ...(ctx.dedup_key && { dedup_key: ctx.dedup_key }),
+            },
+            llmConfig: { provider: 'anthropic', model: 'claude-sonnet-4-6', temperature: 0.15, max_tokens: 4096 },
+          };
+          const assignedWorker = await getAssignedWorker();
+          if (!assignedWorker?.id) throw new Error('No digital worker is available for this task.');
+          const { taskId } = await submitPlan(plan, assignedWorker.id, user?.id);
+          setAgentExecEvents([]);
+          agentExecEventsRef.current = [];
+          setAgentExecTaskTitle((ctx.title || '').slice(0, 80));
+          setAgentExecPanelOpen(true);
+          setAgentExecSSETaskId(taskId);
+          const initLoopSteps = steps.map((s, i) => ({
+            name: s.name, index: i, status: 'pending',
+            workflow_type: s.tool_type, retry_count: 0,
+          }));
+          setAgentExecLoopState({ steps: initLoopSteps, started_at: new Date().toISOString() });
+          appendMessagesToCurrentConversation([{
+            role: 'ai',
+            content: `Task created. Executing ${steps.length} steps via orchestrator...`,
+            timestamp: new Date().toISOString(),
+          }]);
+          await orchestratorApprovePlan(taskId, user?.id);
+        } catch (execErr) {
+          console.error('[DSV] Task plan approve from cache failed:', execErr);
+          appendMessagesToCurrentConversation([{
+            role: 'ai',
+            content: `Task execution failed: ${execErr?.message || 'Unknown error'}`,
+            timestamp: new Date().toISOString(),
+          }]);
+        }
+      },
       handleSaveToToolLibrary: (tool) => {
         addNotification?.(`Tool "${tool?.name || tool?.id || 'unknown'}" saved to library.`, 'success');
       },
@@ -3483,6 +4367,7 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
               messages={currentMessages}
               isTyping={isTyping}
               streamingContent={streamingContent}
+              thinkingSteps={thinkingSteps}
               formatTime={formatTime}
               renderSpecialMessage={renderSpecialMessage}
               quickPrompts={AI_EMPLOYEE_QUICK_PROMPTS}
@@ -3537,6 +4422,8 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
               pendingAttachments={pendingAttachments}
               onRemoveAttachment={handleRemovePendingAttachment}
               status={aiEmployeeComposerStatus}
+              thinkingEnabled={isThinkingToggleEnabled}
+              onToggleThinkingEnabled={handleToggleThinkingEnabled}
               variant="ai_employee"
             />
           ) : null}
@@ -3583,6 +4470,7 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
                     messages={currentMessages}
                     isTyping={isTyping}
                     streamingContent={streamingContent}
+              thinkingSteps={thinkingSteps}
                     formatTime={formatTime}
                     renderSpecialMessage={renderSpecialMessage}
                     quickPrompts={QUICK_PROMPTS}
@@ -3610,7 +4498,9 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
                     onDrop={handleDropUpload}
                     pendingAttachments={pendingAttachments}
                     onRemoveAttachment={handleRemovePendingAttachment}
-                  />
+                    thinkingEnabled={isThinkingToggleEnabled}
+                    onToggleThinkingEnabled={handleToggleThinkingEnabled}
+                        />
                 </>
               ) : (
                 <div className="h-full flex items-center justify-center text-slate-500 text-sm">

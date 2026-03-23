@@ -42,6 +42,26 @@ vi.mock('../services/supabaseClient', () => ({
   },
 }));
 
+// DuckDB-WASM mock — prevent WASM loading in Node test environment
+vi.mock('@duckdb/duckdb-wasm', () => {
+  const mockConn = {
+    query: vi.fn().mockResolvedValue({ toArray: () => [] }),
+    close: vi.fn(),
+  };
+  const mockDb = {
+    instantiate: vi.fn(),
+    connect: vi.fn().mockResolvedValue(mockConn),
+    registerFileText: vi.fn(),
+    terminate: vi.fn(),
+  };
+  return {
+    getJsDelivrBundles: vi.fn(() => ({})),
+    selectBundle: vi.fn().mockResolvedValue({ mainModule: '', mainWorker: '', pthreadWorker: null }),
+    AsyncDuckDB: vi.fn(() => mockDb),
+    ConsoleLogger: vi.fn(),
+  };
+});
+
 // i18n mock — prevent actual i18next init in tests
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({ t: (key) => key, i18n: { changeLanguage: vi.fn() } }),

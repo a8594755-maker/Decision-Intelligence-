@@ -3,6 +3,7 @@ import ChatMessageBubble from './ChatMessageBubble';
 import EmptyChatState from './EmptyChatState';
 import TypingIndicator from './TypingIndicator';
 import JumpToLatestButton from './JumpToLatestButton';
+import ThinkingStepsDisplay from './ThinkingStepsDisplay';
 
 function ChatSkeleton() {
   return (
@@ -20,6 +21,7 @@ function ChatThread({
   messages,
   isTyping,
   streamingContent,
+  thinkingSteps,
   formatTime,
   renderSpecialMessage,
   quickPrompts,
@@ -55,7 +57,7 @@ function ChatThread({
     const el = scrollRef.current;
     if (!el || !isPinnedToBottom) return;
     el.scrollTop = el.scrollHeight;
-  }, [messages, streamingContent, isTyping, isPinnedToBottom]);
+  }, [messages, streamingContent, thinkingSteps, isTyping, isPinnedToBottom]);
 
   const typingMessage = useMemo(() => {
     if (!isTyping) return null;
@@ -89,6 +91,9 @@ function ChatThread({
                 variant={variant}
               />
             ))}
+            {thinkingSteps?.length > 0 && isTyping && (
+              <ThinkingStepsDisplay steps={thinkingSteps} />
+            )}
             {isTyping ? (
               <div className="w-full flex justify-start">
                 {typingMessage ? (

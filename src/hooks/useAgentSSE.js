@@ -76,9 +76,11 @@ export default function useAgentSSE(taskId, options = {}) {
 
   const handleEvent = useCallback((eventType, data) => {
     // Map SSE event to the stepEvent shape used by AgentExecutionPanel
+    // Orchestrator _publishSSE uses camelCase (stepName, stepIndex);
+    // normalize to snake_case for consistency with EventBus shape.
     const stepEvent = {
-      step_name: data.step_name,
-      step_index: data.step_index,
+      step_name: data.step_name || data.stepName,
+      step_index: data.step_index ?? data.stepIndex,
       status: data.status || _eventTypeToStatus(eventType),
       summary: data.summary || '',
       error: data.error || null,

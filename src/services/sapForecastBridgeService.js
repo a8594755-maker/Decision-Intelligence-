@@ -14,7 +14,7 @@
  *   demand_qty     — numeric demand value
  *
  * Flow:
- *   1. Execute user-provided SQL via AlaSQL → demand_fg rows
+ *   1. Execute user-provided SQL via DuckDB → demand_fg rows
  *   2. Build synthetic datasetProfileRow with _inlineRawRows
  *   3. Call runForecastFromDatasetProfile()
  *   4. Optionally run a second SQL for actuals and compare

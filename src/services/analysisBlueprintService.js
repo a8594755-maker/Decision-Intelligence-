@@ -13,29 +13,6 @@
 import { getSchema, executeQuery } from './sapDataQueryService.js';
 import { invokeAiProxy } from './aiProxyService.js';
 import { extractAiJson } from '../utils/aiMappingHelper.js';
-import * as olistAnalysis from './olistAnalysisService.js';
-
-// ── Builtin Analysis Registry ────────────────────────────────────────────────
-
-const BUILTIN_REGISTRY = {
-  'revenue': olistAnalysis.analyzeRevenueTrend,
-  'rfm': olistAnalysis.analyzeCustomerRFM,
-  'delivery': olistAnalysis.analyzeDeliveryPerformance,
-  'seller': olistAnalysis.analyzeSellerScorecard,
-  'category': olistAnalysis.analyzeCategoryInsights,
-  'satisfaction': olistAnalysis.analyzeCustomerSatisfaction,
-  'payment': olistAnalysis.analyzePaymentBehavior,
-};
-
-const BUILTIN_DESCRIPTIONS = [
-  { id: 'revenue',      desc: 'Revenue & sales trends, AOV, growth rates — requires: orders, order_items' },
-  { id: 'rfm',          desc: 'Customer RFM segmentation — requires: orders, customers' },
-  { id: 'delivery',     desc: 'Delivery performance, on-time rates — requires: orders' },
-  { id: 'seller',       desc: 'Seller/vendor scorecard — requires: orders, order_items, sellers' },
-  { id: 'category',     desc: 'Product category insights, Pareto — requires: order_items, products' },
-  { id: 'satisfaction',  desc: 'Customer satisfaction, reviews — requires: orders, reviews' },
-  { id: 'payment',      desc: 'Payment method distribution — requires: orders, payments' },
-];
 
 // ── Schema Description Builder ───────────────────────────────────────────────
 
@@ -76,11 +53,6 @@ async function buildSchemaDescription(datasetProfile) {
   return { schema: [], source: 'empty' };
 }
 
-function detectOlistTables(schema) {
-  const names = schema.map(t => (t.table || '').toLowerCase());
-  return names.includes('orders') && names.includes('order_items') && names.includes('customers');
-}
-
 // ── Generate Blueprint (always AI-driven, no hardcoded fallback) ─────────────
 
 export async function generateAnalysisBlueprint({ datasetProfile } = {}) {
@@ -90,12 +62,8 @@ export async function generateAnalysisBlueprint({ datasetProfile } = {}) {
     throw new Error('No data schema available. Please upload a dataset first or ensure data tables are loaded.');
   }
 
-  const hasOlist = detectOlistTables(schema);
-
-  // Build the builtin block — only offer builtins when we detect compatible tables
-  const builtinBlock = hasOlist
-    ? `\nIMPORTANT: We have 7 pre-built analysis engines you SHOULD use when appropriate:\n${BUILTIN_DESCRIPTIONS.map(b => `- "${b.id}": ${b.desc}`).join('\n')}\nFor these, use: "execution": { "type": "builtin", "function_id": "<id>" }\nYou can ALSO add additional SQL-based modules beyond these 7 to provide deeper, more creative analyses.\n`
-    : '\nNo pre-built analysis engines available for this dataset. Design ALL modules as SQL-based.\n';
+  // All modules are SQL-based — no hardcoded builtin analysis engines
+  const builtinBlock = '\nDesign ALL modules as SQL-based.\n';
 
   const prompt = `You are a world-class Data Analyst. You have been given a dataset's schema below.
 Your task: EXAMINE the schema carefully, THINK about what business questions this data can answer,
@@ -189,15 +157,7 @@ export async function executeModule(module) {
 
   const { type } = module.execution;
 
-  // A. Builtin Execution
-  if (type === 'builtin') {
-    const fnId = module.execution.function_id;
-    const fn = BUILTIN_REGISTRY[fnId];
-    if (!fn) throw new Error(`Unknown builtin function: ${fnId}`);
-    return await fn();
-  }
-
-  // B. SQL Execution
+  // SQL Execution
   if (type === 'sql') {
     const query = module.execution.query;
     if (!query) throw new Error('Missing SQL query');

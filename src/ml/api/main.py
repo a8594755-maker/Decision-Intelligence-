@@ -234,6 +234,18 @@ async def dataset_schema():
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
+
+@app.get("/data-profile")
+async def data_profile(dataset: str = "olist"):
+    """Return comprehensive data profile with distributions, relationships, and semantics."""
+    try:
+        from ml.api.dataset_loader import generate_data_profile
+        profile = generate_data_profile()
+        return {"ok": True, "dataset": dataset, **profile}
+    except Exception as e:
+        logger.error("[data-profile] %s", e)
+        return {"ok": False, "error": str(e)}
+
 # Agent SSE — real-time step progress streaming
 from ml.api.agent_sse_router import agent_sse_router
 app.include_router(agent_sse_router)
@@ -245,6 +257,10 @@ app.include_router(agent_loop_router)
 # Synthetic ERP Sandbox endpoints
 from ml.synthetic_erp.synthetic_router import router as synthetic_router
 app.include_router(synthetic_router)
+
+# MCP intake — bridge between OpenClaw MCP server and DI orchestrator
+from ml.api.mcp_intake_router import router as mcp_intake_router
+app.include_router(mcp_intake_router)
 
 # Health endpoints (liveness + readiness probes)
 from ml.api.observability import health_router, request_id_middleware as _request_id_mw

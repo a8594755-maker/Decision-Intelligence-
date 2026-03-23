@@ -1,6 +1,6 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
-type ProxyMode = 'gemini_generate' | 'deepseek_chat' | 'deepseek_chat_tools' | 'ai_chat' | 'di_prompt' | 'anthropic_chat' | 'openai_chat' | 'openai_chat_tools';
+type ProxyMode = 'gemini_generate' | 'deepseek_chat' | 'deepseek_chat_tools' | 'ai_chat' | 'di_prompt' | 'anthropic_chat' | 'anthropic_chat_tools' | 'anthropic_chat_tools_stream' | 'openai_chat' | 'openai_chat_tools' | 'openai_chat_tools_stream';
 
 interface ProxyRequestBody {
   mode?: ProxyMode;
@@ -654,6 +654,385 @@ const extractOpenAIText = (body: Record<string, unknown>): string => {
   return typeof message?.content === 'string' ? message.content : '';
 };
 
+const safeParseJsonObject = (value: unknown): Record<string, unknown> => {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  if (typeof value !== 'string') return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : {};
+  } catch {
+    return {};
+  }
+};
+
+const buildAnthropicToolsFromOpenAITools = (tools: unknown[]): Array<Record<string, unknown>> => (
+  (Array.isArray(tools) ? tools : [])
+    .map((entry) => {
+      const tool = entry as { type?: unknown; function?: Record<string, unknown> };
+      const fn = tool?.function || {};
+      const name = String(fn?.name || '').trim();
+      if (tool?.type !== 'function' || !name) return null;
+      const description = String(fn?.description || '').trim();
+      const inputSchema = fn?.parameters && typeof fn.parameters === 'object' && !Array.isArray(fn.parameters)
+        ? fn.parameters as Record<string, unknown>
+        : { type: 'object', properties: {} };
+      return {
+        name,
+        description,
+        input_schema: inputSchema,
+      };
+    })
+    .filter(Boolean) as Array<Record<string, unknown>>
+);
+
+const normalizeOpenAIMessageText = (content: unknown): string => {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => {
+        const row = part as Record<string, unknown>;
+        if (typeof row?.text === 'string') return row.text;
+        return '';
+      })
+      .filter(Boolean)
+      .join('');
+  }
+  return '';
+};
+
+const mergeAnthropicMessage = (
+  messages: Array<{ role: 'assistant' | 'user'; content: Array<Record<string, unknown>> }>,
+  role: 'assistant' | 'user',
+  content: Array<Record<string, unknown>>,
+) => {
+  if (!content.length) return;
+  const last = messages[messages.length - 1];
+  if (last && last.role === role) {
+    last.content.push(...content);
+    return;
+  }
+  messages.push({ role, content: [...content] });
+};
+
+const buildAnthropicMessagesFromOpenAIMessages = (rawMessages: unknown[]) => {
+  const systemParts: string[] = [];
+  const messages: Array<{ role: 'assistant' | 'user'; content: Array<Record<string, unknown>> }> = [];
+  let pendingToolResults: Array<Record<string, unknown>> = [];
+
+  const flushPendingToolResults = () => {
+    if (pendingToolResults.length === 0) return;
+    mergeAnthropicMessage(messages, 'user', pendingToolResults);
+    pendingToolResults = [];
+  };
+
+  for (const entry of Array.isArray(rawMessages) ? rawMessages : []) {
+    const row = entry as {
+      role?: unknown;
+      content?: unknown;
+      tool_calls?: Array<Record<string, unknown>>;
+      tool_call_id?: unknown;
+    };
+    const role = String(row?.role || '').trim().toLowerCase();
+
+    if (role === 'system') {
+      const text = normalizeOpenAIMessageText(row?.content).trim();
+      if (text) systemParts.push(text);
+      continue;
+    }
+
+    if (role === 'tool') {
+      const toolUseId = String(row?.tool_call_id || '').trim();
+      if (!toolUseId) continue;
+      pendingToolResults.push({
+        type: 'tool_result',
+        tool_use_id: toolUseId,
+        content: normalizeOpenAIMessageText(row?.content),
+      });
+      continue;
+    }
+
+    flushPendingToolResults();
+
+    if (role !== 'assistant' && role !== 'user' && role !== 'ai') continue;
+
+    const messageRole = normalizeChatRole(role);
+    const text = normalizeOpenAIMessageText(row?.content);
+    const contentBlocks: Array<Record<string, unknown>> = [];
+    if (text) {
+      contentBlocks.push({ type: 'text', text });
+    }
+
+    if (messageRole === 'assistant' && Array.isArray(row?.tool_calls)) {
+      row.tool_calls.forEach((toolCall, index) => {
+        const fn = (toolCall as { function?: Record<string, unknown> })?.function || {};
+        const toolName = String(fn?.name || '').trim();
+        if (!toolName) return;
+        const toolId = String((toolCall as { id?: unknown })?.id || `toolu_local_${index + 1}`).trim();
+        contentBlocks.push({
+          type: 'tool_use',
+          id: toolId,
+          name: toolName,
+          input: safeParseJsonObject(fn?.arguments),
+        });
+      });
+    }
+
+    mergeAnthropicMessage(messages, messageRole, contentBlocks);
+  }
+
+  flushPendingToolResults();
+
+  return {
+    system: systemParts.join('\n\n').trim(),
+    messages,
+  };
+};
+
+const convertAnthropicResponseToOpenAIFormat = ({
+  body,
+  model,
+}: {
+  body: Record<string, unknown>;
+  model: string;
+}) => {
+  const content = Array.isArray(body?.content) ? body.content as Array<Record<string, unknown>> : [];
+  const textContent = content
+    .filter((block) => block?.type === 'text')
+    .map((block) => String(block?.text || ''))
+    .join('');
+  const toolCalls = content
+    .filter((block) => block?.type === 'tool_use')
+    .map((block) => ({
+      id: String(block?.id || ''),
+      type: 'function',
+      function: {
+        name: String(block?.name || ''),
+        arguments: JSON.stringify((block?.input && typeof block.input === 'object' && !Array.isArray(block.input))
+          ? block.input
+          : {}),
+      },
+    }))
+    .filter((toolCall) => toolCall.id && toolCall.function.name);
+
+  const stopReason = String(body?.stop_reason || '').trim();
+  const finishReason = stopReason === 'tool_use'
+    ? 'tool_calls'
+    : stopReason === 'max_tokens'
+      ? 'length'
+      : 'stop';
+
+  const usage = body?.usage && typeof body.usage === 'object' ? body.usage as Record<string, unknown> : {};
+  const inputTokens = Number(usage?.input_tokens || 0);
+  const outputTokens = Number(usage?.output_tokens || 0);
+
+  return {
+    id: String(body?.id || ''),
+    object: 'chat.completion',
+    created: Math.floor(Date.now() / 1000),
+    model,
+    choices: [
+      {
+        index: 0,
+        message: {
+          role: 'assistant',
+          content: textContent || null,
+          ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
+        },
+        finish_reason: finishReason,
+      },
+    ],
+    usage: {
+      prompt_tokens: inputTokens,
+      completion_tokens: outputTokens,
+      total_tokens: inputTokens + outputTokens,
+    },
+  };
+};
+
+const createAnthropicOpenAICompatibleSseStream = (source: ReadableStream<Uint8Array>) => {
+  const encoder = new TextEncoder();
+  const decoder = new TextDecoder();
+
+  return new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const reader = source.getReader();
+      let buffer = '';
+      let inputTokens = 0;
+      let streamClosed = false;
+      const toolCallIndexes = new Map<number, number>();
+      let nextToolCallIndex = 0;
+
+      const enqueueJson = (payload: unknown) => {
+        if (streamClosed) return;
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`));
+      };
+
+      const enqueueDone = () => {
+        if (streamClosed) return;
+        streamClosed = true;
+        controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+        controller.close();
+      };
+
+      const processRawEvent = (rawEvent: string) => {
+        const trimmed = rawEvent.trim();
+        if (!trimmed) return;
+
+        const data = trimmed
+          .split('\n')
+          .filter((line) => line.startsWith('data:'))
+          .map((line) => line.slice(5).trimStart())
+          .join('\n');
+
+        if (!data) return;
+        if (data === '[DONE]') {
+          enqueueDone();
+          return;
+        }
+
+        let parsed: Record<string, unknown>;
+        try {
+          parsed = JSON.parse(data);
+        } catch {
+          return;
+        }
+
+        const type = String(parsed?.type || '');
+
+        if (type === 'message_start') {
+          inputTokens = Number((parsed?.message as Record<string, unknown> | undefined)?.usage && ((parsed.message as Record<string, unknown>).usage as Record<string, unknown>)?.input_tokens || 0);
+          return;
+        }
+
+        if (type === 'content_block_start') {
+          const block = parsed?.content_block as Record<string, unknown> | undefined;
+          const blockType = String(block?.type || '');
+          if (blockType === 'tool_use' || blockType === 'server_tool_use') {
+            const contentIndex = Number(parsed?.index || 0);
+            const toolCallIndex = nextToolCallIndex++;
+            toolCallIndexes.set(contentIndex, toolCallIndex);
+            enqueueJson({
+              choices: [{
+                delta: {
+                  tool_calls: [{
+                    index: toolCallIndex,
+                    id: String(block?.id || ''),
+                    type: 'function',
+                    function: {
+                      name: String(block?.name || ''),
+                      arguments: '',
+                    },
+                  }],
+                },
+              }],
+            });
+          }
+          return;
+        }
+
+        if (type === 'content_block_delta') {
+          const delta = parsed?.delta as Record<string, unknown> | undefined;
+          const deltaType = String(delta?.type || '');
+
+          if (deltaType === 'text_delta') {
+            const text = String(delta?.text || '');
+            if (!text) return;
+            enqueueJson({
+              choices: [{
+                delta: {
+                  content: text,
+                },
+              }],
+            });
+            return;
+          }
+
+          if (deltaType === 'input_json_delta') {
+            const contentIndex = Number(parsed?.index || 0);
+            let toolCallIndex = toolCallIndexes.get(contentIndex);
+            if (toolCallIndex == null) {
+              toolCallIndex = nextToolCallIndex++;
+              toolCallIndexes.set(contentIndex, toolCallIndex);
+            }
+            enqueueJson({
+              choices: [{
+                delta: {
+                  tool_calls: [{
+                    index: toolCallIndex,
+                    function: {
+                      arguments: String(delta?.partial_json || ''),
+                    },
+                  }],
+                },
+              }],
+            });
+          }
+          return;
+        }
+
+        if (type === 'message_delta') {
+          const usage = parsed?.usage as Record<string, unknown> | undefined;
+          const outputTokens = Number(usage?.output_tokens || 0);
+          enqueueJson({
+            usage: {
+              prompt_tokens: inputTokens,
+              completion_tokens: outputTokens,
+              total_tokens: inputTokens + outputTokens,
+            },
+          });
+          return;
+        }
+
+        if (type === 'message_stop') {
+          enqueueDone();
+          return;
+        }
+
+        if (type === 'error') {
+          enqueueJson({ error: parsed?.error || parsed });
+          enqueueDone();
+        }
+      };
+
+      try {
+        while (!streamClosed) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+
+          let boundary = buffer.indexOf('\n\n');
+          while (boundary !== -1) {
+            const rawEvent = buffer.slice(0, boundary);
+            buffer = buffer.slice(boundary + 2);
+            processRawEvent(rawEvent);
+            if (streamClosed) break;
+            boundary = buffer.indexOf('\n\n');
+          }
+        }
+
+        if (!streamClosed && buffer.trim()) {
+          processRawEvent(buffer);
+        }
+
+        if (!streamClosed) {
+          enqueueDone();
+        }
+      } catch (error) {
+        if (!streamClosed) {
+          controller.error(error);
+        }
+      } finally {
+        reader.releaseLock();
+      }
+    },
+  });
+};
+
 const callOpenAIChat = async ({
   message,
   conversationHistory = [],
@@ -901,6 +1280,139 @@ const handleOpenAIChat = async (payload: Record<string, unknown>) => {
   return jsonResponse({ ok: true, ...result });
 };
 
+const handleAnthropicChatTools = async (payload: Record<string, unknown>) => {
+  if (!ANTHROPIC_API_KEY) {
+    return jsonResponse({ error: 'ANTHROPIC_API_KEY is not configured on Edge Function.', code: 'missing_server_keys' }, 500);
+  }
+
+  const messages = payload?.messages;
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return jsonResponse({ error: 'Missing required field: messages (array)' }, 400);
+  }
+
+  const tools = Array.isArray(payload?.tools) ? payload.tools : [];
+  const model = String(payload?.model || DEFAULT_ANTHROPIC_MODEL).trim();
+  const temperature = Math.max(0, Math.min(1, toFiniteNumber(payload?.temperature, 0.3)));
+  const maxOutputTokens = Math.max(64, Math.floor(toFiniteNumber(payload?.maxOutputTokens, 4096)));
+
+  const modelCandidates = Array.from(new Set(
+    [model, ...ANTHROPIC_DEFAULT_CANDIDATES]
+      .map((item) => String(item || '').trim())
+      .filter(Boolean),
+  ));
+
+  const converted = buildAnthropicMessagesFromOpenAIMessages(messages);
+  const anthropicTools = buildAnthropicToolsFromOpenAITools(tools);
+
+  const requestBody: Record<string, unknown> = {
+    temperature,
+    max_tokens: maxOutputTokens,
+    messages: converted.messages,
+  };
+  if (converted.system) {
+    requestBody.system = converted.system;
+  }
+  if (anthropicTools.length > 0) {
+    requestBody.tools = anthropicTools;
+    requestBody.tool_choice = { type: 'auto' };
+  }
+
+  const request = await postAnthropicWithModelFallback({
+    requestBody,
+    modelCandidates,
+  }) as Record<string, unknown>;
+
+  if (!request.ok) {
+    const status = Number(request.status || 500);
+    return jsonResponse(
+      { error: String(request.errorMessage || 'Anthropic tool-calling request failed.'), code: 'anthropic_tools_failed' },
+      status >= 400 && status < 600 ? status : 500,
+    );
+  }
+
+  const response = request.response as Response;
+  const body = await parseJsonSafe(response);
+  const openAiShape = convertAnthropicResponseToOpenAIFormat({
+    body,
+    model: String(request.model || model),
+  });
+
+  return jsonResponse({
+    ok: true,
+    provider: 'anthropic',
+    model: String(request.model || model),
+    ...openAiShape,
+  });
+};
+
+const handleAnthropicChatToolsStream = async (payload: Record<string, unknown>, cors: Record<string, string>) => {
+  if (!ANTHROPIC_API_KEY) {
+    return jsonResponse({ error: 'ANTHROPIC_API_KEY is not configured on Edge Function.', code: 'missing_server_keys' }, 500);
+  }
+
+  const messages = payload?.messages;
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return jsonResponse({ error: 'Missing required field: messages (array)' }, 400);
+  }
+
+  const tools = Array.isArray(payload?.tools) ? payload.tools : [];
+  const model = String(payload?.model || DEFAULT_ANTHROPIC_MODEL).trim();
+  const temperature = Math.max(0, Math.min(1, toFiniteNumber(payload?.temperature, 0.3)));
+  const maxOutputTokens = Math.max(64, Math.floor(toFiniteNumber(payload?.maxOutputTokens, 4096)));
+
+  const modelCandidates = Array.from(new Set(
+    [model, ...ANTHROPIC_DEFAULT_CANDIDATES]
+      .map((item) => String(item || '').trim())
+      .filter(Boolean),
+  ));
+
+  const converted = buildAnthropicMessagesFromOpenAIMessages(messages);
+  const anthropicTools = buildAnthropicToolsFromOpenAITools(tools);
+
+  const requestBody: Record<string, unknown> = {
+    temperature,
+    max_tokens: maxOutputTokens,
+    messages: converted.messages,
+    stream: true,
+  };
+  if (converted.system) {
+    requestBody.system = converted.system;
+  }
+  if (anthropicTools.length > 0) {
+    requestBody.tools = anthropicTools;
+    requestBody.tool_choice = { type: 'auto' };
+  }
+
+  const t = performance.now();
+  const request = await postAnthropicWithModelFallback({
+    requestBody,
+    modelCandidates,
+  }) as Record<string, unknown>;
+  const elapsed = Math.round(performance.now() - t);
+
+  if (!request.ok) {
+    const status = Number(request.status || 500);
+    console.warn(`[ai-proxy] Anthropic stream model=${model} failed (${status}) in ${elapsed}ms: ${String(request.errorMessage || 'Unknown error')}`);
+    return jsonResponse(
+      { error: String(request.errorMessage || 'Anthropic stream request failed.'), code: 'anthropic_stream_failed' },
+      status >= 400 && status < 600 ? status : 500,
+    );
+  }
+
+  const response = request.response as Response;
+  console.info(`[ai-proxy] Anthropic stream model=${String(request.model || model)} connected in ${elapsed}ms`);
+
+  return new Response(createAnthropicOpenAICompatibleSseStream(response.body!), {
+    status: 200,
+    headers: {
+      ...cors,
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'X-Accel-Buffering': 'no',
+    },
+  });
+};
+
 const handleOpenAIChatTools = async (payload: Record<string, unknown>) => {
   if (!OPENAI_API_KEY) {
     return jsonResponse({ error: 'OPENAI_API_KEY is not configured on Edge Function.', code: 'missing_server_keys' }, 500);
@@ -954,6 +1466,66 @@ const handleOpenAIChatTools = async (payload: Record<string, unknown>) => {
     provider: 'openai',
     model: String(request.model || model),
     ...body,
+  });
+};
+
+const handleOpenAIChatToolsStream = async (payload: Record<string, unknown>, cors: Record<string, string>) => {
+  if (!OPENAI_API_KEY) {
+    return jsonResponse({ error: 'OPENAI_API_KEY is not configured on Edge Function.', code: 'missing_server_keys' }, 500);
+  }
+
+  const messages = payload?.messages;
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return jsonResponse({ error: 'Missing required field: messages (array)' }, 400);
+  }
+
+  const tools = Array.isArray(payload?.tools) ? payload.tools : undefined;
+  const model = String(payload?.model || DEFAULT_OPENAI_MODEL).trim();
+  const temperature = toFiniteNumber(payload?.temperature, 0.3);
+  const maxOutputTokens = Math.max(64, Math.floor(toFiniteNumber(payload?.maxOutputTokens, 4096)));
+
+  const requestBody: Record<string, unknown> = {
+    model,
+    messages,
+    temperature,
+    max_completion_tokens: maxOutputTokens,
+    stream: true,
+    stream_options: { include_usage: true },
+  };
+  if (tools && tools.length > 0) {
+    requestBody.tools = tools;
+    requestBody.tool_choice = 'auto';
+  }
+
+  const t = performance.now();
+  const response = await fetch(`${OPENAI_BASE_URL}/v1/chat/completions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${OPENAI_API_KEY}`,
+    },
+    body: JSON.stringify(requestBody),
+  });
+  const elapsed = Math.round(performance.now() - t);
+
+  if (!response.ok) {
+    const errorData = await parseJsonSafe(response);
+    const errorMessage = String((errorData?.error as { message?: string })?.message || 'OpenAI stream request failed');
+    console.warn(`[ai-proxy] OpenAI stream model=${model} failed (${response.status}) in ${elapsed}ms: ${errorMessage}`);
+    return jsonResponse({ error: errorMessage, code: 'openai_stream_failed' }, response.status >= 400 && response.status < 600 ? response.status : 500);
+  }
+
+  console.info(`[ai-proxy] OpenAI stream model=${model} connected in ${elapsed}ms`);
+
+  // Pass through the SSE stream with CORS headers
+  return new Response(response.body, {
+    status: 200,
+    headers: {
+      ...cors,
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'X-Accel-Buffering': 'no',
+    },
   });
 };
 
@@ -1154,8 +1726,20 @@ Deno.serve(async (req) => {
     if (mode === 'ai_chat') return wrapCors(await handleAiChat(payload));
     if (mode === 'di_prompt') return wrapCors(await handleDiPrompt(payload));
     if (mode === 'anthropic_chat') return wrapCors(await handleAnthropicChat(payload));
+    if (mode === 'anthropic_chat_tools') return wrapCors(await handleAnthropicChatTools(payload));
     if (mode === 'openai_chat') return wrapCors(await handleOpenAIChat(payload));
     if (mode === 'openai_chat_tools') return wrapCors(await handleOpenAIChatTools(payload));
+    if (mode === 'anthropic_chat_tools_stream') {
+      const streamResp = await handleAnthropicChatToolsStream(payload, cors);
+      console.info(`[ai-proxy] mode=${mode} total=${Math.round(performance.now() - t0)}ms`);
+      return streamResp;
+    }
+    if (mode === 'openai_chat_tools_stream') {
+      // Streaming handler returns SSE response with CORS already set — no wrapCors needed
+      const streamResp = await handleOpenAIChatToolsStream(payload, cors);
+      console.info(`[ai-proxy] mode=${mode} total=${Math.round(performance.now() - t0)}ms`);
+      return streamResp;
+    }
 
     return jsonResponse({ error: `Unsupported mode: ${mode}` }, 400, cors);
   } catch (error) {

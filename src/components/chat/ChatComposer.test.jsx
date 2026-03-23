@@ -3,6 +3,7 @@
  */
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import '@testing-library/jest-dom';
 import ChatComposer from './ChatComposer';
 
@@ -43,5 +44,68 @@ describe('ChatComposer', () => {
     expect(screen.getByText(/attached dataset: monthly_report.xlsx/i)).toBeInTheDocument();
     expect(screen.getAllByText(/monthly_report.xlsx/i).length).toBeGreaterThan(0);
     expect(screen.queryByText(/shift\+enter for newline/i)).not.toBeInTheDocument();
+  });
+
+  it('renders a thinking toggle and handles clicks', async () => {
+    const user = userEvent.setup();
+    const onToggleThinkingEnabled = vi.fn();
+
+    render(
+      <ChatComposer
+        input=""
+        onInputChange={vi.fn()}
+        onKeyDown={vi.fn()}
+        onSubmit={vi.fn((event) => event.preventDefault())}
+        textareaRef={{ current: null }}
+        fileInputRef={{ current: null }}
+        onFileInputChange={vi.fn()}
+        onFilePicker={vi.fn()}
+        isTyping={false}
+        isUploading={false}
+        uploadStatusText=""
+        isDragOver={false}
+        onDragEnter={vi.fn()}
+        onDragOver={vi.fn()}
+        onDragLeave={vi.fn()}
+        onDrop={vi.fn()}
+        pendingAttachments={[]}
+        onRemoveAttachment={vi.fn()}
+        thinkingEnabled
+        onToggleThinkingEnabled={onToggleThinkingEnabled}
+      />
+    );
+
+    await user.click(screen.getByRole('button', { name: /thinking on/i }));
+
+    expect(onToggleThinkingEnabled).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows auto label when thinking override is not enabled', () => {
+    render(
+      <ChatComposer
+        input=""
+        onInputChange={vi.fn()}
+        onKeyDown={vi.fn()}
+        onSubmit={vi.fn((event) => event.preventDefault())}
+        textareaRef={{ current: null }}
+        fileInputRef={{ current: null }}
+        onFileInputChange={vi.fn()}
+        onFilePicker={vi.fn()}
+        isTyping={false}
+        isUploading={false}
+        uploadStatusText=""
+        isDragOver={false}
+        onDragEnter={vi.fn()}
+        onDragOver={vi.fn()}
+        onDragLeave={vi.fn()}
+        onDrop={vi.fn()}
+        pendingAttachments={[]}
+        onRemoveAttachment={vi.fn()}
+        thinkingEnabled={false}
+        onToggleThinkingEnabled={vi.fn()}
+      />
+    );
+
+    expect(screen.getByRole('button', { name: /thinking auto/i })).toBeInTheDocument();
   });
 });

@@ -8,8 +8,7 @@
 import { runDiPrompt, DI_PROMPT_IDS } from './diModelRouterService';
 import { recordIntent } from './sessionContextService';
 import { isIntentEnabled, getDisabledMessage } from '../config/featureGateService';
-import { handleDataQuery } from './sapQueryChatHandler.js';
-import { detectAndRunAnalysis, buildAnalysisInsightPrompt } from './olistAnalysisService.js';
+
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -260,14 +259,16 @@ export async function routeIntent(parsedIntent, sessionContext, handlers, option
       }
       return { handled: true, intent };
 
-    case 'ASSIGN_TASK':
+    case 'ASSIGN_TASK': {
+      const assignQuery = entities.freeform_query || '';
       if (handlers.assignTask) {
         await handlers.assignTask({
-          userMessage: entities.freeform_query || '',
+          userMessage: assignQuery,
           employeeId: entities.employee_id || null,
         });
       }
       return { handled: true, intent };
+    }
 
     case 'APPROVE':
     case 'REJECT':
@@ -278,52 +279,11 @@ export async function routeIntent(parsedIntent, sessionContext, handlers, option
 
     case 'QUERY_DATA': {
       const userQuery = entities.freeform_query || '';
-      // Check for deep/comprehensive analysis → route to ASSIGN_TASK for broad-then-deep decomposition
-      const deepAnalysisSignals = /全面分析|深度分析|完整分析|全景分析|統計分析|集中度分析|comprehensive analysis|full analysis|deep analysis|deep dive|panorama|statistical analysis|concentration analysis/i;
-      if (deepAnalysisSignals.test(userMessage)) {
-        console.info('[chatIntentService] QUERY_DATA rerouted to ASSIGN_TASK for deep analysis');
-        if (handlers.assignTask) {
-          await handlers.assignTask(userMessage);
-        }
-        return { handled: true, intent: 'ASSIGN_TASK' };
+      // Route all data queries to ASSIGN_TASK → DuckDB SQL + Python analysis engine
+      if (handlers.assignTask) {
+        await handlers.assignTask({ userMessage: userQuery });
       }
-      // Try structured analysis first (RFM, delivery, seller, etc.)
-      const analysisResult = await detectAndRunAnalysis(userQuery);
-      if (analysisResult) {
-        if (handlers.appendMessage) {
-          handlers.appendMessage({
-            role: 'ai',
-            type: 'analysis_result_card',
-            payload: analysisResult,
-            timestamp: new Date().toISOString(),
-            meta: { intent, confidence },
-          });
-        }
-        // Stream LLM insight report with data citations (non-blocking)
-        if (handlers.streamAnalysisInsight) {
-          handlers.streamAnalysisInsight(analysisResult, userQuery).catch((err) => {
-            console.warn('[chatIntentService] LLM insight generation failed:', err?.message);
-          });
-        }
-        return { handled: true, intent };
-      }
-      // Fallback: NL → SQL query
-      try {
-        const queryResult = await handleDataQuery(userQuery);
-        if (handlers.appendMessage && queryResult) {
-          handlers.appendMessage({
-            role: 'ai',
-            type: 'sql_query_result',
-            payload: queryResult,
-            timestamp: new Date().toISOString(),
-            meta: { intent, confidence },
-          });
-        }
-        return { handled: true, intent };
-      } catch (queryErr) {
-        console.error('[chatIntentService] QUERY_DATA handler failed:', queryErr?.message);
-        return { handled: false, intent };
-      }
+      return { handled: true, intent: 'ASSIGN_TASK' };
     }
 
     case 'GENERAL_CHAT':

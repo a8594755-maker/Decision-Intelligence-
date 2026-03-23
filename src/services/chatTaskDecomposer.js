@@ -389,7 +389,20 @@ TOOL_HINT RULES (for python_tool steps):
 - Tell the code to build artifacts incrementally: artifacts = [] then artifacts.append(...).
 - Tell the code to ALWAYS end with: return {"result": {...}, "artifacts": artifacts}.
 
-10. If the user's request is vague or ambiguous (e.g. "分析資料", "analyze data", "generate report" without specifics), set needs_clarification=true and provide 2-4 short clarification questions. Criteria for vague: no specific metrics/KPIs mentioned, no output format specified, multiple possible approaches exist, less than 10 meaningful words.
+INPUT_ARGS RULES (for python_tool steps that need statistical analysis):
+- When the task involves statistical analysis (concentration, distribution, Gini, Lorenz, correlation, segmentation, RFM, anomaly detection, trend decomposition, or any request for charts/metrics/highlights), set input_args: {"analysis_mode": true, "dataset": "olist"}.
+- analysis_mode activates a richer code-generation prompt on the Python backend that produces structured analysis_result artifacts with charts, metrics, highlights, key_findings, and recommendations — instead of plain tables.
+- If the task is pure data cleaning, KPI calculation, or simple aggregation with NO statistical depth, do NOT set analysis_mode.
+
+10. If the user's request is vague or ambiguous (e.g. "分析資料", "analyze data", "generate report" without specifics), set needs_clarification=true and provide 2-4 STRUCTURED clarification questions as objects. Criteria for vague: no specific metrics/KPIs mentioned, no output format specified, multiple possible approaches exist, less than 10 meaningful words.
+    Each question MUST be an object with: question (EN), question_zh (繁體中文), type, and field.
+    Question types:
+    - "single_select": pick one option. Provide 3-5 concise bilingual options. An "Other" option is auto-added — do NOT include it.
+    - "multi_select": pick multiple. Same as above.
+    - "confirm": yes/no question. No options needed.
+    Example:
+    { "question": "Which metric?", "question_zh": "要用哪個指標？", "type": "single_select", "options": ["Revenue (營業額)", "Orders (訂單數)", "Products (商品數)"], "field": "metric" }
+    { "question": "Include Lorenz curve?", "question_zh": "是否需要洛倫茲曲線？", "type": "confirm", "field": "include_lorenz" }
 11. Even when needs_clarification=true, STILL provide your best-guess subtasks so the user can skip clarification if they want.
 12. PREFER FEWER STEPS. If a single builtin tool can do the whole job, use ONE step. For example, "forecast_from_sap" can query data, run forecast, AND compare actuals in a single call — do NOT split this into separate query/forecast/compare steps.
 13. For demand forecast tasks (預測, forecast, predict demand), use builtin_tool "forecast_from_sap" as a SINGLE step. It handles: SQL data query → forecast engine → actuals comparison → MAPE calculation. Do NOT add separate steps for data extraction, forecast, or comparison — the tool does it all.
@@ -403,14 +416,40 @@ Respond with ONLY a JSON object (no markdown, no explanation):
       "description": "what this step does",
       "builtin_tool_id": "tool_id_or_null",
       "depends_on": ["prior_step_name"],
-      "tool_hint": "description for dynamic_tool, or null"
+      "tool_hint": "description for dynamic_tool, or null",
+      "input_args": {"analysis_mode": true, "dataset": "olist"}
     }
   ],
   "report_format": "xlsx|html|powerbi|null",
   "confidence": 0.0-1.0,
   "needs_clarification": false,
-  "clarification_questions": []
+  "clarification_questions": [
+    { "question": "EN text", "question_zh": "中文", "type": "single_select|multi_select|confirm", "options": ["opt1", "opt2"], "field": "field_name" }
+  ]
 }`;
+
+/**
+ * Normalize clarification questions — support both old string[] and new object[] formats.
+ */
+function _normalizeQuestions(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((q, i) => {
+    if (typeof q === 'string') {
+      // Legacy: plain text question → free_text
+      return { question: q, question_zh: q, type: 'free_text', field: `q${i}` };
+    }
+    if (q && typeof q === 'object' && q.question) {
+      return {
+        question: q.question,
+        question_zh: q.question_zh || q.question,
+        type: q.type || 'free_text',
+        options: Array.isArray(q.options) ? q.options : [],
+        field: q.field || `q${i}`,
+      };
+    }
+    return null;
+  }).filter(Boolean);
+}
 
 /**
  * Try LLM-based decomposition. Returns null if LLM is unavailable.
@@ -448,6 +487,7 @@ async function _tryLLMDecompose(userMessage, { employeeId } = {}) {
       builtin_tool_id: s.builtin_tool_id || null,
       depends_on: Array.isArray(s.depends_on) ? s.depends_on : [],
       needs_dataset_profile: false,
+      input_args: (s.input_args && typeof s.input_args === 'object') ? s.input_args : {},
     }));
 
     // Validate builtin_tool_ids against catalog
@@ -470,7 +510,7 @@ async function _tryLLMDecompose(userMessage, { employeeId } = {}) {
       report_format: data.report_format || null,
       confidence: typeof data.confidence === 'number' ? data.confidence : 0.8,
       needs_clarification: data.needs_clarification === true,
-      clarification_questions: Array.isArray(data.clarification_questions) ? data.clarification_questions : [],
+      clarification_questions: _normalizeQuestions(data.clarification_questions),
       _llm_model: model,
     };
   } catch (err) {
@@ -573,7 +613,7 @@ export async function decomposeTask({ userMessage, sessionContext: _sessionConte
     });
   } else {
   // ── Phase 1: Match against builtin tool catalog ─────────────────────────
-  const catalogMatches = findToolsByQuery(userMessage, { maxResults: 5 });
+  const catalogMatches = findToolsByQuery(userMessage, { maxResults: 8 });
 
   for (const tool of catalogMatches) {
     if (usedToolIds.has(tool.id)) continue;

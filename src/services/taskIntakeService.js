@@ -33,6 +33,7 @@ export const INTAKE_SOURCES = {
   EMAIL:              'email',
   MEETING_TRANSCRIPT: 'meeting_transcript',
   API:                'api',
+  OPENCLAW:           'openclaw',
 };
 
 // ── SLA Configurations ──────────────────────────────────────────────────────

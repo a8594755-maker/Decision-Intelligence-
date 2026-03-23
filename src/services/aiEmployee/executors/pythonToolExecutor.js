@@ -43,6 +43,11 @@ export async function executePythonTool(stepInput) {
   // Keep first 1000 rows per artifact for code execution accuracy
   const priorArtifacts = _limitArtifactRows(inputData.priorArtifacts || {}, 1000);
 
+  // Merge step.input_args into the request so flags like analysis_mode / dataset
+  // propagate to the Python API regardless of how the step was generated
+  // (deep-analysis fast-path, LLM decomposition, or manual).
+  const extraArgs = step.input_args || {};
+
   const requestBody = JSON.stringify({
     tool_hint: step.tool_hint,
     input_data: inputData.sheets ? { sheets: inputData.sheets } : inputData,
@@ -53,6 +58,7 @@ export async function executePythonTool(stepInput) {
       max_tokens: llmConfig.max_tokens ?? 16384,
     },
     prior_artifacts: priorArtifacts,
+    ...extraArgs,
   });
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {

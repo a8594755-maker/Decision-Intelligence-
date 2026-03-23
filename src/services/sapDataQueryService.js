@@ -6,12 +6,12 @@
  *   1. CSV files (Olist dataset) from public/data/sap/
  *   2. Supabase tables (suppliers, materials, inventory, POs)
  *
- * Uses AlaSQL to execute real SQL on in-memory arrays.
+ * Uses DuckDB-WASM (in-browser columnar analytics engine) to execute SQL.
+ * Supports CTEs, window functions, PERCENTILE_CONT, MEDIAN, date functions, etc.
  * Only SELECT queries are allowed (read-only).
  */
 
-import alasql from 'alasql';
-import Papa from 'papaparse';
+import * as duckdb from '@duckdb/duckdb-wasm';
 
 // ── SAP Table Registry ────────────────────────────────────────────────────────
 
@@ -128,23 +128,50 @@ const MAX_RESULT_ROWS = 5000;
 // Forbidden SQL keywords (only SELECT allowed)
 const FORBIDDEN_PATTERN = /^\s*(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|TRUNCATE|MERGE|REPLACE|EXEC|EXECUTE|GRANT|REVOKE)\b/i;
 
-// ── CSV Loader ────────────────────────────────────────────────────────────────
+// ── DuckDB-WASM Singleton ─────────────────────────────────────────────────────
 
-async function fetchAndParseCsv(filename) {
+let _db = null;
+let _conn = null;
+let _initPromise = null;
+
+async function getDuckDB() {
+  if (_conn) return { db: _db, conn: _conn };
+  if (_initPromise) return _initPromise;
+
+  _initPromise = (async () => {
+    const JSDELIVR_BUNDLES = duckdb.getJsDelivrBundles();
+    const bundle = await duckdb.selectBundle(JSDELIVR_BUNDLES);
+
+    const worker = new Worker(bundle.mainWorker);
+    const logger = new duckdb.ConsoleLogger();
+    _db = new duckdb.AsyncDuckDB(logger, worker);
+    await _db.instantiate(bundle.mainModule, bundle.pthreadWorker);
+
+    _conn = await _db.connect();
+    return { db: _db, conn: _conn };
+  })();
+
+  return _initPromise;
+}
+
+// ── CSV Loader (DuckDB native) ────────────────────────────────────────────────
+
+async function loadCsvTable(tableName, filename) {
+  const { db, conn } = await getDuckDB();
   const url = `${window.location.origin}/data/sap/${filename}`;
   const response = await fetch(url);
   if (!response.ok) throw new Error(`Failed to fetch ${filename}: ${response.status}`);
-  const text = await response.text();
+  const csvText = await response.text();
 
-  return new Promise((resolve, reject) => {
-    Papa.parse(text, {
-      header: true,
-      skipEmptyLines: true,
-      dynamicTyping: true,
-      complete: (results) => resolve(results.data),
-      error: (err) => reject(err),
-    });
-  });
+  await db.registerFileText(`${tableName}.csv`, csvText);
+  await conn.query(`
+    CREATE OR REPLACE TABLE ${tableName} AS
+    SELECT * FROM read_csv_auto('${tableName}.csv', header=true, auto_detect=true)
+  `);
+
+  const countResult = await conn.query(`SELECT COUNT(*)::INTEGER as cnt FROM ${tableName}`);
+  _tableRowCounts[tableName] = countResult.toArray()[0].cnt;
+  _loadedTables.add(tableName);
 }
 
 // ── Supabase Loader ───────────────────────────────────────────────────────────
@@ -161,35 +188,35 @@ async function fetchFromSupabase(supabaseTable) {
   return data || [];
 }
 
-// ── Table Loader ──────────────────────────────────────────────────────────────
+async function loadSupabaseTable(tableName, rows) {
+  const { db, conn } = await getDuckDB();
+  const jsonStr = JSON.stringify(rows);
+  await db.registerFileText(`${tableName}.json`, jsonStr);
+  await conn.query(`
+    CREATE OR REPLACE TABLE ${tableName} AS
+    SELECT * FROM read_json_auto('${tableName}.json')
+  `);
 
-function registerInAlasql(tableName, rows) {
-  alasql(`DROP TABLE IF EXISTS [${tableName}]`);
-  alasql(`CREATE TABLE [${tableName}]`);
-  alasql.tables[tableName].data = rows;
   _tableRowCounts[tableName] = rows.length;
   _loadedTables.add(tableName);
 }
 
-/**
- * Load a single table into AlaSQL if not already loaded.
- */
+// ── Table Loader ──────────────────────────────────────────────────────────────
+
 async function ensureTableLoaded(tableName) {
   if (_loadedTables.has(tableName)) return;
 
   const entry = SAP_TABLE_REGISTRY[tableName];
   if (!entry) throw new Error(`Unknown table: ${tableName}. Available: ${Object.keys(SAP_TABLE_REGISTRY).join(', ')}`);
 
-  let rows;
   if (entry.source === 'csv') {
-    rows = await fetchAndParseCsv(entry.file);
+    await loadCsvTable(tableName, entry.file);
   } else if (entry.source === 'supabase') {
-    rows = await fetchFromSupabase(entry.table);
+    const rows = await fetchFromSupabase(entry.table);
+    await loadSupabaseTable(tableName, rows);
   } else {
     throw new Error(`Unknown source type for table ${tableName}: ${entry.source}`);
   }
-
-  registerInAlasql(tableName, rows);
 }
 
 /**
@@ -209,11 +236,28 @@ function extractTableNames(sql) {
   return [...tables];
 }
 
+/**
+ * Convert DuckDB Arrow result rows to plain JS objects.
+ * Handles BigInt → Number and Date → ISO string coercion.
+ */
+function coerceRow(row) {
+  const obj = row.toJSON();
+  for (const key of Object.keys(obj)) {
+    const val = obj[key];
+    if (typeof val === 'bigint') {
+      obj[key] = Number(val);
+    } else if (val instanceof Date) {
+      obj[key] = val.toISOString();
+    }
+  }
+  return obj;
+}
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 /**
  * Execute a SQL query against SAP master data tables.
- * Only SELECT statements are allowed. Results capped at 500 rows.
+ * Only SELECT statements are allowed. Results capped at 5000 rows.
  *
  * @param {object} params
  * @param {string} params.sql - SQL query string
@@ -231,7 +275,7 @@ export async function executeQuery({ sql }) {
     return { success: false, rows: [], rowCount: 0, truncated: false, error: 'Only SELECT queries are allowed. INSERT/UPDATE/DELETE/DROP are forbidden.' };
   }
 
-  if (!/^\s*SELECT\b/i.test(trimmed)) {
+  if (!/^\s*SELECT\b/i.test(trimmed) && !/^\s*WITH\b/i.test(trimmed)) {
     return { success: false, rows: [], rowCount: 0, truncated: false, error: 'Only SELECT queries are allowed.' };
   }
 
@@ -242,18 +286,19 @@ export async function executeQuery({ sql }) {
       await Promise.all(tables.map(ensureTableLoaded));
     }
 
-    // Execute SQL
-    const result = alasql(trimmed);
-    const rows = Array.isArray(result) ? result : [];
-    const truncated = rows.length > MAX_RESULT_ROWS;
-    const limited = truncated ? rows.slice(0, MAX_RESULT_ROWS) : rows;
+    const { conn } = await getDuckDB();
+    const arrowResult = await conn.query(trimmed);
+    const allRows = arrowResult.toArray().map(coerceRow);
+
+    const truncated = allRows.length > MAX_RESULT_ROWS;
+    const limited = truncated ? allRows.slice(0, MAX_RESULT_ROWS) : allRows;
 
     return {
       success: true,
       rows: limited,
-      rowCount: rows.length,
+      rowCount: allRows.length,
       truncated,
-      ...(truncated ? { note: `Result truncated to ${MAX_RESULT_ROWS} rows (total: ${rows.length})` } : {}),
+      ...(truncated ? { note: `Result truncated to ${MAX_RESULT_ROWS} rows (total: ${allRows.length})` } : {}),
     };
   } catch (err) {
     return { success: false, rows: [], rowCount: 0, truncated: false, error: `SQL error: ${err.message}` };

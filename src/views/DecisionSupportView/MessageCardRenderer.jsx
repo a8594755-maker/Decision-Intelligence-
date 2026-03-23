@@ -14,6 +14,7 @@ import InventoryProjectionCard from '../../components/chat/InventoryProjectionCa
 import PlanExceptionsCard from '../../components/chat/PlanExceptionsCard';
 import BomBottlenecksCard from '../../components/chat/BomBottlenecksCard';
 import SqlQueryBlock from '../../components/chat/SqlQueryBlock';
+import SqlResultChartCard from '../../components/chat/SqlResultChartCard';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import RiskSummaryCard from '../../components/chat/RiskSummaryCard';
@@ -65,6 +66,12 @@ import TaskResultSummaryCard from '../../components/chat/TaskResultSummaryCard';
 import AnalysisResultCard from '../../components/chat/AnalysisResultCard';
 import AnalysisBlueprintCard from '../../components/chat/AnalysisBlueprintCard';
 import AnalysisInsightCard from '../../components/chat/AnalysisInsightCard';
+import AgentBriefCard from '../../components/chat/AgentBriefCard';
+import AgentAlternativeCard from '../../components/chat/AgentAlternativeCard';
+import AgentQualityCard from '../../components/chat/AgentQualityCard';
+import ExecutionTraceCard from '../../components/chat/ExecutionTraceCard';
+import ThinkingStepsDisplay from '../../components/chat/ThinkingStepsDisplay';
+import { extractAnalysisPayloadsFromToolCall, isRenderableAnalysisToolCall } from '../../services/analysisToolResultService.js';
 import { toPositiveRunId } from './helpers.js';
 
 /**
@@ -460,20 +467,71 @@ export default function MessageCardRenderer({ message, handlers, state }) {
       />
     );
   }
+  if (message.type === 'thinking_trace_card') {
+    return (
+      <ThinkingStepsDisplay
+        steps={message.payload?.steps || []}
+        defaultCollapsed={message.payload?.defaultCollapsed !== false}
+        completed={message.payload?.completed !== false}
+      />
+    );
+  }
   if (message.type === 'agent_response') {
     const toolCalls = message.payload?.toolCalls || [];
+    const brief = message.payload?.brief || null;
+    const qa = message.payload?.qa || null;
+    const judgeDecision = message.payload?.judgeDecision || null;
+    const candidates = Array.isArray(message.payload?.candidates) ? message.payload.candidates : [];
+    const alternativeCandidate = judgeDecision?.winnerCandidateId && candidates.length > 1
+      ? (candidates.find((candidate) => candidate?.candidateId !== judgeDecision?.winnerCandidateId) || null)
+      : null;
+    const winnerCandidate = judgeDecision?.winnerCandidateId
+      ? candidates.find((candidate) => candidate?.candidateId === judgeDecision.winnerCandidateId) || null
+      : (candidates[0] || null);
+    const briefAttribution = {
+      label: judgeDecision?.winnerLabel || winnerCandidate?.label || '',
+      provider: winnerCandidate?.provider || judgeDecision?.winnerProvider || '',
+      model: winnerCandidate?.model || judgeDecision?.winnerModel || '',
+    };
+    const trace = message.payload?.trace || null;
     const sqlCalls = toolCalls.filter((tc) => tc.name === 'query_sap_data' || tc.name === 'list_sap_tables');
-    // Analysis tool calls get rich card rendering instead of generic summary
-    const analysisCalls = toolCalls.filter((tc) => tc.name?.startsWith('analyze_') && tc.result?.success && (tc.result?.result?.title || tc.result?.result?.analysisType));
-    const analysisCallIds = new Set(analysisCalls.map((tc) => tc.id || tc.name));
-    const otherCalls = toolCalls.filter((tc) => tc.name !== 'query_sap_data' && tc.name !== 'list_sap_tables' && !analysisCallIds.has(tc.id || tc.name));
+    const analysisPayloads = toolCalls.flatMap((tc, toolIdx) =>
+      extractAnalysisPayloadsFromToolCall(tc).map((payload, payloadIdx) => ({
+        key: `${tc.id || tc.name || toolIdx}-${payloadIdx}`,
+        payload,
+      }))
+    );
+    const otherCalls = toolCalls.filter((tc) =>
+      tc.name !== 'query_sap_data'
+      && tc.name !== 'list_sap_tables'
+      && !isRenderableAnalysisToolCall(tc)
+    );
+
+    if (brief || trace) {
+      const normalizedTrace = trace || {
+        failed_attempts: [],
+        successful_queries: [],
+        raw_narrative: message.content || '',
+      };
+
+      return (
+        <div className="space-y-3">
+          {brief ? <AgentBriefCard brief={brief} attribution={briefAttribution} /> : null}
+          {analysisPayloads.map(({ key, payload }) => (
+            <AnalysisResultCard key={key} payload={payload} />
+          ))}
+          {qa ? <AgentQualityCard qa={qa} judgeDecision={judgeDecision} /> : null}
+          {alternativeCandidate ? <AgentAlternativeCard candidate={alternativeCandidate} /> : null}
+          <ExecutionTraceCard trace={normalizedTrace} />
+        </div>
+      );
+    }
+
     return (
       <div className="space-y-3">
-        {/* Analysis results — rendered as rich AnalysisResultCard */}
-        {analysisCalls.map((tc, i) => (
-          <AnalysisResultCard key={tc.id || `analysis-${i}`} payload={tc.result.result} />
+        {analysisPayloads.map(({ key, payload }) => (
+          <AnalysisResultCard key={key} payload={payload} />
         ))}
-        {/* SQL query blocks — collapsible with code display */}
         {sqlCalls.map((tc, i) => (
           <SqlQueryBlock
             key={tc.id || `sql-${i}`}
@@ -482,7 +540,6 @@ export default function MessageCardRenderer({ message, handlers, state }) {
             toolName={tc.name === 'list_sap_tables' ? 'List SAP Tables' : 'SQL Query'}
           />
         ))}
-        {/* Other tool calls — compact summary */}
         {otherCalls.length > 0 && (
           <div className="bg-slate-800/50 rounded-lg p-3 border border-slate-700/50">
             <div className="text-xs font-medium text-slate-400 mb-2">Agent executed {otherCalls.length} tool{otherCalls.length > 1 ? 's' : ''}:</div>
@@ -502,7 +559,15 @@ export default function MessageCardRenderer({ message, handlers, state }) {
           </div>
         )}
         {message.content && (
-          <div className="prose prose-sm max-w-none dark:prose-invert text-sm text-slate-800 dark:text-slate-100">
+          <div className={`prose prose-sm max-w-none dark:prose-invert text-sm text-slate-800 dark:text-slate-100
+            prose-table:border-collapse prose-table:w-full prose-table:text-xs
+            prose-th:bg-slate-100 prose-th:dark:bg-slate-700/60 prose-th:px-3 prose-th:py-2 prose-th:text-left prose-th:font-semibold prose-th:text-slate-600 prose-th:dark:text-slate-300 prose-th:border prose-th:border-slate-200 prose-th:dark:border-slate-600
+            prose-td:px-3 prose-td:py-1.5 prose-td:border prose-td:border-slate-200 prose-td:dark:border-slate-700 prose-td:text-slate-700 prose-td:dark:text-slate-300
+            prose-tr:even:bg-slate-50 prose-tr:even:dark:bg-slate-800/30
+            ${analysisPayloads.length > 0
+              ? 'bg-slate-50 dark:bg-slate-800/40 rounded-xl px-4 py-3 border border-slate-100 dark:border-slate-700/50'
+              : ''
+            }`}>
             <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
           </div>
         )}
@@ -597,7 +662,7 @@ export default function MessageCardRenderer({ message, handlers, state }) {
     return (
       <TaskPlanCard
         decomposition={message.payload}
-        onApprove={message._onApprove}
+        onApprove={message._onApprove || ((approvedDecomp) => handlers.handleTaskPlanApprove?.(approvedDecomp, message))}
         onCancel={() => {}}
       />
     );
@@ -645,17 +710,7 @@ export default function MessageCardRenderer({ message, handlers, state }) {
     );
   }
   if (message.type === 'sql_query_result') {
-    const { sql, result, summary } = message.payload || {};
-    return (
-      <div className="space-y-2">
-        <SqlQueryBlock sql={sql} result={result} toolName="Data Query" />
-        {summary && (
-          <div className="text-sm text-slate-600 dark:text-slate-300 whitespace-pre-wrap">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{summary}</ReactMarkdown>
-          </div>
-        )}
-      </div>
-    );
+    return <SqlResultChartCard {...(message.payload || {})} />;
   }
   if (message.type === 'analysis_result_card') {
     const p = message.payload || {};

@@ -66,6 +66,24 @@ function catalogEntryToToolDef(entry) {
   };
 }
 
+function selectBuiltinTools(opts = {}) {
+  const { categories, toolIds, excludePython = true } = opts;
+
+  let tools = BUILTIN_TOOLS;
+
+  if (excludePython) {
+    tools = tools.filter((t) => t.module !== '__python_api__');
+  }
+  if (categories?.length) {
+    tools = tools.filter((t) => categories.includes(t.category));
+  }
+  if (toolIds?.length) {
+    tools = tools.filter((t) => toolIds.includes(t.id));
+  }
+
+  return tools;
+}
+
 /**
  * Get all tool definitions suitable for LLM function calling.
  * Includes both builtin tools AND approved registered tools from the registry.
@@ -79,18 +97,7 @@ function catalogEntryToToolDef(entry) {
  */
 export function getToolDefinitions(opts = {}) {
   const { categories, toolIds, excludePython = true, includeRegistered = true } = opts;
-
-  let tools = BUILTIN_TOOLS;
-
-  if (excludePython) {
-    tools = tools.filter((t) => t.module !== '__python_api__');
-  }
-  if (categories?.length) {
-    tools = tools.filter((t) => categories.includes(t.category));
-  }
-  if (toolIds?.length) {
-    tools = tools.filter((t) => toolIds.includes(t.id));
-  }
+  const tools = selectBuiltinTools({ categories, toolIds, excludePython });
 
   const defs = tools.map(catalogEntryToToolDef);
 
@@ -107,9 +114,9 @@ export function getToolDefinitions(opts = {}) {
  * Get a lightweight summary of available tools for the system prompt.
  * This helps the LLM understand what it can do without sending full schemas.
  */
-export function getToolSummaryForPrompt() {
-  const lines = BUILTIN_TOOLS
-    .filter((t) => t.module !== '__python_api__')
+export function getToolSummaryForPrompt(opts = {}) {
+  const { categories, toolIds, excludePython = true } = opts;
+  const lines = selectBuiltinTools({ categories, toolIds, excludePython })
     .map((t) => `- ${t.id}: ${t.name} — ${t.description}`);
 
   return [
@@ -211,19 +218,27 @@ const ML_API_BASE = String(import.meta.env.VITE_ML_API_BASE || 'http://localhost
 
 async function callPythonAnalysisTool(entry, args, context) {
   try {
+    const inputData = {
+      ...(context.datasetInputData || context.inputData || {}),
+      ...(args.input_data || {}),
+    };
+    const hasInputSheets = Boolean(inputData.sheets && Object.keys(inputData.sheets || {}).length > 0);
+    const datasetProfile = buildPythonDatasetProfile(context, args);
+    const dataset = args.dataset || (!hasInputSheets ? 'olist' : null);
     const body = {
       tool_hint: args.tool_hint || args.query || 'Analyze the dataset',
       analysis_mode: true,
-      dataset: args.dataset || 'olist',
-      input_data: {},
-      prior_artifacts: {},
+      input_data: inputData,
+      prior_artifacts: args.prior_artifacts || {},
+      ...(dataset ? { dataset } : {}),
+      ...(datasetProfile ? { dataset_profile: datasetProfile } : {}),
     };
 
     const resp = await fetch(`${ML_API_BASE}/execute-tool`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(180_000), // 3 min timeout
+      signal: typeof AbortSignal?.timeout === 'function' ? AbortSignal.timeout(180_000) : undefined,
     });
 
     if (!resp.ok) {
@@ -269,6 +284,24 @@ async function callPythonAnalysisTool(entry, args, context) {
       toolId: entry.id,
     };
   }
+}
+
+function buildPythonDatasetProfile(context, args) {
+  if (args.dataset_profile && typeof args.dataset_profile === 'object') {
+    return args.dataset_profile;
+  }
+
+  const row = context.datasetProfileRow;
+  const profileJson = row?.profile_json || row?.profileJson || context.datasetProfileSummary;
+  if (profileJson && typeof profileJson === 'object') {
+    return {
+      ...(Number.isFinite(Number(row?.id || context.datasetProfileId)) ? { id: Number(row?.id || context.datasetProfileId) } : {}),
+      ...(row?.user_file_id || row?.userFileId ? { user_file_id: row?.user_file_id || row?.userFileId } : {}),
+      ...profileJson,
+    };
+  }
+
+  return null;
 }
 
 // ── Registered Tool Support ─────────────────────────────────────────────────

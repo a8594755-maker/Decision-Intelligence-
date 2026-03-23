@@ -1,0 +1,70 @@
+# Decision-Intelligence Supply Chain Team
+# OpenClaw Gateway Configuration
+#
+# This gateway manages a team of specialized AI agents for supply chain
+# decision support. Each agent has its own MCP server instance with
+# role-based tool filtering.
+
+gateway:
+  name: "DI Supply Chain Team"
+  version: "1.0.0"
+  description: >
+    Enterprise supply chain decision intelligence team.
+    Three specialized agents collaborate via shared backend state.
+
+  # Agent definitions (relative paths)
+  agents:
+    - ./agents/forecast-agent.yaml
+    - ./agents/procurement-agent.yaml
+    - ./agents/risk-agent.yaml
+
+  # Message routing rules
+  routing:
+    # Default agent when no keyword match
+    default_agent: ForecastBot
+
+    # Keyword-based routing (regex patterns, case-insensitive)
+    keyword_routing:
+      "forecast|predict|demand|trend|projection|預測|需求|趨勢": ForecastBot
+      "plan|procure|negotiate|order|restock|cost|採購|補貨|訂單|談判|議價": ProcureBot
+      "risk|alert|delay|stockout|threat|overdue|風險|預警|延遲|缺貨": RiskBot
+
+    # Channel-based routing (takes precedence over keyword)
+    channel_routing:
+      "#demand-planning": ForecastBot
+      "#forecast-review": ForecastBot
+      "#procurement": ProcureBot
+      "#supplier-management": ProcureBot
+      "#purchasing": ProcureBot
+      "#risk-alerts": RiskBot
+      "#exception-management": RiskBot
+
+  # Security settings
+  security:
+    require_auth: true
+    allowed_roles:
+      - planner
+      - manager
+      - admin
+      - analyst
+    rate_limit:
+      requests_per_minute: 30
+      requests_per_hour: 500
+
+  # Shared configuration
+  shared:
+    # All agents connect to the same DI backend
+    di_api_base: "${DI_API_BASE:-http://localhost:8000}"
+
+    # Supabase for shared state (tasks, artifacts, workers)
+    supabase_url: "${VITE_SUPABASE_URL}"
+    supabase_anon_key: "${VITE_SUPABASE_ANON_KEY}"
+
+    # LLM routing through Supabase ai-proxy
+    llm_routing: supabase_ai_proxy
+
+  # Observability
+  logging:
+    level: info
+    format: json
+    destination: stderr

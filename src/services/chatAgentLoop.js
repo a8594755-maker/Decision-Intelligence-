@@ -23,10 +23,11 @@
  */
 
 import { getToolDefinitions, getToolSummaryForPrompt, executeTool } from './chatToolAdapter.js';
-import { invokeAiProxy } from './aiProxyService.js';
+import { invokeAiProxy, invokeAiProxyStream } from './aiProxyService.js';
 import { trackLlmUsage } from '../utils/llmUsageTracker.js';
 import { detectToolGap, detectProactiveGap } from './gapDetectionService.js';
 import { generateToolBlueprint } from './toolBlueprintGenerator.js';
+import { getRecipeIndexForPrompt } from './chartRecipeCatalog.js';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -38,6 +39,45 @@ const AGENT_CHAT_MODEL = import.meta.env.VITE_DI_CHAT_MODEL || 'gpt-5.4';
 const AGENT_CHAT_PROVIDER = import.meta.env.VITE_DI_CHAT_PROVIDER || 'openai';
 const USE_EDGE_AI_PROXY = true;
 
+// ── DuckDB dialect guidance (shared between all prompt modes) ────────────────
+const DUCKDB_DIALECT_PROMPT = [
+  'query_sap_data SQL Dialect — DuckDB (PostgreSQL-compatible, in-browser WASM):',
+  '- CTEs (WITH ... AS) fully supported — use them for readability',
+  '- Window functions supported: ROW_NUMBER(), RANK(), DENSE_RANK(), NTILE(), LAG(), LEAD() with OVER(PARTITION BY ... ORDER BY ...)',
+  '- Date functions: DATE_TRUNC(part, col), EXTRACT(part FROM col), col + INTERVAL',
+  '- Advanced aggregates: PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY col), MEDIAN(col), MODE(col), QUANTILE_DISC(0.9 ORDER BY col)',
+  '- String: STRING_AGG(col, sep), REGEXP_MATCHES(), CONCAT()',
+  '- Avoid reserved word aliases: "order", "group", "key", "value" → use descriptive names like "order_count"',
+  '- Standard SQL: COUNT, SUM, AVG, MIN, MAX, ROUND, CASE WHEN, UNION ALL, HAVING, DISTINCT, LIKE, CROSS JOIN',
+].join('\n');
+
+export const ANALYSIS_AGENT_TOOL_IDS = Object.freeze([
+  'query_sap_data',
+  'list_sap_tables',
+  'run_python_analysis',
+  'generate_chart',
+]);
+
+export function getAgentToolConfig(mode = 'default') {
+  if (mode === 'analysis') {
+    return {
+      toolIds: ANALYSIS_AGENT_TOOL_IDS,
+      excludePython: false,
+      includeRegistered: false,
+    };
+  }
+  return {
+    excludePython: true,
+    includeRegistered: true,
+  };
+}
+
+export function getAgentToolStreamingMode(provider) {
+  if (provider === 'openai') return 'openai_chat_tools_stream';
+  if (provider === 'anthropic') return 'anthropic_chat_tools_stream';
+  return null;
+}
+
 // ── Agent Loop ──────────────────────────────────────────────────────────────
 
 /**
@@ -48,6 +88,7 @@ const USE_EDGE_AI_PROXY = true;
  * @param {Array}  params.conversationHistory - Previous messages [{role, content}]
  * @param {string} params.systemPrompt - System context (domain state, capabilities)
  * @param {object} params.toolContext - Runtime context for tool execution (userId, datasetProfileRow)
+ * @param {object|null} [params.answerContract] - Structured contract for what the final answer must cover
  * @param {object} [params.callbacks] - UI callbacks
  * @param {function} [params.callbacks.onTextChunk] - Called with each text chunk (for streaming)
  * @param {function} [params.callbacks.onToolCall] - Called when a tool is about to execute
@@ -62,16 +103,79 @@ export async function runAgentLoop({
   conversationHistory = [],
   systemPrompt = '',
   toolContext = {},
+  answerContract = null,
   callbacks = {},
   signal,
+  mode = 'default',
+  agentProvider = AGENT_CHAT_PROVIDER,
+  agentModel = AGENT_CHAT_MODEL,
 }) {
   const { onTextChunk, onToolCall, onToolResult, onThinking, onToolBlueprint } = callbacks;
 
   // Build the tool definitions for the LLM
-  const tools = getToolDefinitions();
-  const toolSummary = getToolSummaryForPrompt();
+  const toolConfig = getAgentToolConfig(mode);
+  const tools = getToolDefinitions(toolConfig);
+  const toolSummary = getToolSummaryForPrompt(toolConfig);
+  const isAnalysisMode = mode === 'analysis';
 
   // Augment system prompt with tool awareness
+  // Recipe catalog is ALWAYS injected so the LLM can autonomously decide when to use generate_chart.
+  const recipeIndex = getRecipeIndexForPrompt();
+  const answerContractBlock = formatAnswerContractForPrompt(answerContract);
+
+  const importantInstructions = isAnalysisMode
+    ? [
+        '- This is a direct business analysis request.',
+        '',
+        'Tool Selection Rules (in priority order):',
+        '1. generate_chart(recipe_id) — Use when user asks to show, plot, chart, or visualize data, OR when any recipe below matches the question. Pre-written Python, fast (~2s), deterministic.',
+        '2. run_python_analysis — Use for custom/exploratory analysis NOT covered by any recipe, or when the user uploads their own dataset.',
+        '3. query_sap_data — Use when user needs raw SQL lookups or specific data queries.',
+        '',
+        '- If uploaded dataset sheets are available, analyze that dataset with run_python_analysis instead of default Olist tables.',
+        '- After generate_chart succeeds: the card already shows title, metrics, highlights, and chart. Do NOT repeat them. Only add a short (2-4 sentence) business insight or actionable recommendation that is NOT already in the card. If there is nothing to add, just say "已產出圖表" or similar.',
+        '- After other tools return results, summarize the key findings clearly and concisely.',
+        '- If a tool fails, explain the error and suggest a narrower follow-up analysis.',
+        '- Always respond in the same language the user used.',
+        '',
+        DUCKDB_DIALECT_PROMPT,
+        '',
+        'Final Answer Rules:',
+        '- You are a senior analyst. Write only the useful user-facing interpretation.',
+        '- Keep the final answer under 160 words unless the evidence is blocked and needs a caveat.',
+        '- Do NOT output markdown tables, pseudo-tables, SQL, debug logs, tool transcripts, "thinking", or step-by-step execution details.',
+        '- Do NOT list every tool you called. The UI renders execution trace separately.',
+        '- Focus on concise interpretation, caveats, and the next best action.',
+        '',
+        answerContractBlock,
+        recipeIndex,
+      ]
+    : [
+        '- When the user asks about data (customers, orders, products, sellers, payments, etc.), ALWAYS call query_sap_data with a SQL query. NEVER just describe SQL — execute it.',
+        '- Call query_sap_data ONCE per question. Do NOT call it again with test queries like "SELECT 1".',
+        DUCKDB_DIALECT_PROMPT,
+        '- When the user asks to run an analysis, chart, visualization, forecast, plan, or any tool, call the appropriate function.',
+        '- If the user asks for a chart, visualization, or any analysis that matches the recipe catalog below, use generate_chart(recipe_id). It runs pre-written Python (~2s) instead of LLM code generation (~15s).',
+        '- After generate_chart succeeds: the card already shows title, metrics, highlights, and chart. Do NOT repeat them. Only add a short (2-4 sentence) business insight or actionable recommendation. If nothing to add, just say the chart is ready.',
+        '- After other tools return results, summarize the key findings for the user.',
+        '- If a tool fails, explain the error and suggest alternatives.',
+        '- You can chain multiple tools: e.g., run forecast first, then generate a plan.',
+        '- To forecast from SAP data, use forecast_from_sap (NOT run_forecast). It accepts a demand_sql parameter — write a SQL that returns (material_code, plant_id, time_bucket, demand_qty). If no SQL given, defaults to Olist orders. Olist data covers 2017-01 to 2018-08.',
+        '- If you need data that is not available, try query_sap_data first before asking the user to upload.',
+        '- Tools prefixed with "reg_" are user-approved registered tools. Use them when they match the task.',
+        '- If a tool fails due to data format mismatch, the system may auto-generate an adapter tool for the user to approve.',
+        '- Always respond in the same language the user used.',
+        '',
+        'Final Answer Rules:',
+        '- You are a senior analyst. Write only the useful user-facing interpretation.',
+        '- Keep the final answer under 160 words unless the evidence is blocked and needs a caveat.',
+        '- Do NOT output markdown tables, pseudo-tables, SQL, debug logs, tool transcripts, "thinking", or step-by-step execution details.',
+        '- Do NOT list every tool you called. The UI renders execution trace separately.',
+        '- Focus on concise interpretation, caveats, and the next best action.',
+        '',
+        answerContractBlock,
+        recipeIndex,
+      ];
   const agentSystemPrompt = [
     systemPrompt,
     '',
@@ -79,18 +183,7 @@ export async function runAgentLoop({
     toolSummary,
     '',
     'IMPORTANT INSTRUCTIONS:',
-    '- When the user asks about data (customers, orders, products, sellers, payments, etc.), ALWAYS call query_sap_data with a SQL query. NEVER just describe SQL — execute it.',
-    '- Call query_sap_data ONCE per question. Do NOT call it again with test queries like "SELECT 1".',
-    '- SQL dialect is AlaSQL. Avoid reserved words as aliases: "total", "key", "value", "order", "group". Use descriptive aliases like "total_revenue", "order_count" instead.',
-    '- When the user asks to run an analysis, forecast, plan, or any tool, call the appropriate function.',
-    '- After a tool returns results, summarize the key findings for the user in a clear markdown table.',
-    '- If a tool fails, explain the error and suggest alternatives.',
-    '- You can chain multiple tools: e.g., run forecast first, then generate a plan.',
-    '- To forecast from SAP data, use forecast_from_sap (NOT run_forecast). It accepts a demand_sql parameter — write a SQL that returns (material_code, plant_id, time_bucket, demand_qty). If no SQL given, defaults to Olist orders. Olist data covers 2017-01 to 2018-08.',
-    '- If you need data that is not available, try query_sap_data first before asking the user to upload.',
-    '- Tools prefixed with "reg_" are user-approved registered tools. Use them when they match the task.',
-    '- If a tool fails due to data format mismatch, the system may auto-generate an adapter tool for the user to approve.',
-    '- Always respond in the same language the user used.',
+    ...importantInstructions,
   ].join('\n');
 
   // Build initial messages array (OpenAI format)
@@ -114,6 +207,7 @@ export async function runAgentLoop({
   const toolCalls = [];
   let finalText = '';
   let totalIterations = 0;
+  const consecutiveFailures = { count: 0, lastToolName: null };
 
   // ── The Loop ────────────────────────────────────────────────────────────
   for (let i = 0; i < MAX_AGENT_ITERATIONS; i++) {
@@ -122,18 +216,38 @@ export async function runAgentLoop({
     }
 
     totalIterations = i + 1;
-    onThinking?.(`Thinking... (step ${i + 1})`);
+    onThinking?.({ step: i + 1, type: 'step_start', content: '', fullContent: '' });
 
     const t0 = Date.now();
     let response;
 
     try {
-      response = await callLLMWithTools(messages, tools, { signal });
+      let thinkingBuffer = '';
+      response = await callLLMWithToolsStream(messages, tools, {
+        signal,
+        provider: agentProvider,
+        model: agentModel,
+        onPreambleChunk: (chunk) => {
+          thinkingBuffer += chunk;
+          onThinking?.({ step: i + 1, type: 'preamble', content: chunk, fullContent: thinkingBuffer });
+        },
+      });
     } catch (err) {
       if (err.name === 'AbortError') throw err;
-      console.error('[agentLoop] LLM call failed:', err);
-      finalText = `❌ AI service error: ${err.message}`;
-      break;
+      // Fallback to non-streaming if stream mode fails
+      console.warn('[agentLoop] Stream call failed, trying non-stream fallback:', err.message);
+      try {
+        response = await callLLMWithTools(messages, tools, {
+          signal,
+          provider: agentProvider,
+          model: agentModel,
+        });
+      } catch (err2) {
+        if (err2.name === 'AbortError') throw err2;
+        console.error('[agentLoop] LLM call failed:', err2);
+        finalText = `❌ AI service error: ${err2.message}`;
+        break;
+      }
     }
 
     const latencyMs = Date.now() - t0;
@@ -173,8 +287,8 @@ export async function runAgentLoop({
 
         trackLlmUsage({
           source: 'agent_loop',
-          model: DEEPSEEK_CHAT_MODEL,
-          provider: 'deepseek',
+          model: agentModel,
+          provider: agentProvider,
           status: 'success',
           latencyMs,
           workflow: 'agent_chat',
@@ -194,9 +308,9 @@ export async function runAgentLoop({
     });
 
     // Stream any text that came with the tool call (e.g., "Let me run the forecast...")
+    // Keep it out of the persisted final answer.
     if (response.content) {
       onTextChunk?.(response.content + '\n\n');
-      finalText += response.content + '\n\n';
     }
 
     // Execute each tool call
@@ -229,6 +343,15 @@ export async function runAgentLoop({
         args: toolArgs,
         result: toolResult,
       });
+
+      // ── Data Learning: extract insights from successful SQL queries ──
+      if (toolName === 'query_sap_data' && toolResult.success && toolResult.result?.rows) {
+        try {
+          import('./dataInsightService.js').then(({ extractInsightsFromQueryResult }) => {
+            extractInsightsFromQueryResult(toolArgs.sql, toolResult.result.rows, toolResult.result.rowCount);
+          });
+        } catch { /* non-critical — never block agent loop */ }
+      }
 
       // ── Gap Detection: if tool failed, check if we can auto-create a tool ──
       if (!toolResult.success && i < MAX_AGENT_ITERATIONS - 2 && onToolBlueprint) {
@@ -274,12 +397,33 @@ export async function runAgentLoop({
         tool_call_id: tc.id,
         content: resultContent,
       });
+
+      // ── Consecutive failure detection ──────────────────────────────────
+      if (!toolResult.success) {
+        if (toolName === consecutiveFailures.lastToolName) {
+          consecutiveFailures.count++;
+        } else {
+          consecutiveFailures.count = 1;
+          consecutiveFailures.lastToolName = toolName;
+        }
+      } else {
+        consecutiveFailures.count = 0;
+        consecutiveFailures.lastToolName = null;
+      }
+
+      // After 2+ consecutive failures on the same tool, nudge the LLM to switch strategy
+      if (consecutiveFailures.count >= 2) {
+        messages.push({
+          role: 'user',
+          content: `⚠️ ${consecutiveFailures.lastToolName} has failed ${consecutiveFailures.count} times in a row. Do NOT retry with similar parameters. Either use a completely different approach (e.g., generate_chart recipe, run_python_analysis) or provide your final answer with the data you already have.`,
+        });
+      }
     }
 
     trackLlmUsage({
       source: 'agent_loop',
-      model: DEEPSEEK_CHAT_MODEL,
-      provider: 'deepseek',
+      model: agentModel,
+      provider: agentProvider,
       status: 'success',
       latencyMs,
       workflow: 'agent_tool_call',
@@ -300,27 +444,94 @@ export async function runAgentLoop({
     toolCalls,
     iterations: totalIterations,
     isAgentResponse: true,
+    provider: agentProvider,
+    model: agentModel,
   };
 }
 
-// ── LLM Call with Tools ──────────────────────────────────────────────────────
+// ── LLM Call with Tools (Streaming) ─────────────────────────────────────────
 
 /**
- * Call DeepSeek with function-calling tools.
+ * Call LLM with tools via SSE streaming.
+ * Streams thinking/preamble content in real-time via onPreambleChunk callback.
+ * Returns the same shape as callLLMWithTools: { content, tool_calls, usage }.
+ */
+async function callLLMWithToolsStream(messages, tools, { signal, onPreambleChunk, provider = AGENT_CHAT_PROVIDER, model = AGENT_CHAT_MODEL } = {}) {
+  const toolsMode = getAgentToolStreamingMode(provider);
+
+  if (!toolsMode) {
+    // Providers without a streaming tool path fall back to non-streaming.
+    return callLLMWithTools(messages, tools, { signal, provider, model });
+  }
+
+  let content = '';
+  const toolCallsMap = []; // Accumulate tool_calls from deltas
+  let usage = null;
+
+  console.info(`[agentLoop] Calling LLM stream (${toolsMode}, model=${model}) with ${tools.length} tools`);
+
+  await invokeAiProxyStream(toolsMode, {
+    messages,
+    tools,
+    model,
+    temperature: 0.3,
+    maxOutputTokens: 4096,
+  }, {
+    signal,
+    onDelta: (chunk) => {
+      // Handle usage in final chunk
+      if (chunk.usage) {
+        usage = chunk.usage;
+      }
+
+      const delta = chunk.choices?.[0]?.delta;
+      if (!delta) return;
+
+      // Text content — preamble (before/with tool calls) or final answer
+      if (delta.content) {
+        content += delta.content;
+        onPreambleChunk?.(delta.content);
+      }
+
+      // Tool calls are streamed incrementally — accumulate by index
+      if (delta.tool_calls) {
+        for (const tc of delta.tool_calls) {
+          const idx = tc.index;
+          if (!toolCallsMap[idx]) {
+            toolCallsMap[idx] = { id: '', type: 'function', function: { name: '', arguments: '' } };
+          }
+          if (tc.id) toolCallsMap[idx].id = tc.id;
+          if (tc.function?.name) toolCallsMap[idx].function.name += tc.function.name;
+          if (tc.function?.arguments) toolCallsMap[idx].function.arguments += tc.function.arguments;
+        }
+      }
+    },
+  });
+
+  const tool_calls = toolCallsMap.filter(Boolean);
+  console.info(`[agentLoop] Stream complete — content=${content.length}chars, tool_calls=${tool_calls.length}`);
+
+  return { content, tool_calls, usage };
+}
+
+// ── LLM Call with Tools (Non-Streaming) ─────────────────────────────────────
+
+/**
+ * Call LLM with function-calling tools (non-streaming fallback).
  * Returns the parsed assistant message including any tool_calls.
  */
-async function callLLMWithTools(messages, tools, { signal } = {}) {
+async function callLLMWithTools(messages, tools, { signal, provider = AGENT_CHAT_PROVIDER, model = AGENT_CHAT_MODEL } = {}) {
   // Try Edge Function (ai-proxy) first
   if (USE_EDGE_AI_PROXY) {
     try {
-      const toolsMode = AGENT_CHAT_PROVIDER === 'openai' ? 'openai_chat_tools'
-        : AGENT_CHAT_PROVIDER === 'anthropic' ? 'anthropic_chat_tools'
+      const toolsMode = provider === 'openai' ? 'openai_chat_tools'
+        : provider === 'anthropic' ? 'anthropic_chat_tools'
         : 'deepseek_chat_tools';
-      console.info(`[agentLoop] Calling LLM (${toolsMode}, model=${AGENT_CHAT_MODEL}) with ${tools.length} tools:`, tools.map(t => t.function?.name));
+      console.info(`[agentLoop] Calling LLM (${toolsMode}, model=${model}) with ${tools.length} tools:`, tools.map(t => t.function?.name));
       const result = await invokeAiProxy(toolsMode, {
         messages,
         tools,
-        model: AGENT_CHAT_MODEL,
+        model,
         temperature: 0.3, // Lower temperature for tool calls — more deterministic
         maxOutputTokens: 4096,
       }, { signal });
@@ -480,4 +691,24 @@ export function shouldUseAgentMode(message) {
   ];
 
   return strongSignals.some((re) => re.test(lower));
+}
+
+function formatAnswerContractForPrompt(answerContract) {
+  if (!answerContract || typeof answerContract !== 'object') return '';
+
+  const requiredDimensions = Array.isArray(answerContract.required_dimensions) && answerContract.required_dimensions.length > 0
+    ? answerContract.required_dimensions.join(', ')
+    : 'none specified';
+  const requiredOutputs = Array.isArray(answerContract.required_outputs) && answerContract.required_outputs.length > 0
+    ? answerContract.required_outputs.join(', ')
+    : 'none specified';
+
+  return [
+    'Answer Contract:',
+    `- Task type: ${answerContract.task_type || 'mixed'}`,
+    `- Required dimensions: ${requiredDimensions}`,
+    `- Required outputs: ${requiredOutputs}`,
+    `- Audience language: ${answerContract.audience_language || 'same as user'}`,
+    '- Explicitly cover every required dimension that the evidence supports.',
+  ].join('\n');
 }

@@ -1,7 +1,7 @@
 /**
  * AnalysisResultCard.jsx
  *
- * Universal card for structured analysis results from olistAnalysisService.
+ * Universal card for structured analysis results.
  * Renders metrics grid, Recharts charts, collapsible tables, highlights, and details.
  *
  * Payload shape:
@@ -9,16 +9,9 @@
  */
 
 import React, { useState } from 'react';
-import {
-  BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
-  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, ReferenceLine,
-} from 'recharts';
 import { ChevronDown, ChevronUp, BarChart3, TrendingUp, Table2, Database, Code2, Copy, Check } from 'lucide-react';
-
-// Color scale for heatmap: light blue → dark blue
-const HEATMAP_COLORS = ['#dbeafe', '#93c5fd', '#3b82f6', '#1d4ed8', '#1e3a8a'];
-
-const CHART_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16'];
+import ChartRenderer from './ChartRenderer.jsx';
+import { inferChartSpec, getCompatibleTypes } from '../../services/chartSpecInference.js';
 
 export default function AnalysisResultCard({ payload }) {
   const [showTable, setShowTable] = useState(false);
@@ -33,16 +26,11 @@ export default function AnalysisResultCard({ payload }) {
     <div className="w-full rounded-xl border border-blue-200 dark:border-blue-800 bg-gradient-to-br from-blue-50/80 to-white dark:from-blue-950/30 dark:to-gray-900 shadow-sm overflow-hidden">
       {/* Header */}
       <div className="px-4 pt-4 pb-2">
-        <div className="flex items-start justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <div className="p-1.5 rounded-lg bg-blue-100 dark:bg-blue-900/50">
-              <BarChart3 className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-            </div>
-            <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100">{title}</h3>
+        <div className="flex items-start gap-2">
+          <div className="p-1.5 rounded-lg bg-blue-100 dark:bg-blue-900/50">
+            <BarChart3 className="w-4 h-4 text-blue-600 dark:text-blue-400" />
           </div>
-          <span className="shrink-0 px-2 py-0.5 text-[10px] font-medium rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">
-            completed
-          </span>
+          <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100">{title}</h3>
         </div>
         {summary && (
           <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{summary}</p>
@@ -80,20 +68,17 @@ export default function AnalysisResultCard({ payload }) {
         </div>
       )}
 
-      {/* Charts */}
-      {charts.length > 0 && (
+      {/* Charts — use shared ChartRenderer; auto-infer from tables if no charts provided */}
+      {(charts.length > 0 || (charts.length === 0 && tables.length > 0)) && (
         <div className="px-4 pb-3 space-y-4">
-          {charts.map((chart, i) => (
-            <div key={i}>
-              {chart.title && (
-                <div className="text-xs font-medium text-slate-600 dark:text-slate-300 mb-2">{chart.title}</div>
-              )}
-              <div className="bg-white dark:bg-gray-800/40 rounded-lg p-2 border border-slate-100 dark:border-slate-700">
-                <ResponsiveContainer width="100%" height={220}>
-                  {renderChart(chart)}
-                </ResponsiveContainer>
-              </div>
-            </div>
+          {(charts.length > 0 ? charts : autoInferChartsFromTables(tables)).map((chart, i) => (
+            <ChartRenderer
+              key={i}
+              chart={chart}
+              height={220}
+              compatibleTypes={chart.compatibleTypes || getCompatibleTypes(chart.type, chart.data)}
+              showSwitcher={true}
+            />
           ))}
         </div>
       )}
@@ -185,163 +170,26 @@ export default function AnalysisResultCard({ payload }) {
   );
 }
 
-// ── Chart Renderer ───────────────────────────────────────────────────────────
+// ── Auto-infer charts from tables when no charts provided ────────────────────
 
-function renderChart(chart) {
-  const { type, data = [], xKey, yKey, label } = chart;
+function autoInferChartsFromTables(tables) {
+  if (!tables || tables.length === 0) return [];
+  const tbl = tables[0];
+  if (!tbl.columns || !tbl.rows || tbl.rows.length === 0) return [];
 
-  if (!data || data.length === 0) {
-    return <div className="text-xs text-slate-400 text-center py-8">No chart data</div>;
-  }
+  // Convert table rows to object format for inference
+  const rows = tbl.rows.map(row => {
+    if (Array.isArray(row)) {
+      const obj = {};
+      tbl.columns.forEach((col, i) => { obj[col] = row[i]; });
+      return obj;
+    }
+    return row;
+  });
 
-  if (type === 'line') {
-    return (
-      <LineChart data={data} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-        <XAxis dataKey={xKey} tick={{ fontSize: 10 }} angle={-30} textAnchor="end" height={50} />
-        <YAxis tick={{ fontSize: 10 }} />
-        <Tooltip contentStyle={{ fontSize: 11 }} />
-        <Legend wrapperStyle={{ fontSize: 11 }} />
-        <Line type="monotone" dataKey={yKey} stroke={CHART_COLORS[0]} strokeWidth={2} dot={{ r: 2 }} name={label || yKey} />
-      </LineChart>
-    );
-  }
-
-  if (type === 'bar') {
-    return (
-      <BarChart data={data} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-        <XAxis dataKey={xKey} tick={{ fontSize: 10 }} angle={-30} textAnchor="end" height={50} />
-        <YAxis tick={{ fontSize: 10 }} />
-        <Tooltip contentStyle={{ fontSize: 11 }} />
-        <Bar dataKey={yKey} fill={CHART_COLORS[0]} radius={[4, 4, 0, 0]} name={label || yKey} />
-      </BarChart>
-    );
-  }
-
-  if (type === 'pie') {
-    return (
-      <PieChart>
-        <Pie data={data} dataKey={yKey} nameKey={xKey} cx="50%" cy="50%" outerRadius={80} label>
-          {data.map((_, i) => (
-            <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
-          ))}
-        </Pie>
-        <Tooltip contentStyle={{ fontSize: 11 }} />
-        <Legend wrapperStyle={{ fontSize: 11 }} />
-      </PieChart>
-    );
-  }
-
-  // Lorenz curve: actual distribution + diagonal equality line
-  if (type === 'lorenz') {
-    const gini = chart.gini;
-    // Build diagonal reference data (perfect equality line)
-    const diagonalData = data.map(d => ({ ...d, equality: d[xKey] }));
-    return (
-      <div>
-        {gini != null && (
-          <div className="text-[10px] text-slate-500 dark:text-slate-400 mb-1 text-right">
-            Gini = <span className="font-semibold text-blue-600 dark:text-blue-400">{gini.toFixed(3)}</span>
-          </div>
-        )}
-        <LineChart data={diagonalData} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-          <XAxis dataKey={xKey} tick={{ fontSize: 10 }} unit="%" label={{ value: 'Cumulative % of Population', position: 'insideBottomRight', offset: -5, fontSize: 10 }} />
-          <YAxis tick={{ fontSize: 10 }} unit="%" label={{ value: 'Cumulative % of Value', angle: -90, position: 'insideLeft', fontSize: 10 }} />
-          <Tooltip contentStyle={{ fontSize: 11 }} formatter={(v) => `${v.toFixed(1)}%`} />
-          <Legend wrapperStyle={{ fontSize: 11 }} />
-          <Line type="monotone" dataKey="equality" stroke="#9ca3af" strokeWidth={1.5} strokeDasharray="6 4" dot={false} name="Perfect Equality" />
-          <Line type="monotone" dataKey={yKey} stroke={CHART_COLORS[4]} strokeWidth={2.5} dot={false} name={label || 'Lorenz Curve'} />
-        </LineChart>
-      </div>
-    );
-  }
-
-  // Histogram: bar chart with no gap between bars
-  if (type === 'histogram') {
-    return (
-      <BarChart data={data} margin={{ top: 5, right: 20, left: 10, bottom: 5 }} barCategoryGap={0} barGap={0}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-        <XAxis dataKey={xKey} tick={{ fontSize: 10 }} angle={-30} textAnchor="end" height={50} />
-        <YAxis tick={{ fontSize: 10 }} />
-        <Tooltip contentStyle={{ fontSize: 11 }} />
-        <Bar dataKey={yKey} fill={CHART_COLORS[4]} name={label || yKey} />
-      </BarChart>
-    );
-  }
-
-  // Heatmap: custom SVG grid with color-coded cells
-  if (type === 'heatmap') {
-    const rows = [...new Set(data.map(d => d.row))];
-    const cols = [...new Set(data.map(d => d.col))];
-    const valueMap = {};
-    let minVal = Infinity, maxVal = -Infinity;
-    data.forEach(d => {
-      const key = `${d.row}|${d.col}`;
-      valueMap[key] = d.value;
-      if (d.value < minVal) minVal = d.value;
-      if (d.value > maxVal) maxVal = d.value;
-    });
-    const cellW = Math.max(40, Math.floor(600 / Math.max(cols.length, 1)));
-    const cellH = 28;
-    const labelW = 80;
-    const headerH = 40;
-    const getColor = (v) => {
-      if (maxVal === minVal) return HEATMAP_COLORS[2];
-      const idx = Math.floor(((v - minVal) / (maxVal - minVal)) * (HEATMAP_COLORS.length - 1));
-      return HEATMAP_COLORS[Math.min(idx, HEATMAP_COLORS.length - 1)];
-    };
-    return (
-      <div className="overflow-x-auto">
-        <svg width={labelW + cols.length * cellW} height={headerH + rows.length * cellH}>
-          {/* Column headers */}
-          {cols.map((col, ci) => (
-            <text key={`h-${ci}`} x={labelW + ci * cellW + cellW / 2} y={headerH - 8} textAnchor="middle" fontSize={9} fill="#94a3b8">
-              {String(col).slice(0, 12)}
-            </text>
-          ))}
-          {/* Rows */}
-          {rows.map((row, ri) => (
-            <g key={`r-${ri}`}>
-              <text x={labelW - 6} y={headerH + ri * cellH + cellH / 2 + 4} textAnchor="end" fontSize={9} fill="#94a3b8">
-                {String(row).slice(0, 12)}
-              </text>
-              {cols.map((col, ci) => {
-                const val = valueMap[`${row}|${col}`] ?? 0;
-                return (
-                  <g key={`c-${ci}`}>
-                    <rect
-                      x={labelW + ci * cellW} y={headerH + ri * cellH}
-                      width={cellW - 1} height={cellH - 1}
-                      fill={getColor(val)} rx={3}
-                    />
-                    <text
-                      x={labelW + ci * cellW + cellW / 2} y={headerH + ri * cellH + cellH / 2 + 4}
-                      textAnchor="middle" fontSize={9} fill={val > (maxVal + minVal) / 2 ? '#fff' : '#334155'}
-                    >
-                      {typeof val === 'number' ? (val >= 1000 ? `${(val / 1000).toFixed(1)}K` : val.toFixed(0)) : val}
-                    </text>
-                  </g>
-                );
-              })}
-            </g>
-          ))}
-        </svg>
-      </div>
-    );
-  }
-
-  // Fallback: bar chart
-  return (
-    <BarChart data={data} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
-      <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-      <XAxis dataKey={xKey} tick={{ fontSize: 10 }} />
-      <YAxis tick={{ fontSize: 10 }} />
-      <Tooltip contentStyle={{ fontSize: 11 }} />
-      <Bar dataKey={yKey} fill={CHART_COLORS[0]} radius={[4, 4, 0, 0]} name={label || yKey} />
-    </BarChart>
-  );
+  const spec = inferChartSpec(rows);
+  if (!spec) return [];
+  return [{ ...spec, data: rows, title: tbl.title }];
 }
 
 // ── Methodology Section ─────────────────────────────────────────────────────

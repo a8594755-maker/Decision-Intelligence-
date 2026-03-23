@@ -83,6 +83,10 @@ class ToolExecutionRequest(BaseModel):
     analysis_mode: Optional[bool] = False
     # Dataset source for analysis mode (e.g. "olist")
     dataset: Optional[str] = None
+    # SSE context: if provided, publishes code to SSE channel before execution
+    task_id: Optional[str] = None
+    step_name: Optional[str] = None
+    step_index: Optional[int] = None
 
 
 class ArtifactOut(BaseModel):
@@ -573,7 +577,7 @@ OUTPUT FORMAT — return artifacts matching AnalysisResultCard shape:
 CRITICAL NOTES:
 - Produce MULTIPLE artifacts if the analysis covers multiple dimensions.
 - Each artifact MUST have type="analysis_result" and follow the data shape above.
-- Charts: use type "lorenz" for Lorenz curves, "bar" for comparisons, "line" for trends, "pie" for composition, "histogram" for distributions.
+- Charts: use type "horizontal_bar" for rankings/distributions (sorted descending), "bar" for comparisons, "line" for time trends, "area" for cumulative trends, "pie" or "donut" for composition/proportions, "scatter" for correlations between two numeric variables, "stacked_bar" for composition over time, "grouped_bar" for multi-dimension comparisons, "histogram" for frequency distributions, "lorenz" for Lorenz curves/inequality.
 - For histogram charts: data = [{"bin": "0-100", "count": 45}, ...], xKey="bin", yKey="count".
 - metrics dict: keys are display labels, values are pre-formatted strings.
 - highlights: short badge-style strings (1 line each).
@@ -899,7 +903,10 @@ def _execute_code(code: str, input_data: dict, prior_artifacts: dict, tables: Op
             }
 
         # Extract and sanitize artifacts
+        # Some recipes nest artifacts under result.artifacts — check both levels
         artifacts = raw_result.get("artifacts", [])
+        if not artifacts and isinstance(raw_result.get("result"), dict):
+            artifacts = raw_result["result"].get("artifacts", [])
         sanitized_artifacts = []
         for art in artifacts:
             if not isinstance(art, dict):
@@ -1169,6 +1176,29 @@ async def execute_tool(request: ToolExecutionRequest):
             code=code,
             execution_ms=int((time.time() - start_time) * 1000),
         )
+
+    # Publish generated code to SSE channel (if task_id provided) so frontend
+    # can display it in real-time BEFORE execution completes.
+    if request.task_id and code:
+        try:
+            from ml.api.agent_sse_router import _get_or_create_channel
+            import asyncio
+            channel = _get_or_create_channel(request.task_id)
+            sse_event = {
+                "event_type": "step_event",
+                "step_name": request.step_name,
+                "step_index": request.step_index,
+                "status": "running",
+                "code": code,
+                "code_language": "python",
+                "timestamp": time.time(),
+            }
+            try:
+                channel.put_nowait(sse_event)
+            except asyncio.QueueFull:
+                logger.warning("[tool_executor] SSE channel full, skipping code publish")
+        except Exception as sse_err:
+            logger.debug(f"[tool_executor] SSE code publish failed (non-blocking): {sse_err}")
 
     # Step 3: Execute code in sandbox (with runtime error retry)
     exec_result = _execute_code(code, request.input_data, request.prior_artifacts, tables=_loaded_tables)

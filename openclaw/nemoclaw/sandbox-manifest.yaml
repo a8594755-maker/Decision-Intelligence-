@@ -1,0 +1,132 @@
+# NemoClaw OpenShell Sandbox Manifest
+# Decision-Intelligence Supply Chain Plugin
+#
+# Declares the capability requirements for running DI agents under
+# NemoClaw's kernel-level sandbox (OpenShell).
+#
+# Reference: https://developer.nvidia.com/blog/run-autonomous-self-evolving-agents-more-safely-with-nvidia-openshell/
+
+version: "1.0"
+name: "di-supply-chain"
+description: "Decision Intelligence Supply Chain Planning Suite — enterprise-grade demand forecasting, replenishment optimization, risk analysis, and supplier negotiation."
+vendor: "Decision-Intelligence"
+license: "proprietary"
+
+# ── Filesystem capabilities ───────────────────────────────────────────────────
+
+capabilities:
+  filesystem:
+    read:
+      - "/app/data/**"           # Dataset files (CSV, Excel, Parquet)
+      - "/app/models/**"         # ML model artifacts (Prophet, LightGBM)
+      - "/app/openclaw/**"       # Skill definitions and configs
+      - "/app/src/**"            # Source code (read-only for tool catalog)
+      - "/tmp/di-sandbox/**"     # Temporary computation files
+    write:
+      - "/tmp/di-sandbox/**"     # Sandbox-only writes (intermediate results)
+      - "/app/data/exports/**"   # Generated CSV/Excel exports
+    deny:
+      - "/etc/**"                # System config
+      - "/root/**"               # Root home
+      - "**/.env*"               # Environment files with secrets
+
+  # ── Network capabilities ──────────────────────────────────────────────────
+
+  network:
+    outbound:
+      # DI backend API (same host)
+      - host: "localhost"
+        port: 8000
+        protocol: "http"
+        description: "FastAPI ML/Planning API"
+
+      # Supabase backend (cloud)
+      - host: "${SUPABASE_URL}"
+        port: 443
+        protocol: "https"
+        description: "Supabase DB + Edge Functions + ai-proxy"
+
+      # GDELT API (external signals - optional)
+      - host: "api.gdeltproject.org"
+        port: 443
+        protocol: "https"
+        description: "GDELT geopolitical event API (macro-oracle)"
+
+    inbound: []  # No inbound connections needed
+
+  # ── Process capabilities ──────────────────────────────────────────────────
+
+  process:
+    max_memory_mb: 2048
+    max_cpu_percent: 80
+    timeout_seconds: 300
+    max_concurrent_tools: 3
+    allow_subprocess: false   # No spawning child processes
+    allow_exec: false         # No arbitrary code execution
+
+# ── Data classification for Privacy Router ────────────────────────────────────
+# NemoClaw Privacy Router uses these classifications to decide whether
+# data can be sent to cloud LLMs or must stay on-device.
+
+data_classification:
+  # CONFIDENTIAL — Never leave the device. Processed only by on-device models.
+  confidential:
+    fields:
+      - "supplier_name"
+      - "unit_cost"
+      - "unit_price"
+      - "contract_terms"
+      - "negotiation_position"
+      - "margin"
+      - "profit"
+      - "cost_breakdown"
+    description: "Commercially sensitive data — supplier pricing, margins, contract details"
+
+  # INTERNAL — Can be anonymized before sending to cloud LLM.
+  internal:
+    fields:
+      - "material_description"
+      - "plant_name"
+      - "buyer_name"
+      - "approval_notes"
+    description: "Internal business data — can be anonymized for cloud processing"
+
+  # PUBLIC — Safe for cloud LLM processing (aggregated/statistical).
+  public:
+    fields:
+      - "forecast_series"       # Aggregated demand numbers
+      - "risk_scores"           # Computed scores (0-1)
+      - "plan_summary"          # Aggregated plan metrics
+      - "service_level"         # Percentage
+      - "total_cost"            # Aggregated (no per-unit)
+      - "time_bucket"           # Date periods
+      - "demand_qty"            # Aggregated quantities
+    description: "Aggregated/statistical data — safe for cloud model processing"
+
+# ── Audit requirements ────────────────────────────────────────────────────────
+
+audit:
+  log_all_tool_calls: true
+  log_all_llm_calls: true
+  log_data_access: true
+  retention_days: 90
+  format: "json"
+  destination: "/app/data/audit/nemoclaw/"
+
+# ── Health probes ─────────────────────────────────────────────────────────────
+
+health:
+  liveness:
+    endpoint: "/healthz"
+    interval_seconds: 30
+  readiness:
+    endpoint: "/readyz"
+    interval_seconds: 60
+
+# ── Compliance declarations ───────────────────────────────────────────────────
+
+compliance:
+  sap_compatible: true          # SAP MM IDoc export supported
+  audit_trail: true             # 16 event types tracked
+  idempotent_operations: true   # Idempotency keys prevent duplicates
+  governance_gates: true        # Human approval required for plan commits

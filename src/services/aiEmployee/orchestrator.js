@@ -1146,6 +1146,11 @@ async function _handleStepSuccess(task, step, result, stepDef) {
     stepIndex: step.step_index,
     stepName: step.step_name,
     artifacts: result.artifacts,
+    // Propagate code/stdout for UI transparency (Python tools, etc.)
+    code: result.code || null,
+    code_language: result.code_language || null,
+    stdout: result.stdout || null,
+    stderr: result.stderr || null,
     timestamp: Date.now() / 1000,
   };
   eventBus.emit(EVENT_NAMES.AGENT_STEP_COMPLETED, completedPayload);
