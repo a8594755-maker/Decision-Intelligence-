@@ -23,9 +23,43 @@ const QA_DIMENSION_KEYS = Object.freeze([
   'visualization_fit',
   'caveat_quality',
   'clarity',
+  'methodology_transparency',
+  'actionability',
 ]);
 
 const clampText = (text, maxChars = 8000) => String(text || '').slice(0, maxChars);
+
+function buildAnalysisDepthRules(answerContract) {
+  const depth = Array.isArray(answerContract?.analysis_depth) ? answerContract.analysis_depth : [];
+  if (depth.length === 0) return '';
+  const rules = [];
+  if (depth.includes('methodology_disclosure')) {
+    rules.push('- METHODOLOGY DISCLOSURE: Every numeric threshold or recommendation must state the formula, model, or assumption behind it (e.g., "ROP = d×L + z×σ, z=1.65 for 95% service level" or "ABC classification using Pareto 80/20 rule"). If no formal model was used, say "based on historical mean over [period]".');
+  }
+  if (depth.includes('relative_metrics')) {
+    rules.push('- RELATIVE METRICS: For every absolute metric (e.g., revenue = R$5000), also provide relative context (e.g., "3.2% of total revenue", "0.8x category average", "turnover = 12.5 days"). Use evidence data to compute ratios.');
+  }
+  if (depth.includes('sensitivity_range')) {
+    rules.push('- SENSITIVITY ANALYSIS: When recommending a threshold or parameter, include a table titled "Sensitivity Analysis" in the tables array with columns ["Scenario", "Parameter Value", "Expected Outcome", "Risk/Tradeoff"] and at least 3 rows (conservative / moderate / aggressive). Compute outcome values from data when possible; label estimates clearly.');
+  }
+  if (depth.includes('actionable_parameters')) {
+    rules.push('- ACTIONABLE PARAMETERS: Every recommendation must include at least one specific numeric parameter the user can act on. "Use conservative replenishment" is NOT acceptable; "Set safety stock to 45 units (z=1.65, 95% service level)" IS acceptable.');
+  }
+  if (depth.includes('trend_context')) {
+    rules.push('- TREND CONTEXT: Before recommending based on historical averages, state whether the metric is growing, declining, or stable over the available time window. If the trend is non-stationary (>10% change across periods), adjust the recommendation accordingly.');
+  }
+  return rules.length > 0 ? '\n## Analysis Depth Requirements\n' + rules.join('\n') : '';
+}
+
+function requestIncludesQuantileHistogram(answerContract, userMessage) {
+  const requiredDimensions = Array.isArray(answerContract?.required_dimensions)
+    ? answerContract.required_dimensions.map((item) => String(item || '').toLowerCase())
+    : [];
+  return (
+    requiredDimensions.some((item) => /quantiles?|percentiles?/.test(item))
+    && /\bhistogram\b|直方圖/i.test(String(userMessage || ''))
+  );
+}
 
 const summarizeToolCalls = (toolCalls = [], maxRowsPerQuery = 4) => {
   if (!Array.isArray(toolCalls) || toolCalls.length === 0) return 'No tool calls recorded.';
@@ -61,6 +95,9 @@ const summarizeToolCalls = (toolCalls = [], maxRowsPerQuery = 4) => {
     if (success) {
       if (Number.isFinite(rowCount)) {
         base.push(`rows=${rowCount}`);
+        if (rowCount === 0) {
+          base.push('⚠ ZERO ROWS — no evidence from this query. Do NOT cite numbers from it.');
+        }
       }
       if (Array.isArray(sampleRows) && sampleRows.length > 0) {
         base.push(`sample_rows=${clampText(JSON.stringify(sampleRows.slice(0, maxRowsPerQuery)), 500)}`);
@@ -95,7 +132,8 @@ Infer what the final answer must cover, independent of tool execution details.
   "required_dimensions": ["string"],
   "required_outputs": ["chart | table | comparison | recommendation | caveat"],
   "audience_language": "short language code or language name",
-  "brevity": "short"
+  "brevity": "short | analysis",
+  "analysis_depth": ["methodology_disclosure | relative_metrics | trend_context | sensitivity_range | actionable_parameters"]
 }
 
 ## Rules
@@ -109,7 +147,12 @@ Infer what the final answer must cover, independent of tool execution details.
 - required_dimensions: include each metric / lens / dimension the answer must explicitly cover. Keep them short.
 - required_outputs: include only what is clearly expected from the user request.
 - audience_language should match the user's language, e.g. "zh", "en", "Chinese", "English".
-- brevity must always be "short".`;
+- brevity: use "analysis" for comparison, diagnostic, trend, or multi-dimension requests that need detailed breakdowns; use "short" for simple lookups, single-fact questions, or narrow queries.
+- analysis_depth: an array of depth flags from ["methodology_disclosure", "relative_metrics", "trend_context", "sensitivity_range", "actionable_parameters"]. Auto-select:
+  - recommendation or diagnostic → always include "methodology_disclosure", "actionable_parameters", "sensitivity_range".
+  - comparison or trend → always include "relative_metrics", "trend_context".
+  - brevity "analysis" → always include "relative_metrics".
+  - lookup or ranking with brevity "short" → empty array.`;
 }
 
 export function buildAgentBriefSynthesisPrompt({
@@ -120,6 +163,7 @@ export function buildAgentBriefSynthesisPrompt({
   mode = 'default',
   repairInstructions = [],
 }) {
+  const quantileHistogramRequested = requestIncludesQuantileHistogram(answerContract, userMessage);
   return `You are the Presentation Synthesizer for a business-analysis chat agent.
 
 You MUST return one valid JSON object and NOTHING else.
@@ -150,6 +194,16 @@ ${repairInstructions.length > 0 ? repairInstructions.map((item) => `- ${item}`).
     "columns": ["string"],
     "rows": [["string or number"]]
   }],
+  "charts": [{
+    "type": "bar | grouped_bar | stacked_bar | line | scatter | pie | horizontal_bar",
+    "title": "string",
+    "xKey": "string (column name for X axis)",
+    "yKey": "string (column name for Y axis)",
+    "series": ["string (column names for multi-series, used with grouped_bar/stacked_bar)"],
+    "data": [{ "xKeyName": "value", "seriesName": "number" }],
+    "xAxisLabel": "string (optional)",
+    "yAxisLabel": "string (optional)"
+  }],
   "key_findings": ["string"],
   "implications": ["string"],
   "caveats": ["string"],
@@ -162,8 +216,18 @@ ${repairInstructions.length > 0 ? repairInstructions.map((item) => `- ${item}`).
 - If charts or analysis cards already exist, do not repeat every KPI already visible there. Add interpretation instead.
 - If the user asked for multiple dimensions, cover all of them in the brief.
 - If the evidence is partial or proxy-based, add a caveat.
+- Only mention a SQL, worker, connection, or tool failure if the tool evidence explicitly includes a failed call.
+- A successful 0-row SQL lookup is not a tool failure, but it provides ZERO evidence. Do NOT cite any numbers, statistics, or counts from a 0-row query. If all SQL queries returned 0 rows, add a caveat explaining no SQL data was available.
+- If no tool call succeeded, do not fabricate metric pills, evidence tables, or dataset-specific findings. Use empty arrays for unsupported sections. You may offer generic advice only if it is clearly labeled as general guidance rather than a result from this dataset.
+- If existing chart or analysis artifacts already cover the answer contract, do not ask for retries or more SQL just to restate the same metrics.
+- Use the successful artifact evidence as the source of truth whenever it already satisfies the request.
+- ${quantileHistogramRequested
+    ? 'Because the user requested histogram quantiles, the summary or key findings must explicitly mention P25, P50, P75, and P90 (or P95 if P90 is unavailable) when those values exist in the evidence.'
+    : 'If quantiles are requested and supported by the evidence, summarize the key cut points directly instead of only saying they were marked.'}
 - Tables must be structured JSON tables, not markdown or pseudo-table text.
-- Use empty arrays when a section is not needed.`;
+- Charts: when tool evidence contains numeric comparison data (e.g. strategy A vs B, category breakdowns), generate inline chart specs in the "charts" array. Use "grouped_bar" for side-by-side comparisons, "scatter" for two-variable relationships, "bar" for single-metric rankings. Each chart needs type, title, xKey, yKey, and a data array of objects. For multi-series (grouped_bar, stacked_bar), include a "series" array of column names. Keep data to ≤25 rows per chart. If a generate_chart artifact already covers the visualization, do not duplicate it in charts.
+- Use empty arrays when a section is not needed.
+${buildAnalysisDepthRules(answerContract)}`;
 }
 
 export function buildAgentBriefReviewPrompt({
@@ -204,6 +268,7 @@ ${clampText(summarizeToolCalls(toolCalls), 4000)}
 - Did debug logs, failed attempts, SQL transcript, or pseudo-table text leak into the brief?
 - Does the brief include caveats when evidence is partial, proxy-based, or blocked?
 - Are any claims contradictory to the evidence summary?
+- Does the brief cite specific numbers from queries that returned 0 rows (marked ⚠ ZERO ROWS)? If yes, flag as a contradictory_claim.
 
 ## Rules
 - If the brief is good enough for display, return pass=true.
@@ -222,7 +287,9 @@ function buildQaReviewSchemaText() {
     "evidence_alignment": 0.0,
     "visualization_fit": 0.0,
     "caveat_quality": 0.0,
-    "clarity": 0.0
+    "clarity": 0.0,
+    "methodology_transparency": 0.0,
+    "actionability": 0.0
   }
 }`;
 }
@@ -237,6 +304,7 @@ function buildQaReviewPrompt({
   deterministicQa = null,
   artifactSummary = '',
 }) {
+  const quantileHistogramRequested = requestIncludesQuantileHistogram(answerContract, userMessage);
   return `You are the ${reviewerLabel} for a business-analysis answer.
 
 You MUST return one valid JSON object and NOTHING else.
@@ -262,8 +330,14 @@ ${buildQaReviewSchemaText()}
 ## Review rules
 - Prioritize correctness over writing quality.
 - Add a blocker when the answer should not pass as-is.
-- Add blockers for: contradictory numbers without explanation, missing core requested dimensions, unsupported conclusion, chart mismatch, missing caveat for proxy/failed/partial evidence, or debug transcript leakage.
+- Add blockers for: contradictory numbers without explanation, missing core requested dimensions, unsupported conclusion, chart mismatch, invented tool-failure claims, missing caveat for proxy/failed/partial evidence, debug transcript leakage, or citing specific numbers from a 0-row query.
+- A successful 0-row SQL lookup is not a failure, but provides ZERO evidence. If the brief cites specific numbers that only appear in a 0-row query (not from a chart or other artifact), add a blocker.
+- ${quantileHistogramRequested
+    ? 'For histogram-plus-quantiles requests, the answer should explicitly summarize the core cut points P25, P50, P75, and P90/P95 when the artifact evidence contains them.'
+    : 'If the artifact already contains quantiles, prefer an explicit short quantile summary over vague phrasing like "quantiles are marked".'}
 - Scores are 0.0 to 10.0 for each dimension.
+- methodology_transparency: are formulas, models, or assumptions behind numeric thresholds disclosed? Score 10 if the answer is a simple lookup or does not cite thresholds; deduct if recommendation/diagnostic answers cite numbers without stating the methodology.
+- actionability: are recommendations specific enough to act on (e.g., "set safety stock to 45 units")? Score 10 if the task is not a recommendation; deduct if recommendations are vague ("use conservative approach") without specific parameters.
 - Keep repair instructions concrete and implementation-oriented.
 - Do not rewrite the answer. Only judge it.`;
 }
@@ -293,6 +367,7 @@ export function buildAgentQaRepairSynthesisPrompt({
   artifactSummary = '',
   mode = 'default',
 }) {
+  const quantileHistogramRequested = requestIncludesQuantileHistogram(answerContract, userMessage);
   return `You are the Repair Synthesizer for a business-analysis brief.
 
 You MUST return one valid JSON object and NOTHING else.
@@ -334,9 +409,17 @@ ${clampText(summarizeToolCalls(toolCalls), 4500)}
 - Fix missing dimensions, contradictions, caveats, evidence-table problems, chart-fit framing, and duplicate text.
 - Do not invent or alter known numeric facts.
 - Do not remove legitimate caveats or hide failed steps.
+- Remove any hallucinated SQL, worker, connection, or tool failure claim when the tool evidence has no failed call.
+- Never rewrite a successful 0-row SQL lookup as a failure; at most describe it as adding no new evidence.
+- If no tool call succeeded, strip unsupported metric pills, evidence tables, and dataset-specific numeric claims. Keep the brief limited to caveats, generic guidance, and next steps.
+- If existing chart or analysis artifacts already satisfy the request, do not ask for retries or more SQL.
+- ${quantileHistogramRequested
+    ? 'For histogram-plus-quantiles requests, repair the summary or key findings so they explicitly mention P25, P50, P75, and P90/P95 when those values are present in evidence.'
+    : 'If quantiles are part of the request and present in evidence, mention the core cut points explicitly.'}
 - Do not output SQL, pseudo-tables, or debug transcript.
 - You may rewrite headline/summary/findings/tables/caveats/next_steps.
-  - If evidence is insufficient, say so clearly in caveats instead of pretending certainty.`;
+  - If evidence is insufficient, say so clearly in caveats instead of pretending certainty.
+${buildAnalysisDepthRules(answerContract)}`;
 }
 
 export function buildAgentCandidateJudgePrompt({
@@ -373,6 +456,7 @@ Prioritize correctness, completeness, evidence alignment, and risk handling over
 - Pick exactly one winner.
 - Prefer the candidate with fewer contradictions, better caveats, and stronger evidence fit.
 - If one candidate failed or timed out, prefer the surviving candidate unless the surviving answer is clearly unusable.
+- If the winning candidate still has QA warnings or blockers, describe it as the stronger available answer, not as a fully satisfactory or complete solution.
 - Use confidence from 0.0 to 1.0.
 - Keep the summary concise and user-facing.
 - Do not rewrite either answer. Judge only.`;
@@ -397,7 +481,7 @@ export function validateAnswerContract(parsed) {
     && parsed.required_outputs.every((item) => OUTPUT_TYPES.has(item))
     && typeof parsed.audience_language === 'string'
     && parsed.audience_language.trim().length > 0
-    && parsed.brevity === 'short'
+    && (parsed.brevity === 'short' || parsed.brevity === 'analysis')
   );
 }
 
@@ -453,7 +537,7 @@ export function validateAgentBriefReview(parsed) {
 }
 
 export function validateAgentQaReview(parsed) {
-  return (
+  const coreValid = (
     isPlainObject(parsed)
     && typeof parsed.score === 'number'
     && parsed.score >= 0
@@ -464,8 +548,15 @@ export function validateAgentQaReview(parsed) {
     && parsed.issues.every((item) => typeof item === 'string')
     && Array.isArray(parsed.repair_instructions)
     && parsed.repair_instructions.every((item) => typeof item === 'string')
-    && isValidQaDimensionScores(parsed.dimension_scores)
   );
+  if (!coreValid) return false;
+
+  // dimension_scores is optional — accept the review if core fields are valid
+  // (LLM may truncate dimension_scores when maxOutputTokens is tight)
+  if (parsed.dimension_scores != null && !isValidQaDimensionScores(parsed.dimension_scores)) {
+    console.warn('[validateAgentQaReview] dimension_scores present but malformed — accepting core fields');
+  }
+  return true;
 }
 
 export function validateAgentCandidateJudge(parsed) {

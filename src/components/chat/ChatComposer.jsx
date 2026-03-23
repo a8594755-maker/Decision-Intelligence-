@@ -1,5 +1,5 @@
 import React, { memo, useState, useMemo } from 'react';
-import { Brain, FileText, Loader2, Paperclip, Send, Table2, X } from 'lucide-react';
+import { Brain, FileText, Loader2, Paperclip, Send, Square, Table2, X } from 'lucide-react';
 import { CHAT_ATTACHMENT_ACCEPT, formatAttachmentSize } from '../../services/chatAttachmentService';
 
 const STATUS_TONE_CLASSES = {
@@ -47,6 +47,7 @@ function ChatComposer({
   variant = 'default',
   thinkingEnabled = false,
   onToggleThinkingEnabled,
+  onStopGeneration,
 }) {
   const isAIEmployeeVariant = variant === 'ai_employee';
   const statusTone = STATUS_TONE_CLASSES[status?.tone || 'neutral'] || STATUS_TONE_CLASSES.neutral;
@@ -134,6 +135,11 @@ function ChatComposer({
       if (e.key === 'Escape') {
         // Let default handle
       }
+    }
+    if (e.key === 'Escape' && isTyping && onStopGeneration) {
+      e.preventDefault();
+      onStopGeneration();
+      return;
     }
     onKeyDown?.(e);
   };
@@ -264,18 +270,33 @@ function ChatComposer({
             style={{ minHeight: '52px', maxHeight: '180px' }}
           />
 
-          <button
-            type="submit"
-            disabled={isTyping || isUploading || !canSubmit}
-            className={`absolute right-2.5 p-2 text-white transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
-              isAIEmployeeVariant
-                ? 'bottom-2.5 rounded-full bg-slate-900 hover:bg-slate-700 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-200'
-                : 'top-2.5 rounded-lg bg-blue-600 hover:bg-blue-700'
-            }`}
-            title="Send"
-          >
-            <Send className="w-4 h-4" />
-          </button>
+          {isTyping && onStopGeneration ? (
+            <button
+              type="button"
+              onClick={onStopGeneration}
+              className={`absolute right-2.5 p-2 text-white transition-colors ${
+                isAIEmployeeVariant
+                  ? 'bottom-2.5 rounded-full bg-red-600 hover:bg-red-700 dark:bg-red-600 dark:hover:bg-red-700'
+                  : 'top-2.5 rounded-lg bg-red-600 hover:bg-red-700'
+              }`}
+              title="Stop generation (Esc)"
+            >
+              <Square className="w-4 h-4 fill-current" />
+            </button>
+          ) : (
+            <button
+              type="submit"
+              disabled={isTyping || isUploading || !canSubmit}
+              className={`absolute right-2.5 p-2 text-white transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                isAIEmployeeVariant
+                  ? 'bottom-2.5 rounded-full bg-slate-900 hover:bg-slate-700 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-200'
+                  : 'top-2.5 rounded-lg bg-blue-600 hover:bg-blue-700'
+              }`}
+              title="Send"
+            >
+              <Send className="w-4 h-4" />
+            </button>
+          )}
         </div>
       </form>
 

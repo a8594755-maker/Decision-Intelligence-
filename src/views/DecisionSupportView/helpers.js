@@ -737,8 +737,8 @@ Be concise, data-driven, and actionable.\n\n`;
   }
 
   // ── Enterprise Data section ──
-  prompt += '\n## Enterprise Data (Always Available via SQL)\n';
-  prompt += 'You have direct access to ALL enterprise data via the **query_sap_data** tool. Two datasets are available:\n\n';
+  prompt += '\n## Enterprise Data via SQL\n';
+  prompt += 'You have direct access to enterprise data via the **query_sap_data** tool. Two datasets are available, but they do NOT have the same availability guarantees:\n\n';
 
   // Dataset A: Use dynamic profile digest if available, otherwise fall back to static.
   // dataProfile should already be a pre-built digest string (from buildProfileDigest()).
@@ -762,7 +762,7 @@ Be concise, data-driven, and actionable.\n\n`;
 `;
   }
 
-  prompt += `\n### Dataset B: DI Operations (Supply chain — Supabase)
+  prompt += `\n### Dataset B: DI Operations (Supply chain — Supabase; current-user scoped, may be empty)
 | Table | SAP Equiv | Key Columns |
 |-------|-----------|-------------|
 | suppliers | LFA1 | supplier_code, supplier_name, status |
@@ -781,6 +781,7 @@ Be concise, data-driven, and actionable.\n\n`;
 
   prompt += `\n**CRITICAL**: When the user asks about ANY data, you MUST call **query_sap_data** with a SQL SELECT query. NEVER just describe SQL — execute it directly.
 Use **list_sap_tables** to show table schemas if the user asks what data is available.
+Dataset A is built-in. Dataset B depends on the current user having imported or synced operational data.
 You can JOIN across both datasets. Always clarify which dataset the results come from.
 `;
 

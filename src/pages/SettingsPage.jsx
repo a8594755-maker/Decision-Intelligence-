@@ -1,18 +1,22 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  User, Bot, Moon, Sun, AlertCircle, Settings, Database,
+  User, Bot, Moon, Sun, AlertCircle, Settings, Database, BarChart3, Cpu,
 } from 'lucide-react';
 import { Card, Button } from '../components/ui';
 import { useAuth } from '../contexts/AuthContext';
 import { useApp } from '../contexts/AppContext';
 import AdminLogicControlCenter from '../views/AdminLogicControlCenter';
 import DataImportPanel from '../components/DataImportPanel';
+import ApiUsageTab from '../components/settings/ApiUsageTab';
+import ModelConfigTab from '../components/settings/ModelConfigTab';
 
 const TABS = [
   { key: 'profile', label: 'Profile & API', icon: User },
   { key: 'logic',   label: 'Logic Control', icon: Settings },
   { key: 'data',    label: 'Data Import',   icon: Database },
+  { key: 'models',  label: 'Model Config',  icon: Cpu },
+  { key: 'usage',   label: 'API Usage',    icon: BarChart3 },
 ];
 
 export default function SettingsPage() {
@@ -109,6 +113,14 @@ export default function SettingsPage() {
 
         {activeTab === 'data' && (
           <DataImportPanel />
+        )}
+
+        {activeTab === 'models' && (
+          <ModelConfigTab />
+        )}
+
+        {activeTab === 'usage' && (
+          <ApiUsageTab />
         )}
       </div>
     </div>

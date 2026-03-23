@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { buildActionParams, isExecutionType } from './chatIntentService';
+import { describe, it, expect, vi } from 'vitest';
+import { buildActionParams, isExecutionType, routeIntent } from './chatIntentService';
 
 describe('chatIntentService', () => {
   describe('buildActionParams', () => {
@@ -61,6 +61,29 @@ describe('chatIntentService', () => {
 
     it('returns true for ACCEPT_NEGOTIATION_OPTION', () => {
       expect(isExecutionType('ACCEPT_NEGOTIATION_OPTION')).toBe(true);
+    });
+  });
+
+  describe('routeIntent', () => {
+    it('routes QUERY_DATA to queryData handler instead of assignTask', async () => {
+      const queryData = vi.fn();
+      const assignTask = vi.fn();
+
+      const result = await routeIntent(
+        {
+          intent: 'QUERY_DATA',
+          confidence: 0.95,
+          entities: { freeform_query: 'show inventory by plant' },
+          requires_dataset: false,
+        },
+        {},
+        { queryData, assignTask },
+        {}
+      );
+
+      expect(result).toEqual({ handled: true, intent: 'QUERY_DATA' });
+      expect(queryData).toHaveBeenCalledWith({ userMessage: 'show inventory by plant' });
+      expect(assignTask).not.toHaveBeenCalled();
     });
   });
 });

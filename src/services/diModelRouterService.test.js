@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockInvokeAiProxy = vi.fn();
+const mockValidateAgentQaReview = vi.fn(() => true);
+const mockValidateAgentCandidateJudge = vi.fn(() => true);
 
 vi.mock('../prompts/diJsonContracts', () => ({
   buildBlockingQuestionPrompt: () => 'blocking',
@@ -19,9 +21,9 @@ vi.mock('../prompts/agentResponsePrompt', () => ({
   buildAgentQaCrossReviewPrompt: () => 'cross review',
   buildAgentQaRepairSynthesisPrompt: () => 'repair synth',
   validateAgentBrief: () => true,
-  validateAgentCandidateJudge: () => true,
+  validateAgentCandidateJudge: (...args) => mockValidateAgentCandidateJudge(...args),
   validateAgentBriefReview: () => true,
-  validateAgentQaReview: () => true,
+  validateAgentQaReview: (...args) => mockValidateAgentQaReview(...args),
   validateAnswerContract: () => true,
 }));
 
@@ -39,6 +41,10 @@ const { DI_PROMPT_IDS, runDiPrompt } = await import('./diModelRouterService.js')
 describe('diModelRouterService reviewer routing', () => {
   beforeEach(() => {
     mockInvokeAiProxy.mockReset();
+    mockValidateAgentQaReview.mockReset();
+    mockValidateAgentQaReview.mockReturnValue(true);
+    mockValidateAgentCandidateJudge.mockReset();
+    mockValidateAgentCandidateJudge.mockReturnValue(true);
   });
 
   it('uses provider/model overrides for cross-model review prompts and records the resolved route', async () => {
@@ -109,6 +115,114 @@ describe('diModelRouterService reviewer routing', () => {
     );
     expect(result.provider).toBe('anthropic');
     expect(result.model).toBe('claude-judge-live');
+    expect(result.parsed.winner_candidate_id).toBe('secondary');
+  });
+
+  it('normalizes the legacy gemini-3-pro alias to gemini-3.1-pro-preview', async () => {
+    mockInvokeAiProxy.mockResolvedValue({
+      text: JSON.stringify({
+        global: {},
+        sheets: [],
+      }),
+      model: 'gemini-3.1-pro-preview',
+      transport: 'native',
+    });
+
+    const result = await runDiPrompt({
+      promptId: DI_PROMPT_IDS.DATA_PROFILER,
+      input: { sample: true },
+      providerOverride: 'gemini',
+      modelOverride: 'gemini-3-pro',
+    });
+
+    expect(mockInvokeAiProxy).toHaveBeenCalledWith(
+      'di_prompt',
+      expect.objectContaining({
+        provider: 'gemini',
+        model: 'gemini-3.1-pro-preview',
+      }),
+      expect.any(Object),
+    );
+    expect(result.model).toBe('gemini-3.1-pro-preview');
+    expect(result.transport).toBe('native');
+  });
+
+  it('retries strict JSON judge prompts after schema validation failure and succeeds on the second attempt', async () => {
+    mockValidateAgentQaReview
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(true);
+    mockInvokeAiProxy
+      .mockResolvedValueOnce({
+        text: JSON.stringify({ nope: true }),
+        model: 'gemini-3.1-pro-preview',
+      })
+      .mockResolvedValueOnce({
+        text: JSON.stringify({
+          score: 8.4,
+          blockers: [],
+          issues: [],
+          repair_instructions: [],
+          dimension_scores: {
+            correctness: 8.4,
+            completeness: 8.4,
+            evidence_alignment: 8.4,
+            visualization_fit: 8.4,
+            caveat_quality: 8.4,
+            clarity: 8.4,
+          },
+        }),
+        model: 'gemini-3.1-pro-preview',
+      });
+
+    const result = await runDiPrompt({
+      promptId: DI_PROMPT_IDS.AGENT_QA_CROSS_REVIEW,
+      input: { userMessage: 'review this answer' },
+      providerOverride: 'gemini',
+      modelOverride: 'gemini-3.1-pro-preview',
+    });
+
+    expect(mockInvokeAiProxy).toHaveBeenCalledTimes(2);
+    const secondPrompt = mockInvokeAiProxy.mock.calls[1][1].prompt;
+    expect(secondPrompt).toMatch(/CRITICAL RETRY INSTRUCTIONS/i);
+    expect(result.parsed.score).toBe(8.4);
+  });
+
+  it('falls back to anthropic when gemini judge recovery attempts keep failing schema validation', async () => {
+    mockValidateAgentCandidateJudge
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(true);
+    mockInvokeAiProxy
+      .mockResolvedValueOnce({ text: JSON.stringify({ bad: true }), model: 'gemini-3.1-pro-preview' })
+      .mockResolvedValueOnce({ text: JSON.stringify({ bad: true }), model: 'gemini-3.1-pro-preview' })
+      .mockResolvedValueOnce({ text: JSON.stringify({ bad: true }), model: 'gemini-2.5-flash' })
+      .mockResolvedValueOnce({ text: JSON.stringify({ bad: true }), model: 'gemini-2.5-flash-lite' })
+      .mockResolvedValueOnce({
+        text: JSON.stringify({
+          winner_candidate_id: 'secondary',
+          summary: 'Secondary is the stronger available answer.',
+          rationale: ['It carries less answer risk.'],
+          loser_issues: ['Primary omitted key evidence.'],
+          confidence: 0.74,
+        }),
+        model: 'claude-sonnet-4-6',
+      });
+
+    const result = await runDiPrompt({
+      promptId: DI_PROMPT_IDS.AGENT_CANDIDATE_JUDGE,
+      input: { userMessage: 'choose the better answer' },
+      providerOverride: 'gemini',
+      modelOverride: 'gemini-3.1-pro-preview',
+    });
+
+    expect(mockInvokeAiProxy).toHaveBeenCalledTimes(5);
+    expect(mockInvokeAiProxy.mock.calls.at(-1)[1]).toEqual(expect.objectContaining({
+      provider: 'anthropic',
+      model: 'claude-sonnet-4-6',
+    }));
+    expect(result.provider).toBe('anthropic');
     expect(result.parsed.winner_candidate_id).toBe('secondary');
   });
 });

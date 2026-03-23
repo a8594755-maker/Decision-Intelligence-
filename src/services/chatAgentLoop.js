@@ -28,6 +28,9 @@ import { trackLlmUsage } from '../utils/llmUsageTracker.js';
 import { detectToolGap, detectProactiveGap } from './gapDetectionService.js';
 import { generateToolBlueprint } from './toolBlueprintGenerator.js';
 import { getRecipeIndexForPrompt } from './chartRecipeCatalog.js';
+import { getModelConfig } from './modelConfigService.js';
+import { detectRequestedSpecialChart, getStructuredAnswerCoverage } from './agentAnswerCoverageService.js';
+import { buildEnrichedSchemaPrompt } from './sapDataQueryService.js';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -35,8 +38,6 @@ const MAX_AGENT_ITERATIONS = 8; // Prevent infinite loops
 const AGENT_TIMEOUT_MS = 300_000; // 5 minutes total for the full agent loop
 const DEEPSEEK_BASE_URL = String(import.meta.env.VITE_DI_DEEPSEEK_BASE_URL || 'https://api.deepseek.com').replace(/\/+$/, '');
 const DEEPSEEK_CHAT_MODEL = import.meta.env.VITE_DI_DEEPSEEK_MODEL || 'deepseek-chat';
-const AGENT_CHAT_MODEL = import.meta.env.VITE_DI_CHAT_MODEL || 'gpt-5.4';
-const AGENT_CHAT_PROVIDER = import.meta.env.VITE_DI_CHAT_PROVIDER || 'openai';
 const USE_EDGE_AI_PROXY = true;
 
 // ── DuckDB dialect guidance (shared between all prompt modes) ────────────────
@@ -44,11 +45,16 @@ const DUCKDB_DIALECT_PROMPT = [
   'query_sap_data SQL Dialect — DuckDB (PostgreSQL-compatible, in-browser WASM):',
   '- CTEs (WITH ... AS) fully supported — use them for readability',
   '- Window functions supported: ROW_NUMBER(), RANK(), DENSE_RANK(), NTILE(), LAG(), LEAD() with OVER(PARTITION BY ... ORDER BY ...)',
-  '- Date functions: DATE_TRUNC(part, col), EXTRACT(part FROM col), col + INTERVAL',
+  '- Date functions: DATE_TRUNC(part, col), EXTRACT(part FROM col), col + INTERVAL, DATEDIFF(part, start, end)',
+  '- Date arithmetic: use (date1 - date2) for intervals, DATEDIFF(\'day\', start, end) for integer days. Do NOT use JULIANDAY(), TIMESTAMPDIFF(), or any SQLite/MySQL-only date functions.',
+  '- Date casting: DATE(col) to cast to date, STRFTIME(col, format) for formatting, EPOCH(col) for unix timestamp',
   '- Advanced aggregates: PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY col), MEDIAN(col), MODE(col), QUANTILE_DISC(0.9 ORDER BY col)',
   '- String: STRING_AGG(col, sep), REGEXP_MATCHES(), CONCAT()',
   '- Avoid reserved word aliases: "order", "group", "key", "value" → use descriptive names like "order_count"',
   '- Standard SQL: COUNT, SUM, AVG, MIN, MAX, ROUND, CASE WHEN, UNION ALL, HAVING, DISTINCT, LIKE, CROSS JOIN',
+  '',
+  'Available tables and column semantics (read column descriptions carefully to avoid wrong aggregations):',
+  buildEnrichedSchemaPrompt(),
 ].join('\n');
 
 export const ANALYSIS_AGENT_TOOL_IDS = Object.freeze([
@@ -75,7 +81,20 @@ export function getAgentToolConfig(mode = 'default') {
 export function getAgentToolStreamingMode(provider) {
   if (provider === 'openai') return 'openai_chat_tools_stream';
   if (provider === 'anthropic') return 'anthropic_chat_tools_stream';
+  if (provider === 'gemini') return 'gemini_chat_tools_stream';
+  if (provider === 'deepseek') return 'deepseek_chat_tools_stream';
   return null;
+}
+
+export function getAgentToolMode(provider) {
+  if (provider === 'openai') return 'openai_chat_tools';
+  if (provider === 'anthropic') return 'anthropic_chat_tools';
+  if (provider === 'gemini') return 'gemini_chat_tools';
+  return 'deepseek_chat_tools';
+}
+
+export function getAgentProviderTransport(provider) {
+  return provider === 'gemini' ? 'compat' : 'native';
 }
 
 // ── Agent Loop ──────────────────────────────────────────────────────────────
@@ -107,8 +126,8 @@ export async function runAgentLoop({
   callbacks = {},
   signal,
   mode = 'default',
-  agentProvider = AGENT_CHAT_PROVIDER,
-  agentModel = AGENT_CHAT_MODEL,
+  agentProvider = getModelConfig('primary').provider,
+  agentModel = getModelConfig('primary').model,
 }) {
   const { onTextChunk, onToolCall, onToolResult, onThinking, onToolBlueprint } = callbacks;
 
@@ -133,18 +152,32 @@ export async function runAgentLoop({
         '3. query_sap_data — Use when user needs raw SQL lookups or specific data queries.',
         '',
         '- If uploaded dataset sheets are available, analyze that dataset with run_python_analysis instead of default Olist tables.',
-        '- After generate_chart succeeds: the card already shows title, metrics, highlights, and chart. Do NOT repeat them. Only add a short (2-4 sentence) business insight or actionable recommendation that is NOT already in the card. If there is nothing to add, just say "已產出圖表" or similar.',
+        '- After generate_chart succeeds: the card already shows title, metrics, highlights, and chart. Do NOT repeat them in full. Only add a short (2-4 sentence) business insight or actionable recommendation that is NOT already in the card. **Exception**: for histogram+quantile requests, always state the core cut-point values (P25, P50, P75, P90) explicitly in your final answer, even if the chart card already shows them. If there is nothing else to add, just say "已產出圖表" or similar.',
+        '- If a successful chart or analysis artifact already covers the answer contract, stop there. Do NOT call query_sap_data just to restate the same numbers.',
+        '- A successful query_sap_data call with 0 rows is not a tool failure, but it provides ZERO evidence. Do NOT cite any numbers, statistics, or counts from a 0-row query. If another tool (e.g. generate_chart) provided data, attribute findings to that source only.',
+        '- You may retry query_sap_data ONCE after a 0-row result. The retry must stay in the same dataset and only relax filters or fix joins. Do NOT silently switch datasets.',
+        '- Never claim a SQL, worker, connection, or tool failure unless the execution trace actually contains a failed tool call.',
         '- After other tools return results, summarize the key findings clearly and concisely.',
+        '- If query_sap_data fails before all required dimensions are covered, switch to run_python_analysis instead of ending with a partial answer.',
         '- If a tool fails, explain the error and suggest a narrower follow-up analysis.',
         '- Always respond in the same language the user used.',
         '',
         DUCKDB_DIALECT_PROMPT,
         '',
+        '- CRITICAL DATE RANGE: Olist e-commerce data covers 2016-09 to 2018-10. When filtering by date, use dates within this range. Using 2024/2025/2026 dates in WHERE clauses will return 0 rows.',
+        '- Dataset B tables (suppliers, materials, inventory_snapshots, po_open_lines, goods_receipts) may have 0 rows. Prefer Dataset A (Olist CSV tables) unless the user specifically asks about operational/supply chain data.',
+        '',
+        'Data Enrichment Rules:',
+        '- When reporting metrics, always include both absolute and relative forms: alongside "revenue = R$50K", state "which is 3.2% of total" or "0.7x the category average". Use SQL evidence to compute ratios.',
+        '- Before making recommendations based on historical averages, run at least one query grouping by time period. If the metric is growing or declining >10% across periods, note the trend and adjust the recommendation.',
+        '- For SQL queries returning aggregated metrics, also query relative context (% of total, rank within category, vs overall average) in the same or follow-up query.',
+        '',
         'Final Answer Rules:',
         '- You are a senior analyst. Write only the useful user-facing interpretation.',
-        '- Keep the final answer under 160 words unless the evidence is blocked and needs a caveat.',
+        '- Keep the final answer under 500 words. Cover all requested dimensions with specific numbers, category-level breakdowns, and data-backed recommendations. Be thorough but not redundant with chart/table artifacts.',
         '- Do NOT output markdown tables, pseudo-tables, SQL, debug logs, tool transcripts, "thinking", or step-by-step execution details.',
         '- Do NOT list every tool you called. The UI renders execution trace separately.',
+        '- For histogram-plus-quantiles requests, explicitly mention the core cut points P25, P50, P75, and P90 (or P95 if P90 is unavailable) when the evidence contains them.',
         '- Focus on concise interpretation, caveats, and the next best action.',
         '',
         answerContractBlock,
@@ -152,7 +185,7 @@ export async function runAgentLoop({
       ]
     : [
         '- When the user asks about data (customers, orders, products, sellers, payments, etc.), ALWAYS call query_sap_data with a SQL query. NEVER just describe SQL — execute it.',
-        '- Call query_sap_data ONCE per question. Do NOT call it again with test queries like "SELECT 1".',
+        '- You may retry query_sap_data ONCE after a 0-row result or SQL error, but the retry must stay in the same dataset and only relax filters or fix joins. Do NOT use test queries like "SELECT 1".',
         DUCKDB_DIALECT_PROMPT,
         '- When the user asks to run an analysis, chart, visualization, forecast, plan, or any tool, call the appropriate function.',
         '- If the user asks for a chart, visualization, or any analysis that matches the recipe catalog below, use generate_chart(recipe_id). It runs pre-written Python (~2s) instead of LLM code generation (~15s).',
@@ -208,6 +241,7 @@ export async function runAgentLoop({
   let finalText = '';
   let totalIterations = 0;
   const consecutiveFailures = { count: 0, lastToolName: null };
+  let coverageStopInstructionInjected = false;
 
   // ── The Loop ────────────────────────────────────────────────────────────
   for (let i = 0; i < MAX_AGENT_ITERATIONS; i++) {
@@ -223,15 +257,34 @@ export async function runAgentLoop({
 
     try {
       let thinkingBuffer = '';
+      let pendingChunks = '';
+      let flushTimer = null;
+      const FLUSH_INTERVAL_MS = 200;
+
+      const flushPending = () => {
+        if (pendingChunks) {
+          const flushed = pendingChunks;
+          pendingChunks = '';
+          onThinking?.({ step: i + 1, type: 'preamble', content: flushed, fullContent: thinkingBuffer });
+        }
+        flushTimer = null;
+      };
+
       response = await callLLMWithToolsStream(messages, tools, {
         signal,
         provider: agentProvider,
         model: agentModel,
         onPreambleChunk: (chunk) => {
           thinkingBuffer += chunk;
-          onThinking?.({ step: i + 1, type: 'preamble', content: chunk, fullContent: thinkingBuffer });
+          pendingChunks += chunk;
+          if (!flushTimer) {
+            flushTimer = setTimeout(flushPending, FLUSH_INTERVAL_MS);
+          }
         },
       });
+      // Flush any remaining buffered chunks after stream completes
+      if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
+      flushPending();
     } catch (err) {
       if (err.name === 'AbortError') throw err;
       // Fallback to non-streaming if stream mode fails
@@ -294,6 +347,8 @@ export async function runAgentLoop({
           workflow: 'agent_chat',
           promptTokens: response.usage?.prompt_tokens,
           completionTokens: response.usage?.completion_tokens,
+          cacheHitTokens: response.usage?.prompt_cache_hit_tokens,
+          cacheMissTokens: response.usage?.prompt_cache_miss_tokens,
         });
         break;
       }
@@ -301,11 +356,16 @@ export async function runAgentLoop({
 
     // Case 2: LLM wants to call tools → execute them
     // First, append the assistant message with tool_calls to the conversation
-    messages.push({
+    // Note: DeepSeek requires reasoning_content to be passed back in multi-turn tool calling
+    const assistantMsg = {
       role: 'assistant',
       content: response.content || null,
       tool_calls: response.tool_calls,
-    });
+    };
+    if (response.reasoning_content) {
+      assistantMsg.reasoning_content = response.reasoning_content;
+    }
+    messages.push(assistantMsg);
 
     // Stream any text that came with the tool call (e.g., "Let me run the forecast...")
     // Keep it out of the persisted final answer.
@@ -313,7 +373,16 @@ export async function runAgentLoop({
       onTextChunk?.(response.content + '\n\n');
     }
 
-    // Execute each tool call
+    // Execute each tool call.
+    // IMPORTANT: OpenAI requires ALL tool response messages to appear consecutively
+    // after the assistant message with tool_calls. Any non-tool message (e.g. user
+    // guidance) injected between tool responses causes a 400 error. So we collect
+    // tool responses and deferred guidance messages separately, push all tool
+    // responses first, then push guidance messages.
+    const toolResponses = []; // { role: 'tool', tool_call_id, content }
+    const deferredGuidance = []; // { role: 'user', content } — pushed after all tool responses
+    let earlyReturn = null; // set if gap detection wants to return early
+
     for (const tc of response.tool_calls) {
       const toolName = tc.function?.name;
       let toolArgs = {};
@@ -354,7 +423,7 @@ export async function runAgentLoop({
       }
 
       // ── Gap Detection: if tool failed, check if we can auto-create a tool ──
-      if (!toolResult.success && i < MAX_AGENT_ITERATIONS - 2 && onToolBlueprint) {
+      if (!earlyReturn && !toolResult.success && i < MAX_AGENT_ITERATIONS - 2 && onToolBlueprint) {
         const gap = detectToolGap({
           taskDescription: message,
           toolCallResult: toolResult,
@@ -370,33 +439,120 @@ export async function runAgentLoop({
           try {
             const blueprint = await generateToolBlueprint(gap);
             console.info('[agentLoop] Blueprint generated:', blueprint.name);
-
-            // Return early with blueprint — DSV will handle the approval flow
-            return {
+            earlyReturn = {
               text: finalText || '',
               toolCalls,
               iterations: totalIterations,
               isAgentResponse: true,
-              blueprint, // ← DSV checks this to show ToolBlueprintCard
+              blueprint,
               gap,
             };
+            // Don't return yet — finish pushing all tool responses first
           } catch (blueprintErr) {
             console.warn('[agentLoop] Blueprint generation failed:', blueprintErr?.message);
-            // Fall through — let the normal error flow handle it
           }
         }
       }
 
-      // Feed the tool result back into the conversation
+      // Collect the tool response (pushed to messages after the loop)
       const resultContent = toolResult.success
         ? JSON.stringify(summarizeToolResult(toolResult.result), null, 2)
         : JSON.stringify({ error: toolResult.error });
 
-      messages.push({
+      toolResponses.push({
         role: 'tool',
         tool_call_id: tc.id,
         content: resultContent,
       });
+
+      const rowCount = toolName === 'query_sap_data'
+        ? Number.isFinite(toolResult?.result?.rowCount)
+          ? toolResult.result.rowCount
+          : (Array.isArray(toolResult?.result?.rows) ? toolResult.result.rows.length : null)
+        : null;
+      const zeroRowQueryAttempts = toolCalls.filter((call) => {
+        if (call?.name !== 'query_sap_data' || !call?.result?.success) return false;
+        const callRowCount = Number.isFinite(call?.result?.result?.rowCount)
+          ? call.result.result.rowCount
+          : (Array.isArray(call?.result?.result?.rows) ? call.result.result.rows.length : null);
+        return callRowCount === 0;
+      }).length;
+
+      // Collect deferred guidance messages (pushed after all tool responses)
+      if (toolName === 'query_sap_data' && toolResult.success && rowCount === 0) {
+        const sqlText = toolArgs.sql || '';
+        const tablesMentioned = Array.from(new Set((sqlText.match(/\b(?:FROM|JOIN)\s+([a-z_][a-z0-9_]*)/gi) || [])
+          .map((fragment) => fragment.replace(/\b(?:FROM|JOIN)\s+/i, '').trim())
+          .filter(Boolean)));
+        const mentionsModernDate = /202[3-9]|203\d/.test(sqlText);
+        const dateHint = mentionsModernDate
+          ? ' The SQL filters on dates outside the Olist data range (2016-09 to 2018-10). Rewrite it with dates in range.'
+          : '';
+        const tableHint = tablesMentioned.length > 0
+          ? ` Stay in the same dataset and keep using these tables only: ${tablesMentioned.join(', ')}.`
+          : ' Stay in the same dataset; do not silently switch tables from another dataset.';
+
+        deferredGuidance.push({
+          role: 'user',
+          content: zeroRowQueryAttempts <= 1
+            ? `The SQL returned 0 rows / no evidence.${dateHint}${tableHint} Retry query_sap_data once by loosening filters or fixing joins. Do NOT cite numbers from this empty result.`
+            : `The SQL has already returned 0 rows after the allowed retry.${dateHint}${tableHint} Stop retrying, do NOT cite numbers from these empty results, and explain that no SQL evidence was found in this dataset.`,
+        });
+      }
+
+      if (isAnalysisMode) {
+        const coverageStatus = getStructuredCoverageStatus(answerContract, toolCalls, message);
+        const unmetDimensions = getUnmetCoreDimensions(answerContract, toolCalls, message);
+        const unmetStructuredOutputs = getUnmetStructuredOutputs(answerContract, toolCalls, message);
+
+        if (toolName === 'query_sap_data' && toolResult.success && rowCount === 0) {
+          const pendingCoverage = [...unmetDimensions, ...unmetStructuredOutputs];
+          deferredGuidance.push({
+            role: 'user',
+            content: pendingCoverage.length > 0
+              ? zeroRowQueryAttempts <= 1
+                ? `The SQL returned 0 rows and these dimensions are still unmet: ${pendingCoverage.join(', ')}. Retry the SQL once in the same dataset first. If the retry is also empty, use run_python_analysis or provide a caveat instead of inventing numbers.`
+                : `The SQL retry also returned 0 rows and these dimensions remain unmet: ${pendingCoverage.join(', ')}. Do NOT invent numbers. Use run_python_analysis next or give a caveated answer.`
+              : 'The SQL returned 0 rows, but the required analysis may already be covered by successful artifacts. Use existing evidence and write the final answer now.',
+          });
+        }
+
+        if (!coverageStopInstructionInjected && unmetDimensions.length === 0 && unmetStructuredOutputs.length === 0) {
+          coverageStopInstructionInjected = true;
+          const coveredDimensionsText = coverageStatus.coverage.coveredDimensions.join(', ') || 'none';
+          const coveredOutputsText = coverageStatus.coverage.coveredOutputs.join(', ') || 'none';
+          deferredGuidance.push({
+            role: 'user',
+            content: `Coverage rule: the existing successful artifacts already cover all required dimensions and structured outputs. Covered dimensions: ${coveredDimensionsText}. Covered outputs: ${coveredOutputsText}. Do NOT call query_sap_data or other retrieval tools again just to restate the same numbers. Use the current chart/artifact as the source of truth and write the final answer now.`,
+          });
+        }
+      }
+
+      if (isAnalysisMode && toolName === 'query_sap_data' && !toolResult.success) {
+        const unmetDimensions = getUnmetCoreDimensions(answerContract, toolCalls, message);
+        if (unmetDimensions.length > 0) {
+          deferredGuidance.push({
+            role: 'user',
+            content: `Recovery rule: the SQL attempt failed and these required dimensions are still unmet: ${unmetDimensions.join(', ')}. Do NOT stop at the SQL error. Use run_python_analysis next to recover the missing analysis if possible. Only give a caveated final answer if that alternative also fails.`,
+          });
+        }
+      }
+
+      // ── Default mode: 0-row self-healing guidance ─────────────────────
+      if (!isAnalysisMode && toolName === 'query_sap_data' && toolResult.success) {
+        const defRowCount = toolResult.result?.rowCount ?? (Array.isArray(toolResult.result?.rows) ? toolResult.result.rows.length : null);
+        if (defRowCount === 0) {
+          const sqlText = toolArgs.sql || '';
+          const mentionsModernDate = /202[3-9]|203\d/.test(sqlText);
+          const dateHint = mentionsModernDate
+            ? ' Your SQL filters on dates outside the data range (2016-09 to 2018-10). Rewrite with dates in that range.'
+            : ' The table may be empty or WHERE conditions too restrictive. Try removing filters or querying a different table.';
+          deferredGuidance.push({
+            role: 'user',
+            content: `query_sap_data returned 0 rows.${dateHint} Try a corrected query before giving a final answer.`,
+          });
+        }
+      }
 
       // ── Consecutive failure detection ──────────────────────────────────
       if (!toolResult.success) {
@@ -411,13 +567,26 @@ export async function runAgentLoop({
         consecutiveFailures.lastToolName = null;
       }
 
-      // After 2+ consecutive failures on the same tool, nudge the LLM to switch strategy
       if (consecutiveFailures.count >= 2) {
-        messages.push({
+        deferredGuidance.push({
           role: 'user',
           content: `⚠️ ${consecutiveFailures.lastToolName} has failed ${consecutiveFailures.count} times in a row. Do NOT retry with similar parameters. Either use a completely different approach (e.g., generate_chart recipe, run_python_analysis) or provide your final answer with the data you already have.`,
         });
       }
+    }
+
+    // Push all tool responses first (OpenAI requires these to be contiguous)
+    for (const tr of toolResponses) {
+      messages.push(tr);
+    }
+    // Then push any deferred guidance messages
+    for (const gm of deferredGuidance) {
+      messages.push(gm);
+    }
+
+    // Handle early return from gap detection (after tool responses are properly pushed)
+    if (earlyReturn) {
+      return earlyReturn;
     }
 
     trackLlmUsage({
@@ -429,6 +598,8 @@ export async function runAgentLoop({
       workflow: 'agent_tool_call',
       promptTokens: response.usage?.prompt_tokens,
       completionTokens: response.usage?.completion_tokens,
+      cacheHitTokens: response.usage?.prompt_cache_hit_tokens,
+      cacheMissTokens: response.usage?.prompt_cache_miss_tokens,
     });
 
     // Loop continues — LLM will see the tool results and decide what to do next
@@ -446,6 +617,7 @@ export async function runAgentLoop({
     isAgentResponse: true,
     provider: agentProvider,
     model: agentModel,
+    transport: getAgentProviderTransport(agentProvider),
   };
 }
 
@@ -456,7 +628,7 @@ export async function runAgentLoop({
  * Streams thinking/preamble content in real-time via onPreambleChunk callback.
  * Returns the same shape as callLLMWithTools: { content, tool_calls, usage }.
  */
-async function callLLMWithToolsStream(messages, tools, { signal, onPreambleChunk, provider = AGENT_CHAT_PROVIDER, model = AGENT_CHAT_MODEL } = {}) {
+async function callLLMWithToolsStream(messages, tools, { signal, onPreambleChunk, provider = getModelConfig('primary').provider, model = getModelConfig('primary').model } = {}) {
   const toolsMode = getAgentToolStreamingMode(provider);
 
   if (!toolsMode) {
@@ -465,6 +637,7 @@ async function callLLMWithToolsStream(messages, tools, { signal, onPreambleChunk
   }
 
   let content = '';
+  let reasoningContent = '';
   const toolCallsMap = []; // Accumulate tool_calls from deltas
   let usage = null;
 
@@ -486,6 +659,12 @@ async function callLLMWithToolsStream(messages, tools, { signal, onPreambleChunk
 
       const delta = chunk.choices?.[0]?.delta;
       if (!delta) return;
+
+      // DeepSeek reasoning_content — chain-of-thought thinking tokens
+      if (delta.reasoning_content) {
+        reasoningContent += delta.reasoning_content;
+        onPreambleChunk?.(delta.reasoning_content);
+      }
 
       // Text content — preamble (before/with tool calls) or final answer
       if (delta.content) {
@@ -509,9 +688,25 @@ async function callLLMWithToolsStream(messages, tools, { signal, onPreambleChunk
   });
 
   const tool_calls = toolCallsMap.filter(Boolean);
-  console.info(`[agentLoop] Stream complete — content=${content.length}chars, tool_calls=${tool_calls.length}`);
 
-  return { content, tool_calls, usage };
+  // Guard: if streaming dropped a tool_call id, assign a synthetic one to prevent
+  // OpenAI "tool_calls must be followed by tool messages" errors downstream.
+  for (let idx = 0; idx < tool_calls.length; idx++) {
+    if (!tool_calls[idx].id) {
+      tool_calls[idx].id = `call_synthetic_${idx}_${Date.now()}`;
+      console.warn(`[agentLoop] Streaming dropped tool_call id at index ${idx}, assigned synthetic id: ${tool_calls[idx].id}`);
+    }
+  }
+
+  console.info(`[agentLoop] Stream complete — content=${content.length}chars, reasoning=${reasoningContent.length}chars, tool_calls=${tool_calls.length}`);
+
+  return {
+    content,
+    tool_calls,
+    usage,
+    reasoning_content: reasoningContent || undefined,
+    transport: getAgentProviderTransport(provider),
+  };
 }
 
 // ── LLM Call with Tools (Non-Streaming) ─────────────────────────────────────
@@ -520,45 +715,44 @@ async function callLLMWithToolsStream(messages, tools, { signal, onPreambleChunk
  * Call LLM with function-calling tools (non-streaming fallback).
  * Returns the parsed assistant message including any tool_calls.
  */
-async function callLLMWithTools(messages, tools, { signal, provider = AGENT_CHAT_PROVIDER, model = AGENT_CHAT_MODEL } = {}) {
+async function callLLMWithTools(messages, tools, { signal, provider = getModelConfig('primary').provider, model = getModelConfig('primary').model } = {}) {
   // Try Edge Function (ai-proxy) first
   if (USE_EDGE_AI_PROXY) {
-    try {
-      const toolsMode = provider === 'openai' ? 'openai_chat_tools'
-        : provider === 'anthropic' ? 'anthropic_chat_tools'
-        : 'deepseek_chat_tools';
-      console.info(`[agentLoop] Calling LLM (${toolsMode}, model=${model}) with ${tools.length} tools:`, tools.map(t => t.function?.name));
-      const result = await invokeAiProxy(toolsMode, {
-        messages,
-        tools,
-        model,
-        temperature: 0.3, // Lower temperature for tool calls — more deterministic
-        maxOutputTokens: 4096,
-      }, { signal });
+    const toolsMode = getAgentToolMode(provider);
+    console.info(`[agentLoop] Calling LLM (${toolsMode}, model=${model}) with ${tools.length} tools:`, tools.map(t => t.function?.name));
+    const result = await invokeAiProxy(toolsMode, {
+      messages,
+      tools,
+      model,
+      temperature: 0.3, // Lower temperature for tool calls — more deterministic
+      maxOutputTokens: 4096,
+    }, { signal });
 
-      console.info('[agentLoop] LLM raw response keys:', Object.keys(result || {}));
-      console.info('[agentLoop] LLM choices[0].message:', JSON.stringify(result?.choices?.[0]?.message || result?.text || '(no choices)').slice(0, 500));
+    console.info('[agentLoop] LLM raw response keys:', Object.keys(result || {}));
+    console.info('[agentLoop] LLM choices[0].message:', JSON.stringify(result?.choices?.[0]?.message || result?.text || '(no choices)').slice(0, 500));
 
-      // The ai-proxy should return the full OpenAI-format response
-      if (result?.choices?.[0]?.message) {
-        const msg = result.choices[0].message;
-        console.info('[agentLoop] tool_calls in response:', msg.tool_calls?.length ?? 0, msg.tool_calls ? JSON.stringify(msg.tool_calls).slice(0, 300) : '');
-        return {
-          ...msg,
-          usage: result.usage,
-        };
-      }
-      // Fallback: ai-proxy returned text only
-      if (result?.text) {
-        console.warn('[agentLoop] ai-proxy returned text-only (no choices). text:', result.text.slice(0, 200));
-        return { content: result.text, tool_calls: [], usage: result.usage };
-      }
-
-      throw new Error('Unexpected ai-proxy response format');
-    } catch (err) {
-      // NO FALLBACK: surface the error
-      throw err;
+    // The ai-proxy should return the full OpenAI-format response
+    if (result?.choices?.[0]?.message) {
+      const msg = result.choices[0].message;
+      console.info('[agentLoop] tool_calls in response:', msg.tool_calls?.length ?? 0, msg.tool_calls ? JSON.stringify(msg.tool_calls).slice(0, 300) : '');
+      return {
+        ...msg,
+        usage: result.usage,
+        transport: result.transport || getAgentProviderTransport(provider),
+      };
     }
+    // Fallback: ai-proxy returned text only
+    if (result?.text) {
+      console.warn('[agentLoop] ai-proxy returned text-only (no choices). text:', result.text.slice(0, 200));
+      return {
+        content: result.text,
+        tool_calls: [],
+        usage: result.usage,
+        transport: result.transport || getAgentProviderTransport(provider),
+      };
+    }
+
+    throw new Error('Unexpected ai-proxy response format');
   }
 
   throw new Error('[callLLMWithTools] USE_EDGE_AI_PROXY is off and no direct API fallback is enabled.');
@@ -672,25 +866,101 @@ function summarizeToolResult(result, maxItems = 20, maxDepth = 5) {
  *   2. There are tools available
  *   3. The feature is enabled
  */
+/**
+ * Determine whether a message should use agent mode (with tool access).
+ *
+ * Design: default to agent mode (true). Only trivial messages that clearly
+ * need no tools are excluded. This avoids the keyword-whack-a-mole problem
+ * where valid analytical questions fall through because a keyword was missing.
+ */
 export function shouldUseAgentMode(message) {
   if (!message || typeof message !== 'string') return false;
-  const lower = message.toLowerCase();
+  const normalized = message.trim();
 
-  // Strong signals: explicit requests to run something
-  // NOTE: \b does NOT work with CJK characters — use separate patterns for Chinese
-  const strongSignals = [
-    /\b(run|execute|generate|compute|analyze|forecast|plan|simulate)\b/i,
-    /\b(what.?if|scenario|risk|negotiate|cost|revenue|bom|closed.?loop|supply)\b/i,
-    /\b(SELECT|SQL|query|sap|master\s*data)\b/i,
-    /\btop\s*\d+/i,
-    // Chinese signals (no \b — word boundaries don't work with CJK)
-    /(比較|預測|計畫|分析|模擬|執行|產生)/,
-    /(幫我|請|跑一下|做一個|建立|檢查)/,
-    /(客戶|訂單|產品|賣家|付款|查詢|有哪些|列出|多少|統計|哪個)/,
-    /(供應商|物料|庫存|採購單|收貨|評論)/,
+  // Very short messages (≤4 chars) are almost always greetings
+  if (normalized.length <= 4) return false;
+
+  // Explicit plain-chat patterns: greetings, meta, identity questions
+  const plainChatOnly = [
+    /^(hi|hello|hey|yo|sup|thanks|thank you|ok|okay|sure|got it|good|nice|cool)\s*[.!?]?$/i,
+    /^(你好|嗨|哈囉|謝謝|好的|了解|收到|知道了|不錯|可以)\s*[.!?]?$/,
+    /\b(who\s+are\s+you|what\s+are\s+you|your\s+name)\b/i,
+    /(你是誰|你叫什麼)/,
   ];
 
-  return strongSignals.some((re) => re.test(lower));
+  if (plainChatOnly.some((re) => re.test(normalized))) return false;
+
+  // Everything else gets agent mode — let the LLM decide if it needs tools
+  return true;
+}
+
+function getStructuredCoverageStatus(answerContract, toolCalls = [], userMessage = '') {
+  const requestedChart = detectRequestedSpecialChart(userMessage);
+  const coverage = getStructuredAnswerCoverage({
+    toolCalls,
+    requestedChart,
+    userMessage,
+  });
+  const coveredDimensions = new Set((coverage.coveredDimensions || []).map((dimension) => String(dimension || '').toLowerCase()));
+  const coveredOutputs = new Set((coverage.coveredOutputs || []).map((output) => String(output || '').toLowerCase()));
+
+  return {
+    requestedChart,
+    coverage,
+    coveredDimensions,
+    coveredOutputs,
+  };
+}
+
+function isQuantilesDimensionCovered(coverageStatus) {
+  const quantileCoverage = coverageStatus?.coverage?.quantileCoverage || {};
+  const hasCoreQuantiles = Boolean(
+    quantileCoverage.p25
+    && quantileCoverage.p50
+    && quantileCoverage.p75
+    && (quantileCoverage.p90 || quantileCoverage.p95)
+  );
+
+  if (coverageStatus?.requestedChart === 'histogram') {
+    return hasCoreQuantiles && Boolean(coverageStatus?.coverage?.hasHistogramQuantileAnnotations);
+  }
+
+  return hasCoreQuantiles;
+}
+
+export function getUnmetCoreDimensions(answerContract, toolCalls = [], userMessage = '') {
+  const requiredDimensions = Array.isArray(answerContract?.required_dimensions)
+    ? answerContract.required_dimensions.filter(Boolean)
+    : [];
+  if (requiredDimensions.length === 0) return [];
+
+  const coverageStatus = getStructuredCoverageStatus(answerContract, toolCalls, userMessage);
+  const { coveredDimensions } = coverageStatus;
+
+  return requiredDimensions.filter((dimension) => {
+    const normalized = String(dimension || '').trim().toLowerCase();
+    if (/quantiles?|percentiles?/.test(normalized)) {
+      return !isQuantilesDimensionCovered(coverageStatus);
+    }
+    return !coveredDimensions.has(normalized);
+  });
+}
+
+export function getUnmetStructuredOutputs(answerContract, toolCalls = [], userMessage = '') {
+  const requiredOutputs = Array.isArray(answerContract?.required_outputs)
+    ? answerContract.required_outputs.filter((output) => ['chart', 'table'].includes(String(output || '').trim().toLowerCase()))
+    : [];
+  if (requiredOutputs.length === 0) return [];
+
+  const { coveredOutputs } = getStructuredCoverageStatus(answerContract, toolCalls, userMessage);
+  return requiredOutputs.filter((output) => !coveredOutputs.has(String(output || '').trim().toLowerCase()));
+}
+
+export function shouldStopAfterStructuredCoverage(answerContract, toolCalls = [], userMessage = '') {
+  return (
+    getUnmetCoreDimensions(answerContract, toolCalls, userMessage).length === 0
+    && getUnmetStructuredOutputs(answerContract, toolCalls, userMessage).length === 0
+  );
 }
 
 function formatAnswerContractForPrompt(answerContract) {

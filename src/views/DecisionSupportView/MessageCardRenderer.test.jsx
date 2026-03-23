@@ -48,11 +48,9 @@ const stubPaths = [
   '../../components/chat/WarRoomCard',
   '../../components/chat/MacroOracleAlertCard',
   '../../components/chat/TaskPlanCard',
-  '../../components/chat/ClarificationCard',
   '../../components/chat/AIReviewCard',
   '../../components/chat/RevisionLogCard',
   '../../components/chat/ToolRegistryCard',
-  '../../components/chat/WorkOrderDraftCard',
   '../../components/chat/AuditTimelineCard',
   '../../components/review/DecisionReviewPanel',
 ];
@@ -485,7 +483,8 @@ describe('MessageCardRenderer agent response analysis rendering', () => {
     expect(screen.getByTestId('analysis-result-card')).toHaveTextContent('analysis-card:Revenue Trend');
     expect(screen.getByTestId('agent-quality-card')).toHaveTextContent('qa-card:warning/7.5/Primary Agent');
     expect(screen.getByTestId('agent-alternative-card')).toHaveTextContent('alt-card:Challenger Agent');
-    expect(screen.getByTestId('execution-trace-card')).toHaveTextContent('trace-card:1/1');
+    expect(screen.getAllByTestId('execution-trace-card')).toHaveLength(2);
+    expect(screen.getAllByTestId('execution-trace-card')[0]).toHaveTextContent('trace-card:0/0');
     expect(screen.queryByText('legacy markdown narrative that should stay inside trace only')).not.toBeInTheDocument();
   });
 
@@ -537,7 +536,8 @@ describe('MessageCardRenderer agent response analysis rendering', () => {
     );
 
     expect(screen.getByTestId('agent-quality-card')).toHaveTextContent('qa-card:warning/0/no-judge');
-    expect(screen.getByTestId('execution-trace-card')).toHaveTextContent('trace-card:2/0');
+    expect(screen.getAllByTestId('execution-trace-card')).toHaveLength(2);
+    expect(screen.getAllByTestId('execution-trace-card')[0]).toHaveTextContent('trace-card:1/0');
     expect(screen.queryByTestId('agent-alternative-card')).not.toBeInTheDocument();
   });
 

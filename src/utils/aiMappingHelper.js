@@ -145,9 +145,25 @@ export const extractAiJson = (text, options = {}) => {
       }
     }
 
-    // Strategy 4: Repair truncated JSON (missing braces/quote)
-    // Strict mode forbids auto-repair to guarantee structurally valid model output.
-    if (!strictMode && extracted.partial) {
+    // Strategy 4: Greedy last-closer match — find the outermost { … } or [ … ]
+    // Works in strict mode because it does not fabricate missing tokens.
+    {
+      const opener = cleaned[startIdx];
+      const closer = opener === '{' ? '}' : ']';
+      const lastClose = cleaned.lastIndexOf(closer);
+      if (lastClose > startIdx) {
+        const candidate = cleaned.slice(startIdx, lastClose + 1);
+        const parsed = parseJson(candidate);
+        if (parsed !== null) {
+          console.log('Strategy 4 (greedy last-closer) succeeded');
+          return parsed;
+        }
+      }
+    }
+
+    // Strategy 5: Repair truncated JSON (missing braces/quote)
+    // Even in strict mode, a repaired result is better than returning {}.
+    if (extracted.partial) {
       const repaired = repairPartialJson({
         partial: extracted.partial,
         missingClosers: extracted.missingClosers,
@@ -155,7 +171,7 @@ export const extractAiJson = (text, options = {}) => {
       });
       const parsed = parseJson(repaired);
       if (parsed !== null) {
-        console.warn('Strategy 4 (repaired truncated JSON) succeeded');
+        console.warn(`Strategy 5 (repaired truncated JSON) succeeded${strictMode ? ' [strict — repaired]' : ''}`);
         return parsed;
       }
     }
@@ -164,7 +180,7 @@ export const extractAiJson = (text, options = {}) => {
   }
 
   console.error('All extraction strategies failed');
-  console.error('Original text:', raw);
+  console.error('Original text:', raw.substring(0, 500));
   return {};
 };
 

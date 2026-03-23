@@ -16,8 +16,21 @@ function normalizeQuery(query) {
   return String(query || '').trim();
 }
 
+// Queries containing blocked keywords are only blocked when they also contain
+// action verbs (run/execute/start/launch). Analytical framing (compare/analyze/
+// show/what difference) should pass through to the analysis engine.
+const ANALYSIS_VERB_PATTERNS = [
+  /\b(compare|compar|analyz|analy[sz]e|show|display|what.*(differen|impact|effect)|break\s*down|assess|evaluate)\b/i,
+  /(比較|分析|顯示|差異|影響|拆解|評估|對比)/,
+];
+
 function isBlockedExecutionPrompt(query) {
-  return BLOCKED_EXECUTION_PATTERNS.some((pattern) => pattern.test(query));
+  const hasBlockedKeyword = BLOCKED_EXECUTION_PATTERNS.some((pattern) => pattern.test(query));
+  if (!hasBlockedKeyword) return false;
+  // If the query uses analytical framing, allow it through
+  const hasAnalysisVerb = ANALYSIS_VERB_PATTERNS.some((pattern) => pattern.test(query));
+  if (hasAnalysisVerb) return false;
+  return true;
 }
 
 function hasPythonAnalysisSignals(query) {

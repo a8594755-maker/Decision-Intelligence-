@@ -73,6 +73,7 @@ describe('AgentQualityCard', () => {
             },
             {
               stage: 'cross_model',
+              available: true,
               provider: 'gemini',
               model: 'gemini-3.1-pro-preview',
               score: 8.7,
@@ -89,5 +90,33 @@ describe('AgentQualityCard', () => {
     await user.click(screen.getByRole('button', { name: /Answer Quality/i }));
     expect(screen.getByText(/^gemini$/i)).toBeInTheDocument();
     expect(screen.getByText(/gemini-3.1-pro-preview/i)).toBeInTheDocument();
+  });
+
+  it('shows cross-model review unavailable when the reviewer fallback record is unavailable', () => {
+    render(
+      <AgentQualityCard
+        qa={buildQa({
+          reviewers: [
+            {
+              stage: 'self',
+              provider: 'openai',
+              model: 'gpt-5.4',
+              score: 7.2,
+              issues: ['Missing caveat'],
+            },
+            {
+              stage: 'cross_model',
+              available: false,
+              provider: 'gemini',
+              model: 'gemini-3.1-pro-preview',
+              score: 0,
+              issues: ['Reviewer unavailable: schema mismatch'],
+            },
+          ],
+        })}
+      />
+    );
+
+    expect(screen.getByText(/Cross-model review unavailable/i)).toBeInTheDocument();
   });
 });

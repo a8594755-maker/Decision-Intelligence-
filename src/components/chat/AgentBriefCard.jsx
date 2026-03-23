@@ -1,6 +1,7 @@
 import React from 'react';
 import { BarChart3, ChevronRight, Info, Lightbulb, TriangleAlert } from 'lucide-react';
 import { Card } from '../ui';
+import ChartRenderer from './ChartRenderer.jsx';
 
 function Section({ icon: Icon, title, items, children }) {
   const hasItems = Array.isArray(items) && items.length > 0;
@@ -73,6 +74,7 @@ export default function AgentBriefCard({ brief, attribution = null }) {
 
   const metricPills = Array.isArray(brief.metric_pills) ? brief.metric_pills.filter((item) => item?.label && item?.value != null) : [];
   const tables = Array.isArray(brief.tables) ? brief.tables.filter(Boolean) : [];
+  const charts = Array.isArray(brief.charts) ? brief.charts.filter((c) => c?.type && Array.isArray(c?.data) && c.data.length > 0) : [];
   const attributionText = [attribution?.provider, attribution?.model].filter(Boolean).join(' · ');
 
   return (
@@ -118,6 +120,23 @@ export default function AgentBriefCard({ brief, attribution = null }) {
                 </div>
                 <div className="mt-1 text-lg font-semibold text-slate-900 dark:text-slate-100">
                   {item.value}
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : null}
+
+        {charts.length > 0 ? (
+          <div className="space-y-4">
+            {charts.map((chart, i) => (
+              <div key={`brief-chart-${i}`} className="rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden bg-white dark:bg-slate-900/40">
+                {chart.title ? (
+                  <div className="border-b border-slate-200 dark:border-slate-700 px-4 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-slate-500 dark:text-slate-400">
+                    {chart.title}
+                  </div>
+                ) : null}
+                <div className="px-2 py-3">
+                  <ChartRenderer chart={chart} height={240} showSwitcher={false} />
                 </div>
               </div>
             ))}

@@ -14,8 +14,8 @@ import { supabase } from '../services/supabaseClient';
 
 // Pricing（USD per 1K tokens）
 const COST_PER_1K_TOKENS = {
-  'deepseek-chat': { input: 0.00014, output: 0.00028 },
-  'deepseek-reasoner': { input: 0.00055, output: 0.00219 },
+  'deepseek-chat': { input: 0.00028, output: 0.00042 },
+  'deepseek-reasoner': { input: 0.00028, output: 0.00042 },
   'gemini-1.5-pro': { input: 0.00125, output: 0.00375 },
   'gemini-1.5-flash': { input: 0.000075, output: 0.0003 },
   'default': { input: 0.001, output: 0.002 },

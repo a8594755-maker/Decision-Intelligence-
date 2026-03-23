@@ -23,7 +23,6 @@ import { buildIntentParserPrompt, validateIntentContract } from '../prompts/inte
 import { extractAiJson } from '../utils/aiMappingHelper';
 import { invokeAiProxy } from './aiProxyService';
 
-const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY || '';
 const DEEPSEEK_API_KEY = import.meta.env.VITE_DEEPSEEK_API_KEY || '';
 const DEEPSEEK_BASE_URL = String(import.meta.env.VITE_DI_DEEPSEEK_BASE_URL || 'https://api.deepseek.com').replace(/\/+$/, '');
 const EDGE_FN_TIMEOUT_MS = 25000;
@@ -59,7 +58,7 @@ export const DI_PROMPT_IDS = Object.freeze({
 
 const DEFAULT_DI_GEMINI_MODEL = 'gemini-3.1-pro-preview';
 const DI_GEMINI_MODEL_ALIASES = Object.freeze({
-  'gemini-3-pro': 'gemini-3-pro-preview',
+  'gemini-3-pro': 'gemini-3.1-pro-preview',
   'gemini-3.1-pro': 'gemini-3.1-pro-preview'
 });
 const normalizeGeminiModelName = (model) => {
@@ -82,54 +81,33 @@ const DI_GEMINI_MODEL_CANDIDATES = Array.from(new Set(
     import.meta.env.VITE_GEMINI_MODEL,
     DEFAULT_DI_GEMINI_MODEL,
     'gemini-3.1-pro-preview',
-    'gemini-3-pro-preview'
+    'gemini-2.5-flash',
+    'gemini-2.5-flash-lite'
   ]
     .map(normalizeGeminiModelName)
     .filter((model) => Boolean(model) && isGeminiModelName(model))
 ));
 
 const DEFAULT_DI_DEEPSEEK_MODEL = import.meta.env.VITE_DI_DEEPSEEK_MODEL || 'deepseek-chat';
+const ANTHROPIC_JSON_FALLBACK_MODEL = 'claude-sonnet-4-6';
 
-// ── Unified LLM provider (configurable via env) ─────────────────────────────
-const DI_UNIFIED_PROVIDER = import.meta.env.VITE_DI_CHAT_PROVIDER || 'openai';
-const DI_UNIFIED_MODEL = import.meta.env.VITE_DI_CHAT_MODEL || 'gpt-5.4';
-const DI_AGENT_QA_REVIEW_PROVIDER = import.meta.env.VITE_DI_AGENT_QA_REVIEW_PROVIDER || 'gemini';
-const DI_AGENT_QA_REVIEW_MODEL = import.meta.env.VITE_DI_AGENT_QA_REVIEW_MODEL
-  || import.meta.env.VITE_DI_GEMINI_MODEL
-  || import.meta.env.VITE_GEMINI_MODEL
-  || 'gemini-3.1-pro-preview';
+// ── Unified LLM provider (dynamic via modelConfigService + env fallback) ─────
+import { getModelConfig } from './modelConfigService.js';
 
-const PROMPT_PROVIDER = Object.freeze({
-  [DI_PROMPT_IDS.DATA_PROFILER]: DI_UNIFIED_PROVIDER,
-  [DI_PROMPT_IDS.SCHEMA_MAPPING]: DI_UNIFIED_PROVIDER,
-  [DI_PROMPT_IDS.WORKFLOW_A_READINESS]: DI_UNIFIED_PROVIDER,
-  [DI_PROMPT_IDS.REPORT_SUMMARY]: DI_UNIFIED_PROVIDER,
-  [DI_PROMPT_IDS.BLOCKING_QUESTIONS]: DI_UNIFIED_PROVIDER,
-  [DI_PROMPT_IDS.INTENT_PARSER]: DI_UNIFIED_PROVIDER,
-  [DI_PROMPT_IDS.AGENT_ANSWER_CONTRACT]: DI_UNIFIED_PROVIDER,
-  [DI_PROMPT_IDS.AGENT_BRIEF_SYNTHESIS]: DI_UNIFIED_PROVIDER,
-  [DI_PROMPT_IDS.AGENT_BRIEF_REVIEW]: DI_UNIFIED_PROVIDER,
-  [DI_PROMPT_IDS.AGENT_QA_SELF_REVIEW]: DI_UNIFIED_PROVIDER,
-  [DI_PROMPT_IDS.AGENT_QA_CROSS_REVIEW]: DI_AGENT_QA_REVIEW_PROVIDER,
-  [DI_PROMPT_IDS.AGENT_QA_REPAIR_SYNTHESIS]: DI_UNIFIED_PROVIDER,
-  [DI_PROMPT_IDS.AGENT_CANDIDATE_JUDGE]: DI_AGENT_QA_REVIEW_PROVIDER,
-});
+const JUDGE_PROMPT_IDS = new Set([
+  DI_PROMPT_IDS.AGENT_QA_CROSS_REVIEW,
+  DI_PROMPT_IDS.AGENT_CANDIDATE_JUDGE,
+]);
 
-const PROMPT_DEFAULT_MODEL = Object.freeze({
-  [DI_PROMPT_IDS.DATA_PROFILER]: DI_UNIFIED_MODEL,
-  [DI_PROMPT_IDS.SCHEMA_MAPPING]: DI_UNIFIED_MODEL,
-  [DI_PROMPT_IDS.WORKFLOW_A_READINESS]: DI_UNIFIED_MODEL,
-  [DI_PROMPT_IDS.REPORT_SUMMARY]: DI_UNIFIED_MODEL,
-  [DI_PROMPT_IDS.BLOCKING_QUESTIONS]: DI_UNIFIED_MODEL,
-  [DI_PROMPT_IDS.INTENT_PARSER]: DI_UNIFIED_MODEL,
-  [DI_PROMPT_IDS.AGENT_ANSWER_CONTRACT]: DI_UNIFIED_MODEL,
-  [DI_PROMPT_IDS.AGENT_BRIEF_SYNTHESIS]: DI_UNIFIED_MODEL,
-  [DI_PROMPT_IDS.AGENT_BRIEF_REVIEW]: DI_UNIFIED_MODEL,
-  [DI_PROMPT_IDS.AGENT_QA_SELF_REVIEW]: DI_UNIFIED_MODEL,
-  [DI_PROMPT_IDS.AGENT_QA_CROSS_REVIEW]: DI_AGENT_QA_REVIEW_MODEL,
-  [DI_PROMPT_IDS.AGENT_QA_REPAIR_SYNTHESIS]: DI_UNIFIED_MODEL,
-  [DI_PROMPT_IDS.AGENT_CANDIDATE_JUDGE]: DI_AGENT_QA_REVIEW_MODEL,
-});
+function getPromptProvider(promptId) {
+  const role = JUDGE_PROMPT_IDS.has(promptId) ? 'judge' : 'primary';
+  return getModelConfig(role).provider;
+}
+
+function getPromptDefaultModel(promptId) {
+  const role = JUDGE_PROMPT_IDS.has(promptId) ? 'judge' : 'primary';
+  return getModelConfig(role).model;
+}
 const STRICT_JSON_PROMPTS = new Set([
   DI_PROMPT_IDS.DATA_PROFILER,
   DI_PROMPT_IDS.SCHEMA_MAPPING,
@@ -143,6 +121,13 @@ const STRICT_JSON_PROMPTS = new Set([
   DI_PROMPT_IDS.AGENT_QA_REPAIR_SYNTHESIS,
   DI_PROMPT_IDS.AGENT_CANDIDATE_JUDGE,
 ]);
+const JSON_REPAIR_RETRY_NOTE = [
+  'CRITICAL RETRY INSTRUCTIONS:',
+  'The previous attempt did not match the required JSON contract.',
+  'Return exactly one JSON object that matches the schema above.',
+  'Include every required key. Use empty arrays instead of omitting fields.',
+  'Do not add markdown, explanations, code fences, or trailing prose.',
+].join('\n');
 
 const isPlainObject = (value) => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 const hasArrayField = (value, field) => Array.isArray(value?.[field]);
@@ -238,6 +223,47 @@ const toPromptText = (promptId, input) => {
   throw new Error(`Unsupported DI prompt id: ${promptId}`);
 };
 
+const selectPromptCaller = (provider) => (
+  provider === 'gemini' ? callGeminiPrompt
+    : provider === 'openai' ? callOpenAIPrompt
+      : provider === 'anthropic' ? callAnthropicPrompt
+        : callDeepSeekPrompt
+);
+
+const buildSchemaRepairPrompt = (promptText) => `${promptText}\n\n${JSON_REPAIR_RETRY_NOTE}`;
+
+function buildJudgeRecoveryAttempts({ provider, model, promptText }) {
+  const attempts = [
+    { provider, model, prompt: promptText },
+    { provider, model, prompt: buildSchemaRepairPrompt(promptText) },
+  ];
+
+  if (provider === 'gemini') {
+    for (const candidateModel of DI_GEMINI_MODEL_CANDIDATES) {
+      if (candidateModel === model) continue;
+      attempts.push({
+        provider: 'gemini',
+        model: candidateModel,
+        prompt: buildSchemaRepairPrompt(promptText),
+      });
+    }
+  }
+
+  attempts.push({
+    provider: 'anthropic',
+    model: ANTHROPIC_JSON_FALLBACK_MODEL,
+    prompt: buildSchemaRepairPrompt(promptText),
+  });
+
+  const seen = new Set();
+  return attempts.filter((attempt) => {
+    const key = `${attempt.provider}:${attempt.model}:${attempt.prompt}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 const callGeminiPrompt = async ({ prompt, model, temperature = 0.15, maxOutputTokens = 4096 }) => {
   // All Gemini calls go through the ai-proxy Edge Function (no client-side API key)
   const t0 = performance.now();
@@ -256,7 +282,11 @@ const callGeminiPrompt = async ({ prompt, model, temperature = 0.15, maxOutputTo
   const text = typeof response?.text === 'string' ? response.text : '';
   if (!text) throw new Error('AI proxy returned empty Gemini content.');
   console.info(`[diModelRouter] Gemini via Edge Function OK in ${Math.round(performance.now() - t0)}ms`);
-  return { text, model: response?.model || model };
+  return {
+    text,
+    model: response?.model || model,
+    transport: response?.transport || 'native',
+  };
 };
 
 const callDeepSeekDirect = async ({ prompt, model, temperature = 0.15, maxOutputTokens = 4096 }) => {
@@ -284,26 +314,33 @@ const callDeepSeekDirect = async ({ prompt, model, temperature = 0.15, maxOutput
   return { text, model: data.model || model };
 };
 
-const callDeepSeekPrompt = async ({ prompt, model, temperature = 0.15, maxOutputTokens = 4096 }) => {
+const callDeepSeekPrompt = async ({ prompt, model, temperature = 0.15, maxOutputTokens = 4096, thinking = false, responseMimeType } = {}) => {
   // Edge Function only — NO fallback to direct API
   const t0 = performance.now();
+  const resolvedModel = thinking ? 'deepseek-reasoner' : model;
+  const payload = {
+    provider: 'deepseek',
+    prompt,
+    model: resolvedModel,
+    maxOutputTokens,
+    ...(thinking ? { thinking: true } : { temperature }),
+    ...(responseMimeType ? { responseMimeType } : {}),
+  };
   const response = await withTimeout(
-    (signal) => invokeAiProxy('di_prompt', {
-      provider: 'deepseek',
-      prompt,
-      model,
-      temperature,
-      maxOutputTokens
-    }, { signal }),
+    (signal) => invokeAiProxy('di_prompt', payload, { signal }),
     EDGE_FN_TIMEOUT_MS
   );
   const text = typeof response?.text === 'string' ? response.text : '';
   if (!text) throw new Error('AI proxy returned empty DeepSeek content.');
   console.info(`[diModelRouter] DeepSeek via Edge Function OK in ${Math.round(performance.now() - t0)}ms`);
-  return { text, model: response?.model || model };
+  return {
+    text,
+    model: response?.model || resolvedModel,
+    reasoning_content: response?.reasoning_content || undefined,
+  };
 };
 
-const callOpenAIPrompt = async ({ prompt, model, temperature = 0.15, maxOutputTokens = 4096 }) => {
+const callOpenAIPrompt = async ({ prompt, model, temperature = 0.15, maxOutputTokens = 4096, responseMimeType } = {}) => {
   const t0 = performance.now();
   const response = await withTimeout(
     (signal) => invokeAiProxy('di_prompt', {
@@ -312,6 +349,7 @@ const callOpenAIPrompt = async ({ prompt, model, temperature = 0.15, maxOutputTo
       model,
       temperature,
       maxOutputTokens,
+      ...(responseMimeType ? { responseMimeType } : {}),
     }, { signal }),
     EDGE_FN_TIMEOUT_MS
   );
@@ -321,7 +359,7 @@ const callOpenAIPrompt = async ({ prompt, model, temperature = 0.15, maxOutputTo
   return { text, model: response?.model || model };
 };
 
-const callAnthropicPrompt = async ({ prompt, model, temperature = 0.15, maxOutputTokens = 4096 }) => {
+const callAnthropicPrompt = async ({ prompt, model, temperature = 0.15, maxOutputTokens = 4096, responseMimeType } = {}) => {
   const t0 = performance.now();
   const response = await withTimeout(
     (signal) => invokeAiProxy('di_prompt', {
@@ -330,6 +368,7 @@ const callAnthropicPrompt = async ({ prompt, model, temperature = 0.15, maxOutpu
       model,
       temperature,
       maxOutputTokens,
+      ...(responseMimeType ? { responseMimeType } : {}),
     }, { signal }),
     EDGE_FN_TIMEOUT_MS
   );
@@ -347,39 +386,54 @@ export const runDiPrompt = async ({
   providerOverride = '',
   modelOverride = '',
 }) => {
-  const provider = String(providerOverride || PROMPT_PROVIDER[promptId] || '').trim();
+  const provider = String(providerOverride || getPromptProvider(promptId) || '').trim();
   if (!provider) {
     throw new Error(`No DI provider route configured for prompt: ${promptId}`);
   }
 
-  const model = String(modelOverride || PROMPT_DEFAULT_MODEL[promptId] || DI_UNIFIED_MODEL).trim();
+  const requestedModel = String(modelOverride || getPromptDefaultModel(promptId) || getModelConfig('primary').model).trim();
+  const model = provider === 'gemini'
+    ? resolveGeminiModel(requestedModel)
+    : requestedModel;
   const promptText = toPromptText(promptId, input);
-
-  const callPrompt = provider === 'gemini' ? callGeminiPrompt
-    : provider === 'openai' ? callOpenAIPrompt
-    : provider === 'anthropic' ? callAnthropicPrompt
-    : callDeepSeekPrompt;
-
-  const result = await callPrompt({
-    prompt: promptText,
-    model,
-    temperature,
-    maxOutputTokens,
-  });
-
   const strictJson = STRICT_JSON_PROMPTS.has(promptId);
-  const parsed = extractAiJson(result.text, { strict: strictJson });
-  if (strictJson && !validatePromptContract(promptId, parsed)) {
-    throw new Error(`Prompt ${promptId} returned JSON outside the required contract.`);
+  const recoveryAttempts = strictJson && JUDGE_PROMPT_IDS.has(promptId)
+    ? buildJudgeRecoveryAttempts({ provider, model, promptText })
+    : [{ provider, model, prompt: promptText }];
+  const errors = [];
+
+  for (const attempt of recoveryAttempts) {
+    try {
+      const callPrompt = selectPromptCaller(attempt.provider);
+      const result = await callPrompt({
+        prompt: attempt.prompt,
+        model: attempt.provider === 'gemini' ? resolveGeminiModel(attempt.model) : attempt.model,
+        temperature,
+        maxOutputTokens,
+        ...(strictJson ? { responseMimeType: 'application/json' } : {}),
+      });
+
+      const parsed = extractAiJson(result.text, { strict: strictJson });
+      if (strictJson && !validatePromptContract(promptId, parsed)) {
+        const keys = parsed && typeof parsed === 'object' ? Object.keys(parsed) : [];
+        console.warn(`[diModelRouter] Contract validation failed for ${promptId}. Keys present: [${keys.join(', ')}]. Raw (first 300): ${String(result.text).substring(0, 300)}`);
+        throw new Error(`Prompt ${promptId} returned JSON outside the required contract.`);
+      }
+
+      return {
+        provider: attempt.provider,
+        model: result.model,
+        transport: result.transport || null,
+        prompt_id: promptId,
+        raw: result.text,
+        parsed
+      };
+    } catch (error) {
+      errors.push(`${attempt.provider}/${attempt.model}: ${error?.message || 'unknown error'}`);
+    }
   }
 
-  return {
-    provider,
-    model: result.model,
-    prompt_id: promptId,
-    raw: result.text,
-    parsed
-  };
+  throw new Error(errors.join(' | '));
 };
 
 export default {

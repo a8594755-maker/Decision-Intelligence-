@@ -158,14 +158,7 @@ export function resolveChatThinkingPolicy(message, opts = {}) {
     return { mode: 'full', reason: 'recent_tool_context', steps: [] };
   }
 
-  if (resolveDirectAnalysisRequest(normalized, { hasUploadedData })) {
-    return { mode: 'full', reason: 'direct_analysis', steps: [] };
-  }
-
-  if (shouldUseAgentMode(normalized)) {
-    return { mode: 'full', reason: 'agent_signal', steps: [] };
-  }
-
+  // Light-weight orientation patterns take priority (no tools needed)
   if (matchesAny(normalized, LIGHT_DATASET_PATTERNS)) {
     return {
       mode: 'light',
@@ -182,5 +175,11 @@ export function resolveChatThinkingPolicy(message, opts = {}) {
     };
   }
 
-  return { mode: 'none', reason: 'default', steps: [] };
+  // Default: agent mode with tools. The LLM decides whether to call tools.
+  // Only trivial messages (greetings, etc.) are excluded by shouldUseAgentMode.
+  if (shouldUseAgentMode(normalized)) {
+    return { mode: 'full', reason: 'agent_default', steps: [] };
+  }
+
+  return { mode: 'none', reason: 'trivial', steps: [] };
 }

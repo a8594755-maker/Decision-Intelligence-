@@ -5,7 +5,7 @@
  *   1. taskIntakeService calls intakeRoutingService
  *   2. orchestrator imports and calls policyRuleService + toolPermissionGuard
  *   3. webhookIntakeService routes email payloads to emailIntakeEndpoint
- *   4. clarificationService generates questions and applies answers
+ *   4. (removed — clarificationService retired in favor of agent mode)
  *   5. governanceService CRUD operations work correctly
  *   6. policyRuleService evaluation engine works
  */
@@ -278,83 +278,6 @@ describe('governanceService', () => {
   });
 });
 
-// ── 5. clarificationService — Question Generation + Answer Application ──────
-
-import {
-  generateQuestions,
-  createClarification,
-  submitAnswers,
-  _resetForTesting,
-} from './clarificationService.js';
-
-describe('clarificationService', () => {
-  beforeEach(() => {
-    _resetForTesting();
-  });
-
-  it('generates questions for short messages', () => {
-    const questions = generateQuestions({
-      description: 'hi',
-      source: 'chat',
-      clarification_reason: 'Message too short to determine intent',
-    });
-    expect(questions.length).toBeGreaterThan(0);
-    expect(questions.some(q => q.field === 'description')).toBe(true);
-  });
-
-  it('generates workflow question when no suggested_workflow', () => {
-    const questions = generateQuestions({
-      description: 'a longer description that passes the length check',
-      source: 'chat',
-      context: {},
-    });
-    expect(questions.some(q => q.field === 'workflow_type')).toBe(true);
-  });
-
-  it('creates a clarification request', async () => {
-    const clar = await createClarification({
-      id: 'wo_test',
-      description: 'hi',
-      source: 'chat',
-      clarification_reason: 'too short',
-    });
-    expect(clar.id).toBeTruthy();
-    expect(clar.questions.length).toBeGreaterThan(0);
-    expect(clar.status).toBe('pending');
-  });
-
-  it('submits answers and validates required fields', async () => {
-    const clar = await createClarification({
-      id: 'wo_test2',
-      description: 'hi',
-      source: 'chat',
-      clarification_reason: 'too short',
-    });
-
-    // Try submitting without required answers
-    const requiredQ = clar.questions.find(q => q.required);
-    if (requiredQ) {
-      const fail = await submitAnswers(clar.id, {});
-      expect(fail.ok).toBe(false);
-      expect(fail.error).toContain('unanswered');
-    }
-
-    // Submit with all answers
-    const answers = {};
-    for (const q of clar.questions) {
-      answers[q.id] = q.type === 'single_select' ? q.options?.[0] || 'test' : 'Detailed test description';
-    }
-    const success = await submitAnswers(clar.id, answers);
-    expect(success.ok).toBe(true);
-    expect(success.clarification.status).toBe('answered');
-  });
-
-  it('rejects answers for non-existent clarification', async () => {
-    const result = await submitAnswers('nonexistent', { q_intent: 'test' });
-    expect(result.ok).toBe(false);
-    expect(result.error).toContain('not found');
-  });
-});
 
 // ── 6. webhookIntakeService — Email Source Dispatch ────────────────────────
 

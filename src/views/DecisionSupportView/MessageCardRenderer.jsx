@@ -52,12 +52,10 @@ import CausalGraphCard from '../../components/chat/CausalGraphCard';
 import WarRoomCard from '../../components/chat/WarRoomCard';
 import MacroOracleAlertCard from '../../components/chat/MacroOracleAlertCard';
 import TaskPlanCard from '../../components/chat/TaskPlanCard';
-import ClarificationCard from '../../components/chat/ClarificationCard';
 import AIReviewCard from '../../components/chat/AIReviewCard';
 import RevisionLogCard from '../../components/chat/RevisionLogCard';
 import ToolRegistryCard from '../../components/chat/ToolRegistryCard';
 import UnifiedApprovalCard from '../../components/chat/UnifiedApprovalCard';
-import WorkOrderDraftCard from '../../components/chat/WorkOrderDraftCard';
 import SupplierEventCard from '../../components/chat/SupplierEventCard';
 import AuditTimelineCard from '../../components/chat/AuditTimelineCard';
 import DecisionReviewPanel from '../../components/review/DecisionReviewPanel';
@@ -514,6 +512,18 @@ export default function MessageCardRenderer({ message, handlers, state }) {
         raw_narrative: message.content || '',
       };
 
+      // In multi-agent mode, show each candidate's trace with agent label
+      const hasMultipleCandidates = candidates.length > 1;
+      const candidateTraces = hasMultipleCandidates
+        ? candidates
+            .filter((c) => c?.trace)
+            .map((c) => ({
+              key: c.candidateId || c.label,
+              label: [c.label, c.provider, c.model].filter(Boolean).join(' · '),
+              trace: c.trace,
+            }))
+        : [];
+
       return (
         <div className="space-y-3">
           {brief ? <AgentBriefCard brief={brief} attribution={briefAttribution} /> : null}
@@ -522,7 +532,15 @@ export default function MessageCardRenderer({ message, handlers, state }) {
           ))}
           {qa ? <AgentQualityCard qa={qa} judgeDecision={judgeDecision} /> : null}
           {alternativeCandidate ? <AgentAlternativeCard candidate={alternativeCandidate} /> : null}
-          <ExecutionTraceCard trace={normalizedTrace} />
+          {candidateTraces.length > 0
+            ? candidateTraces.map(({ key, label, trace: cTrace }) => (
+                <ExecutionTraceCard key={key} trace={cTrace} agentLabel={label} />
+              ))
+            : <ExecutionTraceCard
+                trace={normalizedTrace}
+                agentLabel={winnerCandidate ? [winnerCandidate.label, winnerCandidate.provider, winnerCandidate.model].filter(Boolean).join(' · ') : ''}
+              />
+          }
         </div>
       );
     }
@@ -635,26 +653,6 @@ export default function MessageCardRenderer({ message, handlers, state }) {
       <MacroOracleAlertCard
         payload={message.payload}
         onAction={handlers.handleDecisionBundleAction}
-      />
-    );
-  }
-  if (message.type === 'clarification_card') {
-    return (
-      <ClarificationCard
-        payload={message.payload}
-        onSubmit={message._onSubmit}
-        onSkip={message._onSkip}
-      />
-    );
-  }
-  if (message.type === 'work_order_draft_card') {
-    return (
-      <WorkOrderDraftCard
-        draft={message.payload}
-        onConfirm={message._onConfirm}
-        onCancel={message._onCancel}
-        onAttach={message._onAttach}
-        disabled={message._disabled}
       />
     );
   }

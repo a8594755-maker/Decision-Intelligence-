@@ -11,6 +11,7 @@
 
 import { BUILTIN_TOOLS } from './builtinToolCatalog.js';
 import { getToolById, listTools, incrementUsage } from './toolRegistryService.js';
+import { createScenario } from './diScenariosService.js';
 
 // ── Convert catalog → LLM tool definitions ──────────────────────────────────
 
@@ -183,6 +184,45 @@ export async function executeTool(toolName, args, context = {}) {
     if (context.userId && !mergedArgs.userId) mergedArgs.userId = context.userId;
     if (context.datasetProfileRow && !mergedArgs.datasetProfileRow && entry.needs_dataset_profile) {
       mergedArgs.datasetProfileRow = context.datasetProfileRow;
+    }
+
+    // ── run_scenario needs special handling ──────────────────────────────
+    // runScenario(userId, scenario, onProgress) expects positional args and
+    // a scenario record with a DB-assigned `id`.  The agent loop only passes
+    // a flat mergedArgs object, so we must:
+    //   1. Create a scenario record via diScenariosService (gives us `id`)
+    //   2. Call runScenario with positional args instead of a single object
+    if (toolName === 'run_scenario') {
+      const userId = mergedArgs.userId;
+      const scenarioInput = mergedArgs.scenario || {};
+
+      if (!scenarioInput.base_run_id) {
+        return { success: false, error: 'run_scenario requires scenario.base_run_id', toolId: toolName };
+      }
+
+      // Ensure the scenario has a DB record with an id
+      let scenarioRecord = scenarioInput;
+      if (!scenarioInput.id) {
+        const { scenario: created, tableNotFound } = await createScenario({
+          user_id: userId,
+          base_run_id: scenarioInput.base_run_id,
+          name: scenarioInput.name || null,
+          overrides: scenarioInput.overrides || {},
+          engine_flags: scenarioInput.engine_flags || {},
+        });
+        if (tableNotFound || !created) {
+          return { success: false, error: 'Failed to create scenario record (di_scenarios table may not exist)', toolId: toolName };
+        }
+        scenarioRecord = created;
+      }
+
+      const result = await fn(userId, scenarioRecord, mergedArgs.onProgress || null);
+      return {
+        success: true,
+        result: typeof result === 'object' ? result : { value: result },
+        toolId: toolName,
+        artifactTypes: entry.output_artifacts,
+      };
     }
 
     const result = await fn(mergedArgs);

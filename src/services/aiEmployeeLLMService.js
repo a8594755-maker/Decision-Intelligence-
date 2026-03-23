@@ -21,6 +21,7 @@
 
 import { resolveModel, recordModelRun } from './modelRoutingService';
 import { invokeAiProxy } from './aiProxyService';
+import { extractAiJson } from '../utils/aiMappingHelper';
 
 // ── Provider → ai-proxy mode mapping ─────────────────────────────────────────
 
@@ -28,7 +29,7 @@ const PROVIDER_MODE_MAP = {
   anthropic: 'anthropic_chat',
   openai:    'openai_chat',
   deepseek:  'deepseek_chat',
-  gemini:    'gemini_generate',
+  gemini:    'gemini_chat',
 };
 
 // For structured DI prompts (JSON output), use di_prompt mode which supports
@@ -82,15 +83,22 @@ export async function callLLM({
   const t0 = performance.now();
   let result;
 
+  // DeepSeek reasoner mode: suppress temperature (API rejects it)
+  const isDeepSeekReasoner = provider === 'deepseek' && /deepseek-reasoner/i.test(model);
+  const finalTemp = isDeepSeekReasoner ? undefined : effectiveTemp;
+
   if (jsonMode && DI_PROMPT_PROVIDERS.has(provider)) {
     // Use di_prompt mode for structured JSON output
-    result = await invokeAiProxy('di_prompt', {
+    const payload = {
       provider,
       model,
       prompt: systemPrompt ? `${systemPrompt}\n\n${prompt}` : prompt,
-      temperature: effectiveTemp,
       maxOutputTokens: maxTokens,
-    });
+      responseMimeType: 'application/json',
+      ...(finalTemp !== undefined ? { temperature: finalTemp } : {}),
+      ...(isDeepSeekReasoner ? { thinking: true } : {}),
+    };
+    result = await invokeAiProxy('di_prompt', payload);
   } else {
     // Use provider-specific chat mode
     const mode = PROVIDER_MODE_MAP[provider];
@@ -98,22 +106,16 @@ export async function callLLM({
       throw new Error(`[aiEmployeeLLM] No ai-proxy mode for provider "${provider}"`);
     }
 
-    if (provider === 'gemini') {
-      result = await invokeAiProxy(mode, {
-        prompt,
-        systemContext: systemPrompt,
-        options: { model, temperature: effectiveTemp, maxOutputTokens: maxTokens },
-      });
-    } else {
-      // anthropic, openai, deepseek all use the same chat payload shape
-      result = await invokeAiProxy(mode, {
-        message: prompt,
-        systemPrompt,
-        model,
-        temperature: effectiveTemp,
-        maxOutputTokens: maxTokens,
-      });
-    }
+    const payload = {
+      message: prompt,
+      systemPrompt,
+      model,
+      maxOutputTokens: maxTokens,
+      ...(finalTemp !== undefined ? { temperature: finalTemp } : {}),
+      ...(isDeepSeekReasoner ? { thinking: true } : {}),
+      ...(jsonMode && provider === 'deepseek' ? { response_format: { type: 'json_object' } } : {}),
+    };
+    result = await invokeAiProxy(mode, payload);
   }
 
   const latencyMs = Math.round(performance.now() - t0);
@@ -143,6 +145,7 @@ export async function callLLM({
     tier,
     escalated,
     usage: result.usage || null,
+    transport: result.transport || (provider === 'gemini' ? 'compat' : 'native'),
   };
 }
 
@@ -155,7 +158,7 @@ export async function callLLM({
  */
 export async function callLLMJson(opts) {
   const result = await callLLM({ ...opts, jsonMode: true });
-  const data = _parseJsonFromText(result.text);
+  const data = extractAiJson(result.text);
   return { ...result, data };
 }
 
@@ -171,50 +174,6 @@ function _defaultTemperature(taskType) {
   }
 }
 
-/**
- * Extract JSON from LLM text that may include markdown fences or preamble.
- */
-function _parseJsonFromText(text) {
-  if (!text) return null;
-
-  // Try direct parse first
-  try {
-    return JSON.parse(text);
-  } catch { /* continue */ }
-
-  // Strip markdown code fences
-  const fenceMatch = text.match(/```(?:json)?\s*\n?([\s\S]*?)```/);
-  if (fenceMatch) {
-    try {
-      return JSON.parse(fenceMatch[1].trim());
-    } catch { /* continue */ }
-  }
-
-  // Find first { or [ and try to parse from there
-  const firstBrace = text.indexOf('{');
-  const firstBracket = text.indexOf('[');
-  const start = firstBrace === -1 ? firstBracket
-    : firstBracket === -1 ? firstBrace
-    : Math.min(firstBrace, firstBracket);
-
-  if (start !== -1) {
-    try {
-      return JSON.parse(text.slice(start));
-    } catch { /* continue */ }
-
-    // Try finding matching closing brace/bracket
-    const opener = text[start];
-    const closer = opener === '{' ? '}' : ']';
-    const lastClose = text.lastIndexOf(closer);
-    if (lastClose > start) {
-      try {
-        return JSON.parse(text.slice(start, lastClose + 1));
-      } catch { /* ignore */ }
-    }
-  }
-
-  return null;
-}
 
 export default {
   callLLM,

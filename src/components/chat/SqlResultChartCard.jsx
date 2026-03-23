@@ -9,6 +9,7 @@
  * - result: { success, rows, rowCount, truncated }
  * - summary: string — markdown summary of results
  * - charts: Array<{ type, data, xKey, yKey, compatibleTypes, title }> — optional chart specs
+ * - meta: query planning/probe metadata
  */
 
 import React, { useState } from 'react';
@@ -18,9 +19,13 @@ import { ChevronDown, ChevronUp, Table2 } from 'lucide-react';
 import SqlQueryBlock from './SqlQueryBlock.jsx';
 import ChartRenderer from './ChartRenderer.jsx';
 
-export default function SqlResultChartCard({ sql, result, summary, charts = [] }) {
+export default function SqlResultChartCard({ sql, result, summary, charts = [], meta = null }) {
   const [showTable, setShowTable] = useState(false);
   const chart = charts?.[0] || null;
+  const hasRows = Array.isArray(result?.rows) && result.rows.length > 0;
+  const checkedTables = Array.isArray(meta?.tablesChecked)
+    ? meta.tablesChecked.map((table) => table.table_name).filter(Boolean)
+    : [];
 
   return (
     <div className="space-y-2">
@@ -39,8 +44,21 @@ export default function SqlResultChartCard({ sql, result, summary, charts = [] }
       {/* SQL Query Block — collapsible */}
       <SqlQueryBlock sql={sql} result={result} toolName="Data Query" />
 
+      {!hasRows && summary && (
+        <div className="rounded-xl border border-amber-200 dark:border-amber-800 bg-amber-50/80 dark:bg-amber-950/20 px-3 py-2 text-sm text-amber-900 dark:text-amber-100">
+          <p>{summary}</p>
+          {(meta?.datasetLabel || checkedTables.length > 0) && (
+            <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">
+              {[meta?.datasetLabel, checkedTables.length > 0 ? `Checked tables: ${checkedTables.join(', ')}` : null]
+                .filter(Boolean)
+                .join(' | ')}
+            </p>
+          )}
+        </div>
+      )}
+
       {/* Data Table — collapsible */}
-      {summary && (
+      {summary && hasRows && (
         <div>
           <button
             onClick={() => setShowTable(!showTable)}

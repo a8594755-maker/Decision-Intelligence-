@@ -1,10 +1,5 @@
 import { DI_PROMPT_IDS, runDiPrompt } from './diModelRouterService.js';
-
-const JUDGE_PROVIDER = import.meta.env.VITE_DI_AGENT_QA_REVIEW_PROVIDER || 'gemini';
-const JUDGE_MODEL = import.meta.env.VITE_DI_AGENT_QA_REVIEW_MODEL
-  || import.meta.env.VITE_DI_GEMINI_MODEL
-  || import.meta.env.VITE_GEMINI_MODEL
-  || 'gemini-3.1-pro-preview';
+import { getModelConfig } from './modelConfigService.js';
 
 function uniqueStrings(items = []) {
   const seen = new Set();
@@ -26,6 +21,7 @@ function summarizeCandidate(candidate) {
     label: candidate?.label,
     provider: candidate?.provider,
     model: candidate?.model,
+    transport: candidate?.transport || null,
     status: candidate?.status || 'completed',
     failed_reason: candidate?.failedReason || null,
     brief: candidate?.presentation?.brief || null,
@@ -52,6 +48,7 @@ function buildFallbackDecision(primaryCandidate, secondaryCandidate) {
       reviewer: {
         provider: 'deterministic_fallback',
         model: 'single_survivor_selection',
+        transport: 'deterministic',
       },
       degraded: true,
     };
@@ -67,6 +64,7 @@ function buildFallbackDecision(primaryCandidate, secondaryCandidate) {
       reviewer: {
         provider: 'deterministic_fallback',
         model: 'single_survivor_selection',
+        transport: 'deterministic',
       },
       degraded: true,
     };
@@ -80,7 +78,7 @@ function buildFallbackDecision(primaryCandidate, secondaryCandidate) {
 
   return {
     winnerCandidateId: winner,
-    summary: `${winningCandidate?.label || 'Winner'} was selected because it achieved the stronger QA score and lower apparent answer risk.`,
+    summary: `${winningCandidate?.label || 'Winner'} was selected as the stronger available answer because it achieved the stronger QA score and lower apparent answer risk.`,
     rationale: [
       `${winningCandidate?.label || 'Winner'} QA score: ${Number(winningCandidate?.presentation?.qa?.score || 0).toFixed(1)}`,
       `${losingCandidate?.label || 'Alternative'} QA score: ${Number(losingCandidate?.presentation?.qa?.score || 0).toFixed(1)}`,
@@ -90,8 +88,37 @@ function buildFallbackDecision(primaryCandidate, secondaryCandidate) {
     reviewer: {
       provider: 'deterministic_fallback',
       model: 'qa_score_comparison',
+      transport: 'deterministic',
     },
     degraded: false,
+  };
+}
+
+function candidateNeedsGuardedSummary(candidate) {
+  const qa = candidate?.presentation?.qa;
+  if (!qa) return true;
+  const passThreshold = Number(qa.pass_threshold || 8);
+  const score = Number(qa.score || 0);
+
+  if (qa.status === 'warning') return true;
+  if (qa.status === 'pass') return false;
+  return score < passThreshold;
+}
+
+function buildGuardedSummary(candidate) {
+  return `${candidate?.label || 'Winner'} was selected as the stronger available answer, but it still carries unresolved QA risk.`;
+}
+
+function applyWinnerGuardrails(decision, winnerCandidate) {
+  if (!decision || !winnerCandidate || !candidateNeedsGuardedSummary(winnerCandidate)) return decision;
+
+  return {
+    ...decision,
+    summary: buildGuardedSummary(winnerCandidate),
+    rationale: uniqueStrings([
+      ...(Array.isArray(decision.rationale) ? decision.rationale : []),
+      `${winnerCandidate?.label || 'Winner'} still has QA warnings, so this is the best available answer rather than a fully clean pass.`,
+    ]),
   };
 }
 
@@ -100,6 +127,7 @@ export async function judgeAgentCandidates({
   answerContract,
   primaryCandidate,
   secondaryCandidate,
+  modelMode,
 }) {
   const degraded = primaryCandidate?.status !== 'completed' || secondaryCandidate?.status !== 'completed';
 
@@ -114,25 +142,30 @@ export async function judgeAgentCandidates({
       },
       temperature: 0.1,
       maxOutputTokens: 1200,
-      providerOverride: JUDGE_PROVIDER,
-      modelOverride: JUDGE_MODEL,
+      providerOverride: getModelConfig('judge', modelMode).provider,
+      modelOverride: getModelConfig('judge', modelMode).model,
     });
 
-    return {
+    const winnerCandidate = result?.parsed?.winner_candidate_id === 'secondary' ? secondaryCandidate : primaryCandidate;
+
+    return applyWinnerGuardrails({
       winnerCandidateId: result?.parsed?.winner_candidate_id === 'secondary' ? 'secondary' : 'primary',
       summary: String(result?.parsed?.summary || '').trim(),
       rationale: uniqueStrings(result?.parsed?.rationale || []),
       loserIssues: uniqueStrings(result?.parsed?.loser_issues || []),
       confidence: Number(result?.parsed?.confidence || 0),
       reviewer: {
-        provider: result?.provider || JUDGE_PROVIDER,
-        model: result?.model || JUDGE_MODEL,
+        provider: result?.provider || getModelConfig('judge', modelMode).provider,
+        model: result?.model || getModelConfig('judge', modelMode).model,
+        transport: result?.transport || null,
       },
       degraded,
-    };
+    }, winnerCandidate);
   } catch (error) {
     console.warn('[agentCandidateJudge] Judge fallback:', error?.message);
-    return buildFallbackDecision(primaryCandidate, secondaryCandidate);
+    const fallbackDecision = buildFallbackDecision(primaryCandidate, secondaryCandidate);
+    const winnerCandidate = fallbackDecision.winnerCandidateId === 'secondary' ? secondaryCandidate : primaryCandidate;
+    return applyWinnerGuardrails(fallbackDecision, winnerCandidate);
   }
 }
 

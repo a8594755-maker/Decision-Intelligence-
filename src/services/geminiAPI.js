@@ -19,9 +19,9 @@ export const getLastUsedModel = () => ({ model: _lastUsedModel, provider: _lastU
 
 // Using environment variable for API key (falls back to empty string)
 const DEFAULT_API_KEY = import.meta.env.VITE_GEMINI_API_KEY || "";
-const DEFAULT_GEMINI_MODEL = 'gemini-3-pro-preview';
+const DEFAULT_GEMINI_MODEL = import.meta.env.VITE_DI_GEMINI_MODEL || 'gemini-3.1-pro-preview';
 const GEMINI_MODEL_ALIASES = Object.freeze({
-  'gemini-3-pro': 'gemini-3-pro-preview',
+  'gemini-3-pro': 'gemini-3.1-pro-preview',
   'gemini-3.1-pro': 'gemini-3.1-pro-preview'
 });
 const normalizeGeminiModelName = (model) => {
@@ -44,7 +44,8 @@ const GEMINI_MODEL_CANDIDATES = Array.from(new Set(
     import.meta.env.VITE_GEMINI_MODEL,
     DEFAULT_GEMINI_MODEL,
     'gemini-3.1-pro-preview',
-    'gemini-3-pro-preview'
+    'gemini-2.5-flash',
+    'gemini-2.5-flash-lite'
   ]
     .map(normalizeGeminiModelName)
     .filter((model) => Boolean(model) && isGeminiModelName(model))
@@ -338,24 +339,33 @@ const postDeepSeekWithModelFallback = async ({
 export const callGeminiAPI = async (prompt, systemContext = "", options = {}) => {
   if (USE_EDGE_AI_PROXY) {
     const t0 = Date.now();
-    const usedModel = options.model || DEFAULT_DEEPSEEK_CHAT_MODEL;
+    const provider = options.provider || import.meta.env.VITE_DI_CHAT_PROVIDER || 'openai';
+    const usedModel = options.model
+      || (provider === 'gemini'
+        ? GEMINI_MODEL
+        : import.meta.env.VITE_DI_CHAT_MODEL || DEFAULT_DEEPSEEK_CHAT_MODEL);
     try {
       const fullPrompt = systemContext
         ? `${systemContext}\n\nUser Query: ${prompt}`
         : prompt;
       const result = await invokeAiProxy('di_prompt', {
-        provider: 'deepseek',
+        provider,
         prompt: fullPrompt,
         model: usedModel,
         temperature: options.temperature || 0.7,
-        maxOutputTokens: options.maxOutputTokens || 8192
+        maxOutputTokens: options.maxOutputTokens || 8192,
+        responseMimeType: options.responseMimeType,
+        responseSchema: options.responseSchema,
+        thinkingConfig: options.thinkingConfig,
+        nativeCapabilities: options.nativeCapabilities,
+        attachments: options.attachments,
       });
       const text = typeof result?.text === 'string' ? result.text : '';
       const usage = result?.usage;
       trackLlmUsage({
         source: 'ai_proxy',
         model: usedModel,
-        provider: 'deepseek',
+        provider,
         promptTokens: usage?.prompt_tokens ?? null,
         completionTokens: usage?.completion_tokens ?? null,
         totalTokens: usage?.total_tokens ?? null,
@@ -373,7 +383,7 @@ export const callGeminiAPI = async (prompt, systemContext = "", options = {}) =>
       trackLlmUsage({
         source: 'ai_proxy',
         model: usedModel,
-        provider: 'deepseek',
+        provider,
         status: 'error',
         latencyMs: Date.now() - t0,
         workflow: options?.workflow ?? null,
@@ -537,21 +547,27 @@ export const chatWithAI = async (message, conversationHistory = [], dataContext 
 
   if (USE_EDGE_AI_PROXY) {
     const t0 = Date.now();
+    const chatModel = import.meta.env.VITE_DI_CHAT_MODEL || 'gpt-5.4';
+    const chatProvider = import.meta.env.VITE_DI_CHAT_PROVIDER || 'openai';
+    const proxyMode = chatProvider === 'openai' ? 'openai_chat'
+      : chatProvider === 'anthropic' ? 'anthropic_chat'
+      : chatProvider === 'gemini' ? 'gemini_chat'
+      : 'deepseek_chat';
     try {
-      const result = await invokeAiProxy('deepseek_chat', {
+      const result = await invokeAiProxy(proxyMode, {
         message,
         conversationHistory,
         systemPrompt: baseSystemContext,
         temperature: 0.7,
         maxOutputTokens: 8192,
-        model: 'deepseek-chat'
+        model: chatProvider === 'gemini' ? GEMINI_MODEL : chatModel,
       });
       const text = typeof result?.text === 'string' ? result.text : '';
       const usage = result?.usage;
       trackLlmUsage({
         source: 'ai_proxy',
-        model: 'deepseek-chat',
-        provider: 'deepseek',
+        model: result?.model || (chatProvider === 'gemini' ? GEMINI_MODEL : chatModel),
+        provider: chatProvider,
         promptTokens: usage?.prompt_tokens ?? null,
         completionTokens: usage?.completion_tokens ?? null,
         totalTokens: usage?.total_tokens ?? null,
@@ -565,8 +581,8 @@ export const chatWithAI = async (message, conversationHistory = [], dataContext 
       if (error instanceof RateLimitError) return error.message;
       trackLlmUsage({
         source: 'ai_proxy',
-        model: 'deepseek-chat',
-        provider: 'deepseek',
+        model: chatProvider === 'gemini' ? GEMINI_MODEL : chatModel,
+        provider: chatProvider,
         status: 'error',
         latencyMs: Date.now() - t0,
         workflow: 'chat',
@@ -884,7 +900,19 @@ const streamDeepSeekChat = async ({
 /** Default timeout for chat streaming requests (180 seconds — long analysis tasks need more time). */
 const STREAM_CHAT_TIMEOUT_MS = 180_000;
 
-export const streamChatWithAI = async (message, conversationHistory = [], systemPrompt = '', onChunk = null, { signal: externalSignal } = {}) => {
+export const streamChatWithAI = async (
+  message,
+  conversationHistory = [],
+  systemPrompt = '',
+  onChunk = null,
+  {
+    signal: externalSignal,
+    nativeCapabilities = null,
+    attachments = [],
+    preferTransport = '',
+    googleOptions = null,
+  } = {},
+) => {
   // Build a combined AbortSignal: external cancel OR timeout
   const timeoutController = new AbortController();
   const timeoutId = setTimeout(() => timeoutController.abort(new Error(`Chat request timed out after ${STREAM_CHAT_TIMEOUT_MS / 1000}s`)), STREAM_CHAT_TIMEOUT_MS);
@@ -906,8 +934,14 @@ export const streamChatWithAI = async (message, conversationHistory = [], system
     try {
       const chatModel = import.meta.env.VITE_DI_CHAT_MODEL || 'gpt-5.4';
       const chatProvider = import.meta.env.VITE_DI_CHAT_PROVIDER || 'openai';
-      const proxyMode = chatProvider === 'openai' ? 'openai_chat'
+      const wantsGeminiNative = chatProvider === 'gemini'
+        && (preferTransport === 'native'
+          || (nativeCapabilities && typeof nativeCapabilities === 'object')
+          || (Array.isArray(attachments) && attachments.length > 0));
+      const proxyMode = wantsGeminiNative ? 'gemini_native'
+        : chatProvider === 'openai' ? 'openai_chat'
         : chatProvider === 'anthropic' ? 'anthropic_chat'
+        : chatProvider === 'gemini' ? 'gemini_chat'
         : 'deepseek_chat';
       const result = await invokeAiProxy(proxyMode, {
         message,
@@ -915,7 +949,10 @@ export const streamChatWithAI = async (message, conversationHistory = [], system
         systemPrompt,
         temperature: 0.7,
         maxOutputTokens: 8192,
-        model: chatModel,
+        model: chatProvider === 'gemini' ? GEMINI_MODEL : chatModel,
+        nativeCapabilities,
+        attachments,
+        googleOptions,
       }, { signal: combinedSignal });
       const text = typeof result?.text === 'string' ? result.text : 'No response generated.';
       const usage = result?.usage;
@@ -931,7 +968,8 @@ export const streamChatWithAI = async (message, conversationHistory = [], system
         workflow: 'chat',
       });
       streamTextToChunks(text, onChunk, 48);
-      _lastUsedModel = result?.model || chatModel; _lastUsedProvider = `${chatProvider} (ai-proxy)`;
+      _lastUsedModel = result?.model || (chatProvider === 'gemini' ? GEMINI_MODEL : chatModel);
+      _lastUsedProvider = `${chatProvider} (ai-proxy${result?.transport ? `:${result.transport}` : ''})`;
       return text;
     } catch (error) {
       if (error instanceof RateLimitError) {

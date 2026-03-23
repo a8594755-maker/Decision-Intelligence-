@@ -28,7 +28,13 @@ export default function AgentQualityCard({ qa, judgeDecision = null }) {
   const normalizedIssues = Array.isArray(qa?.issues) ? qa.issues.filter(Boolean) : [];
   const dimensionScores = qa?.dimension_scores || {};
   const reviewerList = Array.isArray(qa?.reviewers) ? qa.reviewers : [];
-  const escalated = reviewerList.some((reviewer) => reviewer?.stage === 'cross_model');
+  const hasAvailableCrossReview = reviewerList.some((reviewer) => reviewer?.stage === 'cross_model' && reviewer?.available !== false);
+  const hasUnavailableCrossReview = reviewerList.some((reviewer) => reviewer?.stage === 'cross_model' && reviewer?.available === false);
+  const reviewStatusLabel = hasAvailableCrossReview
+    ? 'Cross-model review used'
+    : hasUnavailableCrossReview
+      ? 'Cross-model review unavailable'
+      : 'Self-review only';
 
   const dimensionEntries = useMemo(() => {
     return Object.entries(DIMENSION_LABELS).map(([key, label]) => ({
@@ -57,7 +63,7 @@ export default function AgentQualityCard({ qa, judgeDecision = null }) {
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500 dark:text-slate-400">
             <span>{`Score ${Number(qa.score || 0).toFixed(1)} / ${Number(qa.pass_threshold || 8).toFixed(1)}`}</span>
-            <span>{escalated ? 'Cross-model review used' : 'Self-review only'}</span>
+            <span>{reviewStatusLabel}</span>
             <span>{qa.repair_attempted ? 'Repair executed' : 'No repair needed'}</span>
             {judgeDecision?.winnerLabel ? <span>{`Winner: ${judgeDecision.winnerLabel}`}</span> : null}
           </div>

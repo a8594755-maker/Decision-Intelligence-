@@ -109,6 +109,15 @@ describe('chartRecipeCatalog', () => {
     expect(recipe.category).toBe('trend');
   });
 
+  it('seller revenue histogram recipe includes percentile reference lines and mapping table output', () => {
+    const recipe = getRecipeById('seller_revenue_log_histogram');
+    expect(recipe).toBeTruthy();
+    expect(recipe.pythonCode).toContain('percentile_defs');
+    expect(recipe.pythonCode).toContain('referenceLines');
+    expect(recipe.pythonCode).toContain('Seller Revenue Percentiles');
+    expect(recipe.pythonCode).toContain('Histogram Bin');
+  });
+
   it('getRecipeById should return null for unknown ID', () => {
     expect(getRecipeById('nonexistent_recipe')).toBeNull();
   });

@@ -15,7 +15,7 @@ import { createDatasetProfileFromSheets } from '../../services/datasetProfilingS
 import { datasetProfilesService, registerLocalProfile } from '../../services/datasetProfilesService';
 import { reuseMemoryService } from '../../services/reuseMemoryService';
 import { streamChatWithAI, getLastUsedModel } from '../../services/geminiAPI';
-import { runAgentLoop } from '../../services/chatAgentLoop';
+import { runAgentLoop, ANALYSIS_AGENT_TOOL_IDS } from '../../services/chatAgentLoop';
 import { registerTool, approveTool } from '../../services/toolRegistryService';
 import { invalidateRegisteredToolsCache } from '../../services/chatToolAdapter';
 import { diResetService } from '../../services/diResetService';
@@ -62,11 +62,11 @@ import { judgeAgentCandidates } from '../../services/agentCandidateJudgeService.
 import { resolveAgentExecutionStrategy } from '../../services/agentExecutionStrategyService.js';
 import { buildDirectAnalysisAgentPrompt, resolveDirectAnalysisRequest } from '../../services/directAnalysisService.js';
 import { parseManualThinkingDirective, resolveChatThinkingPolicy } from '../../services/chatThinkingPolicyService.js';
+import { handleDataQuery } from '../../services/sapQueryChatHandler.js';
 
 import { createAlertMonitor, buildAlertChatMessage, isAlertMonitorEnabled } from '../../services/alertMonitorService';
 import { batchApprove, batchReject } from '../../services/approvalWorkflowService';
 import { decomposeTask } from '../../services/chatTaskDecomposer';
-import { draftWorkOrder, isTaskIntent } from '../../services/aiEmployee/workOrderDraftService';
 import { getEmployee, getOrCreateWorker } from '../../services/aiEmployee/queries.js';
 // v2 orchestrator — single entry point for task lifecycle
 import { submitPlan, approvePlan as orchestratorApprovePlan, isRalphLoopEnabled, abortAllRalphLoops, resolveReviewDecision } from '../../services/aiEmployee/index.js';
@@ -74,7 +74,6 @@ import { eventBus, EVENT_NAMES } from '../../services/eventBus.js';
 import { processEmailIntake } from '../../services/emailIntakeService.js';
 import { processTranscriptIntake } from '../../services/transcriptIntakeService.js';
 import { processIntake, INTAKE_SOURCES } from '../../services/taskIntakeService.js';
-import { createClarification, submitAnswers, resolveClarification } from '../../services/clarificationService.js';
 import {
   buildAttachmentPromptText,
   buildSpreadsheetAttachmentPayloads,
@@ -116,13 +115,10 @@ import useForecastExecutor from './useForecastExecutor.js';
 import usePlanExecutor from './usePlanExecutor.js';
 import useWorkflowExecutor from './useWorkflowExecutor.js';
 import MessageCardRenderer from './MessageCardRenderer.jsx';
+import { getModelConfig, getActiveThinkingMode } from '../../services/modelConfigService.js';
 
 const tableAvailable = initTableAvailability();
 const conversationsDb = tableAvailable ? supabase : null;
-const PRIMARY_AGENT_PROVIDER = import.meta.env.VITE_DI_CHAT_PROVIDER || 'openai';
-const PRIMARY_AGENT_MODEL = import.meta.env.VITE_DI_CHAT_MODEL || 'gpt-5.4';
-const SECONDARY_AGENT_PROVIDER = import.meta.env.VITE_DI_AGENT_SECONDARY_PROVIDER || 'anthropic';
-const SECONDARY_AGENT_MODEL = import.meta.env.VITE_DI_AGENT_SECONDARY_MODEL || 'claude-opus-4-6';
 
 // Module-level cache for inline raw rows — survives HMR state resets
 const _rawRowsCache = new Map();
@@ -150,6 +146,7 @@ function buildFailedCandidate({
   tone,
   provider,
   model,
+  transport = null,
   status,
   failedReason,
   startedAt,
@@ -167,6 +164,7 @@ function buildFailedCandidate({
     tone,
     provider,
     model,
+    transport,
     status,
     startedAt,
     finishedAt,
@@ -194,6 +192,9 @@ function buildOrchestrationCandidateMeta(candidate) {
   if (!candidate) return null;
   return {
     candidateId: candidate.candidateId,
+    provider: candidate.provider || null,
+    model: candidate.model || null,
+    transport: candidate.transport || null,
     status: candidate.status || 'completed',
     startedAt: candidate.startedAt || null,
     finishedAt: candidate.finishedAt || null,
@@ -436,6 +437,13 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
   // Abort any in-flight chat streaming on unmount
   useEffect(() => {
     return () => { chatAbortRef.current?.abort(); };
+  }, []);
+
+  // Stop generation handler — aborts current LLM call, keeps partial response
+  const handleStopGeneration = useCallback(() => {
+    chatAbortRef.current?.abort();
+    chatAbortRef.current = null;
+    setIsTyping(false);
   }, []);
 
   // Stable ref for canvas state updater used by useConversationManager
@@ -2089,9 +2097,11 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
     }
   }, [currentConversationId, activeDatasetContext, user?.id, updateCanvasState, appendMessagesToCurrentConversation, addNotification, currentConversation, currentMessages, setConversations]);
 
-  const runDirectAnalysisAgent = useCallback(async ({ query, history = [], runtimeDatasetContext, attachments = [] }) => {
+  const runDirectAnalysisAgent = useCallback(async ({ query, history = [], runtimeDatasetContext, attachments = [], modelMode: explicitModelMode }) => {
     chatAbortRef.current?.abort();
     chatAbortRef.current = new AbortController();
+    // explicitModelMode is 'full' or null; resolved to 'single'|'dual' after strategy
+    const baseDirectMode = explicitModelMode || null;
 
     const datasetProfileId = getDatasetProfileId(runtimeDatasetContext);
     let datasetProfileRow = null;
@@ -2162,6 +2172,7 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
         tone,
         provider: result?.provider || provider,
         model: result?.model || model,
+        transport: result?.transport || null,
         result,
         presentation,
       };
@@ -2196,6 +2207,7 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
           tone: config.tone,
           provider: config.provider,
           model: config.model,
+          transport: null,
           status,
           failedReason,
           startedAt,
@@ -2281,6 +2293,7 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
       mode: 'analysis',
       hasAttachments: attachments.length > 0,
     });
+    const directModelMode = baseDirectMode || (strategy.dualGenerate ? 'dual' : 'single');
 
     let selectedCandidate;
     let alternativeCandidate = null;
@@ -2293,8 +2306,8 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
         candidateId: 'primary',
         label: 'Primary Agent',
         tone: 'primary',
-        provider: PRIMARY_AGENT_PROVIDER,
-        model: PRIMARY_AGENT_MODEL,
+        provider: getModelConfig('primary', directModelMode).provider,
+        model: getModelConfig('primary', directModelMode).model,
         agentMessage: buildDirectAnalysisAgentPrompt(query),
         userMessage: query,
         conversationHistory: history.slice(-6),
@@ -2306,9 +2319,9 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
         candidateId: 'secondary',
         label: 'Challenger Agent',
         tone: 'secondary',
-        provider: SECONDARY_AGENT_PROVIDER,
-        model: SECONDARY_AGENT_MODEL,
-        agentMessage: `${buildDirectAnalysisAgentPrompt(query)}\n\nProduce an independently reasoned alternative answer. Do not mirror another agent.`,
+        provider: getModelConfig('secondary', directModelMode).provider,
+        model: getModelConfig('secondary', directModelMode).model,
+        agentMessage: `${buildDirectAnalysisAgentPrompt(query)}\n\nYou are the CHALLENGER analyst. Provide a genuinely different analytical angle:\n1. DIFFERENT METHODOLOGY: If the obvious approach is historical mean, use median or weighted-recent instead.\n2. DIFFERENT SCOPE: Focus on the most impactful subset (top decile, worst performers, newest cohort).\n3. STRESS TEST: Challenge the most optimistic assumption. What breaks if demand grows 20%?\n4. RELATIVE CONTEXT: Emphasize relative positioning (vs. category average, vs. prior period, as % of total).\nDo NOT run the same queries with the same framing. Your value is surfacing what the primary answer misses.`,
         userMessage: query,
         conversationHistory: history.slice(-6),
         toolContext,
@@ -2361,6 +2374,7 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
           answerContract,
           primaryCandidate,
           secondaryCandidate,
+          modelMode: directModelMode,
         });
 
         appendAgentThinkingNote({
@@ -2369,6 +2383,7 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
           agentTone: 'judge',
           provider: judgeDecision?.reviewer?.provider || '',
           model: judgeDecision?.reviewer?.model || '',
+          transport: judgeDecision?.reviewer?.transport || null,
           status: 'completed',
         }, [judgeDecision?.summary, ...(judgeDecision?.rationale || [])].filter(Boolean).join('\n'));
 
@@ -2387,6 +2402,7 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
           reviewer: {
             provider: 'orchestrator',
             model: 'parallel_dual',
+            transport: 'orchestrator',
           },
           degraded: true,
         };
@@ -2396,6 +2412,7 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
           agentTone: 'judge',
           provider: 'orchestrator',
           model: 'parallel_dual',
+          transport: 'orchestrator',
           status: 'failed',
         }, judgeDecision.summary);
         selectedCandidate = null;
@@ -2408,8 +2425,8 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
         candidateId: 'primary',
         label: 'Primary Agent',
         tone: 'primary',
-        provider: PRIMARY_AGENT_PROVIDER,
-        model: PRIMARY_AGENT_MODEL,
+        provider: getModelConfig('primary', directModelMode).provider,
+        model: getModelConfig('primary', directModelMode).model,
         agentMessage: buildDirectAnalysisAgentPrompt(query),
         userMessage: query,
         conversationHistory: history.slice(-6),
@@ -2555,6 +2572,8 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
     const messageTextWithAttachments = buildMessageWithAttachmentContext(messageText, resolvedAttachments);
     const effectiveThinkingMode = thinkingDirective.isDirective ? thinkingDirective.mode : currentConversationThinkingMode;
     const forceFullThinking = effectiveThinkingMode === 'full';
+    // baseModelMode is refined to 'single'|'dual'|'full' after strategy is resolved
+    const baseModelMode = forceFullThinking ? 'full' : null;
 
     // ── Feature gate for slash commands ──────────────────────────────────
     if (command.startsWith('/') && !isCommandEnabled(command)) {
@@ -2667,6 +2686,7 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
             query: subCmd,
             history: updatedMessages,
             runtimeDatasetContext,
+            modelMode: baseModelMode,
           });
         } catch (analysisErr) {
           appendMessagesToCurrentConversation([{ role: 'ai', content: `Analysis failed: ${analysisErr?.message || 'Unknown error'}`, timestamp: new Date().toISOString() }]);
@@ -2991,189 +3011,13 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
         history: updatedMessages,
         runtimeDatasetContext,
         attachments: resolvedAttachments,
+        modelMode: baseModelMode,
       });
       setIsTyping(false); setStreamingContent(''); return;
     }
 
     // ── AI Employee mode: task decomposition is the PRIMARY path ──────────
-    // Every non-command, non-greeting message goes through the 5-phase workflow:
-    //   Phase 1: Decompose → TaskPlanCard (human approval)
-    //   Phase 2: Agent Loop executes steps (Worker AI + Headless DI)
-    //   Phase 3: AI Review (Reviewer AI quality check + self-correction)
-    //   Phase 4: Deliver artifacts + revision log → Human review
-    //   Phase 5: Tool registration for reuse
-    if (isAIEmployeeMode && !lower.startsWith('/')) {
-      const GREETING_RE = /^(hi|hello|hey|thanks|thank you|ok|okay|你好|謝謝|好的|嗨|哈囉|了解|明白|沒問題|good|great|nice|got it|sure|yes|no|是|不是|對|沒有)\s*[!.。！]*$/i;
-
-      if (!GREETING_RE.test(trimmed) && isTaskIntent(trimmed)) {
-        try {
-          const datasetProfileId = getDatasetProfileId(runtimeDatasetContext);
-
-          // ── Phase 0: Work Order Draft (quick confirmation before expensive decompose) ──
-          const draft = draftWorkOrder(messageTextWithAttachments, {
-            hasAttachment: Boolean(datasetProfileId || resolvedAttachments.length > 0),
-          });
-
-          // Helper: run full decomposition + orchestrator after user confirms draft
-          const _runDecomposeAndExecute = async (userMessage) => {
-            setIsTyping(true);
-            try {
-              const decomposition = await decomposeTask({ userMessage, sessionContext: sessionCtx.context, userId: user?.id });
-
-              if (decomposition?.subtasks?.length) {
-                // ── Pre-execution clarification (vague requests) ────────────
-                if (decomposition.needs_clarification && decomposition.clarification_questions?.length > 0) {
-                  appendMessagesToCurrentConversation([{
-                    role: 'ai', type: 'clarification_card',
-                    payload: { questions: decomposition.clarification_questions, original_instruction: userMessage },
-                    content: 'Before I start, let me ask a few questions to make sure I deliver exactly what you need.',
-                    timestamp: new Date().toISOString(),
-                    _onSubmit: async (answers) => {
-                      // Structured answers: [{ field, value, type, question }]
-                      const preferences = (Array.isArray(answers) ? answers : [])
-                        .filter(a => a.value && (Array.isArray(a.value) ? a.value.length > 0 : true))
-                        .map(a => {
-                          const val = Array.isArray(a.value) ? a.value.join(', ') : a.value;
-                          return `- ${a.question || a.field}: ${val}`;
-                        })
-                        .join('\n');
-                      const enrichedMessage = `${userMessage}\n\nUser preferences:\n${preferences || '(no preferences specified)'}\n[proceed without further clarification]`;
-                      _runDecomposeAndExecute(enrichedMessage);
-                    },
-                    _onSkip: () => {
-                      _runDecomposeAndExecute(userMessage + ' [proceed with defaults, no clarification needed]');
-                    },
-                  }]);
-                  setIsTyping(false); setStreamingContent(''); return;
-                }
-
-                appendMessagesToCurrentConversation([{
-                  role: 'ai', type: 'task_plan_card', payload: decomposition,
-                  content: `I've broken this into ${decomposition.subtasks.length} step(s). Review and approve to let me start working.`,
-                  timestamp: new Date().toISOString(),
-              _approveContext: { title: messageText.slice(0, 120), description: decomposition.original_instruction || messageText, source_type: 'chat' },
-              _onApprove: async (approvedDecomp) => {
-                try {
-                  // ── v2 Orchestrator path ──────────────────────────────────
-                  const assignedWorker = await getAssignedWorker();
-                  if (!assignedWorker?.id) throw new Error('No worker available for this task.');
-
-                  const inputData = buildTaskInputData(runtimeDatasetContext, resolvedAttachments);
-
-                  // Use approved decomposition (may have user-selected model) or fallback to original
-                  const finalDecomp = approvedDecomp || decomposition;
-
-                  // Normalize decomposed steps into plan format
-                  const steps = (finalDecomp.subtasks || []).map((s, i) => ({
-                    name: s.name || s.step_name || `step_${i}`,
-                    tool_hint: s.tool_hint || s.description || s.name,
-                    tool_type: s.workflow_type || s.tool_type || 'python_tool',
-                    builtin_tool_id: s.builtin_tool_id || null,
-                    input_args: s.input_args || {},
-                    review_checkpoint: s.review_checkpoint || false,
-                  }));
-
-                  const plan = {
-                    title: messageText.slice(0, 120),
-                    description: decomposition.original_instruction || messageText,
-                    steps,
-                    inputData,
-                    taskMeta: { source_type: 'chat', attachments: resolvedAttachments },
-                    llmConfig: { provider: 'anthropic', model: 'claude-sonnet-4-6', temperature: 0.15, max_tokens: 4096 },
-                  };
-
-                  // Submit plan → creates task in draft_plan → waiting_approval
-                  const { taskId } = await submitPlan(plan, assignedWorker.id, user?.id);
-
-                  // Open execution dashboard
-                  setAgentExecEvents([]);
-                  agentExecEventsRef.current = [];
-                  setAgentExecTaskTitle(messageText.slice(0, 80));
-                  setAgentExecPanelOpen(true);
-                  setAgentExecSSETaskId(taskId);
-
-                  const initLoopSteps = steps.map((s, i) => ({
-                    name: s.name, index: i, status: 'pending',
-                    workflow_type: s.tool_type, retry_count: 0,
-                  }));
-                  setAgentExecLoopState({ steps: initLoopSteps, started_at: new Date().toISOString() });
-
-                  appendMessagesToCurrentConversation([{
-                    role: 'ai',
-                    content: `Task created. Executing ${steps.length} steps via orchestrator...`,
-                    timestamp: new Date().toISOString(),
-                  }]);
-
-                  // Approve → orchestrator runs tick loop, events drive UI via eventBus
-                  await orchestratorApprovePlan(taskId, user?.id);
-
-                } catch (execErr) {
-                  appendMessagesToCurrentConversation([{ role: 'ai', content: `Task execution failed: ${execErr?.message || 'Unknown error'}`, timestamp: new Date().toISOString() }]);
-                }
-              },
-            }]);
-            setIsTyping(false); setStreamingContent(''); return;
-              }
-            } catch (decompInnerErr) {
-              appendMessagesToCurrentConversation([{ role: 'ai', content: `Task planning failed: ${decompInnerErr?.message || 'Unknown error'}`, timestamp: new Date().toISOString() }]);
-            } finally {
-              setIsTyping(false); setStreamingContent('');
-            }
-          };
-
-          // Show Phase 0 work order draft card
-          appendMessagesToCurrentConversation([{
-            role: 'ai', type: 'work_order_draft_card', payload: draft,
-            content: `I'll set up a **${draft.workflow_label}** work order. Confirm to proceed with planning.`,
-            timestamp: new Date().toISOString(),
-            _onConfirm: async (confirmedDraft, answers) => {
-              // Enrich message with clarification answers if any
-              let enriched = messageText;
-              if (answers?.data_source) enriched += ` [data source: ${answers.data_source}]`;
-
-              // Persist work order via unified intake pipeline
-              try {
-                const assignedWorker = await getAssignedWorker();
-                if (!assignedWorker?.id) throw new Error('No worker available for intake.');
-                await processIntake({
-                  source: INTAKE_SOURCES.CHAT,
-                  message: enriched,
-                  employeeId: assignedWorker.id,
-                  userId: user?.id,
-                  metadata: {
-                    workflow_type: confirmedDraft.workflow_type,
-                    matched_tools: confirmedDraft.matched_tools,
-                    data_hints: confirmedDraft.data_hints,
-                    clarification_answers: answers,
-                    attachments: resolvedAttachments,
-                  },
-                });
-              } catch (intakeErr) {
-                console.warn('[DSV] Work order persistence failed (non-blocking):', intakeErr?.message);
-              }
-
-              _runDecomposeAndExecute(buildMessageWithAttachmentContext(enriched, resolvedAttachments));
-            },
-            _onCancel: () => {
-              appendMessagesToCurrentConversation([{
-                role: 'ai', content: 'Work order dismissed. Let me know if you need something else.',
-                timestamp: new Date().toISOString(),
-              }]);
-            },
-            _onAttach: () => {
-              // Trigger file picker — the ChatComposer's attach button
-              document.querySelector('[data-testid="attach-button"]')?.click();
-            },
-          }]);
-          setIsTyping(false); setStreamingContent(''); return;
-        } catch (decompErr) {
-          console.warn('[DSV] AI Employee decomposition failed, falling through to chat:', decompErr?.message);
-        }
-      }
-      // Greetings and failed decompositions fall through to general chat below
-    }
-
-    // SmartOps 2.0: LLM-powered intent parsing + action routing (DI mode primary path)
+    // All messages go through SmartOps intent parsing → agent loop (no AI Employee intercept).
     try {
       const parsedIntent = await parseIntent({ userMessage: messageTextWithAttachments, sessionContext: sessionCtx.context, domainContext: { ...domainContext, chatContext: buildContextSummaryForPrompt(chatContext) } });
 
@@ -3192,6 +3036,46 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
             const comparison = handlePlanComparison(ctx);
             if (comparison) { appendMessagesToCurrentConversation([{ role: 'ai', type: 'plan_comparison_card', payload: comparison, content: buildComparisonSummaryText(comparison), timestamp: new Date().toISOString() }]); }
             else { appendMessagesToCurrentConversation([{ role: 'ai', content: 'No previous plan available for comparison. Run a plan first, then make changes to compare.', timestamp: new Date().toISOString() }]); }
+          },
+          queryData: async ({ userMessage }) => {
+            const effectiveMessage = buildMessageWithAttachmentContext(userMessage || messageText, resolvedAttachments);
+            const directInputData = buildTaskInputData(runtimeDatasetContext, resolvedAttachments);
+            const hasUploadedQueryData = Boolean(
+              directInputData?.sheets
+              && Object.keys(directInputData.sheets).length > 0
+            );
+
+            if (hasUploadedQueryData) {
+              await runDirectAnalysisAgent({
+                query: effectiveMessage,
+                history: updatedMessages,
+                runtimeDatasetContext,
+                attachments: resolvedAttachments,
+                modelMode: baseModelMode,
+              });
+              return;
+            }
+
+            const sqlResult = await handleDataQuery(effectiveMessage);
+
+            if (!sqlResult?.result?.success) {
+              await runDirectAnalysisAgent({
+                query: effectiveMessage,
+                history: updatedMessages,
+                runtimeDatasetContext,
+                attachments: resolvedAttachments,
+                modelMode: baseModelMode,
+              });
+              return;
+            }
+
+            appendMessagesToCurrentConversation([{
+              role: 'ai',
+              type: 'sql_query_result',
+              payload: sqlResult,
+              content: sqlResult.summary || '',
+              timestamp: new Date().toISOString(),
+            }]);
           },
           runWhatIf: () => { handleCanvasRun(messageTextWithAttachments, stagedMessages, runtimeDatasetContext); },
           handleApproval: async (action) => {
@@ -3244,38 +3128,6 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
                 if (intakeResult?.status === 'duplicate') {
                   appendMessagesToCurrentConversation([{ role: 'ai', content: `A similar task already exists (${intakeResult.workOrder?.title || 'duplicate'}). Check the Task Board for details.`, timestamp: new Date().toISOString() }]);
                   return;
-                }
-                // Handle clarification flow: if intake flags ambiguity, ask user
-                if (intakeResult?.status === 'needs_clarification' && intakeResult?.workOrder) {
-                  try {
-                    const clar = await createClarification(intakeResult.workOrder);
-                    if (clar.questions?.length > 0) {
-                      appendMessagesToCurrentConversation([{
-                        role: 'ai',
-                        type: 'clarification_card',
-                        payload: { clarificationId: clar.id, questions: clar.questions, workOrder: intakeResult.workOrder },
-                        content: `I need a bit more information before proceeding:\n${clar.questions.map((q, i) => `${i + 1}. ${q.question}`).join('\n')}`,
-                        timestamp: new Date().toISOString(),
-                        _onSubmit: async (answers) => {
-                          const submitResult = await submitAnswers(clar.id, answers);
-                          if (!submitResult.ok) {
-                            appendMessagesToCurrentConversation([{ role: 'ai', content: `Clarification error: ${submitResult.error}`, timestamp: new Date().toISOString() }]);
-                            return;
-                          }
-                          const resolved = await resolveClarification(clar.id);
-                          if (resolved.ok && resolved.workOrder) {
-                            appendMessagesToCurrentConversation([{ role: 'ai', content: 'Thanks! Re-submitting the task with your clarifications...', timestamp: new Date().toISOString() }]);
-                          }
-                        },
-                        _onSkip: () => {
-                          appendMessagesToCurrentConversation([{ role: 'ai', content: 'Clarification skipped. Proceeding with available information.', timestamp: new Date().toISOString() }]);
-                        },
-                      }]);
-                      return; // Pause — user must answer questions before task proceeds
-                    }
-                  } catch (clarErr) {
-                    console.warn('[DSV] Clarification flow failed (non-blocking):', clarErr?.message);
-                  }
                 }
               } catch (intakeErr) {
                 console.warn('[DSV] assignTask intake normalization failed (non-blocking):', intakeErr?.message);
@@ -3442,18 +3294,33 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
           userMessage: messageTextWithAttachments,
           mode: 'default',
         });
+        // Auto-promote to analysis mode when the answer contract indicates
+        // a complex analysis need (comparison, diagnostic, trend, or multi-dimension)
+        const effectiveMode = (
+          answerContract?.task_type === 'comparison'
+          || answerContract?.task_type === 'diagnostic'
+          || answerContract?.task_type === 'trend'
+          || (answerContract?.required_dimensions?.length >= 3)
+          || (answerContract?.required_outputs?.some((o) => ['chart', 'table'].includes(o)))
+        ) ? 'analysis' : 'default';
         const toolContext = {
           userId: user?.id,
           datasetProfileRow,
           datasetProfileId,
           datasetInputData: buildTaskInputData(runtimeDatasetContext, resolvedAttachments),
         };
-        const strategy = resolveAgentExecutionStrategy({
+        const baseStrategy = resolveAgentExecutionStrategy({
           userMessage: messageTextWithAttachments,
           answerContract,
-          mode: 'default',
+          mode: effectiveMode,
           hasAttachments: resolvedAttachments.length > 0,
         });
+        // When thinking is forced on, always run dual agent + judge
+        const strategy = forceFullThinking
+          ? { ...baseStrategy, dualGenerate: true, mustJudge: true, triggerReasons: [...baseStrategy.triggerReasons, 'forced_full_thinking'] }
+          : baseStrategy;
+        // Resolve modelMode: full > dual > single
+        const modelMode = baseModelMode || (strategy.dualGenerate ? 'dual' : 'single');
 
         const runAgentCandidatePass = async ({
           candidateId,
@@ -3532,6 +3399,7 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
             tone,
             provider: result?.provider || provider,
             model: result?.model || model,
+            transport: result?.transport || null,
             result,
             presentation,
           };
@@ -3566,6 +3434,7 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
               tone: config.tone,
               provider: config.provider,
               model: config.model,
+              transport: null,
               status,
               failedReason,
               startedAt,
@@ -3638,27 +3507,27 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
             candidateId: 'primary',
             label: 'Primary Agent',
             tone: 'primary',
-            provider: PRIMARY_AGENT_PROVIDER,
-            model: PRIMARY_AGENT_MODEL,
+            provider: getModelConfig('primary', modelMode).provider,
+            model: getModelConfig('primary', modelMode).model,
             agentMessage: messageTextWithAttachments,
             userMessage: messageTextWithAttachments,
             conversationHistory: history,
             toolContext,
             answerContract,
-            mode: 'default',
+            mode: effectiveMode,
           };
           const secondaryConfig = {
             candidateId: 'secondary',
             label: 'Challenger Agent',
             tone: 'secondary',
-            provider: SECONDARY_AGENT_PROVIDER,
-            model: SECONDARY_AGENT_MODEL,
-            agentMessage: `${messageTextWithAttachments}\n\nProvide an independently reasoned alternative answer. Do not mirror another agent.`,
+            provider: getModelConfig('secondary', modelMode).provider,
+            model: getModelConfig('secondary', modelMode).model,
+            agentMessage: `${messageTextWithAttachments}\n\nYou are the CHALLENGER analyst. Provide a genuinely different analytical angle:\n1. DIFFERENT METHODOLOGY: If the obvious approach is historical mean, use median or weighted-recent instead.\n2. DIFFERENT SCOPE: Focus on the most impactful subset (top decile, worst performers, newest cohort).\n3. STRESS TEST: Challenge the most optimistic assumption. What breaks if demand grows 20%?\n4. RELATIVE CONTEXT: Emphasize relative positioning (vs. category average, vs. prior period, as % of total).\nDo NOT run the same queries with the same framing. Your value is surfacing what the primary answer misses.`,
             userMessage: messageTextWithAttachments,
             conversationHistory: history,
             toolContext,
             answerContract,
-            mode: 'default',
+            mode: effectiveMode,
           };
           const [primarySettled, secondarySettled] = await Promise.allSettled([
             runSettledCandidatePass(primaryConfig),
@@ -3708,6 +3577,7 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
               answerContract,
               primaryCandidate,
               secondaryCandidate,
+              modelMode,
             });
 
             appendAgentThinkingNote({
@@ -3716,6 +3586,7 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
               agentTone: 'judge',
               provider: judgeDecision?.reviewer?.provider || '',
               model: judgeDecision?.reviewer?.model || '',
+              transport: judgeDecision?.reviewer?.transport || null,
               status: 'completed',
             }, [judgeDecision?.summary, ...(judgeDecision?.rationale || [])].filter(Boolean).join('\n'));
 
@@ -3734,6 +3605,7 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
               reviewer: {
                 provider: 'orchestrator',
                 model: 'parallel_dual',
+                transport: 'orchestrator',
               },
               degraded: true,
             };
@@ -3743,26 +3615,28 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
               agentTone: 'judge',
               provider: 'orchestrator',
               model: 'parallel_dual',
+              transport: 'orchestrator',
               status: 'failed',
             }, judgeDecision.summary);
             selectedCandidate = null;
             alternativeCandidate = null;
           }
         } else {
+          // ── Single agent path (with auto-escalation to dual if data tools used) ──
           const startedAt = new Date().toISOString();
           const startedMs = Date.now();
           selectedCandidate = await runAgentCandidatePass({
             candidateId: 'primary',
             label: 'Primary Agent',
             tone: 'primary',
-            provider: PRIMARY_AGENT_PROVIDER,
-            model: PRIMARY_AGENT_MODEL,
+            provider: getModelConfig('primary', modelMode).provider,
+            model: getModelConfig('primary', modelMode).model,
             agentMessage: messageTextWithAttachments,
             userMessage: messageTextWithAttachments,
             conversationHistory: history,
             toolContext,
             answerContract,
-            mode: 'default',
+            mode: effectiveMode,
             signal: chatAbortRef.current.signal,
             streamToUser: true,
           });
@@ -3774,7 +3648,75 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
             durationMs: Date.now() - startedMs,
             failedReason: null,
           };
-          candidatePool = [selectedCandidate];
+
+          // ── Auto-escalation: if single agent used data/analysis tools, launch challenger + judge ──
+          const dataToolNames = new Set(ANALYSIS_AGENT_TOOL_IDS);
+          const usedDataTools = (selectedCandidate?.result?.toolCalls || []).some(
+            (tc) => dataToolNames.has(tc?.name)
+          );
+
+          if (usedDataTools && !chatAbortRef.current?.signal?.aborted) {
+            lastChunkAt = Date.now();
+            setStreamingContent((prev) => prev + '\n🔄 Data tools detected — escalating to dual agent + judge...\n🧪 Running challenger agent...\n');
+            appendAgentThinkingNote({
+              agentKey: 'escalation',
+              agentLabel: 'Auto-Escalation',
+              agentTone: 'system',
+              provider: '',
+              model: '',
+            }, 'Primary agent used data tools — launching challenger for quality verification.');
+
+            const dualModelMode = 'dual';
+            const challengerConfig = {
+              candidateId: 'secondary',
+              label: 'Challenger Agent',
+              tone: 'secondary',
+              provider: getModelConfig('secondary', dualModelMode).provider,
+              model: getModelConfig('secondary', dualModelMode).model,
+              agentMessage: `${messageTextWithAttachments}\n\nYou are the CHALLENGER analyst. Provide a genuinely different analytical angle:\n1. DIFFERENT METHODOLOGY: If the obvious approach is historical mean, use median or weighted-recent instead.\n2. DIFFERENT SCOPE: Focus on the most impactful subset (top decile, worst performers, newest cohort).\n3. STRESS TEST: Challenge the most optimistic assumption. What breaks if demand grows 20%?\n4. RELATIVE CONTEXT: Emphasize relative positioning (vs. category average, vs. prior period, as % of total).\nDo NOT run the same queries with the same framing. Your value is surfacing what the primary answer misses.`,
+              userMessage: messageTextWithAttachments,
+              conversationHistory: history,
+              toolContext,
+              answerContract,
+              mode: effectiveMode,
+            };
+            const challengerResult = await runSettledCandidatePass(challengerConfig);
+
+            lastChunkAt = Date.now();
+            setStreamingContent((prev) => `${prev}${challengerResult.status === 'completed' ? '✅' : '❌'} Challenger agent ${challengerResult.status === 'completed' ? 'completed' : challengerResult.status === 'timed_out' ? 'timed out' : 'failed'}\n`);
+
+            candidatePool = [selectedCandidate, challengerResult];
+
+            if (selectedCandidate.status === 'completed' || challengerResult.status === 'completed') {
+              lastChunkAt = Date.now();
+              setStreamingContent((prev) => prev + '\n⚖️ Running judge...\n');
+              judgeDecision = await judgeAgentCandidates({
+                userMessage: messageTextWithAttachments,
+                answerContract,
+                primaryCandidate: selectedCandidate,
+                secondaryCandidate: challengerResult,
+                modelMode: dualModelMode,
+              });
+
+              appendAgentThinkingNote({
+                agentKey: 'judge',
+                agentLabel: 'Judge',
+                agentTone: 'judge',
+                provider: judgeDecision?.reviewer?.provider || '',
+                model: judgeDecision?.reviewer?.model || '',
+              }, judgeDecision?.summary || 'Judge completed.');
+
+              const judgedWinner = candidatePool.find((c) =>
+                c?.candidateId === judgeDecision?.winnerCandidateId && c?.status === 'completed'
+              );
+              selectedCandidate = judgedWinner || selectedCandidate;
+              alternativeCandidate = candidatePool.find((c) => c?.candidateId !== selectedCandidate?.candidateId) || null;
+            } else {
+              candidatePool = [selectedCandidate];
+            }
+          } else {
+            candidatePool = [selectedCandidate];
+          }
         }
 
         fullResult = selectedCandidate?.result?.text || judgeDecision?.summary || '';
@@ -4424,6 +4366,7 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
               status={aiEmployeeComposerStatus}
               thinkingEnabled={isThinkingToggleEnabled}
               onToggleThinkingEnabled={handleToggleThinkingEnabled}
+              onStopGeneration={handleStopGeneration}
               variant="ai_employee"
             />
           ) : null}
@@ -4500,7 +4443,8 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
                     onRemoveAttachment={handleRemovePendingAttachment}
                     thinkingEnabled={isThinkingToggleEnabled}
                     onToggleThinkingEnabled={handleToggleThinkingEnabled}
-                        />
+                    onStopGeneration={handleStopGeneration}
+                  />
                 </>
               ) : (
                 <div className="h-full flex items-center justify-center text-slate-500 text-sm">

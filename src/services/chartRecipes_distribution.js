@@ -263,7 +263,8 @@ def run(input_data, prior_artifacts, tables):
     log_rev = np.log10(seller_rev["revenue"])
     bins = np.arange(log_rev.min().round(0), log_rev.max().round(0) + 0.5, 0.5)
     median_rev = float(seller_rev["revenue"].median())
-    p90_rev = float(seller_rev["revenue"].quantile(0.9))
+    percentile_defs = [("P10", 0.10), ("P25", 0.25), ("P50", 0.50), ("P75", 0.75), ("P90", 0.90), ("P95", 0.95), ("P99", 0.99)]
+    percentile_values = {label: float(seller_rev["revenue"].quantile(q)) for label, q in percentile_defs}
 
     def fmt_range(lo, hi):
         def fmt(v):
@@ -272,24 +273,41 @@ def run(input_data, prior_artifacts, tables):
             return f"{v:.0f}"
         return f"R\${fmt(10**lo)}-{fmt(10**hi)}"
 
+    def fmt_currency(v):
+        return f"R\${v:,.2f}"
+
     seg_colors = ["#8b5cf6", "#8b5cf6", "#3b82f6", "#3b82f6", "#10b981", "#10b981", "#f59e0b", "#f59e0b", "#ef4444", "#ef4444"]
     hist_data = []
     color_map = {}
-    median_bin = None
+    bin_labels = []
     for i in range(len(bins) - 1):
         count = int(((log_rev >= bins[i]) & (log_rev < bins[i+1])).sum())
         label = fmt_range(bins[i], bins[i+1])
         hist_data.append({"range": label, "sellers": count})
         color_map[label] = seg_colors[min(i, len(seg_colors) - 1)]
-        if median_bin is None and 10**bins[i+1] >= median_rev:
-            median_bin = label
+        bin_labels.append((label, bins[i], bins[i+1]))
+
+    def resolve_bin_label(value):
+        log_value = np.log10(value)
+        for label, lo, hi in bin_labels:
+            if log_value < hi or np.isclose(log_value, hi):
+                return label
+        return bin_labels[-1][0]
 
     top10_share = seller_rev.nlargest(10, "revenue")["revenue"].sum() / seller_rev["revenue"].sum() * 100
     gini = float((2 * np.arange(1, len(seller_rev)+1) * seller_rev.sort_values("revenue")["revenue"].values).sum() / (len(seller_rev) * seller_rev["revenue"].sum()) - (len(seller_rev)+1)/len(seller_rev))
 
-    ref_lines = []
-    if median_bin:
-        ref_lines.append({"axis": "x", "value": median_bin, "label": f"Median R\${median_rev:,.0f}", "color": "#f59e0b"})
+    percentile_rows = []
+    grouped_percentiles = {}
+    for label, value in percentile_values.items():
+        bin_label = resolve_bin_label(value)
+        percentile_rows.append([label, fmt_currency(value), bin_label])
+        grouped_percentiles.setdefault(bin_label, []).append(label)
+
+    ref_lines = [
+        {"axis": "x", "value": bin_label, "label": "/".join(labels), "color": "#f59e0b"}
+        for bin_label, labels in grouped_percentiles.items()
+    ]
 
     return {"result": {"artifacts": [{"type": "analysis_result", "label": "Seller Revenue Distribution", "data": {
         "title": "Seller Revenue Distribution (Log Scale)",
@@ -299,7 +317,8 @@ def run(input_data, prior_artifacts, tables):
         "charts": [{"type": "bar", "data": hist_data, "xKey": "range", "yKey": "sellers", "title": "Sellers by Revenue Bracket (Log Scale)", "compatibleTypes": ["bar", "histogram"],
             "xAxisLabel": "Revenue Bracket (R$)", "yAxisLabel": "Seller Count", "tickFormatter": {"y": "compact"},
             "colorMap": color_map, "referenceLines": ref_lines}],
-        "highlights": [f"Long-tail: top 10 sellers = {top10_share:.1f}%", f"Gini = {gini:.3f} (high concentration)"]
+        "tables": [{"title": "Seller Revenue Percentiles", "columns": ["Percentile", "Revenue", "Histogram Bin"], "rows": percentile_rows}],
+        "highlights": [f"Long-tail: top 10 sellers = {top10_share:.1f}%", f"Gini = {gini:.3f} (high concentration)", f"P90 revenue = {fmt_currency(percentile_values['P90'])}"]
     }}]}}
 `,
   },

@@ -50,11 +50,12 @@ describe('resolveChatThinkingPolicy', () => {
     expect(result.reason).toBe('capability_orientation');
   });
 
-  it('returns full thinking for direct analysis prompts', () => {
+  it('returns full thinking for analysis prompts (agent default)', () => {
     const result = resolveChatThinkingPolicy('seller performance');
 
     expect(result.mode).toBe('full');
-    expect(result.reason).toBe('direct_analysis');
+    // Any non-trivial message defaults to agent mode
+    expect(['direct_analysis', 'agent_default']).toContain(result.reason);
   });
 
   it('returns full thinking when recent tool context exists', () => {
@@ -66,11 +67,18 @@ describe('resolveChatThinkingPolicy', () => {
     expect(result.reason).toBe('recent_tool_context');
   });
 
-  it('returns none for ordinary chat prompts', () => {
-    const result = resolveChatThinkingPolicy('Thanks, that helps.');
+  it('defaults to agent mode for non-trivial messages', () => {
+    const result = resolveChatThinkingPolicy('Olist中的資料用保守策略和激進策略的補貨差異');
+
+    expect(result.mode).toBe('full');
+    expect(result.reason).toBe('agent_default');
+  });
+
+  it('returns none for trivial greetings', () => {
+    const result = resolveChatThinkingPolicy('hi');
 
     expect(result.mode).toBe('none');
-    expect(result.reason).toBe('default');
+    expect(result.reason).toBe('trivial');
     expect(result.steps).toEqual([]);
   });
 });

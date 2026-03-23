@@ -88,6 +88,31 @@ describe('agentCandidateJudgeService', () => {
     expect(decision.degraded).toBe(false);
   });
 
+  it('guards judge summaries when the winning candidate still has QA warnings', async () => {
+    mockRunDiPrompt.mockResolvedValue({
+      provider: 'gemini',
+      model: 'gemini-3.1-pro-preview',
+      parsed: {
+        winner_candidate_id: 'secondary',
+        summary: 'Secondary fully satisfies the request.',
+        rationale: ['It is more complete.'],
+        loser_issues: ['Primary omitted quantiles.'],
+        confidence: 0.8,
+      },
+    });
+
+    const decision = await judgeAgentCandidates({
+      userMessage: 'Pick the better answer.',
+      answerContract: { task_type: 'comparison', required_dimensions: ['revenue'] },
+      primaryCandidate: buildCandidate({ id: 'primary', label: 'Primary Agent', score: 7.9 }),
+      secondaryCandidate: buildCandidate({ id: 'secondary', label: 'Challenger Agent', score: 7.8 }),
+    });
+
+    expect(decision.winnerCandidateId).toBe('secondary');
+    expect(decision.summary).toMatch(/stronger available answer/i);
+    expect(decision.rationale.join(' ')).toMatch(/best available answer/i);
+  });
+
   it('returns a degraded winner when only one candidate completes', async () => {
     mockRunDiPrompt.mockRejectedValue(new Error('reviewer unavailable'));
 

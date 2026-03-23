@@ -65,7 +65,7 @@ function TraceAttemptCard({ attempt, variant = 'success' }) {
   );
 }
 
-export default function ExecutionTraceCard({ trace }) {
+export default function ExecutionTraceCard({ trace, agentLabel }) {
   const [expanded, setExpanded] = useState(false);
   const [narrativeExpanded, setNarrativeExpanded] = useState(false);
   const failedAttempts = Array.isArray(trace?.failed_attempts) ? trace.failed_attempts : [];
@@ -89,7 +89,7 @@ export default function ExecutionTraceCard({ trace }) {
           expanded={expanded}
           onToggle={() => setExpanded((value) => !value)}
           icon={Database}
-          title="Execution Trace"
+          title={agentLabel ? `Execution Trace — ${agentLabel}` : 'Execution Trace'}
           meta={`${failedAttempts.length} failed • ${successfulQueries.length} successful`}
         />
       </div>

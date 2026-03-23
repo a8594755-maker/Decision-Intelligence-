@@ -122,6 +122,7 @@ function fallbackIntent(userMessage) {
  *     comparePlans: (sessionContext) => Promise,
  *     runWhatIf: (scenarioOverrides) => Promise,
  *     handleApproval: (action) => Promise,
+ *     queryData: ({ userMessage }) => Promise,
  *     streamChat: (message) => Promise,
  *     appendMessage: (message) => void,
  *     onNoDataset: () => void,
@@ -279,11 +280,11 @@ export async function routeIntent(parsedIntent, sessionContext, handlers, option
 
     case 'QUERY_DATA': {
       const userQuery = entities.freeform_query || '';
-      // Route all data queries to ASSIGN_TASK → DuckDB SQL + Python analysis engine
-      if (handlers.assignTask) {
-        await handlers.assignTask({ userMessage: userQuery });
+      if (handlers.queryData) {
+        await handlers.queryData({ userMessage: userQuery });
+        return { handled: true, intent };
       }
-      return { handled: true, intent: 'ASSIGN_TASK' };
+      return { handled: false, intent };
     }
 
     case 'GENERAL_CHAT':
