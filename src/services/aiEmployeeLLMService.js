@@ -30,11 +30,12 @@ const PROVIDER_MODE_MAP = {
   openai:    'openai_chat',
   deepseek:  'deepseek_chat',
   gemini:    'gemini_chat',
+  kimi:      'kimi_chat',
 };
 
 // For structured DI prompts (JSON output), use di_prompt mode which supports
 // all providers with provider-specific routing.
-const DI_PROMPT_PROVIDERS = new Set(['gemini', 'deepseek', 'anthropic', 'openai']);
+const DI_PROMPT_PROVIDERS = new Set(['gemini', 'deepseek', 'anthropic', 'openai', 'kimi']);
 
 // ── Core LLM call ────────────────────────────────────────────────────────────
 

@@ -18,8 +18,26 @@ const MUTATING_ACTION_PATTERNS = [
   /(核准|否決|發布|註冊工具|談判|工作流|執行計畫|補貨|匯出|送出|寫回|同步)/,
 ];
 
+const EXECUTION_INTENT_PATTERNS = [
+  /\b(approve|reject|publish|register|create tool|execute|run|launch|trigger|export|send|writeback|sync)\b/i,
+  /(核准|否決|發布|註冊工具|執行|運行|啟動|觸發|匯出|送出|寫回|同步|直接做|直接跑)/,
+];
+
+const ANALYTICAL_CONTEXT_PATTERNS = [
+  /\b(analy[sz]e|analysis|compare|comparison|recommend|recommendation|risk|impact|strategy|scenario|assess|evaluate|what.?if)\b/i,
+  /(分析|比較|建議|風險|影響|策略|情境|評估|假設|怎麼|如何|拆解)/,
+];
+
 function hasPattern(patterns, text) {
   return patterns.some((pattern) => pattern.test(text));
+}
+
+function hasMutatingIntent(text) {
+  const sample = String(text || '');
+  if (!hasPattern(MUTATING_ACTION_PATTERNS, sample)) return false;
+  if (hasPattern(EXECUTION_INTENT_PATTERNS, sample)) return true;
+  if (hasPattern(ANALYTICAL_CONTEXT_PATTERNS, sample)) return false;
+  return true;
 }
 
 export function resolveAgentExecutionStrategy({
@@ -40,7 +58,7 @@ export function resolveAgentExecutionStrategy({
   const hasCodingSignal = hasPattern(CODING_PATTERNS, message);
   const hasNumericSignal = hasPattern(NUMERIC_REASONING_PATTERNS, message)
     || ['comparison', 'diagnostic', 'ranking', 'trend', 'recommendation'].includes(answerContract?.task_type || '');
-  const hasMutatingSignal = hasPattern(MUTATING_ACTION_PATTERNS, message);
+  const hasMutatingSignal = hasMutatingIntent(message);
 
   const mustJudge = hasDataAnalysisSignal || hasCodingSignal || hasNumericSignal;
   const dualGenerate = mustJudge && !hasMutatingSignal && (mode === 'analysis' || hasAttachments || hasCodingSignal || hasNumericSignal);

@@ -27,14 +27,69 @@ import { invokeAiProxy, invokeAiProxyStream } from './aiProxyService.js';
 import { trackLlmUsage } from '../utils/llmUsageTracker.js';
 import { detectToolGap, detectProactiveGap } from './gapDetectionService.js';
 import { generateToolBlueprint } from './toolBlueprintGenerator.js';
-import { getRecipeIndexForPrompt } from './chartRecipeCatalog.js';
-import { getModelConfig } from './modelConfigService.js';
+import { getRecipeIndexForPrompt, findRecipeByUserMessage } from './chartRecipeCatalog.js';
+import { getModelConfig, resolveProviderFromModel } from './modelConfigService.js';
 import { detectRequestedSpecialChart, getStructuredAnswerCoverage } from './agentAnswerCoverageService.js';
 import { buildEnrichedSchemaPrompt } from './sapDataQueryService.js';
+import { detectDomain, buildDomainEnrichmentPrompt, buildParameterSweepInstruction, isParameterOptimizationQuestion } from './analysisDomainEnrichment.js';
+import { validateQueryResultData, formatWarningsForAgent, detectBusinessContext, PROXY_DISCLOSURE_PROMPT } from './preAnalysisDataValidator.js';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
-const MAX_AGENT_ITERATIONS = 8; // Prevent infinite loops
+const MAX_AGENT_ITERATIONS_BASE = 8; // Base iteration budget
+
+/**
+ * Dynamically resolve max iterations based on answer contract complexity.
+ * More required dimensions/outputs → higher budget (up to 12).
+ */
+function resolveMaxIterations(answerContract) {
+  const dims = Array.isArray(answerContract?.required_dimensions) ? answerContract.required_dimensions.length : 0;
+  const outputs = Array.isArray(answerContract?.required_outputs) ? answerContract.required_outputs.length : 0;
+  const bonus = Math.min(4, Math.floor((dims + outputs) / 2));
+  return MAX_AGENT_ITERATIONS_BASE + bonus;
+}
+
+/**
+ * Build a lightweight step outline injected into the system prompt.
+ * Not mandatory — just a suggested path to help the agent avoid suboptimal tool sequencing.
+ */
+function buildStepOutline(answerContract, userMessage) {
+  const dims = Array.isArray(answerContract?.required_dimensions) ? answerContract.required_dimensions : [];
+  const outputs = Array.isArray(answerContract?.required_outputs) ? answerContract.required_outputs : [];
+  if (dims.length === 0 && outputs.length === 0) return '';
+
+  const steps = [];
+  const recipeMatch = userMessage ? findRecipeByUserMessage(userMessage) : null;
+
+  // Step 1: if a recipe matches, start with generate_chart
+  if (recipeMatch) {
+    const coveredText = recipeMatch.coveredDimensions.length > 0
+      ? ` — covers: ${recipeMatch.coveredDimensions.join(', ')}`
+      : '';
+    steps.push(`1. generate_chart("${recipeMatch.id}")${coveredText}`);
+  }
+
+  // Step 2: uncovered dimensions → query_sap_data or run_python_analysis
+  const coveredByRecipe = new Set(recipeMatch?.coveredDimensions || []);
+  const uncovered = dims.filter(d => !coveredByRecipe.has(d.toLowerCase()));
+  if (uncovered.length > 0) {
+    steps.push(`${steps.length + 1}. query_sap_data or run_python_analysis — remaining dimensions: ${uncovered.join(', ')}`);
+  }
+
+  // Step 3: custom computation for complex outputs
+  const needsComputation = outputs.some(o => ['comparison', 'diagnostic', 'recommendation'].includes(o));
+  if (needsComputation && !uncovered.length) {
+    steps.push(`${steps.length + 1}. run_python_analysis — custom computation for ${outputs.join(', ')}`);
+  }
+
+  if (steps.length === 0) return '';
+  return [
+    '',
+    'Suggested step outline (not mandatory, adapt as needed):',
+    ...steps,
+    '',
+  ].join('\n');
+}
 const AGENT_TIMEOUT_MS = 300_000; // 5 minutes total for the full agent loop
 const DEEPSEEK_BASE_URL = String(import.meta.env.VITE_DI_DEEPSEEK_BASE_URL || 'https://api.deepseek.com').replace(/\/+$/, '');
 const DEEPSEEK_CHAT_MODEL = import.meta.env.VITE_DI_DEEPSEEK_MODEL || 'deepseek-chat';
@@ -45,6 +100,8 @@ const DUCKDB_DIALECT_PROMPT = [
   'query_sap_data SQL Dialect — DuckDB (PostgreSQL-compatible, in-browser WASM):',
   '- CTEs (WITH ... AS) fully supported — use them for readability',
   '- Window functions supported: ROW_NUMBER(), RANK(), DENSE_RANK(), NTILE(), LAG(), LEAD() with OVER(PARTITION BY ... ORDER BY ...)',
+  '- Window functions cannot be nested. Do NOT place a window function inside another window/aggregate expression, e.g. `SUM(x / SUM(x) OVER ()) OVER (...)`.',
+  '- For cumulative share / Pareto logic, stage the computation across CTEs: first compute totals or shares in one SELECT, then compute the running cumulative sum in an outer SELECT.',
   '- Date functions: DATE_TRUNC(part, col), EXTRACT(part FROM col), col + INTERVAL, DATEDIFF(part, start, end)',
   '- Date arithmetic: use (date1 - date2) for intervals, DATEDIFF(\'day\', start, end) for integer days. Do NOT use JULIANDAY(), TIMESTAMPDIFF(), or any SQLite/MySQL-only date functions.',
   '- Date casting: DATE(col) to cast to date, STRFTIME(col, format) for formatting, EPOCH(col) for unix timestamp',
@@ -52,6 +109,12 @@ const DUCKDB_DIALECT_PROMPT = [
   '- String: STRING_AGG(col, sep), REGEXP_MATCHES(), CONCAT()',
   '- Avoid reserved word aliases: "order", "group", "key", "value" → use descriptive names like "order_count"',
   '- Standard SQL: COUNT, SUM, AVG, MIN, MAX, ROUND, CASE WHEN, UNION ALL, HAVING, DISTINCT, LIKE, CROSS JOIN',
+  '- LATERAL JOIN does NOT support aggregate functions (COUNT, SUM, AVG, etc.) — rewrite as CTE with GROUP BY instead',
+  '',
+  'TIME AGGREGATION GUARD:',
+  '- When computing "monthly", "per month", "月均", or any periodic metric, ALWAYS use DATE_TRUNC(\'month\', timestamp_col) in GROUP BY or as a denominator.',
+  '- A bare SUM() across the full Olist dataset (~24 months) will be ~24x the actual monthly value. Never present an all-time SUM as a monthly figure.',
+  '- For monthly averages, use: SUM(val) / COUNT(DISTINCT DATE_TRUNC(\'month\', date_col)).',
   '',
   'Available tables and column semantics (read column descriptions carefully to avoid wrong aggregations):',
   buildEnrichedSchemaPrompt(),
@@ -62,6 +125,7 @@ export const ANALYSIS_AGENT_TOOL_IDS = Object.freeze([
   'list_sap_tables',
   'run_python_analysis',
   'generate_chart',
+  'generate_analysis_workbook',
 ]);
 
 export function getAgentToolConfig(mode = 'default') {
@@ -78,23 +142,262 @@ export function getAgentToolConfig(mode = 'default') {
   };
 }
 
+// ── Centralized Provider Registry ────────────────────────────────────────────
+// Single source of truth for provider→mode mapping.
+// To add a new provider, add ONE entry here instead of updating 3+ if-else chains.
+const PROVIDER_REGISTRY = {
+  openai:    { toolMode: 'openai_chat_tools',    streamMode: 'openai_chat_tools_stream',    transport: 'native', supportsRequiredToolChoiceWithThinking: true },
+  anthropic: { toolMode: 'anthropic_chat_tools', streamMode: 'anthropic_chat_tools_stream', transport: 'native', supportsRequiredToolChoiceWithThinking: true },
+  gemini:    { toolMode: 'gemini_chat_tools',    streamMode: 'gemini_chat_tools_stream',    transport: 'compat', supportsRequiredToolChoiceWithThinking: false },
+  deepseek:  { toolMode: 'deepseek_chat_tools',  streamMode: 'deepseek_chat_tools_stream',  transport: 'native', supportsRequiredToolChoiceWithThinking: true },
+  kimi:      { toolMode: 'kimi_chat_tools',      streamMode: null,                          transport: 'native', supportsRequiredToolChoiceWithThinking: false },
+};
+
 export function getAgentToolStreamingMode(provider) {
-  if (provider === 'openai') return 'openai_chat_tools_stream';
-  if (provider === 'anthropic') return 'anthropic_chat_tools_stream';
-  if (provider === 'gemini') return 'gemini_chat_tools_stream';
-  if (provider === 'deepseek') return 'deepseek_chat_tools_stream';
-  return null;
+  return PROVIDER_REGISTRY[provider]?.streamMode ?? null;
 }
 
 export function getAgentToolMode(provider) {
-  if (provider === 'openai') return 'openai_chat_tools';
-  if (provider === 'anthropic') return 'anthropic_chat_tools';
-  if (provider === 'gemini') return 'gemini_chat_tools';
-  return 'deepseek_chat_tools';
+  const entry = PROVIDER_REGISTRY[provider];
+  if (!entry) {
+    console.warn(`[agentLoop] Unknown provider "${provider}", falling back to deepseek`);
+    return PROVIDER_REGISTRY.deepseek.toolMode;
+  }
+  return entry.toolMode;
 }
 
 export function getAgentProviderTransport(provider) {
-  return provider === 'gemini' ? 'compat' : 'native';
+  return PROVIDER_REGISTRY[provider]?.transport ?? 'native';
+}
+
+function buildGeminiThinkingGoogleOptions() {
+  return {
+    thinkingConfig: {
+      include_thoughts: true,
+    },
+  };
+}
+
+/**
+ * Last-resort non-streaming call for Gemini/compat providers.
+ * Drops thinkingConfig so tool_choice:"required" actually works.
+ * Returns the parsed message or null if it still fails.
+ */
+async function callLLMWithToolsNoThinking(messages, tools, { signal, provider, model } = {}) {
+  const toolsMode = getAgentToolMode(provider);
+  console.info(`[agentLoop] Evidence recovery: calling ${toolsMode} WITHOUT thinkingConfig, toolChoice=required`);
+  try {
+    const result = await invokeAiProxy(toolsMode, {
+      messages,
+      tools,
+      model,
+      toolChoice: 'required',
+      temperature: 0.2,
+      maxOutputTokens: 4096,
+      // Deliberately omitting googleOptions/thinkingConfig
+    }, { signal });
+    if (result?.choices?.[0]?.message) {
+      const msg = result.choices[0].message;
+      return {
+        ...msg,
+        usage: result.usage,
+        transport: result.transport || getAgentProviderTransport(provider),
+      };
+    }
+    return null;
+  } catch (err) {
+    console.warn('[agentLoop] Evidence recovery call failed:', err.message);
+    return null;
+  }
+}
+
+function isThinkingEnabledForToolChoice(provider) {
+  // Kimi and Gemini send thinking config with tool calls.
+  // Gemini's OpenAI-compat layer passes thinkingConfig via extra_body which
+  // silently breaks tool_choice:"required" (returns prose, 0 reasoning chars).
+  return provider === 'kimi' || provider === 'gemini';
+}
+
+function normalizeRequestedToolChoice(toolChoice) {
+  return String(toolChoice || '').trim().toLowerCase() === 'required' ? 'required' : 'auto';
+}
+
+function normalizeToolChoiceForProvider(provider, requestedToolChoice, { model } = {}) {
+  const normalizedRequested = normalizeRequestedToolChoice(requestedToolChoice);
+  const providerConfig = PROVIDER_REGISTRY[provider];
+
+  if (!providerConfig || normalizedRequested !== 'required') {
+    return {
+      requestedToolChoice: normalizedRequested,
+      effectiveToolChoice: normalizedRequested,
+      downgraded: false,
+      reason: null,
+    };
+  }
+
+  const thinkingEnabled = isThinkingEnabledForToolChoice(provider, model);
+  const supportsRequiredToolChoice = thinkingEnabled
+    ? providerConfig.supportsRequiredToolChoiceWithThinking !== false
+    : providerConfig.supportsRequiredToolChoice !== false;
+
+  if (supportsRequiredToolChoice) {
+    return {
+      requestedToolChoice: normalizedRequested,
+      effectiveToolChoice: normalizedRequested,
+      downgraded: false,
+      reason: null,
+    };
+  }
+
+  return {
+    requestedToolChoice: normalizedRequested,
+    effectiveToolChoice: 'auto',
+    downgraded: true,
+    reason: thinkingEnabled
+      ? 'required_tool_choice_incompatible_with_thinking'
+      : 'required_tool_choice_unsupported',
+  };
+}
+
+function answerContractNeedsAnalysisEvidence(answerContract) {
+  if (!answerContract || typeof answerContract !== 'object') return false;
+
+  const requiredDimensions = Array.isArray(answerContract.required_dimensions)
+    ? answerContract.required_dimensions.filter(Boolean)
+    : [];
+  const requiredOutputs = Array.isArray(answerContract.required_outputs)
+    ? answerContract.required_outputs.filter(Boolean)
+    : [];
+  const taskType = String(answerContract.task_type || '').trim().toLowerCase();
+
+  return (
+    requiredDimensions.length > 0
+    || requiredOutputs.length > 0
+    || ['recommendation', 'comparison', 'diagnostic', 'ranking', 'trend', 'forecast'].includes(taskType)
+  );
+}
+
+function buildForcedEvidenceInstruction(answerContract, attempt = 0) {
+  const requiredDimensions = Array.isArray(answerContract?.required_dimensions) && answerContract.required_dimensions.length > 0
+    ? answerContract.required_dimensions.join(', ')
+    : 'the required analysis dimensions';
+  const requiredOutputs = Array.isArray(answerContract?.required_outputs) && answerContract.required_outputs.length > 0
+    ? answerContract.required_outputs.join(', ')
+    : 'the required outputs';
+
+  if (attempt >= 1) {
+    // Escalated: be very explicit with a concrete example
+    const sqlHint = buildSqlHintFromContract(answerContract);
+    return [
+      'You MUST respond with ONLY a function call. No prose. No explanation.',
+      `Call query_sap_data now. Example: query_sap_data({"sql": "${sqlHint}"})`,
+      'If query_sap_data is not available, call run_python_analysis or generate_chart instead.',
+      'Emit the tool call and nothing else.',
+    ].join(' ');
+  }
+
+  // Gentle first attempt
+  return [
+    'Evidence rule: your previous reply contained prose but no tool call.',
+    'In analysis mode, you MUST gather evidence before giving the final answer.',
+    'Call exactly one evidence-producing tool right now: query_sap_data, run_python_analysis, or generate_chart.',
+    `Target these dimensions first: ${requiredDimensions}.`,
+    `Target these outputs first: ${requiredOutputs}.`,
+    'Do NOT answer in prose yet. Emit the tool call only.',
+  ].join(' ');
+}
+
+function buildInitialEvidenceInstruction(answerContract, userMessage) {
+  const requiredDimensions = Array.isArray(answerContract?.required_dimensions) && answerContract.required_dimensions.length > 0
+    ? answerContract.required_dimensions.join(', ')
+    : 'the required analysis dimensions';
+  const requiredOutputs = Array.isArray(answerContract?.required_outputs) && answerContract.required_outputs.length > 0
+    ? answerContract.required_outputs.join(', ')
+    : 'the required outputs';
+
+  // Check if a chart recipe matches — if so, hint the agent
+  const recipeMatch = userMessage ? findRecipeByUserMessage(userMessage) : null;
+  const recipeHint = recipeMatch
+    ? ` A matching chart recipe exists: generate_chart({"recipe_id":"${recipeMatch.id}"}). Prefer this for fast, deterministic results.`
+    : '';
+
+  return [
+    'Evidence-first rule: this task requires tool-backed evidence before any final answer.',
+    `Call exactly one evidence-producing tool right now: query_sap_data, run_python_analysis, or generate_chart.${recipeHint}`,
+    `Prioritize these dimensions first: ${requiredDimensions}.`,
+    `Prioritize these outputs first: ${requiredOutputs}.`,
+    'Do NOT answer in prose yet. Emit the tool call only.',
+  ].join(' ');
+}
+
+function buildSqlHintFromContract(answerContract) {
+  const dims = Array.isArray(answerContract?.required_dimensions) ? answerContract.required_dimensions : [];
+  if (dims.length === 0) return 'SELECT * FROM orders LIMIT 20';
+  const col = dims[0].replace(/[^a-zA-Z0-9_\u4e00-\u9fff]/g, '_').toLowerCase();
+  return `SELECT ${col}, COUNT(*) as cnt FROM orders GROUP BY ${col} ORDER BY cnt DESC LIMIT 20`;
+}
+
+function suggestPrimaryTool(answerContract, tools, userMessage) {
+  const toolNames = (tools || []).map((t) => t.function?.name).filter(Boolean);
+  const outputs = Array.isArray(answerContract?.required_outputs) ? answerContract.required_outputs : [];
+
+  // Recipe-aware: if a chart recipe matches the user message, prefer generate_chart
+  if (userMessage && toolNames.includes('generate_chart')) {
+    const recipeMatch = findRecipeByUserMessage(userMessage);
+    if (recipeMatch) return `generate_chart (hint: recipe_id="${recipeMatch.id}")`;
+  }
+
+  if (outputs.includes('chart') && toolNames.includes('generate_chart')) return 'generate_chart';
+  if (outputs.includes('workbook') && toolNames.includes('generate_analysis_workbook')) return 'generate_analysis_workbook';
+  if (toolNames.includes('run_python_analysis') && outputs.some((o) => ['comparison', 'diagnostic', 'forecast'].includes(o))) return 'run_python_analysis';
+  if (toolNames.includes('query_sap_data')) return 'query_sap_data';
+  return toolNames[0] || 'query_sap_data';
+}
+
+function createAgentLoopError(category, message, options = {}) {
+  const error = new Error(message);
+  error.name = 'AgentLoopError';
+  error.failureCategory = category;
+  error.failureMessage = message;
+  error.recoveryAttempts = Array.isArray(options.recoveryAttempts) ? [...options.recoveryAttempts] : [];
+  error.provider = options.provider || null;
+  error.model = options.model || null;
+  error.transport = options.transport || null;
+  return error;
+}
+
+function classifyAgentLoopError(error) {
+  const message = String(error?.failureMessage || error?.message || error || '').trim();
+
+  if (/engine.+overloaded|currently overloaded|provider.+overloaded|service.+overloaded|server.+busy/i.test(message)) {
+    return 'provider_overloaded';
+  }
+  if (/unsupported provider|provider not available/i.test(message)) return 'provider_unsupported';
+  if (/model not exist|model.+not found|unknown model|does not exist/i.test(message)) return 'model_not_found';
+  if (/empty response|no text, no tool calls/i.test(message)) return 'empty_response';
+  if (/no successful analysis evidence|missing evidence/i.test(message)) return 'missing_evidence';
+  if (/tool transport|stream call failed|edge function|api service error|unexpected ai-proxy response format/i.test(message)) {
+    return 'tool_transport_failed';
+  }
+  return 'tool_transport_failed';
+}
+
+function coerceAgentLoopError(error, fallbackCategory, options = {}) {
+  if (error?.failureCategory) {
+    if (Array.isArray(options.recoveryAttempts) && !error.recoveryAttempts?.length) {
+      error.recoveryAttempts = [...options.recoveryAttempts];
+    }
+    if (options.provider && !error.provider) error.provider = options.provider;
+    if (options.model && !error.model) error.model = options.model;
+    if (options.transport && !error.transport) error.transport = options.transport;
+    return error;
+  }
+
+  return createAgentLoopError(
+    classifyAgentLoopError(error) || fallbackCategory,
+    String(error?.message || error || 'Unknown agent loop error'),
+    options,
+  );
 }
 
 // ── Agent Loop ──────────────────────────────────────────────────────────────
@@ -172,6 +475,11 @@ export async function runAgentLoop({
         '- Before making recommendations based on historical averages, run at least one query grouping by time period. If the metric is growing or declining >10% across periods, note the trend and adjust the recommendation.',
         '- For SQL queries returning aggregated metrics, also query relative context (% of total, rank within category, vs overall average) in the same or follow-up query.',
         '',
+        'Data Provenance Rules:',
+        '- CRITICAL: Only report numbers that come directly from query results or chart artifacts. If a number is an assumption or industry benchmark (e.g., DSO, marketing budget, warehouse cost, inventory holding cost %), you MUST explicitly label it as "假設" / "assumption" — never present assumptions as data-backed findings.',
+        '- Do NOT fabricate financial projections (capital requirements, marketing costs, system costs, headcount) unless the dataset contains those fields. If the dataset lacks the data, state "需業務方提供" / "requires business input" instead of inventing numbers.',
+        '- Every number in your answer must be traceable: either (a) directly from a SQL result row, (b) computed from SQL results with formula shown, or (c) clearly marked as an assumption with rationale.',
+        '',
         'Final Answer Rules:',
         '- You are a senior analyst. Write only the useful user-facing interpretation.',
         '- Keep the final answer under 500 words. Cover all requested dimensions with specific numbers, category-level breakdowns, and data-backed recommendations. Be thorough but not redundant with chart/table artifacts.',
@@ -182,6 +490,7 @@ export async function runAgentLoop({
         '',
         answerContractBlock,
         recipeIndex,
+        buildStepOutline(answerContract, message),
       ]
     : [
         '- When the user asks about data (customers, orders, products, sellers, payments, etc.), ALWAYS call query_sap_data with a SQL query. NEVER just describe SQL — execute it.',
@@ -198,6 +507,8 @@ export async function runAgentLoop({
         '- Tools prefixed with "reg_" are user-approved registered tools. Use them when they match the task.',
         '- If a tool fails due to data format mismatch, the system may auto-generate an adapter tool for the user to approve.',
         '- Always respond in the same language the user used.',
+        '- For multi-step statistical analysis (classification, stationarity testing, sensitivity analysis, ABC-XYZ), use run_python_analysis (Python/pandas/numpy). SQL (query_sap_data) is for data retrieval only — Python is for computation.',
+        '- After completing a multi-step analysis, use generate_analysis_workbook to produce a professional Excel report with methodology notes, parameter tables, and sensitivity tables.',
         '',
         'Final Answer Rules:',
         '- You are a senior analyst. Write only the useful user-facing interpretation.',
@@ -209,12 +520,46 @@ export async function runAgentLoop({
         answerContractBlock,
         recipeIndex,
       ];
+  // ── Domain enrichment: inject domain-specific formulas and parameter guidance ──
+  const domain = detectDomain(message);
+  const domainEnrichmentBlock = domain.domainKey
+    ? buildDomainEnrichmentPrompt(domain.domainKey, domain.matchedConcepts, answerContract?.task_type)
+    : '';
+  const paramSweepBlock = !domainEnrichmentBlock && domain.domainKey
+    && isParameterOptimizationQuestion(message, answerContract?.task_type)
+    ? buildParameterSweepInstruction(domain.domainKey)
+    : '';
+
+  // ── Provider-specific evidence enforcement ──
+  // When a provider cannot use tool_choice:"required" (e.g. Gemini with thinkingConfig),
+  // inject a hard-coded evidence-first mandate directly into the system prompt so the model
+  // sees it on every turn — not just as a retry nudge.
+  const resolvedProvider = resolveProviderFromModel(agentModel, agentProvider);
+  const providerNeedsEvidencePrompt = isAnalysisMode
+    && PROVIDER_REGISTRY[resolvedProvider]
+    && !PROVIDER_REGISTRY[resolvedProvider].supportsRequiredToolChoiceWithThinking;
+  const evidencePromptBlock = providerNeedsEvidencePrompt
+    ? [
+        '',
+        '⚠️ MANDATORY EVIDENCE-FIRST RULE (applies to EVERY response):',
+        'You MUST call at least one evidence-producing tool (query_sap_data, run_python_analysis, or generate_chart) BEFORE writing ANY prose answer.',
+        'If you respond with text without having called a tool first, your response will be REJECTED and you will be asked again.',
+        'Do NOT describe what you plan to do — just call the tool immediately.',
+        'Do NOT output analysis, recommendations, or commentary until you have tool-backed evidence.',
+        '',
+      ]
+    : [];
+
   const agentSystemPrompt = [
     systemPrompt,
     '',
     '── Agent Capabilities ──',
     toolSummary,
     '',
+    ...(domainEnrichmentBlock ? [domainEnrichmentBlock, ''] : []),
+    ...(paramSweepBlock ? [paramSweepBlock, ''] : []),
+    ...(isAnalysisMode ? [PROXY_DISCLOSURE_PROMPT, ''] : []),
+    ...evidencePromptBlock,
     'IMPORTANT INSTRUCTIONS:',
     ...importantInstructions,
   ].join('\n');
@@ -242,9 +587,19 @@ export async function runAgentLoop({
   let totalIterations = 0;
   const consecutiveFailures = { count: 0, lastToolName: null };
   let coverageStopInstructionInjected = false;
+  let businessContextDetected = false;
+  let forcedEvidenceTurns = 0;
+  const recoveryAttempts = [];
+  const requiresAnalysisEvidence = isAnalysisMode || answerContractNeedsAnalysisEvidence(answerContract);
+  const resolvedAgentProvider = resolveProviderFromModel(agentModel, agentProvider);
+  const agentTransport = getAgentProviderTransport(resolvedAgentProvider);
+  const providerSupportsStreaming = Boolean(getAgentToolStreamingMode(resolvedAgentProvider));
+  let toolChoiceCompatibilityNoted = false;
+  let initialEvidenceInstructionInjected = false;
 
   // ── The Loop ────────────────────────────────────────────────────────────
-  for (let i = 0; i < MAX_AGENT_ITERATIONS; i++) {
+  const maxIterations = resolveMaxIterations(answerContract);
+  for (let i = 0; i < maxIterations; i++) {
     if (signal?.aborted) {
       throw new Error('Agent loop aborted');
     }
@@ -254,53 +609,106 @@ export async function runAgentLoop({
 
     const t0 = Date.now();
     let response;
+    const requestedToolChoice = requiresAnalysisEvidence && toolCalls.length === 0 ? 'required' : 'auto';
+    const {
+      effectiveToolChoice: toolChoice,
+      downgraded: toolChoiceDowngraded,
+    } = normalizeToolChoiceForProvider(resolvedAgentProvider, requestedToolChoice, { model: agentModel });
+
+    if (toolChoiceDowngraded && !toolChoiceCompatibilityNoted) {
+      toolChoiceCompatibilityNoted = true;
+      recoveryAttempts.push('tool_choice_provider_compat_fallback');
+      console.warn(
+        `[agentLoop] ${resolvedAgentProvider}/${agentModel} cannot use toolChoice="${requestedToolChoice}" with current thinking settings; using "auto" and enforcing evidence via prompt policy.`,
+      );
+    }
+    if (
+      toolChoiceDowngraded
+      && requestedToolChoice === 'required'
+      && toolCalls.length === 0
+      && !initialEvidenceInstructionInjected
+    ) {
+      initialEvidenceInstructionInjected = true;
+      recoveryAttempts.push('provider_tool_choice_compat_nudge');
+      messages.push({
+        role: 'user',
+        content: buildInitialEvidenceInstruction(answerContract, message),
+      });
+    }
+
+    // Preamble callback shared by streaming and non-streaming paths
+    let thinkingBuffer = '';
+    let pendingChunks = '';
+    let flushTimer = null;
+    const FLUSH_INTERVAL_MS = 200;
+
+    const flushPending = () => {
+      if (pendingChunks) {
+        const flushed = pendingChunks;
+        pendingChunks = '';
+        onThinking?.({ step: i + 1, type: 'preamble', content: flushed, fullContent: thinkingBuffer });
+      }
+      flushTimer = null;
+    };
+
+    const preambleChunk = (chunk) => {
+      thinkingBuffer += chunk;
+      pendingChunks += chunk;
+      if (!flushTimer) {
+        flushTimer = setTimeout(flushPending, FLUSH_INTERVAL_MS);
+      }
+    };
 
     try {
-      let thinkingBuffer = '';
-      let pendingChunks = '';
-      let flushTimer = null;
-      const FLUSH_INTERVAL_MS = 200;
-
-      const flushPending = () => {
-        if (pendingChunks) {
-          const flushed = pendingChunks;
-          pendingChunks = '';
-          onThinking?.({ step: i + 1, type: 'preamble', content: flushed, fullContent: thinkingBuffer });
-        }
-        flushTimer = null;
-      };
-
       response = await callLLMWithToolsStream(messages, tools, {
         signal,
-        provider: agentProvider,
+        provider: resolvedAgentProvider,
         model: agentModel,
-        onPreambleChunk: (chunk) => {
-          thinkingBuffer += chunk;
-          pendingChunks += chunk;
-          if (!flushTimer) {
-            flushTimer = setTimeout(flushPending, FLUSH_INTERVAL_MS);
-          }
-        },
+        toolChoice,
+        onPreambleChunk: preambleChunk,
       });
       // Flush any remaining buffered chunks after stream completes
       if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
       flushPending();
     } catch (err) {
       if (err.name === 'AbortError') throw err;
+      if (!providerSupportsStreaming) {
+        console.error('[agentLoop] Non-streaming provider call failed:', err);
+        throw coerceAgentLoopError(err, 'tool_transport_failed', {
+          provider: resolvedAgentProvider,
+          model: agentModel,
+          transport: agentTransport,
+          recoveryAttempts,
+        });
+      }
       // Fallback to non-streaming if stream mode fails
       console.warn('[agentLoop] Stream call failed, trying non-stream fallback:', err.message);
+      recoveryAttempts.push('stream_to_non_stream_fallback');
       try {
         response = await callLLMWithTools(messages, tools, {
           signal,
-          provider: agentProvider,
+          provider: resolvedAgentProvider,
           model: agentModel,
+          toolChoice,
+          onPreambleChunk: preambleChunk,
         });
       } catch (err2) {
         if (err2.name === 'AbortError') throw err2;
         console.error('[agentLoop] LLM call failed:', err2);
-        finalText = `❌ AI service error: ${err2.message}`;
-        break;
+        throw coerceAgentLoopError(err2, 'tool_transport_failed', {
+          provider: resolvedAgentProvider,
+          model: agentModel,
+          transport: agentTransport,
+          recoveryAttempts,
+        });
       }
+    }
+    // Flush any reasoning from non-streaming fallback path
+    if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
+    flushPending();
+
+    if (Array.isArray(response?.recovery_attempts) && response.recovery_attempts.length > 0) {
+      recoveryAttempts.push(...response.recovery_attempts);
     }
 
     const latencyMs = Date.now() - t0;
@@ -328,20 +736,107 @@ export async function runAgentLoop({
         // Stream the preamble text so user sees something
         onTextChunk?.(text + '\n');
         messages.push({ role: 'assistant', content: text });
+        const nudgeTool = suggestPrimaryTool(answerContract, tools, message);
         messages.push({
           role: 'user',
-          content: `IMPORTANT: You MUST call the query_sap_data function right now. Do not explain what you will do — just call it. For example: query_sap_data({"sql":"SELECT ..."})`,
+          content: `IMPORTANT: You MUST call the ${nudgeTool} function right now. Do not explain what you will do — just call it.${nudgeTool === 'query_sap_data' ? ' For example: query_sap_data({"sql":"SELECT ..."})' : ''}`,
+        });
+        continue;
+
+      } else if (
+        requiresAnalysisEvidence
+        && toolCalls.length === 0
+        && text.trim()
+        && forcedEvidenceTurns < 2
+      ) {
+        const attempt = forcedEvidenceTurns;
+        forcedEvidenceTurns += 1;
+        recoveryAttempts.push(`forced_evidence_turn_${attempt}`);
+        console.warn(`[agentLoop] ${resolvedAgentProvider} returned prose without tool_calls in evidence-required mode; forcing evidence tool turn (attempt ${attempt + 1}/2).`);
+        messages.push({ role: 'assistant', content: text });
+        messages.push({
+          role: 'user',
+          content: buildForcedEvidenceInstruction(answerContract, attempt),
         });
         continue;
 
       } else {
+        if (!text.trim()) {
+          throw createAgentLoopError(
+            'empty_response',
+            `${resolvedAgentProvider}/${agentModel} returned an empty response (no text, no tool calls).`,
+            {
+              provider: resolvedAgentProvider,
+              model: agentModel,
+              transport: response?.transport || agentTransport,
+              recoveryAttempts,
+            },
+          );
+        }
+        if (requiresAnalysisEvidence && toolCalls.length === 0) {
+          // ── Last-resort recovery: non-streaming call without thinkingConfig ──
+          // For compat-transport providers (Gemini), thinkingConfig silently breaks
+          // tool_choice:"required". Try one final call with thinking disabled so
+          // the model is truly forced to emit a tool call.
+          if (
+            agentTransport === 'compat'
+            && !recoveryAttempts.includes('no_thinking_evidence_recovery')
+          ) {
+            recoveryAttempts.push('no_thinking_evidence_recovery');
+            console.warn(`[agentLoop] ${resolvedAgentProvider}: attempting evidence recovery without thinkingConfig`);
+            messages.push({ role: 'assistant', content: text });
+            messages.push({
+              role: 'user',
+              content: buildForcedEvidenceInstruction(answerContract, 2),
+            });
+            const recoveryResponse = await callLLMWithToolsNoThinking(messages, tools, {
+              signal,
+              provider: resolvedAgentProvider,
+              model: agentModel,
+            });
+            if (recoveryResponse?.tool_calls?.length) {
+              // Success — inject tool calls back into the loop by re-assigning response
+              // and falling through to the tool execution path (Case 2).
+              response = recoveryResponse;
+              // Remove the last two messages we just pushed (they served their purpose)
+              // and let the loop's Case 2 handler process the tool calls.
+              // We need to continue from the tool execution path, so we re-enter the
+              // relevant code path by NOT breaking here.
+              // However the current control flow is inside the "no tool_calls" branch.
+              // The cleanest approach: push the recovery result into toolCalls manually.
+              for (const tc of recoveryResponse.tool_calls) {
+                const toolName = tc.function?.name;
+                let toolArgs = {};
+                try { toolArgs = JSON.parse(tc.function?.arguments || '{}'); } catch { /* ignore */ }
+                onToolCall?.({ name: toolName, args: toolArgs });
+                const toolResult = await executeTool(toolName, toolArgs, toolContext);
+                onToolResult?.({ name: toolName, result: toolResult });
+                toolCalls.push({ name: toolName, args: toolArgs, result: toolResult });
+              }
+              // Now continue the loop — next iteration will see toolCalls.length > 0
+              continue;
+            }
+            console.warn('[agentLoop] Evidence recovery without thinkingConfig also returned no tool calls.');
+          }
+
+          throw createAgentLoopError(
+            'missing_evidence',
+            `${resolvedAgentProvider}/${agentModel} returned prose without producing any successful analysis evidence.`,
+            {
+              provider: resolvedAgentProvider,
+              model: agentModel,
+              transport: response?.transport || agentTransport,
+              recoveryAttempts,
+            },
+          );
+        }
         finalText = text;
         onTextChunk?.(text);
 
         trackLlmUsage({
           source: 'agent_loop',
           model: agentModel,
-          provider: agentProvider,
+          provider: resolvedAgentProvider,
           status: 'success',
           latencyMs,
           workflow: 'agent_chat',
@@ -422,8 +917,35 @@ export async function runAgentLoop({
         } catch { /* non-critical — never block agent loop */ }
       }
 
+      // ── Pre-analysis data validation: detect statistical issues in query results ──
+      if (toolName === 'query_sap_data' && toolResult.success && toolResult.result?.rows?.length > 0) {
+        try {
+          const validationColumns = toolResult.result.columns || Object.keys(toolResult.result.rows[0] || {});
+          const { warnings } = validateQueryResultData(toolResult.result.rows, validationColumns, toolArgs.sql);
+          if (warnings.length > 0) {
+            toolCalls[toolCalls.length - 1]._dataValidationWarnings = warnings;
+            deferredGuidance.push({
+              role: 'user',
+              content: `⚠️ DATA QUALITY WARNINGS for the previous query result:\n${formatWarningsForAgent(warnings)}\nYou MUST address these in your analysis. If computing statistics from this data, apply the suggested corrections.`,
+            });
+          }
+          // Business context detection (first successful query only)
+          if (!businessContextDetected) {
+            const contextClues = detectBusinessContext(toolResult.result.rows);
+            if (contextClues.length > 0) {
+              businessContextDetected = true;
+              toolCalls[toolCalls.length - 1]._businessContextClues = contextClues;
+              deferredGuidance.push({
+                role: 'user',
+                content: `📋 BUSINESS CONTEXT DETECTED:\n${contextClues.map((c) => `- ${c.message}`).join('\n')}\nFactor these into your analysis and recommendations.`,
+              });
+            }
+          }
+        } catch { /* non-critical — never block agent loop */ }
+      }
+
       // ── Gap Detection: if tool failed, check if we can auto-create a tool ──
-      if (!earlyReturn && !toolResult.success && i < MAX_AGENT_ITERATIONS - 2 && onToolBlueprint) {
+      if (!earlyReturn && !toolResult.success && i < maxIterations - 2 && onToolBlueprint) {
         const gap = detectToolGap({
           taskDescription: message,
           toolCallResult: toolResult,
@@ -592,7 +1114,7 @@ export async function runAgentLoop({
     trackLlmUsage({
       source: 'agent_loop',
       model: agentModel,
-      provider: agentProvider,
+      provider: resolvedAgentProvider,
       status: 'success',
       latencyMs,
       workflow: 'agent_tool_call',
@@ -605,7 +1127,19 @@ export async function runAgentLoop({
     // Loop continues — LLM will see the tool results and decide what to do next
   }
 
-  if (totalIterations >= MAX_AGENT_ITERATIONS && !finalText) {
+  if (totalIterations >= maxIterations && !finalText) {
+    if (requiresAnalysisEvidence) {
+      throw createAgentLoopError(
+        'tool_transport_failed',
+        'Agent reached maximum iterations before producing a final answer.',
+        {
+          provider: resolvedAgentProvider,
+          model: agentModel,
+          transport: agentTransport,
+          recoveryAttempts,
+        },
+      );
+    }
     finalText = '⚠️ Agent reached maximum iterations. The analysis may be incomplete. Please try a more specific request.';
     onTextChunk?.(finalText);
   }
@@ -615,9 +1149,10 @@ export async function runAgentLoop({
     toolCalls,
     iterations: totalIterations,
     isAgentResponse: true,
-    provider: agentProvider,
+    provider: resolvedAgentProvider,
     model: agentModel,
-    transport: getAgentProviderTransport(agentProvider),
+    transport: agentTransport,
+    recoveryAttempts,
   };
 }
 
@@ -628,12 +1163,21 @@ export async function runAgentLoop({
  * Streams thinking/preamble content in real-time via onPreambleChunk callback.
  * Returns the same shape as callLLMWithTools: { content, tool_calls, usage }.
  */
-async function callLLMWithToolsStream(messages, tools, { signal, onPreambleChunk, provider = getModelConfig('primary').provider, model = getModelConfig('primary').model } = {}) {
+async function callLLMWithToolsStream(messages, tools, { signal, onPreambleChunk, provider: rawProvider = getModelConfig('primary').provider, model = getModelConfig('primary').model, toolChoice = 'auto' } = {}) {
+  const provider = resolveProviderFromModel(model, rawProvider);
+  const { effectiveToolChoice } = normalizeToolChoiceForProvider(provider, toolChoice, { model });
+  if (!PROVIDER_REGISTRY[provider]) {
+    throw createAgentLoopError(
+      'provider_unsupported',
+      `Unsupported provider "${provider}" for agent tools streaming.`,
+      { provider, model, transport: null },
+    );
+  }
   const toolsMode = getAgentToolStreamingMode(provider);
 
   if (!toolsMode) {
     // Providers without a streaming tool path fall back to non-streaming.
-    return callLLMWithTools(messages, tools, { signal, provider, model });
+    return callLLMWithTools(messages, tools, { signal, provider, model, toolChoice: effectiveToolChoice, onPreambleChunk });
   }
 
   let content = '';
@@ -647,8 +1191,10 @@ async function callLLMWithToolsStream(messages, tools, { signal, onPreambleChunk
     messages,
     tools,
     model,
+    toolChoice: effectiveToolChoice,
     temperature: 0.3,
     maxOutputTokens: 4096,
+    ...(provider === 'gemini' ? { googleOptions: buildGeminiThinkingGoogleOptions() } : {}),
   }, {
     signal,
     onDelta: (chunk) => {
@@ -700,6 +1246,15 @@ async function callLLMWithToolsStream(messages, tools, { signal, onPreambleChunk
 
   console.info(`[agentLoop] Stream complete — content=${content.length}chars, reasoning=${reasoningContent.length}chars, tool_calls=${tool_calls.length}`);
 
+  if (!content.trim() && tool_calls.length === 0) {
+    console.warn(`[agentLoop] ${provider} streaming returned no content/tool_calls; retrying once via non-streaming tools API.`);
+    const fallback = await callLLMWithTools(messages, tools, { signal, provider, model, toolChoice: effectiveToolChoice });
+    return {
+      ...fallback,
+      recovery_attempts: ['stream_empty_to_non_stream_fallback'],
+    };
+  }
+
   return {
     content,
     tool_calls,
@@ -715,7 +1270,16 @@ async function callLLMWithToolsStream(messages, tools, { signal, onPreambleChunk
  * Call LLM with function-calling tools (non-streaming fallback).
  * Returns the parsed assistant message including any tool_calls.
  */
-async function callLLMWithTools(messages, tools, { signal, provider = getModelConfig('primary').provider, model = getModelConfig('primary').model } = {}) {
+async function callLLMWithTools(messages, tools, { signal, provider: rawProvider = getModelConfig('primary').provider, model = getModelConfig('primary').model, toolChoice = 'auto', onPreambleChunk } = {}) {
+  const provider = resolveProviderFromModel(model, rawProvider);
+  const { effectiveToolChoice } = normalizeToolChoiceForProvider(provider, toolChoice, { model });
+  if (!PROVIDER_REGISTRY[provider]) {
+    throw createAgentLoopError(
+      'provider_unsupported',
+      `Unsupported provider "${provider}" for agent tools.`,
+      { provider, model, transport: null },
+    );
+  }
   // Try Edge Function (ai-proxy) first
   if (USE_EDGE_AI_PROXY) {
     const toolsMode = getAgentToolMode(provider);
@@ -724,8 +1288,10 @@ async function callLLMWithTools(messages, tools, { signal, provider = getModelCo
       messages,
       tools,
       model,
+      toolChoice: effectiveToolChoice,
       temperature: 0.3, // Lower temperature for tool calls — more deterministic
       maxOutputTokens: 4096,
+      ...(provider === 'gemini' ? { googleOptions: buildGeminiThinkingGoogleOptions() } : {}),
     }, { signal });
 
     console.info('[agentLoop] LLM raw response keys:', Object.keys(result || {}));
@@ -735,6 +1301,10 @@ async function callLLMWithTools(messages, tools, { signal, provider = getModelCo
     if (result?.choices?.[0]?.message) {
       const msg = result.choices[0].message;
       console.info('[agentLoop] tool_calls in response:', msg.tool_calls?.length ?? 0, msg.tool_calls ? JSON.stringify(msg.tool_calls).slice(0, 300) : '');
+      // Push reasoning_content to UI for non-streaming providers (e.g. Kimi)
+      if (msg.reasoning_content && onPreambleChunk) {
+        onPreambleChunk(msg.reasoning_content);
+      }
       return {
         ...msg,
         usage: result.usage,

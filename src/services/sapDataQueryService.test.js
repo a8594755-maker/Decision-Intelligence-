@@ -32,7 +32,7 @@ vi.mock('./supabaseClient.js', () => ({
   },
 }));
 
-const { probeTables } = await import('./sapDataQueryService.js');
+const { probeTables, executeQuery } = await import('./sapDataQueryService.js');
 
 describe('sapDataQueryService probeTables', () => {
   beforeAll(() => {
@@ -81,5 +81,32 @@ describe('sapDataQueryService probeTables', () => {
     expect(suppliers.dataset_scope).toBe('current_user_scoped');
     expect(suppliers.row_count).toBe(0);
     expect(suppliers.is_empty).toBe(true);
+  });
+
+  it('returns a repairable hint when DuckDB rejects nested window functions', async () => {
+    mockQuery.mockImplementation(async (sql) => {
+      if (sql.includes('SELECT COUNT(*)::INTEGER as cnt FROM customers')) {
+        return { toArray: () => [{ cnt: 99442 }] };
+      }
+      throw new Error('Binder Error: window function calls cannot be nested');
+    });
+
+    const result = await executeQuery({
+      sql: `
+        WITH base AS (
+          SELECT 100 AS weighted_monthly_revenue
+        )
+        SELECT
+          SUM(weighted_monthly_revenue / SUM(weighted_monthly_revenue) OVER ()) OVER (
+            ORDER BY weighted_monthly_revenue DESC
+          ) AS cumulative_share
+        FROM base
+      `,
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('window function calls cannot be nested');
+    expect(result.error).toContain('DuckDB does not allow nested window functions');
+    expect(result.error).toContain('staged CTEs/subqueries');
   });
 });

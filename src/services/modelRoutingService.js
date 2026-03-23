@@ -19,6 +19,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { supabase } from './supabaseClient';
+import { DEFAULT_MODEL_REGISTRY } from './modelRegistryService.js';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -36,23 +37,7 @@ export const ESCALATION_TRIGGERS = {
 
 // ── In-memory defaults (used when Supabase is unavailable) ───────────────────
 
-const DEFAULT_MODELS = [
-  // Tier A — High-reasoning (task decomposition, high-risk, final review, code/agent/Excel)
-  { provider: 'anthropic', model_name: 'claude-opus-4-6',        capability_tier: 'tier_a', cost_per_1k_input: 0.005,    cost_per_1k_output: 0.025,    max_context_tokens: 200000,  active: true },
-  { provider: 'openai',    model_name: 'gpt-5.4',                capability_tier: 'tier_a', cost_per_1k_input: 0.0025,   cost_per_1k_output: 0.015,    max_context_tokens: 1048576, active: true },
-  { provider: 'openai',    model_name: 'gpt-5.4-thinking',       capability_tier: 'tier_a', cost_per_1k_input: 0.0025,   cost_per_1k_output: 0.015,    max_context_tokens: 1048576, active: true },
-  { provider: 'gemini',    model_name: 'gemini-3.1-pro-preview', capability_tier: 'tier_a', cost_per_1k_input: 0.002,    cost_per_1k_output: 0.012,    max_context_tokens: 1048576, active: true },
-  // Tier B — Team workhorse, daily 80% tasks (complex analysis, reasoning chains)
-  { provider: 'openai',    model_name: 'gpt-5-mini',             capability_tier: 'tier_b', cost_per_1k_input: 0.00025,  cost_per_1k_output: 0.002,    max_context_tokens: 1048576, active: true },
-  { provider: 'gemini',    model_name: 'gemini-2.5-flash',       capability_tier: 'tier_b', cost_per_1k_input: 0.0003,   cost_per_1k_output: 0.0025,   max_context_tokens: 1048576, active: true },
-  { provider: 'anthropic', model_name: 'claude-sonnet-4-6',      capability_tier: 'tier_b', cost_per_1k_input: 0.003,    cost_per_1k_output: 0.015,    max_context_tokens: 200000,  active: true },
-  { provider: 'deepseek',  model_name: 'deepseek-reasoner',      capability_tier: 'tier_b', cost_per_1k_input: 0.00028,  cost_per_1k_output: 0.00042,  max_context_tokens: 131072,  active: true },
-  // Tier C — Low-cost utility (summaries, formatting, data cleaning, bulk tasks)
-  // DeepSeek Chat listed first so selectModel() picks it as default (cheapest-first sort still applies,
-  // but we give it a slight edge by using cache-hit pricing to reflect real-world usage)
-  { provider: 'deepseek',  model_name: 'deepseek-chat',          capability_tier: 'tier_c', cost_per_1k_input: 0.00028,  cost_per_1k_output: 0.00042,  max_context_tokens: 131072,  active: true },
-  { provider: 'gemini',    model_name: 'gemini-2.5-flash-lite',  capability_tier: 'tier_c', cost_per_1k_input: 0.0001,   cost_per_1k_output: 0.0004,   max_context_tokens: 1048576, active: true },
-];
+const DEFAULT_MODELS = DEFAULT_MODEL_REGISTRY;
 
 // NOTE: All policies pinned to GPT-5.4 (tier_a) during development.
 // TODO: Once stable, downgrade low-reasoning tasks (forecast, export, registered_tool) to tier_b/c.

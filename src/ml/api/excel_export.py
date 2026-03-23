@@ -1355,3 +1355,115 @@ def _respond_xlsx(wb: Workbook, run_id, raw_request: Request) -> StreamingRespon
             "Access-Control-Allow-Origin": origin,
         },
     )
+
+
+# ---------------------------------------------------------------------------
+# POST /generate-analysis-workbook — structured analysis workbook from agent
+# ---------------------------------------------------------------------------
+
+class AnalysisSheetSpec(BaseModel):
+    name: str = Field(..., description="Sheet tab name")
+    sheet_type: str = Field("table", description="table | text | methodology")
+    headers: Optional[List[str]] = None
+    rows: Optional[List[List[Any]]] = None
+    text_content: Optional[str] = None
+    column_widths: Optional[Dict[str, int]] = None
+
+
+class AnalysisWorkbookRequest(BaseModel):
+    title: str = "Analysis Report"
+    sheets: List[AnalysisSheetSpec] = Field(default_factory=list)
+    methodology_notes: Optional[str] = None
+
+
+@excel_export_router.post("/generate-analysis-workbook")
+async def generate_analysis_workbook(request: Request):
+    """Generate a multi-sheet Excel workbook from structured analysis data."""
+    try:
+        body = await request.json()
+        req = AnalysisWorkbookRequest(**body)
+    except Exception as exc:
+        return {"ok": False, "error": f"Invalid request: {exc}"}
+
+    wb = Workbook()
+    wb.remove(wb.active)  # remove default sheet
+
+    for spec in req.sheets:
+        ws = wb.create_sheet(title=spec.name[:31])  # Excel 31-char limit
+
+        if spec.sheet_type == "text" or spec.sheet_type == "methodology":
+            # Write free-form text content
+            ws.column_dimensions["A"].width = 100
+            content = spec.text_content or ""
+            for i, line in enumerate(content.split("\n"), 1):
+                cell = ws.cell(row=i, column=1, value=line)
+                if line.startswith("■") or line.startswith("#"):
+                    cell.font = SUBTITLE_FONT
+                elif line.startswith("⚠"):
+                    cell.font = Font(name="Calibri", bold=True, color="FF0000", size=10)
+                    cell.fill = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
+                else:
+                    cell.font = NORMAL_FONT
+
+        elif spec.sheet_type == "table":
+            headers = spec.headers or []
+            rows = spec.rows or []
+
+            # Write headers
+            for c, h in enumerate(headers, 1):
+                cell = ws.cell(row=1, column=c, value=h)
+                cell.font = HEADER_FONT
+                cell.fill = HEADER_FILL
+                cell.alignment = CENTER_ALIGN
+                cell.border = THIN_BORDER
+
+            # Write data rows
+            for r_idx, row_data in enumerate(rows):
+                for c_idx, val in enumerate(row_data):
+                    cell = ws.cell(row=r_idx + 2, column=c_idx + 1)
+                    # Try to convert numeric strings to numbers
+                    if isinstance(val, str):
+                        try:
+                            val = float(val) if "." in val else int(val)
+                        except (ValueError, TypeError):
+                            pass
+                    cell.value = val
+                    cell.font = NORMAL_FONT
+                    cell.border = THIN_BORDER
+                    cell.alignment = CENTER_ALIGN
+                    # Alternating row fill
+                    if r_idx % 2 == 1:
+                        cell.fill = ALT_ROW_FILL
+
+            # Auto column widths
+            col_widths = spec.column_widths or {}
+            for c_idx, h in enumerate(headers, 1):
+                col_letter = get_column_letter(c_idx)
+                if h in col_widths:
+                    ws.column_dimensions[col_letter].width = col_widths[h]
+                else:
+                    # Auto-fit: max of header width and data width
+                    max_len = len(str(h))
+                    for row_data in rows[:50]:
+                        if c_idx - 1 < len(row_data):
+                            max_len = max(max_len, len(str(row_data[c_idx - 1] or "")))
+                    ws.column_dimensions[col_letter].width = min(max_len + 4, 40)
+
+    # Save to buffer
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M")
+    safe_title = re.sub(r"[^a-zA-Z0-9_\-]", "_", req.title)[:40]
+    filename = f"DI_Analysis_{safe_title}_{ts}.xlsx"
+
+    origin = request.headers.get("origin", "*")
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Access-Control-Allow-Origin": origin,
+        },
+    )

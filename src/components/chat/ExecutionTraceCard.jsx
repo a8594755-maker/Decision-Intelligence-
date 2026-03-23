@@ -3,6 +3,10 @@ import { ChevronDown, ChevronRight, Database, FileWarning, FileText, Wrench } fr
 import { Card } from '../ui';
 import SqlQueryBlock from './SqlQueryBlock';
 
+function formatFailureCategoryLabel(category) {
+  return String(category || '').trim().replace(/_/g, ' ');
+}
+
 function ToggleRow({ expanded, onToggle, icon: Icon, title, meta }) {
   return (
     <button
@@ -22,8 +26,10 @@ function TraceAttemptCard({ attempt, variant = 'success' }) {
   const [expanded, setExpanded] = useState(false);
   const isFailure = variant === 'failure';
   const title = attempt?.name || 'tool';
+  const failureCategory = isFailure ? String(attempt?.category || '').trim() : '';
+  const failureCategoryLabel = formatFailureCategoryLabel(failureCategory);
   const meta = isFailure
-    ? 'failed'
+    ? failureCategoryLabel ? `failed · ${failureCategoryLabel}` : 'failed'
     : attempt?.rowCount > 0
       ? `${attempt.rowCount} rows`
       : 'completed';

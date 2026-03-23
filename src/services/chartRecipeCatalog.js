@@ -134,3 +134,79 @@ export function getRecipeIndexForPrompt() {
   lines.push('Pass optional params to customize (e.g., period, metric). Most recipes work without params.');
   return lines.join('\n');
 }
+
+/**
+ * Find the best-matching recipe for a user message by scanning recipe metadata
+ * (name, name_zh, tags, description). Returns the recipe with highest token overlap.
+ *
+ * Used by suggestPrimaryTool() to route the agent toward generate_chart when a
+ * pre-built recipe exists, instead of falling back to run_python_analysis.
+ *
+ * @param {string} userMessage
+ * @returns {{ id: string, name: string, chartType: string, coveredDimensions: string[] } | null}
+ */
+export function findRecipeByUserMessage(userMessage) {
+  if (!userMessage) return null;
+  const text = String(userMessage).toLowerCase();
+
+  let bestMatch = null;
+  let bestScore = 0;
+
+  for (const recipe of CHART_RECIPES) {
+    let score = 0;
+    const searchable = [
+      recipe.name,
+      recipe.name_zh,
+      recipe.description,
+      ...(recipe.tags || []),
+    ].filter(Boolean).join(' ').toLowerCase();
+
+    // Token overlap scoring
+    const recipeTokens = searchable.split(/[\s,_\-()（）]+/).filter(t => t.length >= 2);
+    for (const token of recipeTokens) {
+      if (text.includes(token)) score += 1;
+    }
+
+    // Bonus for exact ID mention
+    if (text.includes(recipe.id.replace(/_/g, ' ')) || text.includes(recipe.id)) {
+      score += 5;
+    }
+
+    // Bonus for chart type match
+    if (recipe.chartType && text.includes(recipe.chartType)) {
+      score += 2;
+    }
+
+    if (score > bestScore && score >= 2) {
+      bestScore = score;
+      bestMatch = recipe;
+    }
+  }
+
+  if (!bestMatch) return null;
+
+  // Derive covered dimensions from recipe metadata
+  const coveredDimensions = [];
+  const meta = [bestMatch.name, bestMatch.name_zh, bestMatch.description, ...(bestMatch.tags || [])].join(' ').toLowerCase();
+  const dimensionKeywords = {
+    revenue: ['revenue', 'sales', '營收', '收入'],
+    sellers: ['seller', '賣家'],
+    orders: ['order', '訂單'],
+    'delivery days': ['delivery', '配送', 'shipping'],
+    rating: ['rating', 'review', '評分'],
+    categories: ['category', '品類'],
+    customers: ['customer', '顧客', '客戶'],
+    payments: ['payment', '付款'],
+    quantiles: ['quantile', 'percentile', '分位'],
+  };
+  for (const [dim, keywords] of Object.entries(dimensionKeywords)) {
+    if (keywords.some(kw => meta.includes(kw))) coveredDimensions.push(dim);
+  }
+
+  return {
+    id: bestMatch.id,
+    name: bestMatch.name,
+    chartType: bestMatch.chartType,
+    coveredDimensions,
+  };
+}

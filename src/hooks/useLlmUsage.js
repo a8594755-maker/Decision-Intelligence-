@@ -30,6 +30,7 @@ export default function useLlmUsage(initialDateRange = 7) {
     deepseek: { data: null, loading: false, error: null },
     anthropic: { data: null, loading: false, error: null },
     openai: { data: null, loading: false, error: null },
+    kimi: { data: null, loading: false, error: null },
   });
 
   // ── Usage data (from local DB) ──
@@ -115,6 +116,15 @@ export default function useLlmUsage(initialDateRange = 7) {
       setBillingState('openai', { data: result, loading: false, error: null });
     } catch {
       setBillingState('openai', { data: null, loading: false, error: 'Failed to fetch' });
+    }
+
+    // Kimi (Moonshot) — via Edge Function (key in secrets)
+    setBillingState('kimi', { loading: true });
+    try {
+      const result = await invokeAiProxy('kimi_billing', {}, { timeoutMs: 15_000 });
+      setBillingState('kimi', { data: result, loading: false, error: null });
+    } catch {
+      setBillingState('kimi', { data: null, loading: false, error: 'Failed to fetch' });
     }
   }, []);
 

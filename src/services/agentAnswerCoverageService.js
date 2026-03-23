@@ -18,6 +18,16 @@ const DIMENSION_PATTERNS = Object.freeze([
   { label: 'retention', patterns: [/\bretention\b/i, /(留存)/] },
   { label: 'conversion', patterns: [/\bconversion\b/i, /(轉換率|轉化率)/] },
   { label: 'satisfaction', patterns: [/\bsatisfaction\b/i, /(滿意度)/] },
+  // ── Supply chain dimensions ──
+  { label: 'safety_stock', patterns: [/\bsafety stock\b/i, /(安全庫存|安全存量)/] },
+  { label: 'reorder_point', patterns: [/\breorder point\b/i, /\bROP\b/, /(補貨點|再訂購點|補貨參數)/] },
+  { label: 'eoq', patterns: [/\bEOQ\b/i, /\beconomic order quantity\b/i, /(經濟訂購量)/] },
+  { label: 'service_level', patterns: [/\bservice level\b/i, /(服務水準|服務水平)/] },
+  { label: 'lead_time', patterns: [/\blead time\b/i, /\breplenishment time\b/i, /(前置時間|交期|補貨時間)/] },
+  { label: 'demand_variability', patterns: [/\bdemand variab/i, /\bdemand std/i, /\bCV\b/, /(需求波動|變異係數)/] },
+  { label: 'holding_cost', patterns: [/\bholding cost\b/i, /(持有成本|庫存持有)/] },
+  { label: 'fill_rate', patterns: [/\bfill rate\b/i, /(充填率|滿足率)/] },
+  { label: 'inventory_turns', patterns: [/\binventory turn/i, /(庫存周轉)/] },
 ]);
 
 const SPECIAL_CHART_REQUESTS = Object.freeze([
@@ -52,11 +62,45 @@ function safeSerialize(value) {
   }
 }
 
+// Alias map: chart metric labels → dimension labels.
+// Chart recipes use labels like "Total Sellers" or "Gini Coefficient" that
+// don't match DIMENSION_PATTERNS directly. This alias table bridges the gap.
+const METRIC_LABEL_ALIASES = Object.freeze({
+  'total sellers': 'sellers',
+  'active sellers': 'sellers',
+  'seller count': 'sellers',
+  'gini coefficient': 'revenue',
+  'gini': 'revenue',
+  'total revenue': 'revenue',
+  'median revenue': 'revenue',
+  'top 10 share': 'revenue',
+  'total orders': 'orders',
+  'order count': 'orders',
+  'avg delivery days': 'delivery days',
+  'late rate': 'delivery days',
+  'on-time rate': 'delivery days',
+  'average rating': 'rating',
+  'review count': 'rating',
+  'total customers': 'customers',
+  'customer count': 'customers',
+  'total products': 'products',
+  'product count': 'products',
+  'category count': 'categories',
+});
+
 function addDimensionHits(text, coveredDimensions) {
   const sample = String(text || '');
   for (const entry of DIMENSION_PATTERNS) {
     if (entry.patterns.some((pattern) => pattern.test(sample))) {
       coveredDimensions.add(entry.label);
+    }
+  }
+
+  // Alias-based matching for chart metric labels
+  const sampleLower = sample.toLowerCase();
+  for (const [alias, dimension] of Object.entries(METRIC_LABEL_ALIASES)) {
+    if (sampleLower.includes(alias)) {
+      coveredDimensions.add(dimension);
     }
   }
 }

@@ -230,6 +230,38 @@ const FORBIDDEN_PATTERN = /^\s*(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|TRUNCATE|
 // When dual agents run in parallel, this ensures queries execute one at a time.
 let _queryLock = Promise.resolve();
 
+function buildDuckDbSqlRepairHint(errorMessage, sql) {
+  const message = String(errorMessage || '').trim();
+  if (/window function calls cannot be nested/i.test(message)) {
+    return [
+      'DuckDB does not allow nested window functions.',
+      'Rewrite the query with staged CTEs/subqueries: compute totals or shares in one SELECT, then compute cumulative windows in an outer SELECT.',
+      'Avoid patterns like `SUM(x / SUM(x) OVER ()) OVER (...)`.',
+      'For Pareto/cumulative share analysis: first calculate `share = x / SUM(x) OVER ()`, then in the next CTE calculate `SUM(share) OVER (ORDER BY x DESC)`.',
+    ].join(' ');
+  }
+
+  if (/aggregate function calls cannot contain window function calls/i.test(message)) {
+    return [
+      'DuckDB does not allow window functions inside aggregate function arguments.',
+      'Split the query into stages: compute the window column first in a CTE, then aggregate it in the outer query.',
+    ].join(' ');
+  }
+
+  if (/lateral join does not support aggregates/i.test(message)) {
+    return [
+      'DuckDB does not allow aggregate functions inside a LATERAL join.',
+      'Move the aggregation into a separate CTE with GROUP BY, then join that CTE back to the main query.',
+    ].join(' ');
+  }
+
+  if (/julianday|timestampdiff/i.test(String(sql || ''))) {
+    return 'Use DuckDB date functions instead: DATE_TRUNC, EXTRACT, DATEDIFF, or direct date subtraction.';
+  }
+
+  return '';
+}
+
 // ── DuckDB-WASM Singleton ─────────────────────────────────────────────────────
 
 let _db = null;
@@ -500,12 +532,15 @@ export async function executeQuery({ sql }) {
     };
   } catch (err) {
     console.error('[sapDataQuery] SQL error:', err.message, '| SQL:', trimmed.slice(0, 300));
+    const repairHint = buildDuckDbSqlRepairHint(err?.message, trimmed);
     return {
       success: false,
       rows: [],
       rowCount: 0,
       truncated: false,
-      error: `SQL error: ${err.message}`,
+      error: repairHint
+        ? `SQL error: ${err.message} Hint: ${repairHint}`
+        : `SQL error: ${err.message}`,
       meta: buildQueryMetaFromTables(extractTableNames(trimmed)),
     };
   } finally {

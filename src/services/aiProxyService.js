@@ -54,6 +54,202 @@ export const warmupEdgeFunction = () => {
 
 /** Default timeout for AI proxy requests (180 seconds — long tasks are common). */
 const AI_PROXY_TIMEOUT_MS = 180_000;
+const KIMI_MAX_IN_FLIGHT = Math.max(1, Math.floor(Number(import.meta.env.VITE_DI_KIMI_MAX_INFLIGHT || 4)));
+const KIMI_OVERLOAD_RETRY_DELAYS_MS = Object.freeze([1000, 2000, 4000]);
+
+class AsyncSemaphore {
+  constructor(maxConcurrent) {
+    this.maxConcurrent = Math.max(1, Math.floor(Number(maxConcurrent) || 1));
+    this.active = 0;
+    this.queue = [];
+  }
+
+  acquire({ signal } = {}) {
+    if (signal?.aborted) {
+      return Promise.reject(signal.reason || new Error('Request aborted before acquiring provider slot.'));
+    }
+
+    if (this.active < this.maxConcurrent) {
+      this.active += 1;
+      return Promise.resolve(this._buildRelease());
+    }
+
+    return new Promise((resolve, reject) => {
+      const entry = {
+        resolve: () => {
+          cleanup();
+          this.active += 1;
+          resolve(this._buildRelease());
+        },
+        reject,
+      };
+
+      const onAbort = () => {
+        cleanup();
+        reject(signal.reason || new Error('Request aborted while waiting for provider slot.'));
+      };
+
+      const cleanup = () => {
+        const idx = this.queue.indexOf(entry);
+        if (idx >= 0) this.queue.splice(idx, 1);
+        if (signal) signal.removeEventListener('abort', onAbort);
+      };
+
+      if (signal) signal.addEventListener('abort', onAbort, { once: true });
+      this.queue.push(entry);
+    });
+  }
+
+  _buildRelease() {
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.active = Math.max(0, this.active - 1);
+      this._drain();
+    };
+  }
+
+  _drain() {
+    while (this.active < this.maxConcurrent && this.queue.length > 0) {
+      const next = this.queue.shift();
+      next?.resolve?.();
+    }
+  }
+}
+
+const providerSemaphores = new Map();
+
+function getProviderSemaphore(provider) {
+  if (!providerSemaphores.has(provider)) {
+    const maxConcurrent = provider === 'kimi' ? KIMI_MAX_IN_FLIGHT : 1;
+    providerSemaphores.set(provider, new AsyncSemaphore(maxConcurrent));
+  }
+  return providerSemaphores.get(provider);
+}
+
+function inferProxyProvider(mode, payload = {}) {
+  const normalizedMode = String(mode || '').trim().toLowerCase();
+  if (normalizedMode.startsWith('kimi_')) return 'kimi';
+  if (normalizedMode.startsWith('gemini_')) return 'gemini';
+  if (normalizedMode.startsWith('anthropic_')) return 'anthropic';
+  if (normalizedMode.startsWith('openai_')) return 'openai';
+  if (normalizedMode.startsWith('deepseek_')) return 'deepseek';
+  if (normalizedMode === 'di_prompt') {
+    return String(payload?.provider || '').trim().toLowerCase() || null;
+  }
+  return null;
+}
+
+function shouldApplyProviderBackpressure(mode, payload = {}) {
+  const provider = inferProxyProvider(mode, payload);
+  if (provider !== 'kimi') return false;
+  return !/billing$/i.test(String(mode || '').trim());
+}
+
+function isProviderOverloadedMessage(message) {
+  return /engine.+overloaded|currently overloaded|provider.+overloaded|service.+overloaded|server.+busy|please try again later/i.test(String(message || ''));
+}
+
+function parseRetryAfterMs(response) {
+  const header = response?.headers?.get?.('retry-after');
+  if (!header) return null;
+  const numericSeconds = Number(header);
+  if (Number.isFinite(numericSeconds) && numericSeconds >= 0) {
+    return Math.round(numericSeconds * 1000);
+  }
+  const dateValue = Date.parse(header);
+  if (Number.isFinite(dateValue)) {
+    return Math.max(0, dateValue - Date.now());
+  }
+  return null;
+}
+
+function createAiProxyError(message, { status = null, mode = null, payload = {}, retryAfterMs = null } = {}) {
+  const provider = inferProxyProvider(mode, payload);
+  const error = new Error(message);
+  error.name = 'AiProxyError';
+  error.status = status;
+  error.mode = mode;
+  error.provider = provider;
+  if (Number.isFinite(retryAfterMs) && retryAfterMs >= 0) {
+    error.retryAfterMs = retryAfterMs;
+  }
+  if (provider === 'kimi' && isProviderOverloadedMessage(message)) {
+    error.failureCategory = 'provider_overloaded';
+    error.failureMessage = message;
+  }
+  return error;
+}
+
+function isRetriableProviderOverload(error, { provider } = {}) {
+  if (provider !== 'kimi') return false;
+  const status = Number(error?.status || 0);
+  const message = String(error?.failureMessage || error?.message || '').trim();
+  return (
+    status === 429
+    || status === 503
+    || isProviderOverloadedMessage(message)
+  );
+}
+
+function delayWithAbort(ms, signal) {
+  if (!Number.isFinite(ms) || ms <= 0) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const tid = setTimeout(() => {
+      cleanup();
+      resolve();
+    }, ms);
+
+    const onAbort = () => {
+      cleanup();
+      reject(signal?.reason || new Error('Request aborted during retry backoff.'));
+    };
+
+    const cleanup = () => {
+      clearTimeout(tid);
+      signal?.removeEventListener?.('abort', onAbort);
+    };
+
+    if (signal) {
+      if (signal.aborted) {
+        cleanup();
+        reject(signal.reason || new Error('Request aborted during retry backoff.'));
+        return;
+      }
+      signal.addEventListener('abort', onAbort, { once: true });
+    }
+  });
+}
+
+async function withProviderBackpressure(mode, payload, signal, task) {
+  const provider = inferProxyProvider(mode, payload);
+  const applyBackpressure = shouldApplyProviderBackpressure(mode, payload);
+  const release = applyBackpressure
+    ? await getProviderSemaphore(provider).acquire({ signal })
+    : null;
+
+  try {
+    let attempt = 0;
+    while (true) {
+      try {
+        return await task();
+      } catch (error) {
+        if (!applyBackpressure || !isRetriableProviderOverload(error, { provider }) || attempt >= KIMI_OVERLOAD_RETRY_DELAYS_MS.length) {
+          throw error;
+        }
+        const baseDelayMs = error?.retryAfterMs ?? KIMI_OVERLOAD_RETRY_DELAYS_MS[attempt];
+        const jitterMs = Math.floor((Math.random?.() ?? 0.5) * 250);
+        const delayMs = baseDelayMs + jitterMs;
+        console.warn(`[aiProxy] ${provider} overloaded for mode=${mode}; retrying in ${delayMs}ms (attempt ${attempt + 2}/${KIMI_OVERLOAD_RETRY_DELAYS_MS.length + 1})`);
+        attempt += 1;
+        await delayWithAbort(delayMs, signal);
+      }
+    }
+  } finally {
+    release?.();
+  }
+}
 
 export const invokeAiProxy = async (mode, payload = {}, { signal, timeoutMs = AI_PROXY_TIMEOUT_MS } = {}) => {
   acquireOrThrow('ai_proxy');
@@ -85,12 +281,29 @@ export const invokeAiProxy = async (mode, payload = {}, { signal, timeoutMs = AI
 
   let res;
   try {
-  res = await fetch(EDGE_FN_URL, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({ mode, payload }),
-    signal: effectiveSignal,
-  });
+    res = await withProviderBackpressure(mode, payload, effectiveSignal, async () => {
+      const response = await fetch(EDGE_FN_URL, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ mode, payload }),
+        signal: effectiveSignal,
+      });
+
+      if (!response.ok) {
+        let message = `Edge Function failed (${response.status})`;
+        const retryAfterMs = parseRetryAfterMs(response);
+        try {
+          const errPayload = await response.json();
+          if (errPayload?.error) message = String(errPayload.error);
+          else if (errPayload?.message) message = String(errPayload.message);
+        } catch {
+          // ignore parse errors
+        }
+        throw createAiProxyError(message, { status: response.status, mode, payload, retryAfterMs });
+      }
+
+      return response;
+    });
   } finally {
     clearTimeout(timeoutId);
   }
@@ -98,24 +311,12 @@ export const invokeAiProxy = async (mode, payload = {}, { signal, timeoutMs = AI
   const elapsed = Math.round(performance.now() - t0);
   console.info(`[aiProxy] Edge Function "${AI_PROXY_FUNCTION_NAME}" (mode=${mode}) responded in ${elapsed}ms — status ${res.status}`);
 
-  if (!res.ok) {
-    let message = `Edge Function failed (${res.status})`;
-    try {
-      const errPayload = await res.json();
-      if (errPayload?.error) message = String(errPayload.error);
-      else if (errPayload?.message) message = String(errPayload.message);
-    } catch {
-      // ignore parse errors
-    }
-    throw new Error(message);
-  }
-
   const data = await res.json();
   if (!data) {
-    throw new Error('AI proxy returned an empty response.');
+    throw createAiProxyError('AI proxy returned an empty response.', { status: res.status, mode, payload });
   }
   if (data?.error) {
-    throw new Error(String(data.error));
+    throw createAiProxyError(String(data.error), { status: res.status, mode, payload });
   }
 
   return data;
@@ -161,11 +362,25 @@ export const invokeAiProxyStream = async (mode, payload = {}, { signal, timeoutM
 
   let res;
   try {
-    res = await fetch(EDGE_FN_URL, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ mode, payload }),
-      signal: effectiveSignal,
+    res = await withProviderBackpressure(mode, payload, effectiveSignal, async () => {
+      const response = await fetch(EDGE_FN_URL, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ mode, payload }),
+        signal: effectiveSignal,
+      });
+
+      if (!response.ok) {
+        let message = `Edge Function stream failed (${response.status})`;
+        const retryAfterMs = parseRetryAfterMs(response);
+        try {
+          const errPayload = await response.json();
+          if (errPayload?.error) message = String(errPayload.error);
+        } catch { /* ignore */ }
+        throw createAiProxyError(message, { status: response.status, mode, payload, retryAfterMs });
+      }
+
+      return response;
     });
   } catch (err) {
     clearTimeout(timeoutId);
@@ -173,16 +388,6 @@ export const invokeAiProxyStream = async (mode, payload = {}, { signal, timeoutM
   }
 
   const elapsed = Math.round(performance.now() - t0);
-
-  if (!res.ok) {
-    clearTimeout(timeoutId);
-    let message = `Edge Function stream failed (${res.status})`;
-    try {
-      const errPayload = await res.json();
-      if (errPayload?.error) message = String(errPayload.error);
-    } catch { /* ignore */ }
-    throw new Error(message);
-  }
 
   console.info(`[aiProxy] Stream connected in ${elapsed}ms — reading SSE events...`);
 
@@ -229,8 +434,13 @@ export const streamTextToChunks = (text, onChunk, chunkSize = 48) => {
   }
 };
 
+export const __resetAiProxyBackpressureForTests = () => {
+  providerSemaphores.clear();
+};
+
 export default {
   invokeAiProxy,
   invokeAiProxyStream,
   streamTextToChunks,
+  __resetAiProxyBackpressureForTests,
 };

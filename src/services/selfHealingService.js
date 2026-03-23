@@ -26,6 +26,7 @@ const ERROR_PATTERNS = [
 
   // Provider / API unavailability → switch provider
   { re: /unavailable|503|502|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|network/i, category: 'llm_unavailable' },
+  { re: /engine.+overloaded|currently overloaded|provider.+overloaded|service.+overloaded|server.+busy/i, category: 'provider_overloaded' },
   { re: /429|rate.?limit|too many requests|quota|throttl/i,              category: 'rate_limited' },
   { re: /api.?key|auth|unauthorized|401|403|forbidden/i,                 category: 'api_key_missing' },
   { re: /Unsupported provider/i,                                         category: 'provider_unsupported' },
@@ -176,7 +177,7 @@ export function chooseHealingStrategy(errorMessage, step, retryCount) {
   }
 
   // Provider/API issues → switch provider
-  if (category === 'llm_unavailable' || category === 'rate_limited' || category === 'api_key_missing') {
+  if (category === 'llm_unavailable' || category === 'provider_overloaded' || category === 'rate_limited' || category === 'api_key_missing') {
     return {
       errorCategory: category,
       healingStrategy: 'escalate_model',

@@ -29,6 +29,16 @@ const QA_DIMENSION_KEYS = Object.freeze([
 
 const clampText = (text, maxChars = 8000) => String(text || '').slice(0, maxChars);
 
+const STRING_ARRAY_SCHEMA = Object.freeze({
+  type: 'array',
+  items: { type: 'string' },
+});
+
+const QA_DIMENSION_SCORES_SCHEMA = Object.freeze({
+  type: 'object',
+  properties: Object.fromEntries(QA_DIMENSION_KEYS.map((key) => [key, { type: 'number' }])),
+});
+
 function buildAnalysisDepthRules(answerContract) {
   const depth = Array.isArray(answerContract?.analysis_depth) ? answerContract.analysis_depth : [];
   if (depth.length === 0) return '';
@@ -113,7 +123,7 @@ const summarizeToolCalls = (toolCalls = [], maxRowsPerQuery = 4) => {
   }).join('\n');
 };
 
-export function buildAgentAnswerContractPrompt({ userMessage, mode = 'default' }) {
+export function buildAgentAnswerContractPrompt({ userMessage, mode = 'default', domainEnrichment = '' }) {
   return `You are the Answer Contract Parser for a business-analysis chat system.
 
 You MUST return one valid JSON object and NOTHING else.
@@ -125,6 +135,7 @@ Infer what the final answer must cover, independent of tool execution details.
 ## Inputs
 - Mode: ${mode}
 - User message: "${clampText(userMessage, 2500)}"
+${domainEnrichment ? `\n${domainEnrichment}\n` : ''}
 
 ## Output JSON schema
 {
@@ -144,7 +155,7 @@ Infer what the final answer must cover, independent of tool execution details.
 - diagnostic: root cause / why / anomaly / issue investigation.
 - recommendation: asks what to do / best action / suggestion.
 - mixed: multiple equally-important goals or ambiguous request.
-- required_dimensions: include each metric / lens / dimension the answer must explicitly cover. Keep them short.
+- required_dimensions: include each metric / lens / dimension the answer must explicitly cover. Use 2-4 word labels (e.g. "庫存水位", "revenue trend"), NOT full sentences.
 - required_outputs: include only what is clearly expected from the user request.
 - audience_language should match the user's language, e.g. "zh", "en", "Chinese", "English".
 - brevity: use "analysis" for comparison, diagnostic, trend, or multi-dimension requests that need detailed breakdowns; use "short" for simple lookups, single-fact questions, or narrow queries.
@@ -162,6 +173,7 @@ export function buildAgentBriefSynthesisPrompt({
   finalAnswerText = '',
   mode = 'default',
   repairInstructions = [],
+  domainEnrichment = '',
 }) {
   const quantileHistogramRequested = requestIncludesQuantileHistogram(answerContract, userMessage);
   return `You are the Presentation Synthesizer for a business-analysis chat agent.
@@ -207,15 +219,18 @@ ${repairInstructions.length > 0 ? repairInstructions.map((item) => `- ${item}`).
   "key_findings": ["string"],
   "implications": ["string"],
   "caveats": ["string"],
-  "next_steps": ["string"]
+  "next_steps": ["string"],
+  "methodology_note": "string (optional — formula/model/assumption disclosure, preserved from raw narrative)"
 }
-
+${domainEnrichment ? `\n${domainEnrichment}\n` : ''}
 ## Rules
 - Keep the brief compact and executive-facing.
+- METHODOLOGY PRESERVATION: When the raw narrative contains formulas, model names, or parameter definitions (e.g., "SS = z × σ × √(L/T)", "z=1.65 for 95% service level", "ROP = d̄ × L + SS"), you MUST preserve them in the key_findings, summary, or methodology_note field. Never compress a formula into just the output number. The methodology disclosure is mandatory, not optional decoration.
 - Do not include SQL, debug logs, failure transcript, or tool-by-tool narration in headline/summary/findings.
 - If charts or analysis cards already exist, do not repeat every KPI already visible there. Add interpretation instead.
 - If the user asked for multiple dimensions, cover all of them in the brief.
 - If the evidence is partial or proxy-based, add a caveat.
+- DATA QUALITY DISCLOSURE: If the agent's reasoning mentions data quality warnings (non-stationary trend, small sample, outliers, seasonal patterns, proxy metrics, or business context caveats like marketplace model or pre-aggregated data), these MUST appear in the "caveats" array. Never suppress a data quality warning in the final brief. Each warning should be a concise, actionable caveat sentence.
 - Only mention a SQL, worker, connection, or tool failure if the tool evidence explicitly includes a failed call.
 - A successful 0-row SQL lookup is not a tool failure, but it provides ZERO evidence. Do NOT cite any numbers, statistics, or counts from a 0-row query. If all SQL queries returned 0 rows, add a caveat explaining no SQL data was available.
 - If no tool call succeeded, do not fabricate metric pills, evidence tables, or dataset-specific findings. Use empty arrays for unsupported sections. You may offer generic advice only if it is clearly labeled as general guidance rather than a result from this dataset.
@@ -226,6 +241,7 @@ ${repairInstructions.length > 0 ? repairInstructions.map((item) => `- ${item}`).
     : 'If quantiles are requested and supported by the evidence, summarize the key cut points directly instead of only saying they were marked.'}
 - Tables must be structured JSON tables, not markdown or pseudo-table text.
 - Charts: when tool evidence contains numeric comparison data (e.g. strategy A vs B, category breakdowns), generate inline chart specs in the "charts" array. Use "grouped_bar" for side-by-side comparisons, "scatter" for two-variable relationships, "bar" for single-metric rankings. Each chart needs type, title, xKey, yKey, and a data array of objects. For multi-series (grouped_bar, stacked_bar), include a "series" array of column names. Keep data to ≤25 rows per chart. If a generate_chart artifact already covers the visualization, do not duplicate it in charts.
+- FIELD PRIORITY: Always complete ALL required fields (headline, summary, key_findings, implications, caveats, next_steps) before generating optional fields (tables, charts, metric_pills). If output space is limited, use fewer table rows and chart data points rather than omitting required fields.
 - Use empty arrays when a section is not needed.
 ${buildAnalysisDepthRules(answerContract)}`;
 }
@@ -316,13 +332,13 @@ Score the answer with correctness first. Treat all prior model output as fallibl
 ## Inputs
 - User message: "${clampText(userMessage, 2500)}"
 - Answer contract: ${clampText(JSON.stringify(answerContract || {}), 1800)}
-- Brief: ${clampText(JSON.stringify(brief || {}), 5000)}
-- Raw final narrative: "${clampText(finalAnswerText, 3000)}"
-- Deterministic QA: ${clampText(JSON.stringify(deterministicQa || {}), 3500)}
+- Brief: ${clampText(JSON.stringify(brief || {}), 3500)}
+- Raw final narrative: "${clampText(finalAnswerText, 2500)}"
+- Deterministic QA: ${clampText(JSON.stringify(deterministicQa || {}), 3000)}
 - Artifact summary:
-${clampText(artifactSummary || 'No artifacts summarized.', 3500)}
+${clampText(artifactSummary || 'No artifacts summarized.', 2500)}
 - Tool evidence:
-${clampText(summarizeToolCalls(toolCalls), 4500)}
+${clampText(summarizeToolCalls(toolCalls), 3000)}
 
 ## Output JSON schema
 ${buildQaReviewSchemaText()}
@@ -339,6 +355,7 @@ ${buildQaReviewSchemaText()}
 - methodology_transparency: are formulas, models, or assumptions behind numeric thresholds disclosed? Score 10 if the answer is a simple lookup or does not cite thresholds; deduct if recommendation/diagnostic answers cite numbers without stating the methodology.
 - actionability: are recommendations specific enough to act on (e.g., "set safety stock to 45 units")? Score 10 if the task is not a recommendation; deduct if recommendations are vague ("use conservative approach") without specific parameters.
 - Keep repair instructions concrete and implementation-oriented.
+- CONCISENESS: Keep each blocker and issue description to 1-2 sentences. Be specific but concise — cite the problematic field/value, not the full context.
 - Do not rewrite the answer. Only judge it.`;
 }
 
@@ -402,11 +419,14 @@ ${clampText(summarizeToolCalls(toolCalls), 4500)}
   "key_findings": ["string"],
   "implications": ["string"],
   "caveats": ["string"],
-  "next_steps": ["string"]
+  "next_steps": ["string"],
+  "methodology_note": "string (optional — formula/model/assumption disclosure)"
 }
 
 ## Repair rules
+- EVIDENCE AUTHORITY: When the brief narrative contradicts artifact metrics/tables, ALWAYS use the artifact value. Artifacts are computed from raw data and are the authoritative source; narrative text may contain rounding errors or stale numbers. When resolving contradictions, replace the narrative value with the exact artifact value.
 - Fix missing dimensions, contradictions, caveats, evidence-table problems, chart-fit framing, and duplicate text.
+- If the QA scorecard flags missing methodology disclosure, extract the methodology/formula from the raw narrative and insert it into key_findings or the methodology_note field. Do not drop formulas during repair.
 - Do not invent or alter known numeric facts.
 - Do not remove legitimate caveats or hide failed steps.
 - Remove any hallucinated SQL, worker, connection, or tool failure claim when the tool evidence has no failed call.
@@ -427,6 +447,7 @@ export function buildAgentCandidateJudgePrompt({
   answerContract,
   primaryCandidate,
   secondaryCandidate,
+  domainCriteria = '',
 }) {
   return `You are the Final Candidate Judge for a business-analysis agent system.
 
@@ -436,7 +457,7 @@ No markdown. No code fences. No commentary. No extra keys.
 ## Goal
 Choose the better candidate answer for end-user display.
 Prioritize correctness, completeness, evidence alignment, and risk handling over writing style.
-
+${domainCriteria ? `\n${domainCriteria}\n` : ''}
 ## Inputs
 - User message: "${clampText(userMessage, 2500)}"
 - Answer contract: ${clampText(JSON.stringify(answerContract || {}), 1800)}
@@ -455,7 +476,7 @@ Prioritize correctness, completeness, evidence alignment, and risk handling over
 ## Rules
 - Pick exactly one winner.
 - Prefer the candidate with fewer contradictions, better caveats, and stronger evidence fit.
-- If one candidate failed or timed out, prefer the surviving candidate unless the surviving answer is clearly unusable.
+${domainCriteria ? '- When domain evaluation criteria are provided above, use them as the PRIMARY evaluation rubric. A candidate with correct formulas but poor writing beats a well-written candidate with incorrect formulas.\n' : ''}- If one candidate failed or timed out, prefer the surviving candidate unless the surviving answer is clearly unusable.
 - If the winning candidate still has QA warnings or blockers, describe it as the stronger available answer, not as a fully satisfactory or complete solution.
 - Use confidence from 0.0 to 1.0.
 - Keep the summary concise and user-facing.
@@ -574,6 +595,192 @@ export function validateAgentCandidateJudge(parsed) {
   );
 }
 
+export function buildAnswerContractResponseSchema() {
+  return {
+    type: 'object',
+    properties: {
+      task_type: {
+        type: 'string',
+        enum: Array.from(TASK_TYPES),
+      },
+      required_dimensions: STRING_ARRAY_SCHEMA,
+      required_outputs: {
+        type: 'array',
+        items: {
+          type: 'string',
+          enum: Array.from(OUTPUT_TYPES),
+        },
+      },
+      audience_language: { type: 'string' },
+      brevity: {
+        type: 'string',
+        enum: ['short', 'analysis'],
+      },
+      analysis_depth: {
+        type: 'array',
+        items: {
+          type: 'string',
+          enum: [
+            'methodology_disclosure',
+            'relative_metrics',
+            'trend_context',
+            'sensitivity_range',
+            'actionable_parameters',
+          ],
+        },
+      },
+    },
+    required: [
+      'task_type',
+      'required_dimensions',
+      'required_outputs',
+      'audience_language',
+      'brevity',
+      'analysis_depth',
+    ],
+  };
+}
+
+export function buildAgentBriefResponseSchema() {
+  return {
+    type: 'object',
+    properties: {
+      headline: { type: 'string' },
+      summary: { type: 'string' },
+      metric_pills: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            label: { type: 'string' },
+            value: { type: 'string' },
+          },
+          required: ['label', 'value'],
+        },
+      },
+      tables: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            title: { type: 'string' },
+            columns: STRING_ARRAY_SCHEMA,
+            rows: {
+              type: 'array',
+              items: {
+                type: 'array',
+                items: { type: 'string' },
+              },
+            },
+          },
+          required: ['columns', 'rows'],
+        },
+      },
+      charts: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            type: { type: 'string' },
+            title: { type: 'string' },
+            xKey: { type: 'string' },
+            yKey: { type: 'string' },
+            series: STRING_ARRAY_SCHEMA,
+            data: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {},
+              },
+            },
+            xAxisLabel: { type: 'string' },
+            yAxisLabel: { type: 'string' },
+          },
+        },
+      },
+      key_findings: STRING_ARRAY_SCHEMA,
+      implications: STRING_ARRAY_SCHEMA,
+      caveats: STRING_ARRAY_SCHEMA,
+      next_steps: STRING_ARRAY_SCHEMA,
+      methodology_note: { type: 'string' },
+    },
+    required: [
+      'headline',
+      'summary',
+      'metric_pills',
+      'tables',
+      'charts',
+      'key_findings',
+      'implications',
+      'caveats',
+      'next_steps',
+    ],
+  };
+}
+
+export function buildAgentBriefReviewResponseSchema() {
+  return {
+    type: 'object',
+    properties: {
+      pass: { type: 'boolean' },
+      issues: STRING_ARRAY_SCHEMA,
+      missing_dimensions: STRING_ARRAY_SCHEMA,
+      contradictory_claims: STRING_ARRAY_SCHEMA,
+      repair_instructions: STRING_ARRAY_SCHEMA,
+    },
+    required: [
+      'pass',
+      'issues',
+      'missing_dimensions',
+      'contradictory_claims',
+      'repair_instructions',
+    ],
+  };
+}
+
+export function buildAgentQaReviewResponseSchema() {
+  return {
+    type: 'object',
+    properties: {
+      score: { type: 'number' },
+      blockers: STRING_ARRAY_SCHEMA,
+      issues: STRING_ARRAY_SCHEMA,
+      repair_instructions: STRING_ARRAY_SCHEMA,
+      dimension_scores: QA_DIMENSION_SCORES_SCHEMA,
+    },
+    required: [
+      'score',
+      'blockers',
+      'issues',
+      'repair_instructions',
+      'dimension_scores',
+    ],
+  };
+}
+
+export function buildAgentCandidateJudgeResponseSchema() {
+  return {
+    type: 'object',
+    properties: {
+      winner_candidate_id: {
+        type: 'string',
+        enum: ['primary', 'secondary'],
+      },
+      summary: { type: 'string' },
+      rationale: STRING_ARRAY_SCHEMA,
+      loser_issues: STRING_ARRAY_SCHEMA,
+      confidence: { type: 'number' },
+    },
+    required: [
+      'winner_candidate_id',
+      'summary',
+      'rationale',
+      'loser_issues',
+      'confidence',
+    ],
+  };
+}
+
 export default {
   buildAgentAnswerContractPrompt,
   buildAgentBriefSynthesisPrompt,
@@ -582,6 +789,11 @@ export default {
   buildAgentQaCrossReviewPrompt,
   buildAgentQaRepairSynthesisPrompt,
   buildAgentCandidateJudgePrompt,
+  buildAnswerContractResponseSchema,
+  buildAgentBriefResponseSchema,
+  buildAgentBriefReviewResponseSchema,
+  buildAgentQaReviewResponseSchema,
+  buildAgentCandidateJudgeResponseSchema,
   validateAnswerContract,
   validateAgentBrief,
   validateAgentBriefReview,

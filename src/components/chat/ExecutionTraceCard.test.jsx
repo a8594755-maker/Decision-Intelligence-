@@ -66,4 +66,27 @@ describe('ExecutionTraceCard', () => {
     await user.click(screen.getByRole('button', { name: /Full Narrative/i }));
     expect(screen.getByText('This is the hidden narrative.')).toBeInTheDocument();
   });
+
+  it('renders provider overload categories with a readable label', async () => {
+    const user = userEvent.setup();
+
+    render(
+      <ExecutionTraceCard
+        trace={{
+          failed_attempts: [{
+            id: 'provider-overloaded-1',
+            name: 'Challenger Agent',
+            category: 'provider_overloaded',
+            error: 'The engine is currently overloaded, please try again later',
+            summary: 'Challenger Agent failed because the provider is overloaded.',
+          }],
+          successful_queries: [],
+          raw_narrative: '',
+        }}
+      />
+    );
+
+    await user.click(screen.getByRole('button', { name: /Execution Trace/i }));
+    expect(screen.getByText(/failed · provider overloaded/i)).toBeInTheDocument();
+  });
 });

@@ -1,5 +1,6 @@
 import { DI_PROMPT_IDS, runDiPrompt } from './diModelRouterService.js';
 import { getModelConfig } from './modelConfigService.js';
+import { detectDomain, buildJudgeDomainCriteria } from './analysisDomainEnrichment.js';
 
 function uniqueStrings(items = []) {
   const seen = new Set();
@@ -13,6 +14,19 @@ function uniqueStrings(items = []) {
     result.push(normalized);
   }
   return result;
+}
+
+function summarizeSqlEvidence(candidate) {
+  const toolCalls = candidate?.result?.toolCalls || [];
+  return toolCalls
+    .filter((tc) => tc?.name === 'query_sap_data' && tc?.result?.success && tc?.result?.rows?.length > 0)
+    .slice(0, 3) // cap at 3 queries to avoid bloating the judge prompt
+    .map((tc) => ({
+      sql: String(tc?.args?.sql || '').slice(0, 200),
+      rowCount: tc.result.rows.length,
+      columns: Object.keys(tc.result.rows[0] || {}),
+      sampleRows: tc.result.rows.slice(0, 3),
+    }));
 }
 
 function summarizeCandidate(candidate) {
@@ -31,6 +45,7 @@ function summarizeCandidate(candidate) {
       successful_queries: candidate?.presentation?.trace?.successful_queries?.length || 0,
     },
     artifacts: (candidate?.result?.toolCalls || []).map((toolCall) => toolCall?.name).filter(Boolean),
+    sql_evidence_summary: summarizeSqlEvidence(candidate),
   };
 }
 
@@ -132,6 +147,9 @@ export async function judgeAgentCandidates({
   const degraded = primaryCandidate?.status !== 'completed' || secondaryCandidate?.status !== 'completed';
 
   try {
+    const domain = detectDomain(userMessage);
+    const domainCriteria = domain.domainKey ? buildJudgeDomainCriteria(domain.domainKey) : '';
+
     const result = await runDiPrompt({
       promptId: DI_PROMPT_IDS.AGENT_CANDIDATE_JUDGE,
       input: {
@@ -139,6 +157,7 @@ export async function judgeAgentCandidates({
         answerContract,
         primaryCandidate: summarizeCandidate(primaryCandidate),
         secondaryCandidate: summarizeCandidate(secondaryCandidate),
+        domainCriteria,
       },
       temperature: 0.1,
       maxOutputTokens: 1200,

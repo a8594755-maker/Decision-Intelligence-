@@ -150,6 +150,9 @@ SQL rules:
 - Column names must exactly match the schema above
 - If the user asks for trend/time-series, use the real date/timestamp columns from the schema above
 - If the question is about Dataset B and the allowed tables are operational tables, stay in Dataset B even if it is sparse
+- CRITICAL TIME AGGREGATION: When the user asks for "monthly", "per month", "月均", "每月", or any periodic metric, you MUST GROUP BY DATE_TRUNC('month', <date_column>). Never report a bare SUM() across the full dataset as a "monthly" figure.
+- Olist data spans ~24 months (2016-09 to 2018-10). A bare SUM() without time grouping produces the ALL-TIME total (~24x the actual monthly value). To compute a monthly average, use: SUM(val) / COUNT(DISTINCT DATE_TRUNC('month', date_col)).
+- If reporting an average across time, always include the month count in output so the consumer can verify the denominator.
 
 DuckDB SQL dialect notes:
 - CTEs (WITH ... AS) supported
@@ -157,6 +160,7 @@ DuckDB SQL dialect notes:
 - DATE_TRUNC, EXTRACT, INTERVAL supported
 - PERCENTILE_CONT, MEDIAN, MODE, QUANTILE_DISC supported
 - STRING_AGG, CONCAT supported
+- LATERAL JOIN does NOT support aggregate functions — use CTE + GROUP BY instead
 
 Chart rules:
 - If the user explicitly wants a chart/plot/visualization, set chart to a fitting spec

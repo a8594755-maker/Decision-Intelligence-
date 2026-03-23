@@ -38,4 +38,34 @@ describe('AgentAlternativeCard', () => {
     expect(screen.getByText(/Tool execution failed before a usable brief was produced/i)).toBeInTheDocument();
     expect(screen.getByText(/Execution Trace/i)).toBeInTheDocument();
   });
+
+  it('formats failure categories into readable labels', async () => {
+    const user = userEvent.setup();
+
+    render(
+      <AgentAlternativeCard
+        candidate={{
+          label: 'Challenger Agent',
+          provider: 'kimi',
+          model: 'kimi-k2.5',
+          status: 'failed',
+          failureCategory: 'provider_overloaded',
+          failedReason: 'The engine is currently overloaded, please try again later.',
+          trace: {
+            failed_attempts: [{
+              id: 'alt-overloaded',
+              name: 'Challenger Agent',
+              category: 'provider_overloaded',
+              error: 'The engine is currently overloaded, please try again later.',
+            }],
+            successful_queries: [],
+            raw_narrative: '',
+          },
+        }}
+      />
+    );
+
+    await user.click(screen.getByRole('button', { name: /Alternative Answer/i }));
+    expect(screen.getByText(/\[provider overloaded\]/i)).toBeInTheDocument();
+  });
 });

@@ -163,6 +163,10 @@ export async function executeTool(toolName, args, context = {}) {
     if (entry.id === 'run_python_analysis') {
       return callPythonAnalysisTool(entry, args, context);
     }
+    // Allow generate_analysis_workbook — calls /generate-analysis-workbook
+    if (entry.id === 'generate_analysis_workbook') {
+      return callAnalysisWorkbookTool(entry, args, context);
+    }
     return { success: false, error: `Python API tool "${toolName}" is not supported in chat agent mode yet.` };
   }
 
@@ -342,6 +346,59 @@ function buildPythonDatasetProfile(context, args) {
   }
 
   return null;
+}
+
+// ── Analysis Workbook Tool Support ──────────────────────────────────────────
+// Calls the Python /generate-analysis-workbook endpoint to produce multi-sheet
+// Excel workbooks from structured analysis results.
+
+async function callAnalysisWorkbookTool(entry, args, _context) {
+  try {
+    const body = {
+      title: args.title || 'Analysis Report',
+      sheets: args.sheets || [],
+      methodology_notes: args.methodology_notes || null,
+    };
+
+    const resp = await fetch(`${ML_API_BASE}/generate-analysis-workbook`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: typeof AbortSignal?.timeout === 'function' ? AbortSignal.timeout(120_000) : undefined,
+    });
+
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => '');
+      return { success: false, error: `Workbook generation failed (${resp.status}): ${text.slice(0, 500)}`, toolId: entry.id };
+    }
+
+    // Response is binary xlsx — convert to blob URL for download
+    const blob = await resp.blob();
+    const filename = args.title
+      ? `${args.title.replace(/[^a-zA-Z0-9\u4e00-\u9fff_-]/g, '_')}.xlsx`
+      : 'analysis_report.xlsx';
+    const url = URL.createObjectURL(blob);
+
+    return {
+      success: true,
+      result: {
+        type: 'analysis_workbook',
+        filename,
+        download_url: url,
+        sheet_count: (args.sheets || []).length,
+        message: `Excel workbook "${filename}" generated with ${(args.sheets || []).length} sheets.`,
+      },
+      toolId: entry.id,
+      artifactTypes: ['analysis_workbook'],
+    };
+  } catch (err) {
+    console.error('[chatToolAdapter] Analysis workbook tool failed:', err);
+    return {
+      success: false,
+      error: `Workbook generation failed: ${err.message}`,
+      toolId: entry.id,
+    };
+  }
 }
 
 // ── Registered Tool Support ─────────────────────────────────────────────────

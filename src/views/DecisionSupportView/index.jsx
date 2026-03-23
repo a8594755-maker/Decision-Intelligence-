@@ -16,6 +16,7 @@ import { datasetProfilesService, registerLocalProfile } from '../../services/dat
 import { reuseMemoryService } from '../../services/reuseMemoryService';
 import { streamChatWithAI, getLastUsedModel } from '../../services/geminiAPI';
 import { runAgentLoop, ANALYSIS_AGENT_TOOL_IDS } from '../../services/chatAgentLoop';
+import { detectDomain, buildChallengerInstruction } from '../../services/analysisDomainEnrichment';
 import { registerTool, approveTool } from '../../services/toolRegistryService';
 import { invalidateRegisteredToolsCache } from '../../services/chatToolAdapter';
 import { diResetService } from '../../services/diResetService';
@@ -115,7 +116,10 @@ import useForecastExecutor from './useForecastExecutor.js';
 import usePlanExecutor from './usePlanExecutor.js';
 import useWorkflowExecutor from './useWorkflowExecutor.js';
 import MessageCardRenderer from './MessageCardRenderer.jsx';
-import { getModelConfig, getActiveThinkingMode } from '../../services/modelConfigService.js';
+import {
+  consumeModelConfigNormalizationNotices,
+  getModelConfigResolution,
+} from '../../services/modelConfigService.js';
 
 const tableAvailable = initTableAvailability();
 const conversationsDb = tableAvailable ? supabase : null;
@@ -140,6 +144,27 @@ function resolveCandidateFailureStatus(error) {
   return /timed?\s*out/i.test(message) ? 'timed_out' : 'failed';
 }
 
+function getCandidateFailureCategory(error) {
+  return String(error?.failureCategory || '').trim() || 'tool_transport_failed';
+}
+
+function getCandidateFailureMessage(error) {
+  return String(error?.failureMessage || getErrorMessage(error)).trim() || 'Unknown error';
+}
+
+function getCandidateRecoveryAttempts(error) {
+  return Array.isArray(error?.recoveryAttempts) ? error.recoveryAttempts.filter(Boolean) : [];
+}
+
+function createMissingEvidenceError(result) {
+  const error = new Error('No successful analysis evidence was produced.');
+  error.name = 'AgentLoopError';
+  error.failureCategory = 'missing_evidence';
+  error.failureMessage = 'No successful analysis evidence was produced.';
+  error.recoveryAttempts = Array.isArray(result?.recoveryAttempts) ? result.recoveryAttempts.filter(Boolean) : [];
+  return error;
+}
+
 function buildFailedCandidate({
   candidateId,
   label,
@@ -149,14 +174,20 @@ function buildFailedCandidate({
   transport = null,
   status,
   failedReason,
+  failureCategory = 'tool_transport_failed',
+  failureMessage = null,
+  recoveryAttempts = [],
+  configNormalized = false,
   startedAt,
   finishedAt,
   durationMs,
 }) {
-  const normalizedReason = String(failedReason || 'Unknown error').trim() || 'Unknown error';
+  const normalizedReason = String(failedReason || failureMessage || 'Unknown error').trim() || 'Unknown error';
+  const normalizedCategory = String(failureCategory || 'tool_transport_failed').trim() || 'tool_transport_failed';
+  const categoryLabel = normalizedCategory.replace(/_/g, ' ');
   const summary = status === 'timed_out'
-    ? `${label || candidateId || 'Candidate'} timed out: ${normalizedReason}`
-    : `${label || candidateId || 'Candidate'} failed: ${normalizedReason}`;
+    ? `${label || candidateId || 'Candidate'} timed out (${categoryLabel}): ${normalizedReason}`
+    : `${label || candidateId || 'Candidate'} failed (${categoryLabel}): ${normalizedReason}`;
 
   return {
     candidateId,
@@ -170,6 +201,10 @@ function buildFailedCandidate({
     finishedAt,
     durationMs,
     failedReason: normalizedReason,
+    failureCategory: normalizedCategory,
+    failureMessage: String(failureMessage || normalizedReason).trim() || normalizedReason,
+    recoveryAttempts,
+    configNormalized: Boolean(configNormalized),
     result: null,
     presentation: {
       brief: null,
@@ -177,6 +212,7 @@ function buildFailedCandidate({
         failed_attempts: [{
           id: `${candidateId || 'candidate'}-failure`,
           name: label || candidateId || 'Candidate',
+          category: normalizedCategory,
           error: normalizedReason,
           summary,
         }],
@@ -186,6 +222,26 @@ function buildFailedCandidate({
       qa: null,
     },
   };
+}
+
+function hasSuccessfulAnalysisEvidence(result) {
+  const toolCalls = Array.isArray(result?.toolCalls) ? result.toolCalls : [];
+  return toolCalls.some((toolCall) => {
+    if (!toolCall?.result?.success) return false;
+
+    if (toolCall?.name === 'run_python_analysis' || toolCall?.name === 'generate_chart') {
+      return true;
+    }
+
+    if (toolCall?.name === 'query_sap_data') {
+      const rowCount = Number.isFinite(toolCall?.result?.result?.rowCount)
+        ? toolCall.result.result.rowCount
+        : (Array.isArray(toolCall?.result?.result?.rows) ? toolCall.result.result.rows.length : null);
+      return Number.isFinite(rowCount) ? rowCount > 0 : false;
+    }
+
+    return false;
+  });
 }
 
 function buildOrchestrationCandidateMeta(candidate) {
@@ -200,6 +256,10 @@ function buildOrchestrationCandidateMeta(candidate) {
     finishedAt: candidate.finishedAt || null,
     durationMs: Number.isFinite(candidate.durationMs) ? candidate.durationMs : null,
     failedReason: candidate.failedReason || null,
+    failureCategory: candidate.failureCategory || null,
+    failureMessage: candidate.failureMessage || null,
+    recoveryAttempts: Array.isArray(candidate.recoveryAttempts) ? candidate.recoveryAttempts : [],
+    configNormalized: Boolean(candidate.configNormalized),
   };
 }
 
@@ -208,7 +268,8 @@ function buildBlockedAgentQa(candidates = []) {
     .map((candidate) => {
       const reason = String(candidate?.failedReason || '').trim();
       if (!reason) return null;
-      return `${candidate?.label || candidate?.candidateId || 'Candidate'}: ${reason}`;
+      const category = String(candidate?.failureCategory || '').trim();
+      return `${candidate?.label || candidate?.candidateId || 'Candidate'}${category ? ` [${category}]` : ''}: ${reason}`;
     })
     .filter(Boolean);
 
@@ -238,11 +299,13 @@ function buildBlockedTrace(candidates = []) {
       .map((candidate, index) => {
         const reason = String(candidate?.failedReason || '').trim();
         if (!reason) return null;
+        const category = String(candidate?.failureCategory || '').trim();
         return {
           id: `${candidate?.candidateId || 'candidate'}-${index}`,
           name: candidate?.label || candidate?.candidateId || 'Candidate',
+          category: category || null,
           error: reason,
-          summary: reason,
+          summary: category ? `[${category}] ${reason}` : reason,
         };
       })
       .filter(Boolean),
@@ -2115,6 +2178,7 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
       tone,
       provider,
       model,
+      configNormalized = false,
       agentMessage,
       userMessage,
       conversationHistory,
@@ -2152,6 +2216,10 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
         agentModel: model,
       });
 
+      if (mode === 'analysis' && !hasSuccessfulAnalysisEvidence(result)) {
+        throw createMissingEvidenceError(result);
+      }
+
       const presentation = await buildAgentPresentationPayload({
         userMessage,
         toolCalls: result.toolCalls || [],
@@ -2173,6 +2241,8 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
         provider: result?.provider || provider,
         model: result?.model || model,
         transport: result?.transport || null,
+        recoveryAttempts: Array.isArray(result?.recoveryAttempts) ? result.recoveryAttempts : [],
+        configNormalized: Boolean(configNormalized),
         result,
         presentation,
       };
@@ -2196,11 +2266,13 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
           finishedAt,
           durationMs: Date.now() - startedMs,
           failedReason: null,
+          failureCategory: null,
+          failureMessage: null,
         };
       } catch (error) {
         const finishedAt = new Date().toISOString();
         const status = resolveCandidateFailureStatus(error);
-        const failedReason = getErrorMessage(error);
+        const failedReason = getCandidateFailureMessage(error);
         const failureCandidate = buildFailedCandidate({
           candidateId: config.candidateId,
           label: config.label,
@@ -2210,6 +2282,10 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
           transport: null,
           status,
           failedReason,
+          failureCategory: getCandidateFailureCategory(error),
+          failureMessage: getCandidateFailureMessage(error),
+          recoveryAttempts: getCandidateRecoveryAttempts(error),
+          configNormalized: config.configNormalized,
           startedAt,
           finishedAt,
           durationMs: Date.now() - startedMs,
@@ -2236,9 +2312,16 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
       strategy,
       candidates = [],
     }) => {
-      const payloadCandidates = candidates.length > 0 ? candidates : [winner, alternative].filter(Boolean);
+      const payloadCandidates = candidates.length > 0
+        ? (winner
+            ? [winner, ...candidates.filter((candidate) => candidate?.candidateId !== winner?.candidateId)]
+            : candidates)
+        : [winner, alternative].filter(Boolean);
       const winnerTrace = winner?.presentation?.trace || null;
       const blockedTrace = buildBlockedTrace(payloadCandidates);
+      const orchestrationMode = payloadCandidates.length > 1 || strategy?.dualGenerate
+        ? 'parallel_dual'
+        : 'single';
       return {
         toolCalls: winner?.result?.toolCalls || [],
         brief: winner?.presentation?.brief || null,
@@ -2257,6 +2340,10 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
           finishedAt: candidate.finishedAt || null,
           durationMs: Number.isFinite(candidate.durationMs) ? candidate.durationMs : null,
           failedReason: candidate.failedReason || null,
+          failureCategory: candidate.failureCategory || null,
+          failureMessage: candidate.failureMessage || null,
+          recoveryAttempts: Array.isArray(candidate.recoveryAttempts) ? candidate.recoveryAttempts : [],
+          configNormalized: Boolean(candidate.configNormalized),
           brief: candidate.presentation?.brief || null,
           trace: candidate.presentation?.trace || null,
           qa: candidate.presentation?.qa || null,
@@ -2269,7 +2356,7 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
           triggerReasons: strategy?.triggerReasons || [],
         } : null,
         orchestration: {
-          mode: strategy?.dualGenerate ? 'parallel_dual' : 'single',
+          mode: orchestrationMode,
           triggerReasons: strategy?.triggerReasons || [],
           candidates: payloadCandidates.map(buildOrchestrationCandidateMeta).filter(Boolean),
         },
@@ -2287,13 +2374,34 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
       datasetProfileId,
       datasetInputData: buildTaskInputData(runtimeDatasetContext, attachments),
     };
-    const strategy = resolveAgentExecutionStrategy({
+    const baseStrategy = resolveAgentExecutionStrategy({
       userMessage: query,
       answerContract,
       mode: 'analysis',
       hasAttachments: attachments.length > 0,
     });
+    const strategy = baseDirectMode === 'full'
+      ? {
+          ...baseStrategy,
+          dualGenerate: true,
+          mustJudge: true,
+          triggerReasons: [...baseStrategy.triggerReasons, 'forced_full_thinking'],
+        }
+      : baseStrategy;
     const directModelMode = baseDirectMode || (strategy.dualGenerate ? 'dual' : 'single');
+    const resolveRoleConfig = (role, mode) => getModelConfigResolution(role, mode);
+    const appendConfigNormalizationNotes = () => {
+      consumeModelConfigNormalizationNotices().forEach((notice) => {
+        appendAgentThinkingNote({
+          agentKey: 'config',
+          agentLabel: 'Model Config',
+          agentTone: 'system',
+          provider: '',
+          model: '',
+          status: 'completed',
+        }, notice.message);
+      });
+    };
 
     let selectedCandidate;
     let alternativeCandidate = null;
@@ -2302,12 +2410,16 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
 
     if (strategy.dualGenerate) {
       setStreamingContent('🧠 Running primary agent...\n🧪 Running challenger agent...\n');
+      const primaryModelConfig = resolveRoleConfig('primary', directModelMode);
+      const secondaryModelConfig = resolveRoleConfig('secondary', directModelMode);
+      appendConfigNormalizationNotes();
       const primaryConfig = {
         candidateId: 'primary',
         label: 'Primary Agent',
         tone: 'primary',
-        provider: getModelConfig('primary', directModelMode).provider,
-        model: getModelConfig('primary', directModelMode).model,
+        provider: primaryModelConfig.provider,
+        model: primaryModelConfig.model,
+        configNormalized: primaryModelConfig.configNormalized,
         agentMessage: buildDirectAnalysisAgentPrompt(query),
         userMessage: query,
         conversationHistory: history.slice(-6),
@@ -2319,9 +2431,10 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
         candidateId: 'secondary',
         label: 'Challenger Agent',
         tone: 'secondary',
-        provider: getModelConfig('secondary', directModelMode).provider,
-        model: getModelConfig('secondary', directModelMode).model,
-        agentMessage: `${buildDirectAnalysisAgentPrompt(query)}\n\nYou are the CHALLENGER analyst. Provide a genuinely different analytical angle:\n1. DIFFERENT METHODOLOGY: If the obvious approach is historical mean, use median or weighted-recent instead.\n2. DIFFERENT SCOPE: Focus on the most impactful subset (top decile, worst performers, newest cohort).\n3. STRESS TEST: Challenge the most optimistic assumption. What breaks if demand grows 20%?\n4. RELATIVE CONTEXT: Emphasize relative positioning (vs. category average, vs. prior period, as % of total).\nDo NOT run the same queries with the same framing. Your value is surfacing what the primary answer misses.`,
+        provider: secondaryModelConfig.provider,
+        model: secondaryModelConfig.model,
+        configNormalized: secondaryModelConfig.configNormalized,
+        agentMessage: `${buildDirectAnalysisAgentPrompt(query)}\n\n${buildChallengerInstruction({ answerContract, domainKey: detectDomain(query).domainKey })}`,
         userMessage: query,
         conversationHistory: history.slice(-6),
         toolContext,
@@ -2341,7 +2454,11 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
           provider: primaryConfig.provider,
           model: primaryConfig.model,
           status: resolveCandidateFailureStatus(primarySettled.reason),
-          failedReason: getErrorMessage(primarySettled.reason),
+          failedReason: getCandidateFailureMessage(primarySettled.reason),
+          failureCategory: getCandidateFailureCategory(primarySettled.reason),
+          failureMessage: getCandidateFailureMessage(primarySettled.reason),
+          recoveryAttempts: getCandidateRecoveryAttempts(primarySettled.reason),
+          configNormalized: primaryConfig.configNormalized,
           startedAt: null,
           finishedAt: new Date().toISOString(),
           durationMs: null,
@@ -2355,7 +2472,11 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
           provider: secondaryConfig.provider,
           model: secondaryConfig.model,
           status: resolveCandidateFailureStatus(secondarySettled.reason),
-          failedReason: getErrorMessage(secondarySettled.reason),
+          failedReason: getCandidateFailureMessage(secondarySettled.reason),
+          failureCategory: getCandidateFailureCategory(secondarySettled.reason),
+          failureMessage: getCandidateFailureMessage(secondarySettled.reason),
+          recoveryAttempts: getCandidateRecoveryAttempts(secondarySettled.reason),
+          configNormalized: secondaryConfig.configNormalized,
           startedAt: null,
           finishedAt: new Date().toISOString(),
           durationMs: null,
@@ -2367,7 +2488,7 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
 
       const completedCandidates = settledCandidates.filter((candidate) => candidate.status === 'completed');
 
-      if (completedCandidates.length > 0) {
+      if (completedCandidates.length === 2) {
         setStreamingContent((prev) => prev + '\n⚖️ Running judge...\n');
         judgeDecision = await judgeAgentCandidates({
           userMessage: query,
@@ -2392,6 +2513,18 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
         );
         selectedCandidate = judgedWinner || completedCandidates[0];
         alternativeCandidate = settledCandidates.find((candidate) => candidate?.candidateId !== selectedCandidate?.candidateId) || null;
+      } else if (completedCandidates.length === 1) {
+        selectedCandidate = completedCandidates[0];
+        alternativeCandidate = settledCandidates.find((candidate) => candidate?.candidateId !== selectedCandidate?.candidateId) || null;
+        appendAgentThinkingNote({
+          agentKey: 'judge',
+          agentLabel: 'Judge',
+          agentTone: 'judge',
+          provider: 'orchestrator',
+          model: 'skipped',
+          transport: 'orchestrator',
+          status: 'failed',
+        }, 'Judge skipped because only one candidate produced usable evidence.');
       } else {
         judgeDecision = {
           winnerCandidateId: null,
@@ -2419,32 +2552,103 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
         alternativeCandidate = null;
       }
     } else {
-      const startedAt = new Date().toISOString();
-      const startedMs = Date.now();
-      selectedCandidate = await runAgentCandidatePass({
+      const primaryModelConfig = resolveRoleConfig('primary', directModelMode);
+      appendConfigNormalizationNotes();
+      selectedCandidate = await runSettledCandidatePass({
         candidateId: 'primary',
         label: 'Primary Agent',
         tone: 'primary',
-        provider: getModelConfig('primary', directModelMode).provider,
-        model: getModelConfig('primary', directModelMode).model,
+        provider: primaryModelConfig.provider,
+        model: primaryModelConfig.model,
+        configNormalized: primaryModelConfig.configNormalized,
         agentMessage: buildDirectAnalysisAgentPrompt(query),
         userMessage: query,
         conversationHistory: history.slice(-6),
         toolContext,
         answerContract,
         mode: 'analysis',
-        signal: chatAbortRef.current.signal,
         streamToUser: true,
       });
-      selectedCandidate = {
-        ...selectedCandidate,
-        status: 'completed',
-        startedAt,
-        finishedAt: new Date().toISOString(),
-        durationMs: Date.now() - startedMs,
-        failedReason: null,
-      };
       candidatePool = [selectedCandidate];
+
+      const dataToolNames = new Set(ANALYSIS_AGENT_TOOL_IDS);
+      const usedDataTools = selectedCandidate?.status === 'completed' && (selectedCandidate?.result?.toolCalls || []).some(
+        (toolCall) => dataToolNames.has(toolCall?.name)
+      );
+
+      if (usedDataTools && !chatAbortRef.current?.signal?.aborted) {
+        setStreamingContent((prev) => prev + '\n🔄 Data tools detected — escalating to dual agent + judge...\n🧪 Running challenger agent...\n');
+        appendAgentThinkingNote({
+          agentKey: 'escalation',
+          agentLabel: 'Auto-Escalation',
+          agentTone: 'system',
+          provider: '',
+          model: '',
+        }, 'Primary agent used data tools — launching challenger for quality verification.');
+
+        const challengerModelConfig = resolveRoleConfig('secondary', 'dual');
+        appendConfigNormalizationNotes();
+        const challengerConfig = {
+          candidateId: 'secondary',
+          label: 'Challenger Agent',
+          tone: 'secondary',
+          provider: challengerModelConfig.provider,
+          model: challengerModelConfig.model,
+          configNormalized: challengerModelConfig.configNormalized,
+          agentMessage: `${buildDirectAnalysisAgentPrompt(query)}\n\n${buildChallengerInstruction({ answerContract, domainKey: detectDomain(query).domainKey, primaryBrief: selectedCandidate?.presentation?.brief })}`,
+          userMessage: query,
+          conversationHistory: history.slice(-6),
+          toolContext,
+          answerContract,
+          mode: 'analysis',
+        };
+        const challengerResult = await runSettledCandidatePass(challengerConfig);
+
+        setStreamingContent((prev) => `${prev}${challengerResult.status === 'completed' ? '✅' : '❌'} Challenger agent ${challengerResult.status === 'completed' ? 'completed' : challengerResult.status === 'timed_out' ? 'timed out' : 'failed'}\n`);
+
+        candidatePool = [selectedCandidate, challengerResult];
+
+        const completedCandidates = candidatePool.filter((candidate) => candidate?.status === 'completed');
+
+        if (completedCandidates.length === 2) {
+          setStreamingContent((prev) => prev + '\n⚖️ Running judge...\n');
+          judgeDecision = await judgeAgentCandidates({
+            userMessage: query,
+            answerContract,
+            primaryCandidate: selectedCandidate,
+            secondaryCandidate: challengerResult,
+            modelMode: 'dual',
+          });
+
+          appendAgentThinkingNote({
+            agentKey: 'judge',
+            agentLabel: 'Judge',
+            agentTone: 'judge',
+            provider: judgeDecision?.reviewer?.provider || '',
+            model: judgeDecision?.reviewer?.model || '',
+            transport: judgeDecision?.reviewer?.transport || null,
+            status: 'completed',
+          }, [judgeDecision?.summary, ...(judgeDecision?.rationale || [])].filter(Boolean).join('\n'));
+
+          const judgedWinner = candidatePool.find((candidate) =>
+            candidate?.candidateId === judgeDecision?.winnerCandidateId && candidate?.status === 'completed'
+          );
+          selectedCandidate = judgedWinner || selectedCandidate;
+          alternativeCandidate = candidatePool.find((candidate) => candidate?.candidateId !== selectedCandidate?.candidateId) || null;
+        } else if (completedCandidates.length === 1) {
+          selectedCandidate = completedCandidates[0];
+          alternativeCandidate = candidatePool.find((candidate) => candidate?.candidateId !== selectedCandidate?.candidateId) || null;
+          appendAgentThinkingNote({
+            agentKey: 'judge',
+            agentLabel: 'Judge',
+            agentTone: 'judge',
+            provider: 'orchestrator',
+            model: 'skipped',
+            transport: 'orchestrator',
+            status: 'failed',
+          }, 'Judge skipped because only one candidate produced usable evidence.');
+        }
+      }
     }
 
     const thinkingTraceMessage = buildThinkingTraceMessage();
@@ -2454,7 +2658,7 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
       {
         role: 'ai',
         type: 'agent_response',
-        content: selectedCandidate?.result?.text || judgeDecision?.summary || '',
+        content: selectedCandidate?.result?.text || judgeDecision?.summary || selectedCandidate?.failedReason || '',
         payload: buildCompetitivePayload({
           winner: selectedCandidate,
           alternative: alternativeCandidate,
@@ -3321,6 +3525,19 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
           : baseStrategy;
         // Resolve modelMode: full > dual > single
         const modelMode = baseModelMode || (strategy.dualGenerate ? 'dual' : 'single');
+        const resolveRoleConfig = (role, requestedMode) => getModelConfigResolution(role, requestedMode);
+        const appendConfigNormalizationNotes = () => {
+          consumeModelConfigNormalizationNotices().forEach((notice) => {
+            appendAgentThinkingNote({
+              agentKey: 'config',
+              agentLabel: 'Model Config',
+              agentTone: 'system',
+              provider: '',
+              model: '',
+              status: 'completed',
+            }, notice.message);
+          });
+        };
 
         const runAgentCandidatePass = async ({
           candidateId,
@@ -3328,6 +3545,7 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
           tone,
           provider,
           model,
+          configNormalized = false,
           agentMessage,
           userMessage,
           conversationHistory,
@@ -3379,6 +3597,10 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
             agentModel: model,
           });
 
+          if (mode === 'analysis' && !hasSuccessfulAnalysisEvidence(result)) {
+            throw createMissingEvidenceError(result);
+          }
+
           const presentation = await buildAgentPresentationPayload({
             userMessage,
             toolCalls: result.toolCalls || [],
@@ -3400,6 +3622,8 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
             provider: result?.provider || provider,
             model: result?.model || model,
             transport: result?.transport || null,
+            recoveryAttempts: Array.isArray(result?.recoveryAttempts) ? result.recoveryAttempts : [],
+            configNormalized: Boolean(configNormalized),
             result,
             presentation,
           };
@@ -3423,11 +3647,13 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
               finishedAt,
               durationMs: Date.now() - startedMs,
               failedReason: null,
+              failureCategory: null,
+              failureMessage: null,
             };
           } catch (error) {
             const finishedAt = new Date().toISOString();
             const status = resolveCandidateFailureStatus(error);
-            const failedReason = getErrorMessage(error);
+            const failedReason = getCandidateFailureMessage(error);
             const failureCandidate = buildFailedCandidate({
               candidateId: config.candidateId,
               label: config.label,
@@ -3437,6 +3663,10 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
               transport: null,
               status,
               failedReason,
+              failureCategory: getCandidateFailureCategory(error),
+              failureMessage: getCandidateFailureMessage(error),
+              recoveryAttempts: getCandidateRecoveryAttempts(error),
+              configNormalized: config.configNormalized,
               startedAt,
               finishedAt,
               durationMs: Date.now() - startedMs,
@@ -3456,7 +3686,11 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
         };
 
         const buildCompetitivePayload = ({ winner = null, alternative = null, judgeDecision = null, candidates = [] }) => {
-          const payloadCandidates = candidates.length > 0 ? candidates : [winner, alternative].filter(Boolean);
+          const payloadCandidates = candidates.length > 0
+            ? (winner
+                ? [winner, ...candidates.filter((candidate) => candidate?.candidateId !== winner?.candidateId)]
+                : candidates)
+            : [winner, alternative].filter(Boolean);
           const winnerTrace = winner?.presentation?.trace || null;
           return {
             toolCalls: winner?.result?.toolCalls || [],
@@ -3476,24 +3710,28 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
               finishedAt: candidate.finishedAt || null,
               durationMs: Number.isFinite(candidate.durationMs) ? candidate.durationMs : null,
               failedReason: candidate.failedReason || null,
+              failureCategory: candidate.failureCategory || null,
+              failureMessage: candidate.failureMessage || null,
+              recoveryAttempts: Array.isArray(candidate.recoveryAttempts) ? candidate.recoveryAttempts : [],
+              configNormalized: Boolean(candidate.configNormalized),
               brief: candidate.presentation?.brief || null,
               trace: candidate.presentation?.trace || null,
               qa: candidate.presentation?.qa || null,
             })),
-            judgeDecision: judgeDecision ? {
-              ...judgeDecision,
-              winnerLabel: winner?.label || '',
-              winnerProvider: winner?.provider || '',
-              winnerModel: winner?.model || '',
-              triggerReasons: strategy?.triggerReasons || [],
-            } : null,
-            orchestration: {
-              mode: strategy?.dualGenerate ? 'parallel_dual' : 'single',
-              triggerReasons: strategy?.triggerReasons || [],
-              candidates: payloadCandidates.map(buildOrchestrationCandidateMeta).filter(Boolean),
-            },
-          };
-        };
+        judgeDecision: judgeDecision ? {
+          ...judgeDecision,
+          winnerLabel: winner?.label || '',
+          winnerProvider: winner?.provider || '',
+          winnerModel: winner?.model || '',
+          triggerReasons: strategy?.triggerReasons || [],
+        } : null,
+        orchestration: {
+          mode: (payloadCandidates.length > 1 || strategy?.dualGenerate) ? 'parallel_dual' : 'single',
+          triggerReasons: strategy?.triggerReasons || [],
+          candidates: payloadCandidates.map(buildOrchestrationCandidateMeta).filter(Boolean),
+        },
+      };
+    };
 
         let selectedCandidate;
         let alternativeCandidate = null;
@@ -3503,12 +3741,16 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
         if (strategy.dualGenerate) {
           lastChunkAt = Date.now();
           setStreamingContent('🧠 Running primary agent...\n🧪 Running challenger agent...\n');
+          const primaryModelConfig = resolveRoleConfig('primary', modelMode);
+          const secondaryModelConfig = resolveRoleConfig('secondary', modelMode);
+          appendConfigNormalizationNotes();
           const primaryConfig = {
             candidateId: 'primary',
             label: 'Primary Agent',
             tone: 'primary',
-            provider: getModelConfig('primary', modelMode).provider,
-            model: getModelConfig('primary', modelMode).model,
+            provider: primaryModelConfig.provider,
+            model: primaryModelConfig.model,
+            configNormalized: primaryModelConfig.configNormalized,
             agentMessage: messageTextWithAttachments,
             userMessage: messageTextWithAttachments,
             conversationHistory: history,
@@ -3520,9 +3762,10 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
             candidateId: 'secondary',
             label: 'Challenger Agent',
             tone: 'secondary',
-            provider: getModelConfig('secondary', modelMode).provider,
-            model: getModelConfig('secondary', modelMode).model,
-            agentMessage: `${messageTextWithAttachments}\n\nYou are the CHALLENGER analyst. Provide a genuinely different analytical angle:\n1. DIFFERENT METHODOLOGY: If the obvious approach is historical mean, use median or weighted-recent instead.\n2. DIFFERENT SCOPE: Focus on the most impactful subset (top decile, worst performers, newest cohort).\n3. STRESS TEST: Challenge the most optimistic assumption. What breaks if demand grows 20%?\n4. RELATIVE CONTEXT: Emphasize relative positioning (vs. category average, vs. prior period, as % of total).\nDo NOT run the same queries with the same framing. Your value is surfacing what the primary answer misses.`,
+            provider: secondaryModelConfig.provider,
+            model: secondaryModelConfig.model,
+            configNormalized: secondaryModelConfig.configNormalized,
+            agentMessage: `${messageTextWithAttachments}\n\n${buildChallengerInstruction({ answerContract, domainKey: detectDomain(messageTextWithAttachments).domainKey })}`,
             userMessage: messageTextWithAttachments,
             conversationHistory: history,
             toolContext,
@@ -3542,7 +3785,11 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
               provider: primaryConfig.provider,
               model: primaryConfig.model,
               status: resolveCandidateFailureStatus(primarySettled.reason),
-              failedReason: getErrorMessage(primarySettled.reason),
+              failedReason: getCandidateFailureMessage(primarySettled.reason),
+              failureCategory: getCandidateFailureCategory(primarySettled.reason),
+              failureMessage: getCandidateFailureMessage(primarySettled.reason),
+              recoveryAttempts: getCandidateRecoveryAttempts(primarySettled.reason),
+              configNormalized: primaryConfig.configNormalized,
               startedAt: null,
               finishedAt: new Date().toISOString(),
               durationMs: null,
@@ -3556,7 +3803,11 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
               provider: secondaryConfig.provider,
               model: secondaryConfig.model,
               status: resolveCandidateFailureStatus(secondarySettled.reason),
-              failedReason: getErrorMessage(secondarySettled.reason),
+              failedReason: getCandidateFailureMessage(secondarySettled.reason),
+              failureCategory: getCandidateFailureCategory(secondarySettled.reason),
+              failureMessage: getCandidateFailureMessage(secondarySettled.reason),
+              recoveryAttempts: getCandidateRecoveryAttempts(secondarySettled.reason),
+              configNormalized: secondaryConfig.configNormalized,
               startedAt: null,
               finishedAt: new Date().toISOString(),
               durationMs: null,
@@ -3569,7 +3820,7 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
 
           const completedCandidates = settledCandidates.filter((candidate) => candidate.status === 'completed');
 
-          if (completedCandidates.length > 0) {
+          if (completedCandidates.length === 2) {
             lastChunkAt = Date.now();
             setStreamingContent((prev) => prev + '\n⚖️ Running judge...\n');
             judgeDecision = await judgeAgentCandidates({
@@ -3595,6 +3846,18 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
             );
             selectedCandidate = judgedWinner || completedCandidates[0];
             alternativeCandidate = settledCandidates.find((candidate) => candidate?.candidateId !== selectedCandidate?.candidateId) || null;
+          } else if (completedCandidates.length === 1) {
+            selectedCandidate = completedCandidates[0];
+            alternativeCandidate = settledCandidates.find((candidate) => candidate?.candidateId !== selectedCandidate?.candidateId) || null;
+            appendAgentThinkingNote({
+              agentKey: 'judge',
+              agentLabel: 'Judge',
+              agentTone: 'judge',
+              provider: 'orchestrator',
+              model: 'skipped',
+              transport: 'orchestrator',
+              status: 'failed',
+            }, 'Judge skipped because only one candidate produced usable evidence.');
           } else {
             judgeDecision = {
               winnerCandidateId: null,
@@ -3623,35 +3886,28 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
           }
         } else {
           // ── Single agent path (with auto-escalation to dual if data tools used) ──
-          const startedAt = new Date().toISOString();
-          const startedMs = Date.now();
-          selectedCandidate = await runAgentCandidatePass({
+          const primaryModelConfig = resolveRoleConfig('primary', modelMode);
+          appendConfigNormalizationNotes();
+          selectedCandidate = await runSettledCandidatePass({
             candidateId: 'primary',
             label: 'Primary Agent',
             tone: 'primary',
-            provider: getModelConfig('primary', modelMode).provider,
-            model: getModelConfig('primary', modelMode).model,
+            provider: primaryModelConfig.provider,
+            model: primaryModelConfig.model,
+            configNormalized: primaryModelConfig.configNormalized,
             agentMessage: messageTextWithAttachments,
             userMessage: messageTextWithAttachments,
             conversationHistory: history,
             toolContext,
             answerContract,
             mode: effectiveMode,
-            signal: chatAbortRef.current.signal,
             streamToUser: true,
           });
-          selectedCandidate = {
-            ...selectedCandidate,
-            status: 'completed',
-            startedAt,
-            finishedAt: new Date().toISOString(),
-            durationMs: Date.now() - startedMs,
-            failedReason: null,
-          };
+          candidatePool = [selectedCandidate];
 
           // ── Auto-escalation: if single agent used data/analysis tools, launch challenger + judge ──
           const dataToolNames = new Set(ANALYSIS_AGENT_TOOL_IDS);
-          const usedDataTools = (selectedCandidate?.result?.toolCalls || []).some(
+          const usedDataTools = selectedCandidate?.status === 'completed' && (selectedCandidate?.result?.toolCalls || []).some(
             (tc) => dataToolNames.has(tc?.name)
           );
 
@@ -3667,13 +3923,16 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
             }, 'Primary agent used data tools — launching challenger for quality verification.');
 
             const dualModelMode = 'dual';
+            const challengerModelConfig = resolveRoleConfig('secondary', dualModelMode);
+            appendConfigNormalizationNotes();
             const challengerConfig = {
               candidateId: 'secondary',
               label: 'Challenger Agent',
               tone: 'secondary',
-              provider: getModelConfig('secondary', dualModelMode).provider,
-              model: getModelConfig('secondary', dualModelMode).model,
-              agentMessage: `${messageTextWithAttachments}\n\nYou are the CHALLENGER analyst. Provide a genuinely different analytical angle:\n1. DIFFERENT METHODOLOGY: If the obvious approach is historical mean, use median or weighted-recent instead.\n2. DIFFERENT SCOPE: Focus on the most impactful subset (top decile, worst performers, newest cohort).\n3. STRESS TEST: Challenge the most optimistic assumption. What breaks if demand grows 20%?\n4. RELATIVE CONTEXT: Emphasize relative positioning (vs. category average, vs. prior period, as % of total).\nDo NOT run the same queries with the same framing. Your value is surfacing what the primary answer misses.`,
+              provider: challengerModelConfig.provider,
+              model: challengerModelConfig.model,
+              configNormalized: challengerModelConfig.configNormalized,
+              agentMessage: `${messageTextWithAttachments}\n\n${buildChallengerInstruction({ answerContract, domainKey: detectDomain(messageTextWithAttachments).domainKey, primaryBrief: selectedCandidate?.presentation?.brief })}`,
               userMessage: messageTextWithAttachments,
               conversationHistory: history,
               toolContext,
@@ -3687,7 +3946,9 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
 
             candidatePool = [selectedCandidate, challengerResult];
 
-            if (selectedCandidate.status === 'completed' || challengerResult.status === 'completed') {
+            const completedCandidates = candidatePool.filter((candidate) => candidate?.status === 'completed');
+
+            if (completedCandidates.length === 2) {
               lastChunkAt = Date.now();
               setStreamingContent((prev) => prev + '\n⚖️ Running judge...\n');
               judgeDecision = await judgeAgentCandidates({
@@ -3711,15 +3972,23 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
               );
               selectedCandidate = judgedWinner || selectedCandidate;
               alternativeCandidate = candidatePool.find((c) => c?.candidateId !== selectedCandidate?.candidateId) || null;
-            } else {
-              candidatePool = [selectedCandidate];
+            } else if (completedCandidates.length === 1) {
+              selectedCandidate = completedCandidates[0];
+              alternativeCandidate = candidatePool.find((c) => c?.candidateId !== selectedCandidate?.candidateId) || null;
+              appendAgentThinkingNote({
+                agentKey: 'judge',
+                agentLabel: 'Judge',
+                agentTone: 'judge',
+                provider: 'orchestrator',
+                model: 'skipped',
+                transport: 'orchestrator',
+                status: 'failed',
+              }, 'Judge skipped because only one candidate produced usable evidence.');
             }
-          } else {
-            candidatePool = [selectedCandidate];
           }
         }
 
-        fullResult = selectedCandidate?.result?.text || judgeDecision?.summary || '';
+        fullResult = selectedCandidate?.result?.text || judgeDecision?.summary || selectedCandidate?.failedReason || '';
         agentToolCalls = selectedCandidate?.result?.toolCalls || [];
         agentPayload = buildCompetitivePayload({
           winner: selectedCandidate,

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mockInvokeAiProxy = vi.fn();
 const mockValidateAgentQaReview = vi.fn(() => true);
 const mockValidateAgentCandidateJudge = vi.fn(() => true);
+const mockValidateAnswerContract = vi.fn(() => true);
 
 vi.mock('../prompts/diJsonContracts', () => ({
   buildBlockingQuestionPrompt: () => 'blocking',
@@ -14,17 +15,22 @@ vi.mock('../prompts/diJsonContracts', () => ({
 
 vi.mock('../prompts/agentResponsePrompt', () => ({
   buildAgentAnswerContractPrompt: () => 'answer contract',
+  buildAnswerContractResponseSchema: () => ({ type: 'object', properties: { task_type: { type: 'string' } } }),
   buildAgentCandidateJudgePrompt: () => 'candidate judge',
+  buildAgentCandidateJudgeResponseSchema: () => ({ type: 'object', properties: { winner_candidate_id: { type: 'string' } } }),
   buildAgentBriefReviewPrompt: () => 'brief review',
+  buildAgentBriefReviewResponseSchema: () => ({ type: 'object', properties: { pass: { type: 'boolean' } } }),
   buildAgentBriefSynthesisPrompt: () => 'brief synth',
+  buildAgentBriefResponseSchema: () => ({ type: 'object', properties: { headline: { type: 'string' } } }),
   buildAgentQaSelfReviewPrompt: () => 'self review',
   buildAgentQaCrossReviewPrompt: () => 'cross review',
+  buildAgentQaReviewResponseSchema: () => ({ type: 'object', properties: { score: { type: 'number' } } }),
   buildAgentQaRepairSynthesisPrompt: () => 'repair synth',
   validateAgentBrief: () => true,
   validateAgentCandidateJudge: (...args) => mockValidateAgentCandidateJudge(...args),
   validateAgentBriefReview: () => true,
   validateAgentQaReview: (...args) => mockValidateAgentQaReview(...args),
-  validateAnswerContract: () => true,
+  validateAnswerContract: (...args) => mockValidateAnswerContract(...args),
 }));
 
 vi.mock('../prompts/intentParserPrompt', () => ({
@@ -45,6 +51,8 @@ describe('diModelRouterService reviewer routing', () => {
     mockValidateAgentQaReview.mockReturnValue(true);
     mockValidateAgentCandidateJudge.mockReset();
     mockValidateAgentCandidateJudge.mockReturnValue(true);
+    mockValidateAnswerContract.mockReset();
+    mockValidateAnswerContract.mockReturnValue(true);
   });
 
   it('uses provider/model overrides for cross-model review prompts and records the resolved route', async () => {
@@ -224,5 +232,44 @@ describe('diModelRouterService reviewer routing', () => {
     }));
     expect(result.provider).toBe('anthropic');
     expect(result.parsed.winner_candidate_id).toBe('secondary');
+  });
+
+  it('retries non-judge strict Gemini prompts with response schema after contract validation failure', async () => {
+    mockValidateAnswerContract
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(true);
+    mockInvokeAiProxy
+      .mockResolvedValueOnce({
+        text: JSON.stringify({ task_type: 'recommendation' }),
+        model: 'gemini-3.1-pro-preview',
+      })
+      .mockResolvedValueOnce({
+        text: JSON.stringify({
+          task_type: 'recommendation',
+          required_dimensions: ['replenishment'],
+          required_outputs: ['recommendation', 'caveat'],
+          audience_language: 'zh',
+          brevity: 'analysis',
+          analysis_depth: ['methodology_disclosure'],
+        }),
+        model: 'gemini-3.1-pro-preview',
+      });
+
+    const result = await runDiPrompt({
+      promptId: DI_PROMPT_IDS.AGENT_ANSWER_CONTRACT,
+      input: { userMessage: '幫我做補貨建議' },
+      providerOverride: 'gemini',
+      modelOverride: 'gemini-3.1-pro-preview',
+    });
+
+    expect(mockInvokeAiProxy).toHaveBeenCalledTimes(2);
+    expect(mockInvokeAiProxy.mock.calls[0][1]).toEqual(expect.objectContaining({
+      provider: 'gemini',
+      model: 'gemini-3.1-pro-preview',
+      responseMimeType: 'application/json',
+      responseSchema: expect.any(Object),
+    }));
+    expect(mockInvokeAiProxy.mock.calls[1][1].prompt).toMatch(/CRITICAL RETRY INSTRUCTIONS/i);
+    expect(result.parsed.required_outputs).toEqual(['recommendation', 'caveat']);
   });
 });

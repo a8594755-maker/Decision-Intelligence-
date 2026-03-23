@@ -12,13 +12,30 @@
 
 import { supabase } from '../services/supabaseClient';
 
-// Pricing（USD per 1K tokens）
+// Pricing（USD per 1K tokens）— updated 2026-03-23 from official sources
 const COST_PER_1K_TOKENS = {
-  'deepseek-chat': { input: 0.00028, output: 0.00042 },
-  'deepseek-reasoner': { input: 0.00028, output: 0.00042 },
-  'gemini-1.5-pro': { input: 0.00125, output: 0.00375 },
-  'gemini-1.5-flash': { input: 0.000075, output: 0.0003 },
-  'default': { input: 0.001, output: 0.002 },
+  // OpenAI
+  'gpt-5.4':                { input: 0.0025,   output: 0.015   },
+  'gpt-5.4-thinking':       { input: 0.0025,   output: 0.015   },
+  'gpt-5.4-mini':           { input: 0.00075,  output: 0.0045  },
+  'gpt-4.1-mini':           { input: 0.0004,   output: 0.0016  },
+  'gpt-4.1-nano':           { input: 0.0001,   output: 0.0004  },
+  // Anthropic
+  'claude-opus-4-6':        { input: 0.005,    output: 0.025   },
+  'claude-sonnet-4-6':      { input: 0.003,    output: 0.015   },
+  'claude-haiku-4-5-20251001': { input: 0.001, output: 0.005   },
+  // Gemini (≤200K pricing; >200K is 2× input, 1.5× output)
+  'gemini-3.1-pro-preview': { input: 0.002,    output: 0.012   },
+  'gemini-2.5-flash':       { input: 0.0003,   output: 0.0025  },
+  'gemini-2.5-flash-lite':  { input: 0.0001,   output: 0.0004  },
+  // DeepSeek (cache-miss pricing; cache-hit input is ~10× cheaper)
+  'deepseek-chat':          { input: 0.00028,  output: 0.00042 },
+  'deepseek-reasoner':      { input: 0.00028,  output: 0.00042 },
+  // Kimi / Moonshot (USD pricing from OpenRouter; cache-hit ~75% discount)
+  'kimi-k2.5':              { input: 0.00045,  output: 0.0022  },
+  'kimi-k2-0905-preview':   { input: 0.00045,  output: 0.0022  },
+  'kimi-k2-turbo-preview':  { input: 0.00045,  output: 0.0022  },
+  'default':                { input: 0.001,    output: 0.002   },
 };
 
 /**
@@ -109,7 +126,9 @@ export function trackLlmUsage({
           ? 'gemini'
           : model?.includes('deepseek')
             ? 'deepseek'
-            : null),
+            : model?.includes('kimi') || model?.includes('moonshot')
+              ? 'kimi'
+              : null),
       prompt_tokens: promptTokens,
       completion_tokens: completionTokens,
       total_tokens:

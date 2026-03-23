@@ -15,26 +15,30 @@ export default function EmptyChatState({ quickPrompts = [], onSelectPrompt, vari
           Describe an analysis, upload a dataset, ask for a report, or let the digital worker break a task into steps and run it.
         </p>
 
-        <div className="mt-8 flex items-center gap-1.5 text-xs font-medium uppercase tracking-[0.18em] text-slate-400">
-          <Sparkles className="h-3.5 w-3.5" />
-          Suggestions
-        </div>
+        {quickPrompts.length > 0 && (
+          <>
+            <div className="mt-8 flex items-center gap-1.5 text-xs font-medium uppercase tracking-[0.18em] text-slate-400">
+              <Sparkles className="h-3.5 w-3.5" />
+              Suggestions
+            </div>
 
-        <div className="mt-4 grid w-full max-w-3xl gap-3 sm:grid-cols-2">
-          {quickPrompts.slice(0, 4).map((prompt) => (
-            <button
-              key={prompt.label}
-              type="button"
-              onClick={() => onSelectPrompt?.(prompt.prompt)}
-              className="rounded-[22px] border border-black/8 bg-white/90 px-5 py-4 text-left shadow-[0_20px_50px_rgba(15,23,42,0.06)] transition hover:-translate-y-0.5 hover:border-slate-300 hover:bg-white dark:border-white/10 dark:bg-[#171717] dark:hover:border-slate-600"
-            >
-              <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">{prompt.label}</div>
-              <div className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-400">
-                {prompt.prompt}
-              </div>
-            </button>
-          ))}
-        </div>
+            <div className="mt-4 grid w-full max-w-3xl gap-3 sm:grid-cols-2">
+              {quickPrompts.slice(0, 4).map((prompt) => (
+                <button
+                  key={prompt.label}
+                  type="button"
+                  onClick={() => onSelectPrompt?.(prompt.prompt)}
+                  className="rounded-[22px] border border-black/8 bg-white/90 px-5 py-4 text-left shadow-[0_20px_50px_rgba(15,23,42,0.06)] transition hover:-translate-y-0.5 hover:border-slate-300 hover:bg-white dark:border-white/10 dark:bg-[#171717] dark:hover:border-slate-600"
+                >
+                  <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">{prompt.label}</div>
+                  <div className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-400">
+                    {prompt.prompt}
+                  </div>
+                </button>
+              ))}
+            </div>
+          </>
+        )}
       </div>
     );
   }
@@ -49,22 +53,26 @@ export default function EmptyChatState({ quickPrompts = [], onSelectPrompt, vari
         Upload data with the paperclip, assign a task or ask a question, and review deliverables in Canvas.
       </p>
 
-      <div className="mt-5 flex items-center gap-1 text-xs text-slate-400">
-        <Sparkles className="w-3.5 h-3.5" />
-        Suggestions
-      </div>
-      <div className="mt-2 flex flex-wrap justify-center gap-2 max-w-2xl">
-        {quickPrompts.slice(0, 3).map((prompt) => (
-          <button
-            key={prompt.label}
-            type="button"
-            onClick={() => onSelectPrompt?.(prompt.prompt)}
-            className="rounded-full border border-slate-200 dark:border-slate-700 px-3 py-1.5 text-xs text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-          >
-            {prompt.label}
-          </button>
-        ))}
-      </div>
+      {quickPrompts.length > 0 && (
+        <>
+          <div className="mt-5 flex items-center gap-1 text-xs text-slate-400">
+            <Sparkles className="w-3.5 h-3.5" />
+            Suggestions
+          </div>
+          <div className="mt-2 flex flex-wrap justify-center gap-2 max-w-2xl">
+            {quickPrompts.slice(0, 3).map((prompt) => (
+              <button
+                key={prompt.label}
+                type="button"
+                onClick={() => onSelectPrompt?.(prompt.prompt)}
+                className="rounded-full border border-slate-200 dark:border-slate-700 px-3 py-1.5 text-xs text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+              >
+                {prompt.label}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
     </div>
   );
 }

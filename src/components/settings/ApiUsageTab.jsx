@@ -48,9 +48,9 @@ const STATUS_STYLES = {
   quota_exceeded: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',
 };
 
-const PROVIDER_COLORS = { deepseek: '#6366f1', gemini: '#10b981', anthropic: '#f97316', openai: '#8b5cf6', other: '#f59e0b' };
+const PROVIDER_COLORS = { deepseek: '#6366f1', gemini: '#10b981', anthropic: '#f97316', openai: '#8b5cf6', kimi: '#0ea5e9', other: '#f59e0b' };
 
-const PROVIDER_LABELS = { deepseek: 'DeepSeek', gemini: 'Gemini', anthropic: 'Anthropic (Claude)', openai: 'OpenAI' };
+const PROVIDER_LABELS = { deepseek: 'DeepSeek', gemini: 'Gemini', anthropic: 'Anthropic (Claude)', openai: 'OpenAI', kimi: 'Kimi (Moonshot)' };
 
 // ── Component ────────────────────────────────────────────────
 
@@ -275,6 +275,7 @@ function ProviderBalancesCard({ billing }) {
     { key: 'deepseek', ...billing.deepseek },
     { key: 'anthropic', ...billing.anthropic },
     { key: 'openai', ...billing.openai },
+    { key: 'kimi', ...billing.kimi },
   ];
 
   // Hide if all providers failed or have no data
@@ -287,7 +288,7 @@ function ProviderBalancesCard({ billing }) {
         <Wallet className="w-4 h-4" />
         Provider Balances
       </h3>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
         {entries.map(({ key, data, loading: isLoading, error: err }) => (
           <BalanceItem key={key} provider={key} data={data} loading={isLoading} error={err} />
         ))}
@@ -304,8 +305,8 @@ function BalanceItem({ provider, data, loading: isLoading, error: err }) {
     if (isLoading) return <Loader2 className="w-3.5 h-3.5 animate-spin" style={{ color }} />;
     if (err || !data) return <span className="text-xs flex items-center gap-1" style={{ color: 'var(--text-secondary)' }}><AlertCircle className="w-3 h-3" /> N/A</span>;
 
-    // DeepSeek: { balance_usd }
-    if (provider === 'deepseek' && data.balance_usd != null) {
+    // DeepSeek / Kimi: { balance_usd }
+    if ((provider === 'deepseek' || provider === 'kimi') && data.balance_usd != null) {
       return <span className="font-semibold">${Number(data.balance_usd).toFixed(2)}</span>;
     }
 

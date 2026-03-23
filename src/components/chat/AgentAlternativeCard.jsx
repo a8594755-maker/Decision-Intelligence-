@@ -4,12 +4,18 @@ import { Card } from '../ui';
 import AgentBriefCard from './AgentBriefCard';
 import ExecutionTraceCard from './ExecutionTraceCard';
 
+function formatFailureCategoryLabel(category) {
+  return String(category || '').trim().replace(/_/g, ' ');
+}
+
 export default function AgentAlternativeCard({ candidate }) {
   const [expanded, setExpanded] = useState(false);
 
   if (!candidate) return null;
   const status = candidate?.status || 'completed';
   const failedReason = String(candidate?.failedReason || '').trim();
+  const failureCategory = String(candidate?.failureCategory || '').trim();
+  const failureCategoryLabel = formatFailureCategoryLabel(failureCategory);
   const hasBrief = Boolean(candidate?.brief);
   const statusLabel = status === 'timed_out'
     ? 'timed out'
@@ -51,7 +57,7 @@ export default function AgentAlternativeCard({ candidate }) {
             <AgentBriefCard brief={candidate.brief} />
           ) : (
             <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:border-rose-900/40 dark:bg-rose-950/20 dark:text-rose-200">
-              {failedReason || 'This candidate did not produce a usable answer.'}
+              {failureCategoryLabel ? `[${failureCategoryLabel}] ` : ''}{failedReason || 'This candidate did not produce a usable answer.'}
             </div>
           )}
           {candidate.trace ? <ExecutionTraceCard trace={candidate.trace} /> : null}

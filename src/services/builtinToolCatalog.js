@@ -1177,6 +1177,29 @@ export const BUILTIN_TOOLS = [
     },
   },
 
+  {
+    id: 'generate_analysis_workbook',
+    name: 'Generate Analysis Excel Workbook',
+    description: 'Generate a professional multi-sheet Excel workbook (.xlsx) from structured analysis results. Supports table sheets (with headers/rows), methodology/text sheets, and auto-styling. Used as the final step of recipe-driven analysis to produce downloadable reports.',
+    category: TOOL_CATEGORY.ANALYTICS,
+    keywords_en: ['excel', 'workbook', 'analysis report', 'export', 'spreadsheet', 'xlsx',
+      'safety stock report', 'inventory report', 'sensitivity report'],
+    keywords_zh: ['Excel', '報告', '分析報告', '匯出', '試算表', '工作簿',
+      '安全庫存報告', '庫存報告', '敏感度報告'],
+    module: '__python_api__',
+    method: 'POST /generate-analysis-workbook',
+    tier: 'tier_b',
+    required_datasets: [],
+    output_artifacts: ['analysis_workbook'],
+    depends_on: ['run_python_analysis'],
+    needs_dataset_profile: false,
+    input_schema: {
+      title: 'string (workbook title)',
+      sheets: 'array of {name, sheet_type, headers?, rows?, text_content?, column_widths?}',
+      methodology_notes: 'string|null (optional methodology notes)',
+    },
+  },
+
   // ── Excel Output ──────────────────────────────────────────────────────────
 
   {

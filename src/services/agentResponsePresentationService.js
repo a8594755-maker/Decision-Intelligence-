@@ -1,6 +1,8 @@
 import { extractAnalysisPayloadsFromToolCall } from './analysisToolResultService.js';
 import { DI_PROMPT_IDS, runDiPrompt } from './diModelRouterService.js';
 import { SAP_TABLE_REGISTRY, SAP_DATASET_INFO } from './sapDataQueryService.js';
+import { detectDomain, verifyFormulaConsistency } from './analysisDomainEnrichment.js';
+import { WARNING_ACKNOWLEDGMENT_PATTERNS } from './preAnalysisDataValidator.js';
 import {
   REQUESTED_PERCENTILE_KEYS,
   collectPercentileKeysFromText,
@@ -71,6 +73,16 @@ const DIMENSION_PATTERNS = Object.freeze([
   { label: 'retention', patterns: [/\bretention\b/i, /(留存)/] },
   { label: 'conversion', patterns: [/\bconversion\b/i, /(轉換率|轉化率)/] },
   { label: 'satisfaction', patterns: [/\bsatisfaction\b/i, /(滿意度)/] },
+  // ── Supply chain dimensions ──
+  { label: 'safety_stock', patterns: [/\bsafety stock\b/i, /(安全庫存|安全存量)/] },
+  { label: 'reorder_point', patterns: [/\breorder point\b/i, /\bROP\b/, /(補貨點|再訂購點|補貨參數)/] },
+  { label: 'eoq', patterns: [/\bEOQ\b/i, /\beconomic order quantity\b/i, /(經濟訂購量)/] },
+  { label: 'service_level', patterns: [/\bservice level\b/i, /(服務水準|服務水平)/] },
+  { label: 'lead_time', patterns: [/\blead time\b/i, /\breplenishment time\b/i, /(前置時間|交期|補貨時間)/] },
+  { label: 'demand_variability', patterns: [/\bdemand variab/i, /\bdemand std/i, /\bCV\b/, /(需求波動|變異係數)/] },
+  { label: 'holding_cost', patterns: [/\bholding cost\b/i, /(持有成本|庫存持有)/] },
+  { label: 'fill_rate', patterns: [/\bfill rate\b/i, /(充填率|滿足率)/] },
+  { label: 'inventory_turns', patterns: [/\binventory turn/i, /(庫存周轉)/] },
 ]);
 
 const DEBUG_PATTERNS = [
@@ -661,6 +673,7 @@ function normalizeBrief(brief, fallbackBrief, { brevity } = {}) {
     implications: uniqueStrings(Array.isArray(source.implications) ? source.implications : fallback.implications || []).slice(0, isAnalysis ? 6 : 4),
     caveats: uniqueStrings(Array.isArray(source.caveats) ? source.caveats : fallback.caveats || []).slice(0, isAnalysis ? 6 : 4),
     next_steps: uniqueStrings(Array.isArray(source.next_steps) ? source.next_steps : fallback.next_steps || []).slice(0, isAnalysis ? 6 : 4),
+    methodology_note: typeof source.methodology_note === 'string' ? source.methodology_note.trim() : (fallback.methodology_note || null),
   };
 
   if (!normalized.summary) normalized.summary = fallback.summary || '';
@@ -1030,6 +1043,78 @@ function hasMethodologyCaveat(brief) {
   return (brief?.caveats || []).some((line) => /proxy|approx|approximation|限制|近似|代理指標|duplicate|duplication|log[-\s]?scale|對數分箱/i.test(String(line || '')));
 }
 
+// ── Magnitude cross-validation: SQL result values vs narrative claims ──────
+// Extracts large numeric values from SQL result rows and checks whether the
+// brief text cites any number that is >3x or <0.33x of a SQL-returned value
+// sharing the same column-name keyword.  This catches the "24-month total
+// presented as monthly average" class of bug.
+function detectMagnitudeMismatches({ brief, toolCalls = [] }) {
+  const mismatches = [];
+  // 1. Collect numeric values from successful query_sap_data results
+  const sqlValues = new Map(); // columnName → Set<number>
+  for (const tc of (Array.isArray(toolCalls) ? toolCalls : [])) {
+    if (tc?.name !== 'query_sap_data' || !tc?.result?.success) continue;
+    const rows = getStructuredRows(tc);
+    for (const row of rows) {
+      if (!isPlainObject(row)) continue;
+      for (const [col, val] of Object.entries(row)) {
+        const num = typeof val === 'number' ? val : parseFloat(String(val || '').replace(/,/g, ''));
+        if (!Number.isFinite(num) || Math.abs(num) < 10) continue; // skip trivial values
+        if (!sqlValues.has(col)) sqlValues.set(col, new Set());
+        sqlValues.get(col).add(num);
+      }
+    }
+  }
+  if (sqlValues.size === 0) return mismatches;
+
+  // 2. Collect numeric claims from brief narrative
+  const briefText = [
+    brief?.headline,
+    brief?.summary,
+    ...(brief?.key_findings || []),
+    ...(brief?.implications || []),
+  ].filter(Boolean).join(' ');
+
+  // Extract all R$ or plain large numbers from brief
+  const briefNumbers = [];
+  const moneyPattern = /R?\$\s*([\d,.]+)/g;
+  const plainNumPattern = /\b(\d{3,}(?:[,.]\d+)?)\b/g;
+  for (const pattern of [moneyPattern, plainNumPattern]) {
+    for (const match of briefText.matchAll(new RegExp(pattern.source, pattern.flags))) {
+      const parsed = parseFloat(match[1].replace(/,/g, ''));
+      if (Number.isFinite(parsed) && parsed >= 100) briefNumbers.push(parsed);
+    }
+  }
+  if (briefNumbers.length === 0) return mismatches;
+
+  // 3. For each SQL column, check if any brief number is wildly different
+  //    from ALL values in that column (>3x or <0.33x every value)
+  for (const [col, valueSet] of sqlValues) {
+    const sqlNums = [...valueSet];
+    // Only check revenue/price/value columns (most prone to aggregation errors)
+    if (!/revenue|price|value|total|amount|sum|avg|mean|月均|營收/i.test(col)) continue;
+    const maxSql = Math.max(...sqlNums);
+    const minSql = Math.min(...sqlNums.filter((v) => v > 0));
+
+    for (const briefNum of briefNumbers) {
+      // Brief claims a number >3x the largest SQL value for this column
+      if (briefNum > maxSql * 3 && maxSql > 100) {
+        mismatches.push(
+          `Narrative cites ${briefNum.toLocaleString()} but SQL column "${col}" max is ${maxSql.toLocaleString()} — possible ${Math.round(briefNum / maxSql)}x inflation.`
+        );
+      }
+      // Brief claims a number <0.33x the smallest SQL value (possible under-reporting)
+      if (briefNum > 0 && briefNum < minSql * 0.33 && minSql > 100) {
+        mismatches.push(
+          `Narrative cites ${briefNum.toLocaleString()} but SQL column "${col}" min is ${minSql.toLocaleString()} — possible under-reporting.`
+        );
+      }
+    }
+  }
+
+  return mismatches;
+}
+
 function collectContradictoryClaims({ brief, toolCalls = [] }) {
   const facts = collectEvidenceMetricFacts({ brief, toolCalls });
 
@@ -1141,6 +1226,20 @@ export function computeDeterministicQa({
     blockers.push(...contradictoryClaims);
     issues.push(...contradictoryClaims);
     repairInstructions.push('Resolve contradictory metric values and keep one explained source of truth in the brief.');
+    dimensionScores.correctness = Math.max(0, dimensionScores.correctness - 5);
+    dimensionScores.evidence_alignment = Math.max(0, dimensionScores.evidence_alignment - 4);
+  }
+
+  // ── Magnitude mismatch: narrative numbers wildly different from SQL results ──
+  const magnitudeMismatches = detectMagnitudeMismatches({ brief, toolCalls });
+  if (magnitudeMismatches.length > 0) {
+    const issue = `Magnitude mismatch between SQL evidence and narrative: ${magnitudeMismatches[0]}`;
+    blockers.push(issue);
+    issues.push(issue, ...magnitudeMismatches.slice(1));
+    repairInstructions.push(
+      'Re-check aggregation period: if the SQL sums across the full date range, divide by the number of months to get a true monthly average. '
+      + 'Ensure narrative numbers match SQL result values within 3x tolerance.'
+    );
     dimensionScores.correctness = Math.max(0, dimensionScores.correctness - 5);
     dimensionScores.evidence_alignment = Math.max(0, dimensionScores.evidence_alignment - 4);
   }
@@ -1368,19 +1467,21 @@ export function computeDeterministicQa({
     analysisDepth.includes('methodology_disclosure')
     && (answerContract?.task_type === 'recommendation' || answerContract?.task_type === 'diagnostic')
   ) {
-    const METHODOLOGY_MARKERS = /\bbased on\b|formula|model|assumption|standard deviation|sigma|percentile|pareto|weighted average|ROP|EOQ|service level|z[=＝]\d|confidence interval/i;
+    const METHODOLOGY_MARKERS = /\bbased on\b|formula|model|assumption|standard deviation|sigma|percentile|pareto|weighted average|ROP|EOQ|service level|z[=＝×]\d|confidence interval|SS\s*=|ROP\s*=|EOQ\s*=|σ.*√|sqrt\(L|service level.*\d+%|\d+%.*service/i;
     const methodologyText = [
       brief?.summary,
+      brief?.methodology_note,
       ...(brief?.key_findings || []),
       ...(brief?.implications || []),
     ].filter(Boolean).join(' ');
     const hasMethodologyMarker = METHODOLOGY_MARKERS.test(methodologyText);
-    const hasNumericThreshold = /\b\d+(?:\.\d+)?\s*(?:units?|days?|%|x|倍|個|天)/i.test(methodologyText);
+    const hasNumericThreshold = /\b\d+(?:\.\d+)?\s*(?:units?|days?|%|x|倍|個|天|件)/i.test(methodologyText);
     if (!hasMethodologyMarker && hasNumericThreshold) {
       const issue = 'Numeric thresholds cited without disclosing the methodology or model used.';
+      blockers.push(issue);
       issues.push(issue);
-      repairInstructions.push('State the formula, model, or assumption behind each numeric threshold (e.g., "based on historical mean + 1.65σ").');
-      dimensionScores.methodology_transparency = Math.max(0, dimensionScores.methodology_transparency - 5);
+      repairInstructions.push('State the formula, model, or assumption behind each numeric threshold (e.g., "SS = Z × √(LT × σ²_d + d̄² × σ²_LT), Z=1.645 for 95% service level").');
+      dimensionScores.methodology_transparency = Math.max(0, dimensionScores.methodology_transparency - 6);
     }
   }
 
@@ -1409,13 +1510,103 @@ export function computeDeterministicQa({
     analysisDepth.includes('sensitivity_range')
     && answerContract?.task_type === 'recommendation'
   ) {
-    const hasSensitivityTable = (brief?.tables || []).some((table) =>
+    const sensitivityTable = (brief?.tables || []).find((table) =>
       /sensitiv|scenario|what.if|parameter.comparison|情境|敏感度/i.test(String(table?.title || '')));
-    if (!hasSensitivityTable) {
+    if (!sensitivityTable) {
       const issue = 'Recommendation lacks a sensitivity analysis table with multiple scenarios.';
+      blockers.push(issue);
       issues.push(issue);
       repairInstructions.push('Add a Sensitivity Analysis table with at least 3 scenarios (conservative/moderate/aggressive) and corresponding parameter + outcome.');
+      dimensionScores.methodology_transparency = Math.max(0, dimensionScores.methodology_transparency - 4);
+    } else {
+      const tableRows = Array.isArray(sensitivityTable?.rows) ? sensitivityTable.rows : [];
+      if (tableRows.length < 3) {
+        const issue = `Sensitivity table has only ${tableRows.length} row(s); at least 3 scenarios required.`;
+        issues.push(issue);
+        repairInstructions.push('Expand the sensitivity table to at least 3 rows (e.g., conservative/moderate/aggressive).');
+        dimensionScores.methodology_transparency = Math.max(0, dimensionScores.methodology_transparency - 2);
+      }
     }
+  }
+
+  // ── Domain formula verification ──
+  const domain = detectDomain(userMessage);
+  if (domain.domainKey) {
+    const formulaInconsistencies = verifyFormulaConsistency(brief, toolCalls, domain.domainKey);
+    if (formulaInconsistencies.length > 0) {
+      for (const finding of formulaInconsistencies.slice(0, 3)) {
+        issues.push(finding);
+      }
+      const deduction = Math.min(6, formulaInconsistencies.length * 3);
+      dimensionScores.correctness = Math.max(0, dimensionScores.correctness - deduction);
+      repairInstructions.push('Recheck formula calculations against SQL evidence. Ensure SS = Z × √(LT × σ²_d + d̄² × σ²_LT) values match the stated inputs.');
+    }
+  }
+
+  // ── Recipe compliance QA ──
+  // When a recipe was active (e.g. safety_stock_optimization), check that key
+  // outputs prescribed by the recipe are present in the agent response.
+  if (answerContract?.recipe_id === 'safety_stock_optimization' || (
+    domain.domainKey === 'supply_chain'
+    && domain.matchedConcepts?.some(c => ['safety_stock', 'reorder_point', 'replenishment'].includes(c))
+    && ['recommendation', 'diagnostic', 'mixed'].includes(answerContract?.task_type)
+  )) {
+    const combinedText = [brief, ...toolCalls.map(tc => JSON.stringify(tc.result || ''))].join(' ');
+
+    // Check ABC-XYZ classification
+    if (!/ABC|XYZ|分群|classification/i.test(combinedText)) {
+      issues.push('Recipe prescribes ABC-XYZ classification but none found in output.');
+      repairInstructions.push('Add ABC-XYZ classification: ABC by cumulative revenue (A=80%, B=15%, C=5%), XYZ by CV (X<0.25, Y<0.50, Z≥0.50). Assign differentiated service levels per group.');
+      dimensionScores.methodology_transparency = Math.max(0, dimensionScores.methodology_transparency - 3);
+    }
+
+    // Check stationarity / stable period selection
+    if (!/stabili|stationari|穩態|穩定期|stable.period|trend.detect/i.test(combinedText)) {
+      issues.push('Recipe prescribes stationarity check and stable-period selection but none found.');
+      repairInstructions.push('Check for demand trends (compare first-half vs second-half means). If trend >15%, use only the recent stable window for CV computation.');
+      dimensionScores.methodology_transparency = Math.max(0, dimensionScores.methodology_transparency - 2);
+    }
+
+    // Check full SS formula usage (not just simplified)
+    if (/σ_LT|σ²_LT|lead.time.std|lead.time.variab/i.test(combinedText) === false
+        && !/simplified|σ_LT\s*=\s*0/i.test(combinedText)) {
+      issues.push('Recipe prescribes full SS formula with σ_LT term but response uses simplified formula without disclosure.');
+      repairInstructions.push('Use full formula SS = Z × √(LT × σ²_d + d̄² × σ²_LT) when lead time variability is available, or explicitly disclose when using simplified version (σ_LT=0).');
+      dimensionScores.correctness = Math.max(0, dimensionScores.correctness - 2);
+    }
+  }
+
+  // ── Pre-analysis data validation warning acknowledgment ──
+  const dataValidationWarnings = toolCalls.flatMap((tc) => tc._dataValidationWarnings || []);
+  const businessContextClues = toolCalls.flatMap((tc) => tc._businessContextClues || []);
+
+  for (const warning of dataValidationWarnings.filter((w) => w.severity === 'high')) {
+    const patterns = WARNING_ACKNOWLEDGMENT_PATTERNS[warning.id] || [];
+    const acknowledged = patterns.some((p) => p.test(combinedNarrativeText));
+    if (!acknowledged) {
+      issues.push(`Data quality warning not addressed: ${warning.message}`);
+      repairInstructions.push(`Address data quality issue: ${warning.instruction}`);
+      dimensionScores.correctness = Math.max(0, dimensionScores.correctness - 3);
+      dimensionScores.caveat_quality = Math.max(0, dimensionScores.caveat_quality - 2);
+    }
+  }
+
+  for (const clue of businessContextClues) {
+    const acknowledged = (clue.acknowledgmentPatterns || []).some((p) => p.test(combinedNarrativeText));
+    if (!acknowledged) {
+      issues.push(`Business context not addressed: ${clue.shortMessage}`);
+      repairInstructions.push(`Add caveat about business context: ${clue.shortMessage}`);
+      dimensionScores.caveat_quality = Math.max(0, dimensionScores.caveat_quality - 3);
+    }
+  }
+
+  // Proxy disclosure check
+  const proxyUsageHinted = /as.*(?:lead time|前置時間)|(?:delivery|交貨).*(?:as|作為|當作)|used.*as.*proxy|作為.*替代/i.test(combinedNarrativeText);
+  const proxyDisclosed = /proxy|surrogate|approximate|替代指標|代理指標|近似值/i.test(combinedNarrativeText);
+  if (proxyUsageHinted && !proxyDisclosed) {
+    issues.push('Agent appears to use a proxy metric without explicit disclosure.');
+    repairInstructions.push('Explicitly label any proxy metrics used with "⚠️ Proxy" and assess their impact on accuracy.');
+    dimensionScores.methodology_transparency = Math.max(0, dimensionScores.methodology_transparency - 4);
   }
 
   const score = scoreFromDimensionScores(dimensionScores);
@@ -1557,7 +1748,7 @@ async function deriveAnswerContract({ userMessage, mode = 'default' }) {
       promptId: DI_PROMPT_IDS.AGENT_ANSWER_CONTRACT,
       input: { userMessage, mode },
       temperature: 0.1,
-      maxOutputTokens: 700,
+      maxOutputTokens: 2048,
     });
     return normalizeAnswerContract(result?.parsed, userMessage, mode);
   } catch (error) {
@@ -1592,12 +1783,12 @@ async function synthesizeBrief({
         userMessage,
         answerContract,
         toolCalls: summarizeToolCallsForPrompt(toolCalls),
-        finalAnswerText: clamp(finalAnswerText, 3500),
+        finalAnswerText: clamp(finalAnswerText, 2500),
         mode,
         repairInstructions,
       },
       temperature: 0.1,
-      maxOutputTokens: 1800,
+      maxOutputTokens: 4096,
     });
     return normalizeBrief(result?.parsed, fallbackBrief, { brevity: answerContract?.brevity });
   } catch (error) {
@@ -1608,7 +1799,7 @@ async function synthesizeBrief({
 
 function summarizeToolCallsForPrompt(toolCalls = []) {
   return (Array.isArray(toolCalls) ? toolCalls : []).map((toolCall) => {
-    const rows = getStructuredRows(toolCall).slice(0, 4);
+    const rows = getStructuredRows(toolCall).slice(0, 3);
     const analysisPayloads = extractAnalysisPayloadsFromToolCall(toolCall)
       .slice(0, 2)
       .map((payload) => ({
@@ -1677,7 +1868,7 @@ async function requestQaReview({
         artifactSummary,
       },
       temperature: 0.1,
-      maxOutputTokens: 2048,
+      maxOutputTokens: 4096,
       providerOverride,
       modelOverride,
     });
@@ -1758,7 +1949,7 @@ async function repairBrief({
         mode,
       },
       temperature: 0.1,
-      maxOutputTokens: 1800,
+      maxOutputTokens: 4096,
     });
     return normalizeBrief(result?.parsed, fallbackBrief, { brevity: answerContract?.brevity });
   } catch (error) {

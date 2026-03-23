@@ -1,60 +1,90 @@
 /**
  * ModelConfigTab.jsx
  *
- * Settings tab for configuring LLM provider & model per execution mode:
- *   Single Agent  — primary only
- *   Dual Agent    — primary + challenger + judge
- *   Full (On)     — forced dual + judge every message
+ * Simplified settings for model selection:
+ *   - Thinking mode default (Auto / On)
+ *   - Primary model
+ *   - Advanced comparison path models (challenger + judge)
  */
 
-import { useState, useCallback } from 'react';
-import { RotateCcw } from 'lucide-react';
+import { useMemo, useState, useCallback } from 'react';
+import { ChevronDown, ChevronRight, RotateCcw } from 'lucide-react';
 import { Card } from '../ui';
 import {
-  EXECUTION_MODES,
   PROVIDER_MODELS,
-  getModelConfig,
-  setModelConfig,
+  getSharedModelConfig,
+  setSharedModelConfig,
   resetModelConfig,
   getActiveThinkingMode,
   setActiveThinkingMode,
 } from '../../services/modelConfigService';
 
-const ROLE_META = {
-  single: [
-    { key: 'primary', label: 'Agent', desc: 'The single agent that answers directly' },
-  ],
-  dual: [
-    { key: 'primary', label: 'Primary Agent', desc: 'Main reasoning agent' },
-    { key: 'secondary', label: 'Challenger Agent', desc: 'Runs in parallel with primary for comparison' },
-    { key: 'judge', label: 'Judge / QA Review', desc: 'Evaluates both candidates and picks the winner' },
-  ],
-  full: [
-    { key: 'primary', label: 'Primary Agent', desc: 'Main reasoning agent (always runs)' },
-    { key: 'secondary', label: 'Challenger Agent', desc: 'Always runs in parallel with primary' },
-    { key: 'judge', label: 'Judge / QA Review', desc: 'Always evaluates and picks the winner' },
-  ],
-};
-
-const PROVIDER_OPTIONS = [
-  { key: 'openai',    label: 'OpenAI' },
-  { key: 'anthropic', label: 'Anthropic' },
-  { key: 'gemini',    label: 'Gemini' },
-  { key: 'deepseek',  label: 'DeepSeek' },
+const ROLE_META = [
+  {
+    key: 'primary',
+    label: 'Primary Model',
+    desc: 'Used for the main answer. This is the default model for normal chat and analysis.',
+  },
+  {
+    key: 'secondary',
+    label: 'Challenger Model',
+    desc: 'Used only when the system runs a second competing answer for comparison.',
+  },
+  {
+    key: 'judge',
+    label: 'Judge Model',
+    desc: 'Used to review candidates and cross-check quality when comparison is active.',
+  },
 ];
 
-const PROVIDER_LABELS = Object.fromEntries(PROVIDER_OPTIONS.map((p) => [p.key, p.label]));
+const PRIMARY_ROLE = ROLE_META[0];
+const ADVANCED_ROLES = ROLE_META.slice(1);
+
+const PROVIDER_OPTIONS = [
+  { key: 'openai', label: 'OpenAI' },
+  { key: 'anthropic', label: 'Anthropic' },
+  { key: 'gemini', label: 'Gemini' },
+  { key: 'deepseek', label: 'DeepSeek' },
+  { key: 'kimi', label: 'Kimi (Moonshot)' },
+];
+
+const PROVIDER_LABELS = Object.fromEntries(PROVIDER_OPTIONS.map((provider) => [provider.key, provider.label]));
 const providers = Object.keys(PROVIDER_MODELS);
 
+function loadSharedConfigs() {
+  return Object.fromEntries(ROLE_META.map((role) => [role.key, getSharedModelConfig(role.key)]));
+}
+
+function ThinkingModeButton({ active, title, description, onClick }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`flex-1 rounded-xl border px-4 py-3 text-left transition-all ${
+        active
+          ? 'border-indigo-600 bg-indigo-50 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300'
+          : 'border-transparent hover:border-stone-300 dark:hover:border-stone-600'
+      }`}
+      style={active ? undefined : {
+        backgroundColor: 'var(--bg-secondary)',
+        color: 'var(--text-secondary)',
+      }}
+    >
+      <div className="text-sm font-semibold">{title}</div>
+      <div className="mt-1 text-xs opacity-80">{description}</div>
+    </button>
+  );
+}
+
 function RoleCard({ role, config, onChange }) {
-  const handleProviderChange = (e) => {
-    const newProvider = e.target.value;
-    const firstModel = PROVIDER_MODELS[newProvider][0];
-    onChange(role.key, newProvider, firstModel);
+  const handleProviderChange = (event) => {
+    const nextProvider = event.target.value;
+    const nextModel = PROVIDER_MODELS[nextProvider]?.[0] || '';
+    onChange(role.key, nextProvider, nextModel);
   };
 
-  const handleModelChange = (e) => {
-    onChange(role.key, config.provider, e.target.value);
+  const handleModelChange = (event) => {
+    onChange(role.key, config.provider, event.target.value);
   };
 
   const models = PROVIDER_MODELS[config.provider] || [];
@@ -62,9 +92,11 @@ function RoleCard({ role, config, onChange }) {
   return (
     <Card>
       <h3 className="font-semibold mb-1">{role.label}</h3>
-      <p className="text-xs mb-4" style={{ color: 'var(--text-secondary)' }}>{role.desc}</p>
+      <p className="text-xs mb-4" style={{ color: 'var(--text-secondary)' }}>
+        {role.desc}
+      </p>
 
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid gap-4 md:grid-cols-2">
         <div>
           <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
             Provider
@@ -79,8 +111,10 @@ function RoleCard({ role, config, onChange }) {
               color: 'var(--text-primary)',
             }}
           >
-            {providers.map((p) => (
-              <option key={p} value={p}>{PROVIDER_LABELS[p] || p}</option>
+            {providers.map((providerKey) => (
+              <option key={providerKey} value={providerKey}>
+                {PROVIDER_LABELS[providerKey] || providerKey}
+              </option>
             ))}
           </select>
         </div>
@@ -99,9 +133,9 @@ function RoleCard({ role, config, onChange }) {
               color: 'var(--text-primary)',
             }}
           >
-            {models.map((m) => (
-              <option key={m} value={m}>
-                {m}{(m === 'deepseek-reasoner' || m === 'gpt-5.4-thinking') ? ' (thinking/CoT)' : ''}
+            {models.map((model) => (
+              <option key={model} value={model}>
+                {model}{(model === 'deepseek-reasoner' || model === 'gpt-5.4-thinking') ? ' (thinking/CoT)' : ''}
               </option>
             ))}
           </select>
@@ -111,177 +145,115 @@ function RoleCard({ role, config, onChange }) {
   );
 }
 
-function loadConfigsForMode(mode) {
-  const roles = ROLE_META[mode] || ROLE_META.single;
-  const result = {};
-  for (const role of roles) {
-    result[role.key] = getModelConfig(role.key, mode);
-  }
-  return result;
-}
-
-const MODE_KEYS = ['single', 'dual', 'full'];
-
 export default function ModelConfigTab() {
-  const [selectedMode, setSelectedMode] = useState(() => {
-    const active = getActiveThinkingMode();
-    return active === 'full' ? 'full' : 'single';
-  });
-  const [configs, setConfigs] = useState(() => loadConfigsForMode(selectedMode));
+  const [thinkingMode, setThinkingMode] = useState(() => getActiveThinkingMode());
+  const [configs, setConfigs] = useState(() => loadSharedConfigs());
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
-  const handleModeSwitch = useCallback((mode) => {
-    setSelectedMode(mode);
-    setConfigs(loadConfigsForMode(mode));
-    // Only persist global thinking mode for single vs full
-    if (mode === 'full') setActiveThinkingMode('full');
-    if (mode === 'single') setActiveThinkingMode('single');
+  const handleThinkingModeChange = useCallback((mode) => {
+    setActiveThinkingMode(mode);
+    setThinkingMode(mode);
   }, []);
 
   const handleChange = useCallback((role, provider, model) => {
-    setModelConfig(role, provider, model, selectedMode);
-    setConfigs((prev) => ({ ...prev, [role]: { provider, model } }));
-  }, [selectedMode]);
-
-  const handlePresetProvider = useCallback((providerKey) => {
-    const topModel = PROVIDER_MODELS[providerKey]?.[0];
-    if (!topModel) return;
-    const roles = ROLE_META[selectedMode] || ROLE_META.single;
-    const next = {};
-    for (const role of roles) {
-      setModelConfig(role.key, providerKey, topModel, selectedMode);
-      next[role.key] = { provider: providerKey, model: topModel };
-    }
-    setConfigs(next);
-  }, [selectedMode]);
+    setSharedModelConfig(role, provider, model);
+    setConfigs((prev) => ({
+      ...prev,
+      [role]: { provider, model },
+    }));
+  }, []);
 
   const handleReset = useCallback(() => {
     resetModelConfig();
-    setConfigs(loadConfigsForMode(selectedMode));
-  }, [selectedMode]);
+    setThinkingMode(getActiveThinkingMode());
+    setConfigs(loadSharedConfigs());
+  }, []);
 
-  const roles = ROLE_META[selectedMode] || ROLE_META.single;
-  const modeInfo = EXECUTION_MODES[selectedMode] || EXECUTION_MODES.single;
-
-  // Detect if all visible roles use the same provider
-  const roleProviders = roles.map((r) => configs[r.key]?.provider);
-  const allSameProvider = roleProviders.length > 0 && roleProviders.every((p) => p === roleProviders[0]);
-  const activePresetProvider = allSameProvider ? roleProviders[0] : null;
+  const advancedSummary = useMemo(() => {
+    return ADVANCED_ROLES.map((role) => {
+      const config = configs[role.key] || getSharedModelConfig(role.key);
+      return `${role.label}: ${PROVIDER_LABELS[config.provider] || config.provider} · ${config.model}`;
+    });
+  }, [configs]);
 
   return (
     <div className="space-y-4">
-      {/* Execution mode tabs */}
       <Card>
-        <h3 className="font-semibold mb-2">Execution Mode</h3>
+        <h3 className="font-semibold mb-2">Thinking Mode Default</h3>
         <p className="text-xs mb-3" style={{ color: 'var(--text-secondary)' }}>
-          Each mode has its own provider & model settings.
+          Auto is the normal default. Turn Thinking On only if you want every message to force challenger + judge.
         </p>
         <div className="flex gap-2">
-          {MODE_KEYS.map((key) => {
-            const mode = EXECUTION_MODES[key];
-            return (
-              <button
-                key={key}
-                onClick={() => handleModeSwitch(key)}
-                className={`flex-1 px-4 py-2.5 text-sm font-medium rounded-lg border-2 transition-all ${
-                  selectedMode === key
-                    ? 'border-indigo-600 bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300'
-                    : 'border-transparent hover:border-stone-300 dark:hover:border-stone-600'
-                }`}
-                style={selectedMode !== key ? {
-                  backgroundColor: 'var(--bg-secondary)',
-                  color: 'var(--text-secondary)',
-                } : undefined}
-              >
-                <div className="font-semibold">{mode.label}</div>
-                <div className="text-xs mt-0.5 opacity-75">{mode.desc}</div>
-              </button>
-            );
-          })}
+          <ThinkingModeButton
+            active={thinkingMode !== 'full'}
+            title="Auto"
+            description="Recommended. The system decides when comparison and judging are worth the extra cost."
+            onClick={() => handleThinkingModeChange('single')}
+          />
+          <ThinkingModeButton
+            active={thinkingMode === 'full'}
+            title="On"
+            description="Always run challenger + judge. Higher quality, slower, and uses more tokens."
+            onClick={() => handleThinkingModeChange('full')}
+          />
         </div>
-        {selectedMode === 'full' && (
-          <div className="mt-3 px-3 py-2 rounded-md bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 text-xs text-amber-800 dark:text-amber-200">
-            Full mode always runs dual agent + judge on every message. Higher quality, more tokens.
+      </Card>
+
+      <RoleCard
+        role={PRIMARY_ROLE}
+        config={configs.primary || getSharedModelConfig('primary')}
+        onChange={handleChange}
+      />
+
+      <Card>
+        <button
+          type="button"
+          onClick={() => setAdvancedOpen((value) => !value)}
+          className="flex w-full items-start gap-3 text-left"
+        >
+          <div className="pt-0.5 text-slate-400">
+            {advancedOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
           </div>
-        )}
-        {selectedMode === 'single' && (
-          <div className="mt-3 px-3 py-2 rounded-md bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 text-xs text-emerald-800 dark:text-emerald-200">
-            In Auto mode, when the system decides not to trigger dual generation, this model is used.
+          <div className="min-w-0 flex-1">
+            <div className="font-semibold">Advanced Comparison Models</div>
+            <p className="mt-1 text-xs" style={{ color: 'var(--text-secondary)' }}>
+              Challenger and judge are only used when the system escalates to multi-agent comparison, or when Thinking On is enabled.
+            </p>
           </div>
-        )}
-        {selectedMode === 'dual' && (
-          <div className="mt-3 px-3 py-2 rounded-md bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 text-xs text-blue-800 dark:text-blue-200">
-            In Auto mode, when the system detects data analysis / coding / numeric reasoning, these models are used.
+        </button>
+
+        {!advancedOpen ? (
+          <div className="mt-4 space-y-1 text-xs" style={{ color: 'var(--text-secondary)' }}>
+            {advancedSummary.map((line) => (
+              <div key={line}>{line}</div>
+            ))}
+          </div>
+        ) : (
+          <div className="mt-4 space-y-4">
+            {ADVANCED_ROLES.map((role) => (
+              <RoleCard
+                key={role.key}
+                role={role}
+                config={configs[role.key] || getSharedModelConfig(role.key)}
+                onChange={handleChange}
+              />
+            ))}
           </div>
         )}
       </Card>
-
-      {/* Quick provider preset */}
-      <Card>
-        <h3 className="font-semibold mb-1">Provider</h3>
-        <p className="text-xs mb-3" style={{ color: 'var(--text-secondary)' }}>
-          {roles.length === 1
-            ? 'Pick the provider for this mode.'
-            : 'Pick a provider for all roles at once, or fine-tune per role below.'}
-        </p>
-        <div className="flex gap-2">
-          {PROVIDER_OPTIONS.map((p) => (
-            <button
-              key={p.key}
-              onClick={() => handlePresetProvider(p.key)}
-              className={`flex-1 px-3 py-2 text-sm font-medium rounded-lg border-2 transition-all ${
-                activePresetProvider === p.key
-                  ? 'border-indigo-600 bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300'
-                  : 'border-transparent hover:border-stone-300 dark:hover:border-stone-600'
-              }`}
-              style={activePresetProvider !== p.key ? {
-                backgroundColor: 'var(--bg-secondary)',
-                color: 'var(--text-secondary)',
-              } : undefined}
-            >
-              <div className="font-semibold">{p.label}</div>
-              <div className="text-xs mt-0.5 opacity-60">{PROVIDER_MODELS[p.key]?.[0]}</div>
-            </button>
-          ))}
-        </div>
-        {!allSameProvider && roles.length > 1 && (
-          <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">
-            Mixed providers — see per-role config below.
-          </p>
-        )}
-      </Card>
-
-      {/* Per-role fine-tuning */}
-      {roles.length > 1 && (
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300">
-            {modeInfo.label}
-          </span>
-          <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>
-            Per-role fine-tuning
-          </span>
-        </div>
-      )}
-
-      {roles.map((role) => (
-        <RoleCard
-          key={role.key}
-          role={role}
-          config={configs[role.key] || getModelConfig(role.key, selectedMode)}
-          onChange={handleChange}
-        />
-      ))}
 
       <div className="flex items-center justify-between">
         <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>
-          Changes take effect on next message. Each mode stores configs independently.
+          Changes take effect on the next message.
         </p>
         <button
+          type="button"
           onClick={handleReset}
           className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md border hover:bg-stone-100 dark:hover:bg-stone-800 transition-colors"
           style={{ borderColor: 'var(--border-default)', color: 'var(--text-secondary)' }}
         >
           <RotateCcw className="w-3.5 h-3.5" />
-          Reset All
+          Reset
         </button>
       </div>
     </div>

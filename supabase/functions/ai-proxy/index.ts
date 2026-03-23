@@ -17,8 +17,11 @@ type ProxyMode =
   | 'openai_chat'
   | 'openai_chat_tools'
   | 'openai_chat_tools_stream'
+  | 'kimi_chat'
+  | 'kimi_chat_tools'
   | 'anthropic_billing'
-  | 'openai_billing';
+  | 'openai_billing'
+  | 'kimi_billing';
 
 interface ProxyRequestBody {
   mode?: ProxyMode;
@@ -78,6 +81,8 @@ const ANTHROPIC_ADMIN_API_KEY = Deno.env.get('ANTHROPIC_ADMIN_API_KEY') || '';
 const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY') || '';
 const OPENAI_ADMIN_API_KEY = Deno.env.get('OPENAI_ADMIN_API_KEY') || '';
 const OPENAI_BASE_URL = String(Deno.env.get('DI_OPENAI_BASE_URL') || 'https://api.openai.com').replace(/\/+$/, '');
+const KIMI_API_KEY = Deno.env.get('KIMI_API_KEY') || '';
+const KIMI_BASE_URL = String(Deno.env.get('DI_KIMI_BASE_URL') || 'https://api.moonshot.ai').replace(/\/+$/, '');
 const ANTHROPIC_API_VERSION = '2023-06-01';
 
 const GEMINI_MODEL_ALIASES = Object.freeze({
@@ -158,6 +163,20 @@ const OPENAI_DEFAULT_CANDIDATES = Array.from(new Set(
     .filter(Boolean),
 ));
 
+const DEFAULT_KIMI_MODEL = String(
+  Deno.env.get('DI_KIMI_MODEL') || 'kimi-k2.5',
+).trim();
+const KIMI_DEFAULT_CANDIDATES = Array.from(new Set(
+  [
+    DEFAULT_KIMI_MODEL,
+    'kimi-k2.5',
+    'kimi-k2-0905-preview',
+    'kimi-k2-turbo-preview',
+  ]
+    .map((item) => String(item || '').trim())
+    .filter(Boolean),
+));
+
 const jsonResponse = (payload: unknown, status = 200, cors?: Record<string, string>) =>
   new Response(JSON.stringify(payload), {
     status,
@@ -171,6 +190,28 @@ const toFiniteNumber = (value: unknown, fallback: number): number => {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : fallback;
 };
+
+const normalizeRequestedToolChoice = (value: unknown): 'auto' | 'required' =>
+  String(value || '').trim().toLowerCase() === 'required' ? 'required' : 'auto';
+
+const buildOpenAiStyleToolChoice = (
+  value: unknown,
+  options?: { provider?: string; thinkingEnabled?: boolean },
+): 'auto' | 'required' => {
+  const requested = normalizeRequestedToolChoice(value);
+  if (requested !== 'required') return 'auto';
+
+  if (options?.provider === 'kimi' && options.thinkingEnabled !== false) {
+    return 'auto';
+  }
+
+  return 'required';
+};
+
+const buildAnthropicToolChoice = (value: unknown): { type: 'auto' | 'any' } =>
+  normalizeRequestedToolChoice(value) === 'required'
+    ? { type: 'any' }
+    : { type: 'auto' };
 
 const parseJsonSafe = async (response: Response): Promise<Record<string, unknown>> =>
   response.json().catch(() => ({}));
@@ -749,6 +790,130 @@ const extractOpenAIText = (body: Record<string, unknown>): string => {
   if (!Array.isArray(choices) || choices.length === 0) return '';
   const message = choices[0]?.message as Record<string, unknown> | undefined;
   return typeof message?.content === 'string' ? message.content : '';
+};
+
+// ── Kimi (Moonshot) — OpenAI-compatible API ───────────────────────────────
+
+// kimi-k2.5 and thinking models use fixed temperature/top_p; sending custom values causes errors
+const isKimiFixedTempModel = (model: string): boolean =>
+  /^kimi-k2\.5/i.test(model) || /^kimi-k2-thinking/i.test(model);
+
+const postKimiWithModelFallback = async ({
+  requestBody,
+  modelCandidates = [],
+}: {
+  requestBody: Record<string, unknown>;
+  modelCandidates?: string[];
+}) => {
+  let retryableFailure: Record<string, unknown> | null = null;
+
+  for (const model of modelCandidates) {
+    const t = performance.now();
+    const response = await fetch(`${KIMI_BASE_URL}/v1/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${KIMI_API_KEY}`,
+      },
+      body: JSON.stringify({ ...requestBody, model }),
+    });
+    const elapsed = Math.round(performance.now() - t);
+
+    if (response.ok) {
+      console.info(`[ai-proxy] Kimi model=${model} OK in ${elapsed}ms`);
+      return { ok: true, response, model };
+    }
+
+    const errorData = await parseJsonSafe(response);
+    const errorMessage = String((errorData?.error as { message?: string })?.message || 'Unknown error');
+    console.warn(`[ai-proxy] Kimi model=${model} failed (${response.status}) in ${elapsed}ms: ${errorMessage}`);
+    const failure = { ok: false, response, status: response.status, model, errorData, errorMessage };
+
+    if (!isModelLookupError(response.status, errorMessage)) {
+      return failure;
+    }
+    retryableFailure = failure;
+  }
+
+  return retryableFailure || {
+    ok: false, response: null, status: 0, model: DEFAULT_KIMI_MODEL,
+    errorData: {}, errorMessage: 'No Kimi model candidates are available for this request.',
+  };
+};
+
+const callKimiChat = async ({
+  message,
+  conversationHistory = [],
+  systemPrompt = '',
+  temperature = 0.7,
+  maxOutputTokens = 8192,
+  model,
+  jsonMode = false,
+}: {
+  message: string;
+  conversationHistory?: unknown[];
+  systemPrompt?: string;
+  temperature?: number;
+  maxOutputTokens?: number;
+  model?: string;
+  jsonMode?: boolean;
+}) => {
+  if (!KIMI_API_KEY) {
+    throw new Error('KIMI_API_KEY is not configured on Edge Function.');
+  }
+
+  const modelCandidates = Array.from(new Set(
+    [model, ...KIMI_DEFAULT_CANDIDATES]
+      .map((item) => String(item || '').trim())
+      .filter(Boolean),
+  ));
+
+  const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [];
+  if (systemPrompt.trim()) {
+    messages.push({ role: 'system', content: systemPrompt.trim() });
+  }
+  const historyWindow = Array.isArray(conversationHistory) ? conversationHistory.slice(-10) : [];
+  for (const entry of historyWindow) {
+    const row = entry as { role?: unknown; content?: unknown };
+    const content = typeof row?.content === 'string' ? row.content.trim() : '';
+    if (!content) continue;
+    messages.push({ role: normalizeChatRole(row.role), content });
+  }
+  messages.push({ role: 'user', content: String(message || '').trim() });
+
+  const request = await postKimiWithModelFallback({
+    requestBody: {
+      messages,
+      // kimi-k2.5 and thinking models reject custom temperature/top_p
+      ...(isKimiFixedTempModel(String(model || '')) ? {} : { temperature }),
+      max_tokens: maxOutputTokens,
+      ...(jsonMode ? { response_format: { type: 'json_object' } } : {}),
+    },
+    modelCandidates,
+  }) as Record<string, unknown>;
+
+  if (!request.ok) {
+    const status = Number(request.status || 500);
+    const messageText = String(request.errorMessage || 'Kimi request failed.');
+    const error = new Error(messageText);
+    (error as Error & { status?: number }).status = status;
+    throw error;
+  }
+
+  const response = request.response as Response;
+  const body = await parseJsonSafe(response);
+  const text = extractOpenAIText(body); // Kimi uses OpenAI-compatible response format
+  if (!text) {
+    throw new Error('Kimi returned empty content.');
+  }
+
+  return {
+    provider: 'kimi',
+    model: String(request.model || model || DEFAULT_KIMI_MODEL),
+    text,
+    raw: body,
+    usage: body?.usage || null,
+  };
 };
 
 const safeParseJsonObject = (value: unknown): Record<string, unknown> => {
@@ -2307,7 +2472,7 @@ const handleGeminiChatTools = async (payload: Record<string, unknown>) => {
   };
   if (tools && tools.length > 0) {
     requestBody.tools = tools;
-    requestBody.tool_choice = 'auto';
+    requestBody.tool_choice = buildOpenAiStyleToolChoice(payload?.toolChoice);
   }
   const extraBody = buildGeminiCompatExtraBody(
     payload?.googleOptions && typeof payload.googleOptions === 'object'
@@ -2369,7 +2534,7 @@ const handleGeminiChatToolsStream = async (payload: Record<string, unknown>, cor
   };
   if (tools && tools.length > 0) {
     requestBody.tools = tools;
-    requestBody.tool_choice = 'auto';
+    requestBody.tool_choice = buildOpenAiStyleToolChoice(payload?.toolChoice);
   }
   const extraBody = buildGeminiCompatExtraBody(
     payload?.googleOptions && typeof payload.googleOptions === 'object'
@@ -2488,7 +2653,7 @@ const handleDeepSeekChatTools = async (payload: Record<string, unknown>) => {
   };
   if (tools && tools.length > 0) {
     requestBody.tools = tools;
-    requestBody.tool_choice = 'auto';
+    requestBody.tool_choice = buildOpenAiStyleToolChoice(payload?.toolChoice);
   }
   if (responseFormat) {
     requestBody.response_format = responseFormat;
@@ -2592,7 +2757,7 @@ const handleDeepSeekChatToolsStream = async (payload: Record<string, unknown>, c
   };
   if (tools && tools.length > 0) {
     requestBody.tools = tools;
-    requestBody.tool_choice = 'auto';
+    requestBody.tool_choice = buildOpenAiStyleToolChoice(payload?.toolChoice);
   }
   if (responseFormat) {
     requestBody.response_format = responseFormat;
@@ -2726,6 +2891,22 @@ const handleAnthropicChat = async (payload: Record<string, unknown>) => {
   return jsonResponse({ ok: true, ...result });
 };
 
+const handleKimiChat = async (payload: Record<string, unknown>) => {
+  const message = String(payload?.message || '').trim();
+  if (!message) return jsonResponse({ error: 'Missing required field: message' }, 400);
+
+  const result = await callKimiChat({
+    message,
+    conversationHistory: Array.isArray(payload?.conversationHistory) ? payload.conversationHistory : [],
+    systemPrompt: String(payload?.systemPrompt || ''),
+    temperature: toFiniteNumber(payload?.temperature, 0.7),
+    maxOutputTokens: Math.max(64, Math.floor(toFiniteNumber(payload?.maxOutputTokens, 8192))),
+    model: String(payload?.model || DEFAULT_KIMI_MODEL),
+  });
+
+  return jsonResponse({ ok: true, ...result });
+};
+
 const handleOpenAIChat = async (payload: Record<string, unknown>) => {
   const message = String(payload?.message || '').trim();
   if (!message) return jsonResponse({ error: 'Missing required field: message' }, 400);
@@ -2776,7 +2957,7 @@ const handleAnthropicChatTools = async (payload: Record<string, unknown>) => {
   }
   if (anthropicTools.length > 0) {
     requestBody.tools = anthropicTools;
-    requestBody.tool_choice = { type: 'auto' };
+    requestBody.tool_choice = buildAnthropicToolChoice(payload?.toolChoice);
   }
 
   const request = await postAnthropicWithModelFallback({
@@ -2842,7 +3023,7 @@ const handleAnthropicChatToolsStream = async (payload: Record<string, unknown>, 
   }
   if (anthropicTools.length > 0) {
     requestBody.tools = anthropicTools;
-    requestBody.tool_choice = { type: 'auto' };
+    requestBody.tool_choice = buildAnthropicToolChoice(payload?.toolChoice);
   }
 
   const t = performance.now();
@@ -2875,6 +3056,67 @@ const handleAnthropicChatToolsStream = async (payload: Record<string, unknown>, 
   });
 };
 
+const handleKimiChatTools = async (payload: Record<string, unknown>) => {
+  if (!KIMI_API_KEY) {
+    return jsonResponse({ error: 'KIMI_API_KEY is not configured on Edge Function.', code: 'missing_server_keys' }, 500);
+  }
+
+  const messages = payload?.messages;
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return jsonResponse({ error: 'Missing required field: messages (array)' }, 400);
+  }
+
+  const tools = Array.isArray(payload?.tools) ? payload.tools : undefined;
+  const model = String(payload?.model || DEFAULT_KIMI_MODEL).trim();
+  const maxOutputTokens = Math.max(64, Math.floor(toFiniteNumber(payload?.maxOutputTokens, 4096)));
+
+  const modelCandidates = Array.from(new Set(
+    [model, ...KIMI_DEFAULT_CANDIDATES]
+      .map((item) => String(item || '').trim())
+      .filter(Boolean),
+  ));
+
+  // kimi-k2.5 and thinking models reject custom temperature/top_p
+  const requestBody: Record<string, unknown> = {
+    model,
+    messages,
+    max_tokens: maxOutputTokens,
+  };
+  if (!isKimiFixedTempModel(model)) {
+    requestBody.temperature = toFiniteNumber(payload?.temperature, 0.3);
+  }
+  if (tools && tools.length > 0) {
+    requestBody.tools = tools;
+    requestBody.tool_choice = buildOpenAiStyleToolChoice(payload?.toolChoice, {
+      provider: 'kimi',
+      thinkingEnabled: true,
+    });
+  }
+
+  const request = await postKimiWithModelFallback({
+    requestBody,
+    modelCandidates,
+  }) as Record<string, unknown>;
+
+  if (!request.ok) {
+    const status = Number(request.status || 500);
+    return jsonResponse(
+      { error: String(request.errorMessage || 'Kimi tool-calling request failed.'), code: 'kimi_tools_failed' },
+      status >= 400 && status < 600 ? status : 500,
+    );
+  }
+
+  const response = request.response as Response;
+  const body = await parseJsonSafe(response);
+
+  return jsonResponse({
+    ok: true,
+    provider: 'kimi',
+    model: String(request.model || model),
+    ...body,
+  });
+};
+
 const handleOpenAIChatTools = async (payload: Record<string, unknown>) => {
   if (!OPENAI_API_KEY) {
     return jsonResponse({ error: 'OPENAI_API_KEY is not configured on Edge Function.', code: 'missing_server_keys' }, 500);
@@ -2904,7 +3146,7 @@ const handleOpenAIChatTools = async (payload: Record<string, unknown>) => {
   };
   if (tools && tools.length > 0) {
     requestBody.tools = tools;
-    requestBody.tool_choice = 'auto';
+    requestBody.tool_choice = buildOpenAiStyleToolChoice(payload?.toolChoice);
   }
 
   const request = await postOpenAIWithModelFallback({
@@ -2956,7 +3198,7 @@ const handleOpenAIChatToolsStream = async (payload: Record<string, unknown>, cor
   };
   if (tools && tools.length > 0) {
     requestBody.tools = tools;
-    requestBody.tool_choice = 'auto';
+    requestBody.tool_choice = buildOpenAiStyleToolChoice(payload?.toolChoice);
   }
 
   const t = performance.now();
@@ -3102,6 +3344,27 @@ const handleDiPrompt = async (payload: Record<string, unknown>, authContext: Aut
     return jsonResponse({
       ok: true,
       provider: 'anthropic',
+      model: result.model,
+      text: result.text,
+      usage: result.usage,
+    });
+  }
+
+  if (provider === 'kimi') {
+    if (!KIMI_API_KEY) {
+      return jsonResponse({ error: 'KIMI_API_KEY is not configured on Edge Function.' }, 500);
+    }
+    const result = await callKimiChat({
+      message: prompt,
+      systemPrompt: '',
+      temperature,
+      maxOutputTokens,
+      model: model || DEFAULT_KIMI_MODEL,
+      jsonMode: isJsonMode,
+    });
+    return jsonResponse({
+      ok: true,
+      provider: 'kimi',
       model: result.model,
       text: result.text,
       usage: result.usage,
@@ -3297,6 +3560,33 @@ const handleOpenAIBilling = async (): Promise<Response> => {
   }
 };
 
+// ── Kimi (Moonshot) — Balance API ─────────────────────────────────────────
+const handleKimiBilling = async (): Promise<Response> => {
+  if (!KIMI_API_KEY) {
+    return jsonResponse({ error: 'KIMI_API_KEY is not configured.', code: 'missing_server_keys' }, 500);
+  }
+  try {
+    const res = await fetch(`${KIMI_BASE_URL}/v1/users/me/balance`, {
+      headers: { Authorization: `Bearer ${KIMI_API_KEY}` },
+    });
+    if (!res.ok) {
+      const errText = await res.text().catch(() => '');
+      return jsonResponse({ error: `Kimi billing API returned ${res.status}: ${errText}`, code: 'kimi_billing_failed' }, 502);
+    }
+    const json = await res.json();
+    const data = json?.data || {};
+    return jsonResponse({
+      provider: 'kimi',
+      balance_usd: data.available_balance ?? null,
+      voucher_balance: data.voucher_balance ?? null,
+      cash_balance: data.cash_balance ?? null,
+      fetched_at: new Date().toISOString(),
+    });
+  } catch (err) {
+    return jsonResponse({ error: String((err as Error).message), code: 'kimi_billing_failed' }, 502);
+  }
+};
+
 Deno.serve(async (req) => {
   const t0 = performance.now();
   const cors = buildCorsHeaders(req.headers.get('origin'));
@@ -3416,6 +3706,8 @@ Deno.serve(async (req) => {
     if (mode === 'di_prompt') return wrapCors(await handleDiPrompt(payload, authContext));
     if (mode === 'anthropic_chat') return wrapCors(await handleAnthropicChat(payload));
     if (mode === 'anthropic_chat_tools') return wrapCors(await handleAnthropicChatTools(payload));
+    if (mode === 'kimi_chat') return wrapCors(await handleKimiChat(payload));
+    if (mode === 'kimi_chat_tools') return wrapCors(await handleKimiChatTools(payload));
     if (mode === 'openai_chat') return wrapCors(await handleOpenAIChat(payload));
     if (mode === 'openai_chat_tools') return wrapCors(await handleOpenAIChatTools(payload));
     if (mode === 'gemini_native') {
@@ -3442,6 +3734,7 @@ Deno.serve(async (req) => {
 
     if (mode === 'anthropic_billing') return wrapCors(await handleAnthropicBilling());
     if (mode === 'openai_billing') return wrapCors(await handleOpenAIBilling());
+    if (mode === 'kimi_billing') return wrapCors(await handleKimiBilling());
 
     return jsonResponse({ error: `Unsupported mode: ${mode}` }, 400, cors);
   } catch (error) {

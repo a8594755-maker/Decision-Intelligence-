@@ -15,6 +15,10 @@ describe('classifyError', () => {
     expect(classifyError('Rate limit exceeded')).toBe('rate_limited');
   });
 
+  it('returns provider_overloaded for overloaded provider errors', () => {
+    expect(classifyError('The engine is currently overloaded, please try again later')).toBe('provider_overloaded');
+  });
+
   it('returns api_key_missing for auth errors', () => {
     expect(classifyError('API key invalid')).toBe('api_key_missing');
     expect(classifyError('Unauthorized (401)')).toBe('api_key_missing');
@@ -70,6 +74,12 @@ describe('chooseHealingStrategy', () => {
     const result = chooseHealingStrategy('429 Too Many Requests', baseStep, 0);
     expect(result.healingStrategy).toBe('escalate_model');
     expect(result.errorCategory).toBe('rate_limited');
+  });
+
+  it('returns escalate_model for provider overload', () => {
+    const result = chooseHealingStrategy('The engine is currently overloaded, please try again later', baseStep, 0);
+    expect(result.healingStrategy).toBe('escalate_model');
+    expect(result.errorCategory).toBe('provider_overloaded');
   });
 
   it('returns escalate_model for API key issues', () => {

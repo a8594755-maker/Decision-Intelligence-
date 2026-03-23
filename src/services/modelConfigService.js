@@ -2,16 +2,27 @@
  * Model Configuration Service
  * Reads/writes chat agent model settings from localStorage.
  *
- * Three execution modes, each with independent model configs:
+ * Legacy storage supported three execution modes with independent configs:
  *   - 'single'  — single agent only (no challenger, no judge)
  *   - 'dual'    — primary + challenger + judge (auto-triggered)
  *   - 'full'    — forced dual + judge on every message (thinking On)
  *
+ * The current settings UI uses simplified shared role configs:
+ *   - primary   — answer generation
+ *   - secondary — challenger / comparison path
+ *   - judge     — QA reviewer / candidate judge
+ *
  * Falls back to env vars → hardcoded defaults.
  */
 
+import {
+  PROVIDER_MODELS as REGISTRY_PROVIDER_MODELS,
+  normalizeProviderModelConfig,
+} from './modelRegistryService.js';
+
 const STORAGE_KEY = 'di_model_config';
 const ACTIVE_MODE_KEY = 'di_active_thinking_mode';
+const NORMALIZATION_NOTICES = [];
 
 export const EXECUTION_MODES = Object.freeze({
   single: {
@@ -37,34 +48,214 @@ export const EXECUTION_MODES = Object.freeze({
 // Kept for backward compat with imports that reference THINKING_MODES
 export const THINKING_MODES = EXECUTION_MODES;
 
-export const PROVIDER_MODELS = Object.freeze({
-  openai:    ['gpt-5.4', 'gpt-5.4-thinking'],
-  anthropic: ['claude-opus-4-6', 'claude-sonnet-4-6'],
-  gemini:    ['gemini-3.1-pro-preview', 'gemini-2.5-flash', 'gemini-2.5-flash-lite'],
-  deepseek:  ['deepseek-chat', 'deepseek-reasoner'],
-});
+export const PROVIDER_MODELS = REGISTRY_PROVIDER_MODELS;
+
+const MODEL_TO_PROVIDER = Object.freeze(
+  Object.fromEntries(
+    Object.entries(PROVIDER_MODELS).flatMap(([provider, models]) =>
+      models.map((modelName) => [modelName, provider]),
+    ),
+  ),
+);
+
+/**
+ * Resolve the correct provider for a model name.
+ * If the declared provider doesn't own the model, return the inferred provider.
+ * Unknown models (not in PROVIDER_MODELS) trust the declared provider.
+ */
+export function resolveProviderFromModel(model, declaredProvider) {
+  const inferred = MODEL_TO_PROVIDER[String(model || '').trim()];
+  if (!inferred) return declaredProvider;
+  if (inferred === declaredProvider) return declaredProvider;
+  console.warn(
+    `[modelConfig] Provider mismatch: declared="${declaredProvider}" but model="${model}" belongs to "${inferred}". Using "${inferred}".`,
+  );
+  return inferred;
+}
+
+const HARD_DEFAULTS = {
+  primary: {
+    provider: 'openai',
+    model: 'gpt-5.4',
+  },
+  secondary: {
+    provider: 'anthropic',
+    model: 'claude-opus-4-6',
+  },
+  judge: {
+    provider: 'gemini',
+    model: 'gemini-3.1-pro-preview',
+  },
+};
 
 const ENV_DEFAULTS = {
   primary: {
-    provider: import.meta.env.VITE_DI_CHAT_PROVIDER || 'openai',
-    model:    import.meta.env.VITE_DI_CHAT_MODEL || 'gpt-5.4',
+    provider: import.meta.env.VITE_DI_CHAT_PROVIDER || HARD_DEFAULTS.primary.provider,
+    model:    import.meta.env.VITE_DI_CHAT_MODEL || HARD_DEFAULTS.primary.model,
   },
   secondary: {
-    provider: import.meta.env.VITE_DI_AGENT_SECONDARY_PROVIDER || 'anthropic',
-    model:    import.meta.env.VITE_DI_AGENT_SECONDARY_MODEL || 'claude-opus-4-6',
+    provider: import.meta.env.VITE_DI_AGENT_SECONDARY_PROVIDER || HARD_DEFAULTS.secondary.provider,
+    model:    import.meta.env.VITE_DI_AGENT_SECONDARY_MODEL || HARD_DEFAULTS.secondary.model,
   },
   judge: {
-    provider: import.meta.env.VITE_DI_AGENT_QA_REVIEW_PROVIDER || 'gemini',
-    model:    import.meta.env.VITE_DI_AGENT_QA_REVIEW_MODEL || 'gemini-3.1-pro-preview',
+    provider: import.meta.env.VITE_DI_AGENT_QA_REVIEW_PROVIDER || HARD_DEFAULTS.judge.provider,
+    model:    import.meta.env.VITE_DI_AGENT_QA_REVIEW_MODEL || HARD_DEFAULTS.judge.model,
   },
 };
 
 const VALID_MODES = new Set(['single', 'dual', 'full']);
+const VALID_ROLES = new Set(['primary', 'secondary', 'judge']);
+const SHARED_CONFIG_KEY = 'shared';
 
 function loadConfig() {
   try {
     return JSON.parse(localStorage.getItem(STORAGE_KEY)) || {};
   } catch { return {}; }
+}
+
+function saveConfig(config) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
+}
+
+function enqueueNormalizationNotice(notice) {
+  if (!notice?.message) return;
+  const key = notice.key || notice.message;
+  if (NORMALIZATION_NOTICES.some((item) => item.key === key)) return;
+  NORMALIZATION_NOTICES.push({ ...notice, key });
+}
+
+function buildRoleDefaults(role) {
+  const envDefaults = ENV_DEFAULTS[role] || ENV_DEFAULTS.primary;
+  const hardDefaults = HARD_DEFAULTS[role] || HARD_DEFAULTS.primary;
+  return normalizeProviderModelConfig({
+    provider: envDefaults.provider,
+    model: envDefaults.model,
+    fallbackProvider: hardDefaults.provider,
+    fallbackModel: hardDefaults.model,
+  });
+}
+
+function isValidConfigEntry(entry) {
+  return Boolean(entry && typeof entry.provider === 'string' && typeof entry.model === 'string');
+}
+
+function normalizeStoredEntry(entry, role, sourceKey) {
+  if (!isValidConfigEntry(entry)) {
+    return { entry: null, normalized: false, reason: null };
+  }
+
+  const defaults = buildRoleDefaults(role);
+  const normalized = normalizeProviderModelConfig({
+    provider: entry.provider,
+    model: entry.model,
+    fallbackProvider: defaults.provider,
+    fallbackModel: defaults.model,
+  });
+
+  if (normalized.normalized) {
+    enqueueNormalizationNotice({
+      key: `${sourceKey}:${role}:${normalized.reason}:${entry.provider}:${entry.model}`,
+      role,
+      sourceKey,
+      reason: normalized.reason,
+      message: `Model config repaired for ${role}: ${entry.provider || 'unknown'} · ${entry.model || 'unknown'} → ${normalized.provider} · ${normalized.model}.`,
+    });
+  }
+
+  return {
+    entry: {
+      provider: normalized.provider,
+      model: normalized.model,
+    },
+    normalized: normalized.normalized,
+    reason: normalized.reason,
+  };
+}
+
+function sanitizeConfig(config) {
+  const rawConfig = config && typeof config === 'object' ? config : {};
+  const nextConfig = { ...rawConfig };
+  let changed = false;
+
+  if (rawConfig?.[SHARED_CONFIG_KEY] && typeof rawConfig[SHARED_CONFIG_KEY] === 'object') {
+    nextConfig[SHARED_CONFIG_KEY] = { ...rawConfig[SHARED_CONFIG_KEY] };
+    for (const role of VALID_ROLES) {
+      if (!rawConfig[SHARED_CONFIG_KEY]?.[role]) continue;
+      const normalized = normalizeStoredEntry(rawConfig[SHARED_CONFIG_KEY][role], role, SHARED_CONFIG_KEY);
+      if (normalized.entry) {
+        nextConfig[SHARED_CONFIG_KEY][role] = normalized.entry;
+        changed ||= normalized.normalized;
+      }
+    }
+  }
+
+  for (const mode of VALID_MODES) {
+    if (!rawConfig?.[mode] || typeof rawConfig[mode] !== 'object') continue;
+    nextConfig[mode] = { ...rawConfig[mode] };
+    for (const role of VALID_ROLES) {
+      if (!rawConfig[mode]?.[role]) continue;
+      const normalized = normalizeStoredEntry(rawConfig[mode][role], role, mode);
+      if (normalized.entry) {
+        nextConfig[mode][role] = normalized.entry;
+        changed ||= normalized.normalized;
+      }
+    }
+  }
+
+  for (const role of VALID_ROLES) {
+    if (!rawConfig?.[role]) continue;
+    const normalized = normalizeStoredEntry(rawConfig[role], role, 'legacy');
+    if (normalized.entry) {
+      nextConfig[role] = normalized.entry;
+      changed ||= normalized.normalized;
+    }
+  }
+
+  return {
+    config: nextConfig,
+    changed,
+  };
+}
+
+function loadSanitizedConfig() {
+  const rawConfig = loadConfig();
+  const { config, changed } = sanitizeConfig(rawConfig);
+  if (changed) {
+    saveConfig(config);
+  }
+  return config;
+}
+
+function getSharedEntry(config, role) {
+  const entry = config?.[SHARED_CONFIG_KEY]?.[role];
+  return isValidConfigEntry(entry) ? entry : null;
+}
+
+function getModeEntry(config, mode, role) {
+  const entry = config?.[mode]?.[role];
+  return isValidConfigEntry(entry) ? entry : null;
+}
+
+function getLegacyEntry(config, role) {
+  const entry = config?.[role];
+  return isValidConfigEntry(entry) ? entry : null;
+}
+
+function getDefaultLookupMode(role) {
+  if (role === 'primary') return getActiveThinkingMode();
+  return 'dual';
+}
+
+function getModeFallbackOrder(role, mode) {
+  if (role === 'primary') {
+    if (mode === 'full') return ['full', 'dual', 'single'];
+    if (mode === 'dual') return ['dual', 'single', 'full'];
+    return ['single', 'dual', 'full'];
+  }
+
+  if (mode === 'full') return ['full', 'dual'];
+  if (mode === 'single') return ['dual', 'full'];
+  return ['dual', 'full'];
 }
 
 /**
@@ -79,6 +270,70 @@ function normalizeMode(mode) {
   return 'single';
 }
 
+function getResolvedEntry(config, role, mode) {
+  const normalizedRole = VALID_ROLES.has(role) ? role : 'primary';
+  const defaults = buildRoleDefaults(normalizedRole);
+  const sharedEntry = getSharedEntry(config, normalizedRole);
+  if (sharedEntry) {
+    const normalized = normalizeStoredEntry(sharedEntry, normalizedRole, SHARED_CONFIG_KEY);
+    return {
+      provider: normalized.entry?.provider || defaults.provider,
+      model: normalized.entry?.model || defaults.model,
+      configNormalized: normalized.normalized,
+      normalizationReason: normalized.reason,
+      source: SHARED_CONFIG_KEY,
+    };
+  }
+
+  const effectiveMode = normalizeMode(mode || getDefaultLookupMode(normalizedRole));
+  const modeEntry = getModeFallbackOrder(normalizedRole, effectiveMode)
+    .map((candidateMode) => {
+      const entry = getModeEntry(config, candidateMode, normalizedRole);
+      return entry ? { entry, source: candidateMode } : null;
+    })
+    .find(Boolean);
+  if (modeEntry) {
+    const normalized = normalizeStoredEntry(modeEntry.entry, normalizedRole, modeEntry.source);
+    return {
+      provider: normalized.entry?.provider || defaults.provider,
+      model: normalized.entry?.model || defaults.model,
+      configNormalized: normalized.normalized,
+      normalizationReason: normalized.reason,
+      source: modeEntry.source,
+    };
+  }
+
+  const legacyEntry = getLegacyEntry(config, normalizedRole);
+  if (legacyEntry) {
+    const normalized = normalizeStoredEntry(legacyEntry, normalizedRole, 'legacy');
+    return {
+      provider: normalized.entry?.provider || defaults.provider,
+      model: normalized.entry?.model || defaults.model,
+      configNormalized: normalized.normalized,
+      normalizationReason: normalized.reason,
+      source: 'legacy',
+    };
+  }
+
+  return {
+    provider: defaults.provider,
+    model: defaults.model,
+    configNormalized: false,
+    normalizationReason: null,
+    source: 'default',
+  };
+}
+
+export function getModelConfigResolution(role, mode) {
+  const rawConfig = loadConfig();
+  const resolution = getResolvedEntry(rawConfig, role, mode);
+  const { config, changed } = sanitizeConfig(rawConfig);
+  if (changed) {
+    saveConfig(config);
+  }
+  return resolution;
+}
+
 /**
  * Get effective provider+model for a role.
  * @param {'primary'|'secondary'|'judge'} role
@@ -86,17 +341,8 @@ function normalizeMode(mode) {
  * @returns {{ provider: string, model: string }}
  */
 export function getModelConfig(role, mode) {
-  const effectiveMode = normalizeMode(mode || getActiveThinkingMode());
-  const config = loadConfig();
-  const modeConfig = config[effectiveMode] || {};
-  const entry = modeConfig[role] || {};
-  // Legacy flat format fallback (pre-mode migration)
-  const legacyEntry = config[role] && typeof config[role].provider === 'string' ? config[role] : {};
-  const defaults = ENV_DEFAULTS[role] || ENV_DEFAULTS.primary;
-  return {
-    provider: entry.provider || legacyEntry.provider || defaults.provider,
-    model:    entry.model    || legacyEntry.model    || defaults.model,
-  };
+  const { provider, model } = getModelConfigResolution(role, mode);
+  return { provider, model };
 }
 
 /**
@@ -107,11 +353,76 @@ export function getModelConfig(role, mode) {
  * @param {'single'|'dual'|'full'} [mode]
  */
 export function setModelConfig(role, provider, model, mode) {
-  const effectiveMode = normalizeMode(mode || getActiveThinkingMode());
-  const config = loadConfig();
+  const normalizedRole = VALID_ROLES.has(role) ? role : 'primary';
+  const defaultMode = normalizedRole === 'primary' ? 'single' : 'dual';
+  const effectiveMode = normalizeMode(mode || defaultMode);
+  const config = loadSanitizedConfig();
+  const defaults = buildRoleDefaults(normalizedRole);
+  const normalized = normalizeProviderModelConfig({
+    provider,
+    model,
+    fallbackProvider: defaults.provider,
+    fallbackModel: defaults.model,
+  });
   if (!config[effectiveMode]) config[effectiveMode] = {};
-  config[effectiveMode][role] = { provider, model };
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
+  config[effectiveMode][normalizedRole] = {
+    provider: normalized.provider,
+    model: normalized.model,
+  };
+  if (normalized.normalized) {
+    enqueueNormalizationNotice({
+      key: `${effectiveMode}:${normalizedRole}:${normalized.reason}:write`,
+      role: normalizedRole,
+      sourceKey: effectiveMode,
+      reason: normalized.reason,
+      message: `Model config repaired for ${normalizedRole}: ${provider || 'unknown'} · ${model || 'unknown'} → ${normalized.provider} · ${normalized.model}.`,
+    });
+  }
+  saveConfig(config);
+}
+
+/**
+ * Get the simplified shared config for a role.
+ * Falls back to legacy mode-based configs if no shared entry exists yet.
+ * @param {'primary'|'secondary'|'judge'} role
+ * @returns {{ provider: string, model: string }}
+ */
+export function getSharedModelConfig(role) {
+  return getModelConfig(role, role === 'primary' ? 'single' : 'dual');
+}
+
+/**
+ * Persist provider+model for a role in the simplified shared settings model.
+ * This becomes the canonical config used across execution modes.
+ * @param {'primary'|'secondary'|'judge'} role
+ * @param {string} provider
+ * @param {string} model
+ */
+export function setSharedModelConfig(role, provider, model) {
+  const normalizedRole = VALID_ROLES.has(role) ? role : 'primary';
+  const config = loadSanitizedConfig();
+  const defaults = buildRoleDefaults(normalizedRole);
+  const normalized = normalizeProviderModelConfig({
+    provider,
+    model,
+    fallbackProvider: defaults.provider,
+    fallbackModel: defaults.model,
+  });
+  if (!config[SHARED_CONFIG_KEY]) config[SHARED_CONFIG_KEY] = {};
+  config[SHARED_CONFIG_KEY][normalizedRole] = {
+    provider: normalized.provider,
+    model: normalized.model,
+  };
+  if (normalized.normalized) {
+    enqueueNormalizationNotice({
+      key: `${SHARED_CONFIG_KEY}:${normalizedRole}:${normalized.reason}:write`,
+      role: normalizedRole,
+      sourceKey: SHARED_CONFIG_KEY,
+      reason: normalized.reason,
+      message: `Model config repaired for ${normalizedRole}: ${provider || 'unknown'} · ${model || 'unknown'} → ${normalized.provider} · ${normalized.model}.`,
+    });
+  }
+  saveConfig(config);
 }
 
 /**
@@ -119,6 +430,7 @@ export function setModelConfig(role, provider, model, mode) {
  */
 export function resetModelConfig() {
   localStorage.removeItem(STORAGE_KEY);
+  NORMALIZATION_NOTICES.splice(0, NORMALIZATION_NOTICES.length);
 }
 
 /**
@@ -138,4 +450,10 @@ export function getActiveThinkingMode() {
  */
 export function setActiveThinkingMode(mode) {
   localStorage.setItem(ACTIVE_MODE_KEY, mode === 'full' ? 'full' : 'single');
+}
+
+export function consumeModelConfigNormalizationNotices() {
+  const notices = NORMALIZATION_NOTICES.slice();
+  NORMALIZATION_NOTICES.splice(0, NORMALIZATION_NOTICES.length);
+  return notices;
 }
