@@ -65,7 +65,7 @@ describe('aiProxyService Kimi backpressure', () => {
     __resetAiProxyBackpressureForTests();
 
     const promise = invokeAiProxy('kimi_chat_tools', { messages: [{ role: 'user', content: 'hi' }] });
-    await vi.advanceTimersByTimeAsync(1000);
+    await vi.advanceTimersByTimeAsync(2000);
     const result = await promise;
 
     expect(globalThis.fetch).toHaveBeenCalledTimes(2);
@@ -122,6 +122,86 @@ describe('aiProxyService Kimi backpressure', () => {
     await vi.runAllTimersAsync();
 
     await rejection;
-    expect(globalThis.fetch).toHaveBeenCalledTimes(4);
+    expect(globalThis.fetch).toHaveBeenCalledTimes(5);
+  });
+});
+
+describe('aiProxyService Circuit Breaker', () => {
+  beforeEach(() => {
+    mockAcquireOrThrow.mockReset();
+    mockAcquireOrThrow.mockImplementation(() => undefined);
+    vi.stubEnv('VITE_SUPABASE_URL', 'https://unit-test.supabase.co');
+    vi.stubEnv('VITE_SUPABASE_ANON_KEY', 'anon-test-key');
+    globalThis.fetch = vi.fn();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it('opens circuit breaker after consecutive 429 failures and rejects immediately', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    globalThis.fetch.mockResolvedValue(makeJsonResponse(429, {
+      error: 'The engine is currently overloaded, please try again later',
+    }));
+
+    const { invokeAiProxy, isProviderCircuitOpen, __resetAiProxyBackpressureForTests } = await loadAiProxyService();
+    __resetAiProxyBackpressureForTests();
+
+    // First call: exhausts all retries (5 fetches) and trips the circuit breaker
+    // Cooldown is 60s so it stays OPEN even after retries (~44s)
+    const promise1 = invokeAiProxy('gemini_chat', { provider: 'gemini' });
+    const rejection1 = expect(promise1).rejects.toMatchObject({ status: 429 });
+    await vi.runAllTimersAsync();
+    await rejection1;
+
+    // Circuit should be open (not CLOSED) — cooldown is 60s, retries took ~44s
+    expect(isProviderCircuitOpen('gemini')).toBe(true);
+
+    // Second call: should be rejected immediately by circuit breaker
+    const promise2 = invokeAiProxy('gemini_chat', { provider: 'gemini' });
+    await expect(promise2).rejects.toMatchObject({
+      failureCategory: 'provider_circuit_open',
+    });
+  });
+
+  it('recovers after successful request following cooldown', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+
+    const { invokeAiProxy, isProviderCircuitOpen, __resetAiProxyBackpressureForTests } = await loadAiProxyService();
+    __resetAiProxyBackpressureForTests();
+
+    // First send 429s to trip the breaker
+    globalThis.fetch.mockResolvedValue(makeJsonResponse(429, {
+      error: 'The engine is currently overloaded, please try again later',
+    }));
+
+    const promise1 = invokeAiProxy('gemini_chat', { provider: 'gemini' });
+    const rejection1 = expect(promise1).rejects.toThrow();
+    await vi.runAllTimersAsync();
+    await rejection1;
+
+    expect(isProviderCircuitOpen('gemini')).toBe(true);
+
+    // Advance past cooldown (60s from when breaker opened at ~7s into retry loop)
+    await vi.advanceTimersByTimeAsync(61_000);
+
+    // Now send a success — the breaker should recover via HALF_OPEN
+    globalThis.fetch.mockResolvedValueOnce(makeJsonResponse(200, { ok: true, text: 'recovered' }));
+    const promise2 = invokeAiProxy('gemini_chat', { provider: 'gemini' });
+    const result = await promise2;
+
+    expect(result).toEqual(expect.objectContaining({ ok: true, text: 'recovered' }));
+    expect(isProviderCircuitOpen('gemini')).toBe(false);
+  });
+
+  it('isProviderCircuitOpen returns false for providers without circuit breaker', async () => {
+    const { isProviderCircuitOpen, __resetAiProxyBackpressureForTests } = await loadAiProxyService();
+    __resetAiProxyBackpressureForTests();
+    expect(isProviderCircuitOpen('anthropic')).toBe(false);
+    expect(isProviderCircuitOpen('gemini')).toBe(false);
   });
 });

@@ -40,8 +40,13 @@ describe('detectDomain', () => {
     expect(result.matchedConcepts).toContain('service_level');
   });
 
-  it('returns null domain for non-supply-chain questions', () => {
+  it('returns finance domain for revenue questions', () => {
     const result = detectDomain('Show me revenue trends by category');
+    expect(result.domainKey).toBe('finance');
+  });
+
+  it('returns null domain for unrecognized questions', () => {
+    const result = detectDomain('Tell me a joke about cats');
     expect(result.domainKey).toBeNull();
     expect(result.matchedConcepts).toHaveLength(0);
   });
@@ -161,7 +166,18 @@ describe('buildJudgeDomainCriteria', () => {
 
   it('returns empty for unknown domain', () => {
     expect(buildJudgeDomainCriteria(null)).toBe('');
-    expect(buildJudgeDomainCriteria('finance')).toBe('');
+    expect(buildJudgeDomainCriteria('unknown_domain')).toBe('');
+  });
+
+  it('returns criteria for finance domain', () => {
+    const criteria = buildJudgeDomainCriteria('finance');
+    expect(criteria).toContain('Finance & Accounting');
+    expect(criteria).toContain('ARITHMETIC CONSISTENCY');
+  });
+
+  it('returns criteria for general domain', () => {
+    const criteria = buildJudgeDomainCriteria('general');
+    expect(criteria).toContain('STATISTICAL RIGOR');
   });
 });
 

@@ -54,6 +54,8 @@ const DEFAULT_POLICIES = {
   report:                  { preferred_tier: 'tier_a', fallback_tier: 'tier_b', preferred_model: 'gpt-5.4', escalation_rules: {} },
   export:                  { preferred_tier: 'tier_a', fallback_tier: 'tier_b', preferred_model: 'gpt-5.4', escalation_rules: {} },
   builtin_tool:            { preferred_tier: 'tier_a', fallback_tier: 'tier_b', preferred_model: 'gpt-5.4', escalation_rules: {} },
+  chart_artisan:           { preferred_tier: 'tier_a', fallback_tier: 'tier_b', preferred_model: 'gpt-5.4', escalation_rules: {} },
+  dashboard_summary:       { preferred_tier: 'tier_c', fallback_tier: 'tier_b', preferred_model: 'gemini-2.0-flash', escalation_rules: {} },
 };
 
 const LOCAL_RUNS_KEY = 'ai_employee_model_runs_v1';

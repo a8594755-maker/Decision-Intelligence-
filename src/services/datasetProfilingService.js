@@ -75,20 +75,91 @@ const detectColumnType = (values) => {
 };
 
 const buildColumnSemantics = (columns, rows) => {
+  const sampleRows = rows.slice(0, MAX_STATS_ROWS);
+
   return columns.slice(0, 30).map((column) => {
-    const values = rows
-      .slice(0, 120)
+    const values = sampleRows
       .map((row) => row[column])
       .filter((value) => value !== '' && value !== null && value !== undefined);
 
-    return {
+    const type = detectColumnType(values);
+    const nonNullRatio = sampleRows.length > 0
+      ? Number((values.length / sampleRows.length).toFixed(3))
+      : 0;
+
+    const result = {
       column,
       normalized: normalizeHeader(column),
-      guessed_type: detectColumnType(values),
-      non_null_ratio: rows.length > 0
-        ? Number((values.length / rows.slice(0, 120).length).toFixed(3))
-        : 0
+      guessed_type: type,
+      non_null_ratio: nonNullRatio,
     };
+
+    // ── Cardinality ──
+    const uniqueValues = new Set(values.map(v => String(v).trim()));
+    result.cardinality = uniqueValues.size;
+
+    // ── Sample Values (low-cardinality: all distinct; high-cardinality: top 8 by freq) ──
+    if (type === 'string' || type === 'boolean') {
+      if (uniqueValues.size <= 50) {
+        result.distinct_values = [...uniqueValues].sort().slice(0, 30);
+      } else {
+        const freq = {};
+        values.forEach(v => {
+          const key = String(v).trim();
+          freq[key] = (freq[key] || 0) + 1;
+        });
+        result.top_values = Object.entries(freq)
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 8)
+          .map(([val]) => val);
+      }
+    }
+
+    // ── Numeric stats (min/max/mean/p25/p75) ──
+    if (type === 'number') {
+      const nums = values.map(v => Number(v)).filter(Number.isFinite);
+      if (nums.length > 0) {
+        nums.sort((a, b) => a - b);
+        result.stats = {
+          min: nums[0],
+          max: nums[nums.length - 1],
+          mean: Number((nums.reduce((s, n) => s + n, 0) / nums.length).toFixed(2)),
+          p25: nums[Math.floor(nums.length * 0.25)],
+          p75: nums[Math.floor(nums.length * 0.75)],
+        };
+      }
+    }
+
+    // ── Date range + granularity ──
+    if (type === 'date') {
+      const { parseTemporalValue } = timeColumnDetectionInternals;
+      const dates = values
+        .map(v => parseTemporalValue(v, { allowExcelSerial: false }))
+        .filter(Boolean)
+        .map(d => new Date(d))
+        .filter(d => !isNaN(d.getTime()))
+        .sort((a, b) => a - b);
+
+      if (dates.length >= 2) {
+        result.date_range = {
+          min: dates[0].toISOString().slice(0, 10),
+          max: dates[dates.length - 1].toISOString().slice(0, 10),
+        };
+        // Infer granularity from median gap
+        const gaps = [];
+        for (let i = 1; i < Math.min(dates.length, 50); i++) {
+          gaps.push(dates[i] - dates[i - 1]);
+        }
+        const medianGapMs = gaps.sort((a, b) => a - b)[Math.floor(gaps.length / 2)];
+        const medianGapDays = medianGapMs / (1000 * 60 * 60 * 24);
+        if (medianGapDays <= 1.5) result.granularity = 'daily';
+        else if (medianGapDays <= 8) result.granularity = 'weekly';
+        else if (medianGapDays <= 35) result.granularity = 'monthly';
+        else result.granularity = 'irregular';
+      }
+    }
+
+    return result;
   });
 };
 
@@ -405,6 +476,172 @@ const parseSchemaMappingFromLlm = ({ candidate, uploadType, columns }) => {
 };
 
 const toIsoDay = (dateObj) => dateObj ? dateObj.toISOString().slice(0, 10) : null;
+
+/**
+ * Infer cross-sheet FK relationships by matching normalized column names.
+ * If two sheets share a column name, the one with lower cardinality is the dimension table.
+ */
+export function inferCrossSheetRelationships(sheets) {
+  const relationships = [];
+
+  // Build column → [sheet, cardinality] index
+  const colIndex = new Map();
+  for (const sheet of sheets) {
+    for (const col of (sheet.column_semantics || [])) {
+      const key = col.normalized;
+      if (!colIndex.has(key)) colIndex.set(key, []);
+      colIndex.get(key).push({
+        sheet_name: sheet.sheet_name,
+        cardinality: col.cardinality || 0,
+        column: col.column,
+      });
+    }
+  }
+
+  // Same normalized column in 2+ sheets → possible FK
+  const genericNames = new Set(['id', 'name', 'date', 'type', 'status', 'value', 'amount']);
+  for (const [normalizedCol, occurrences] of colIndex.entries()) {
+    if (occurrences.length < 2) continue;
+    if (genericNames.has(normalizedCol)) continue;
+
+    // Lowest cardinality = dimension table
+    const sorted = [...occurrences].sort((a, b) => a.cardinality - b.cardinality);
+    const dimension = sorted[0];
+
+    for (let i = 1; i < sorted.length; i++) {
+      relationships.push({
+        column: normalizedCol,
+        from: { sheet: sorted[i].sheet_name, column: sorted[i].column },
+        to: { sheet: dimension.sheet_name, column: dimension.column },
+        confidence: dimension.cardinality < sorted[i].cardinality ? 'high' : 'medium',
+      });
+    }
+  }
+
+  return relationships;
+}
+
+/**
+ * Build a structured schema digest of user-uploaded data for injection into the agent's
+ * system prompt. Follows the style of dataLearningService.buildProfileDigest() but reads
+ * from profile_json / contract_json instead of the ML API profile format.
+ *
+ * Budget: ~1800 tokens (~7000 chars). Progressive truncation applied if exceeded.
+ */
+export const buildUserDatasetDigest = (profileRow, { maxChars = 7000 } = {}) => {
+  if (!profileRow?.profile_json) return '';
+
+  const profile = profileRow.profile_json;
+  const contract = profileRow.contract_json || {};
+  const workflow = profile.global?.workflow_guess || {};
+  const timeRange = profile.global?.time_range_guess || {};
+
+  const contractBySheet = new Map();
+  for (const ds of (contract.datasets || [])) {
+    contractBySheet.set(ds.sheet_name, ds);
+  }
+
+  const lines = [];
+
+  // ── Header ──
+  const fileName = profile.file_name || `Profile #${profileRow.id}`;
+  lines.push(`**User Dataset** — ${fileName}`);
+  if (workflow.label) {
+    lines.push(`Workflow: ${workflow.label}`);
+  }
+  if (timeRange.start || timeRange.end) {
+    lines.push(`Time range: ${timeRange.start || '?'} → ${timeRange.end || '?'}`);
+  }
+
+  // ── Per-sheet digest (max 8 sheets) ──
+  const sheets = (profile.sheets || []).slice(0, 8);
+  const MAX_COLS = 20;
+
+  for (const sheet of sheets) {
+    const role = sheet.likely_role || 'unknown';
+    const semantics = sheet.column_semantics || [];
+    const rowCount = profileRow._rowCounts?.[sheet.sheet_name];
+    const rowNote = rowCount != null ? `, ${rowCount.toLocaleString()} rows` : '';
+    lines.push(`\n**${sheet.sheet_name}** (${role}${rowNote})`);
+
+    const cols = semantics.slice(0, MAX_COLS);
+    for (const col of cols) {
+      const type = col.guessed_type || '?';
+      let line = `  - \`${col.column}\` ${type}`;
+
+      // Cardinality
+      if (col.cardinality != null) {
+        line += ` (${col.cardinality} unique)`;
+      }
+
+      // Low-cardinality → list all distinct values
+      if (col.distinct_values?.length > 0) {
+        const vals = col.distinct_values.slice(0, 15).join(', ');
+        line += ` → [${vals}]`;
+      }
+      // High-cardinality → top values
+      else if (col.top_values?.length > 0) {
+        line += ` → top: [${col.top_values.slice(0, 5).join(', ')}]`;
+      }
+      // Fallback: sample values
+      else if (col.sample_values?.length > 0) {
+        line += ` → samples: [${col.sample_values.slice(0, 5).join(', ')}]`;
+      }
+
+      // Numeric range
+      if (col.stats) {
+        line += ` {${col.stats.min}~${col.stats.max}, avg=${col.stats.mean}}`;
+      }
+
+      // Date range
+      if (col.date_range) {
+        line += ` {${col.date_range.min}~${col.date_range.max}}`;
+        if (col.granularity) line += ` [${col.granularity}]`;
+      }
+
+      // Null warning (only when severe)
+      if (col.non_null_ratio != null && col.non_null_ratio < 0.80) {
+        line += ` ⚠${Math.round((1 - col.non_null_ratio) * 100)}%null`;
+      }
+
+      lines.push(line);
+    }
+
+    if (semantics.length > MAX_COLS) {
+      lines.push(`  ... +${semantics.length - MAX_COLS} more columns`);
+    }
+  }
+
+  // ── FK relationships (inferred) ──
+  const relationships = inferCrossSheetRelationships(profile.sheets || []);
+  if (relationships.length > 0) {
+    lines.push('\n**Relationships (inferred):**');
+    for (const rel of relationships.slice(0, 10)) {
+      lines.push(`  - ${rel.from.sheet}.${rel.from.column} → ${rel.to.sheet}.${rel.to.column} (${rel.confidence})`);
+    }
+  }
+
+  // ── Context selection metadata ──
+  if (profile._contextSelection) {
+    const cs = profile._contextSelection;
+    lines.push(`\n[Context: ${cs.selectedSheets.length}/${cs.totalSheets} tables selected by ${cs.method}]`);
+  }
+
+  let result = lines.join('\n');
+
+  // ── Progressive truncation ──
+  if (result.length > maxChars) {
+    result = result.replace(/ \{[\d.~,avg= ]+\}/g, ''); // Remove numeric stats
+  }
+  if (result.length > maxChars) {
+    result = result.replace(/ → (?:top: )?\[[^\]]+\]/g, ''); // Remove sample values
+  }
+  if (result.length > maxChars) {
+    result = result.replace(/ \(\d+ unique\)/g, ''); // Remove cardinality
+  }
+
+  return result;
+};
 
 export const summarizeDatasetProfileForChat = (profileRow) => {
   if (!profileRow?.profile_json) return '';

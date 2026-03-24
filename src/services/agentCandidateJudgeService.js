@@ -1,6 +1,9 @@
 import { DI_PROMPT_IDS, runDiPrompt } from './diModelRouterService.js';
 import { getModelConfig } from './modelConfigService.js';
 import { detectDomain, buildJudgeDomainCriteria } from './analysisDomainEnrichment.js';
+import { computeQueryComplexity } from './agentExecutionStrategyService.js';
+import { logEvent } from './auditService.js';
+import { supabase } from './supabaseClient.js';
 
 function uniqueStrings(items = []) {
   const seen = new Set();
@@ -30,6 +33,29 @@ function summarizeSqlEvidence(candidate) {
 }
 
 function summarizeCandidate(candidate) {
+  const toolCalls = candidate?.result?.toolCalls || [];
+
+  // Extract key numbers from all successful SQL results for cross-checking
+  const keyNumbers = [];
+  for (const tc of toolCalls) {
+    if (tc?.name === 'query_sap_data' && tc?.result?.success && tc?.result?.rows?.length > 0) {
+      const rows = tc.result.rows;
+      const numericKeys = Object.keys(rows[0] || {}).filter(k => typeof rows[0][k] === 'number');
+      for (const key of numericKeys.slice(0, 3)) {
+        const values = rows.map(r => r[key]).filter(v => v != null);
+        if (values.length > 0) {
+          keyNumbers.push({
+            column: key,
+            min: Math.min(...values),
+            max: Math.max(...values),
+            sum: values.reduce((a, b) => a + b, 0),
+            count: values.length,
+          });
+        }
+      }
+    }
+  }
+
   return {
     candidate_id: candidate?.candidateId,
     label: candidate?.label,
@@ -44,8 +70,13 @@ function summarizeCandidate(candidate) {
       failed_attempts: candidate?.presentation?.trace?.failed_attempts?.length || 0,
       successful_queries: candidate?.presentation?.trace?.successful_queries?.length || 0,
     },
-    artifacts: (candidate?.result?.toolCalls || []).map((toolCall) => toolCall?.name).filter(Boolean),
+    artifacts: toolCalls.map((toolCall) => toolCall?.name).filter(Boolean),
     sql_evidence_summary: summarizeSqlEvidence(candidate),
+    key_numbers: keyNumbers.slice(0, 10),
+    tool_errors: toolCalls
+      .filter(tc => !tc?.result?.success && tc?.result?.error)
+      .map(tc => ({ tool: tc.name, error: String(tc.result.error).slice(0, 150) }))
+      .slice(0, 5),
   };
 }
 
@@ -91,21 +122,28 @@ function buildFallbackDecision(primaryCandidate, secondaryCandidate) {
   const winningCandidate = winner === 'secondary' ? secondaryCandidate : primaryCandidate;
   const losingCandidate = winner === 'secondary' ? primaryCandidate : secondaryCandidate;
 
+  // Detect if both candidates are below QA pass threshold
+  const passThreshold = Number(winningCandidate?.presentation?.qa?.pass_threshold || secondaryCandidate?.presentation?.qa?.pass_threshold || 8);
+  const bothBelowThreshold = primaryScore < passThreshold && secondaryScore < passThreshold;
+
   return {
     winnerCandidateId: winner,
-    summary: `${winningCandidate?.label || 'Winner'} was selected as the stronger available answer because it achieved the stronger QA score and lower apparent answer risk.`,
+    summary: bothBelowThreshold
+      ? `${winningCandidate?.label || 'Winner'} was selected as the best available answer, but both candidates scored below the QA threshold (${passThreshold}). Results should be treated with caution.`
+      : `${winningCandidate?.label || 'Winner'} was selected as the stronger available answer because it achieved the stronger QA score and lower apparent answer risk.`,
     rationale: [
       `${winningCandidate?.label || 'Winner'} QA score: ${Number(winningCandidate?.presentation?.qa?.score || 0).toFixed(1)}`,
       `${losingCandidate?.label || 'Alternative'} QA score: ${Number(losingCandidate?.presentation?.qa?.score || 0).toFixed(1)}`,
+      ...(bothBelowThreshold ? [`Both candidates scored below pass threshold (${passThreshold}). Quality is not guaranteed.`] : []),
     ],
     loserIssues: uniqueStrings(losingCandidate?.presentation?.qa?.issues || []).slice(0, 4),
-    confidence: 0.6,
+    confidence: bothBelowThreshold ? 0.3 : 0.6,
     reviewer: {
       provider: 'deterministic_fallback',
       model: 'qa_score_comparison',
       transport: 'deterministic',
     },
-    degraded: false,
+    degraded: bothBelowThreshold,
   };
 }
 
@@ -135,6 +173,48 @@ function applyWinnerGuardrails(decision, winnerCandidate) {
       `${winnerCandidate?.label || 'Winner'} still has QA warnings, so this is the best available answer rather than a fully clean pass.`,
     ]),
   };
+}
+
+function logJudgeDecision(decision, { userMessage, answerContract, primaryCandidate, secondaryCandidate }) {
+  try {
+    const userId = supabase?.auth?.getSession?.()?.then?.((r) => r?.data?.session?.user?.id).catch(() => null) || null;
+    const complexityScore = computeQueryComplexity(userMessage, answerContract);
+    const primaryQa = Number(primaryCandidate?.presentation?.qa?.score || 0);
+    const secondaryQa = Number(secondaryCandidate?.presentation?.qa?.score || 0);
+    const winnerId = decision?.winnerCandidateId;
+    const challengerWon = winnerId === 'secondary';
+    const qaDelta = secondaryQa - primaryQa;
+
+    // Fire-and-forget: never block the main flow
+    Promise.resolve(userId).then((uid) => {
+      logEvent(uid, {
+        eventType: 'agent_judge_decision',
+        entityType: 'dual_agent',
+        payload: {
+          complexity_score: complexityScore,
+          primary_qa_score: primaryQa,
+          secondary_qa_score: secondaryQa,
+          qa_delta: qaDelta,
+          winner: winnerId,
+          challenger_won: challengerWon,
+          judge_confidence: decision?.confidence || 0,
+          judge_provider: decision?.reviewer?.provider || 'unknown',
+          judge_model: decision?.reviewer?.model || 'unknown',
+          degraded: decision?.degraded || false,
+          task_type: answerContract?.task_type || 'unknown',
+          dimension_count: answerContract?.required_dimensions?.length || 0,
+          output_count: answerContract?.required_outputs?.length || 0,
+          primary_provider: primaryCandidate?.provider || 'unknown',
+          secondary_provider: secondaryCandidate?.provider || 'unknown',
+        },
+      });
+    }).catch(() => {});
+
+    // Also log to console for local debugging
+    console.info(`[judge-telemetry] complexity=${complexityScore} winner=${winnerId} qa=${primaryQa.toFixed(1)}/${secondaryQa.toFixed(1)} delta=${qaDelta >= 0 ? '+' : ''}${qaDelta.toFixed(1)} confidence=${(decision?.confidence || 0).toFixed(2)}`);
+  } catch {
+    // Never fail from telemetry
+  }
 }
 
 export async function judgeAgentCandidates({
@@ -167,7 +247,7 @@ export async function judgeAgentCandidates({
 
     const winnerCandidate = result?.parsed?.winner_candidate_id === 'secondary' ? secondaryCandidate : primaryCandidate;
 
-    return applyWinnerGuardrails({
+    const decision = applyWinnerGuardrails({
       winnerCandidateId: result?.parsed?.winner_candidate_id === 'secondary' ? 'secondary' : 'primary',
       summary: String(result?.parsed?.summary || '').trim(),
       rationale: uniqueStrings(result?.parsed?.rationale || []),
@@ -180,14 +260,119 @@ export async function judgeAgentCandidates({
       },
       degraded,
     }, winnerCandidate);
+
+    logJudgeDecision(decision, { userMessage, answerContract, primaryCandidate, secondaryCandidate });
+    return decision;
   } catch (error) {
     console.warn('[agentCandidateJudge] Judge fallback:', error?.message);
     const fallbackDecision = buildFallbackDecision(primaryCandidate, secondaryCandidate);
     const winnerCandidate = fallbackDecision.winnerCandidateId === 'secondary' ? secondaryCandidate : primaryCandidate;
-    return applyWinnerGuardrails(fallbackDecision, winnerCandidate);
+    const guardedDecision = applyWinnerGuardrails(fallbackDecision, winnerCandidate);
+    logJudgeDecision(guardedDecision, { userMessage, answerContract, primaryCandidate, secondaryCandidate });
+    return guardedDecision;
+  }
+}
+
+/**
+ * Judge whether the optimizer (B) improved on the original (A).
+ * Returns approve/reject instead of winner selection.
+ */
+export async function judgeOptimizedCandidate({
+  userMessage,
+  answerContract,
+  originalCandidate,
+  optimizedCandidate,
+  modelMode,
+}) {
+  const originalQa = Number(originalCandidate?.presentation?.qa?.score || 0);
+  const optimizedQa = Number(optimizedCandidate?.presentation?.qa?.score || 0);
+
+  // Format gate: if optimizer brief has malformed headline/summary, skip it
+  const optBrief = optimizedCandidate?.presentation?.brief;
+  const headlineInvalid = optBrief?.headline && /^#{1,4}\s/.test(optBrief.headline);
+  const summaryOverlong = (optBrief?.summary?.length || 0) > 3000;
+  const summaryRawDump = optBrief?.summary && /^##\s/m.test(optBrief.summary);
+  if (headlineInvalid || summaryOverlong || summaryRawDump) {
+    console.warn('[judgeOptimized] Optimizer brief format invalid, falling back to primary');
+    const decision = {
+      approved: false,
+      winnerCandidateId: 'primary',
+      reason: 'Optimizer brief has malformed format (markdown headers in headline or raw narrative dump in summary).',
+      originalQaScore: originalQa,
+      optimizedQaScore: optimizedQa,
+      qaDelta: optimizedQa - originalQa,
+      reviewer: { provider: 'deterministic', model: 'format_gate', transport: 'deterministic' },
+    };
+    logJudgeDecision(decision, { userMessage, answerContract, primaryCandidate: originalCandidate, secondaryCandidate: optimizedCandidate });
+    return decision;
+  }
+
+  // Fast path: if optimizer scored higher by meaningful margin, approve
+  if (optimizedQa >= originalQa + 0.5 && optimizedQa >= 6.0) {
+    const decision = {
+      approved: true,
+      winnerCandidateId: 'secondary',
+      reason: `Optimizer improved QA score from ${originalQa.toFixed(1)} to ${optimizedQa.toFixed(1)}.`,
+      originalQaScore: originalQa,
+      optimizedQaScore: optimizedQa,
+      qaDelta: optimizedQa - originalQa,
+      reviewer: { provider: 'deterministic', model: 'qa_delta_comparison', transport: 'deterministic' },
+    };
+    logJudgeDecision(decision, { userMessage, answerContract, primaryCandidate: originalCandidate, secondaryCandidate: optimizedCandidate });
+    return decision;
+  }
+
+  // Fast path: if optimizer scored lower, reject
+  if (optimizedQa < originalQa) {
+    const decision = {
+      approved: false,
+      winnerCandidateId: 'primary',
+      reason: `Optimizer did not improve: ${originalQa.toFixed(1)} → ${optimizedQa.toFixed(1)}.`,
+      originalQaScore: originalQa,
+      optimizedQaScore: optimizedQa,
+      qaDelta: optimizedQa - originalQa,
+      reviewer: { provider: 'deterministic', model: 'qa_delta_comparison', transport: 'deterministic' },
+    };
+    logJudgeDecision(decision, { userMessage, answerContract, primaryCandidate: originalCandidate, secondaryCandidate: optimizedCandidate });
+    return decision;
+  }
+
+  // Close scores: use LLM judge for nuanced comparison
+  try {
+    const result = await judgeAgentCandidates({
+      userMessage,
+      answerContract,
+      primaryCandidate: originalCandidate,
+      secondaryCandidate: optimizedCandidate,
+      modelMode,
+    });
+
+    return {
+      approved: result.winnerCandidateId === 'secondary',
+      winnerCandidateId: result.winnerCandidateId,
+      reason: result.summary,
+      originalQaScore: originalQa,
+      optimizedQaScore: optimizedQa,
+      qaDelta: optimizedQa - originalQa,
+      reviewer: result.reviewer,
+    };
+  } catch (error) {
+    console.warn('[judgeOptimized] Fallback to deterministic:', error?.message);
+    // Tie-breaker: prefer optimizer if it at least matched original
+    const approved = optimizedQa >= originalQa;
+    return {
+      approved,
+      winnerCandidateId: approved ? 'secondary' : 'primary',
+      reason: `Fallback: optimizer ${approved ? 'matched' : 'did not match'} original (${originalQa.toFixed(1)} → ${optimizedQa.toFixed(1)}).`,
+      originalQaScore: originalQa,
+      optimizedQaScore: optimizedQa,
+      qaDelta: optimizedQa - originalQa,
+      reviewer: { provider: 'deterministic_fallback', model: 'qa_score_comparison', transport: 'deterministic' },
+    };
   }
 }
 
 export default {
   judgeAgentCandidates,
+  judgeOptimizedCandidate,
 };

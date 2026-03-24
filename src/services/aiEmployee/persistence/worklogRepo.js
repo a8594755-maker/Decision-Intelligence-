@@ -3,14 +3,20 @@
  *
  * Replaces the worklog portion of aiEmployeeService.js.
  * No localStorage fallback.
+ *
+ * When VITE_DI_MOCK_MODE=true, all functions delegate to in-memory mock.
  */
 
 import { supabase } from '../../supabaseClient.js';
+
+const _MOCK = import.meta.env?.VITE_DI_MOCK_MODE === 'true';
+const _m = _MOCK ? await import('../mock/mockWorklogRepo.js') : null;
 
 /**
  * Append a worklog entry.
  */
 export async function appendWorklog(employeeId, taskId, runId, logType, content) {
+  if (_m) return _m.appendWorklog(employeeId, taskId, runId, logType, content);
   const { data, error } = await supabase
     .from('ai_employee_worklogs')
     .insert({
@@ -34,6 +40,7 @@ export async function appendWorklog(employeeId, taskId, runId, logType, content)
  * Falls back to single employeeId filter if userId is not given.
  */
 export async function listWorklogs(employeeId, { limit = 50, taskId, userId } = {}) {
+  if (_m) return _m.listWorklogs(employeeId, { limit, taskId, userId });
   let query;
 
   if (userId) {

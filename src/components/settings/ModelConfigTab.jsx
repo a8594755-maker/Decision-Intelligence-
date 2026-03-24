@@ -17,6 +17,12 @@ import {
   resetModelConfig,
   getActiveThinkingMode,
   setActiveThinkingMode,
+  getArtisanModelConfig,
+  setArtisanUsePrimary,
+  setArtisanCustomModel,
+  getInsightsHubModelConfig,
+  setInsightsHubAuto,
+  setInsightsHubCustomModel,
 } from '../../services/modelConfigService';
 
 const ROLE_META = [
@@ -145,10 +151,219 @@ function RoleCard({ role, config, onChange }) {
   );
 }
 
+function ArtisanModelCard({ configs }) {
+  const [artisan, setArtisan] = useState(() => getArtisanModelConfig());
+  const isCustom = artisan.mode === 'custom';
+  const customProvider = isCustom ? artisan.provider : (configs.primary?.provider || 'openai');
+  const customModel = isCustom ? artisan.model : (configs.primary?.model || 'gpt-5.4');
+  const models = PROVIDER_MODELS[customProvider] || [];
+
+  const handleModeChange = (e) => {
+    if (e.target.value === 'use_primary') {
+      setArtisanUsePrimary();
+      setArtisan({ mode: 'use_primary' });
+    } else {
+      const p = configs.primary?.provider || 'openai';
+      const m = configs.primary?.model || 'gpt-5.4';
+      setArtisanCustomModel(p, m);
+      setArtisan({ mode: 'custom', provider: p, model: m });
+    }
+  };
+
+  const handleProviderChange = (e) => {
+    const p = e.target.value;
+    const m = PROVIDER_MODELS[p]?.[0] || '';
+    setArtisanCustomModel(p, m);
+    setArtisan({ mode: 'custom', provider: p, model: m });
+  };
+
+  const handleModelChange = (e) => {
+    setArtisanCustomModel(customProvider, e.target.value);
+    setArtisan({ mode: 'custom', provider: customProvider, model: e.target.value });
+  };
+
+  const selectStyle = {
+    borderColor: 'var(--border-default)',
+    backgroundColor: 'var(--bg-primary)',
+    color: 'var(--text-primary)',
+  };
+
+  return (
+    <Card>
+      <h3 className="font-semibold mb-1">Artisan Chart Model</h3>
+      <p className="text-xs mb-4" style={{ color: 'var(--text-secondary)' }}>
+        The model used to generate publication-quality Artisan charts. Use &quot;Same as Primary&quot; to mirror whichever model handled the analysis.
+      </p>
+
+      <div className="mb-4">
+        <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
+          Mode
+        </label>
+        <select
+          value={artisan.mode}
+          onChange={handleModeChange}
+          className="w-full rounded-md border px-3 py-2 text-sm"
+          style={selectStyle}
+        >
+          <option value="use_primary">Same as Primary Model</option>
+          <option value="custom">Custom Model</option>
+        </select>
+      </div>
+
+      {isCustom && (
+        <div className="grid gap-4 md:grid-cols-2">
+          <div>
+            <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
+              Provider
+            </label>
+            <select
+              value={customProvider}
+              onChange={handleProviderChange}
+              className="w-full rounded-md border px-3 py-2 text-sm"
+              style={selectStyle}
+            >
+              {providers.map((providerKey) => (
+                <option key={providerKey} value={providerKey}>
+                  {PROVIDER_LABELS[providerKey] || providerKey}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
+              Model
+            </label>
+            <select
+              value={customModel}
+              onChange={handleModelChange}
+              className="w-full rounded-md border px-3 py-2 text-sm"
+              style={selectStyle}
+            >
+              {models.map((m) => (
+                <option key={m} value={m}>{m}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+      )}
+
+      {!isCustom && (
+        <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>
+          Currently using: {PROVIDER_LABELS[configs.primary?.provider] || configs.primary?.provider} · {configs.primary?.model}
+        </p>
+      )}
+    </Card>
+  );
+}
+
+function InsightsHubModelCard() {
+  const [config, setConfig] = useState(() => getInsightsHubModelConfig());
+  const isCustom = config.mode === 'custom';
+  const currentProvider = isCustom ? config.provider : 'gemini';
+  const currentModel = isCustom ? config.model : 'gemini-2.0-flash';
+  const models = PROVIDER_MODELS[currentProvider] || [];
+
+  const handleModeChange = (e) => {
+    if (e.target.value === 'auto') {
+      setInsightsHubAuto();
+      setConfig({ mode: 'auto', provider: 'gemini', model: 'gemini-2.0-flash' });
+    } else {
+      setInsightsHubCustomModel(currentProvider, currentModel);
+      setConfig({ mode: 'custom', provider: currentProvider, model: currentModel });
+    }
+  };
+
+  const handleProviderChange = (e) => {
+    const p = e.target.value;
+    const m = PROVIDER_MODELS[p]?.[0] || '';
+    setInsightsHubCustomModel(p, m);
+    setConfig({ mode: 'custom', provider: p, model: m });
+  };
+
+  const handleModelChange = (e) => {
+    setInsightsHubCustomModel(currentProvider, e.target.value);
+    setConfig({ mode: 'custom', provider: currentProvider, model: e.target.value });
+  };
+
+  const selectStyle = {
+    borderColor: 'var(--border-default)',
+    backgroundColor: 'var(--bg-primary)',
+    color: 'var(--text-primary)',
+  };
+
+  return (
+    <Card>
+      <h3 className="font-semibold mb-1">Insights Hub Agent</h3>
+      <p className="text-xs mb-4" style={{ color: 'var(--text-secondary)' }}>
+        The model used to generate cross-report trend summaries on the Insights Hub dashboard. Default is Gemini Flash (budget-tier, &lt;$0.001/call).
+      </p>
+
+      <div className="mb-4">
+        <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
+          Mode
+        </label>
+        <select
+          value={config.mode}
+          onChange={handleModeChange}
+          className="w-full rounded-md border px-3 py-2 text-sm"
+          style={selectStyle}
+        >
+          <option value="auto">Auto (Gemini Flash)</option>
+          <option value="custom">Custom Model</option>
+        </select>
+      </div>
+
+      {isCustom && (
+        <div className="grid gap-4 md:grid-cols-2">
+          <div>
+            <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
+              Provider
+            </label>
+            <select
+              value={currentProvider}
+              onChange={handleProviderChange}
+              className="w-full rounded-md border px-3 py-2 text-sm"
+              style={selectStyle}
+            >
+              {providers.map((providerKey) => (
+                <option key={providerKey} value={providerKey}>
+                  {PROVIDER_LABELS[providerKey] || providerKey}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
+              Model
+            </label>
+            <select
+              value={currentModel}
+              onChange={handleModelChange}
+              className="w-full rounded-md border px-3 py-2 text-sm"
+              style={selectStyle}
+            >
+              {models.map((m) => (
+                <option key={m} value={m}>{m}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+      )}
+
+      {!isCustom && (
+        <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>
+          Currently using: Gemini · gemini-2.0-flash
+        </p>
+      )}
+    </Card>
+  );
+}
+
 export default function ModelConfigTab() {
   const [thinkingMode, setThinkingMode] = useState(() => getActiveThinkingMode());
   const [configs, setConfigs] = useState(() => loadSharedConfigs());
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [artisanConfig, setArtisanConfig] = useState(() => getArtisanModelConfig());
 
   const handleThinkingModeChange = useCallback((mode) => {
     setActiveThinkingMode(mode);
@@ -241,6 +456,16 @@ export default function ModelConfigTab() {
           </div>
         )}
       </Card>
+
+      <ArtisanModelCard
+        configs={configs}
+        onReset={() => {
+          setArtisanUsePrimary();
+          setArtisanConfig(getArtisanModelConfig());
+        }}
+      />
+
+      <InsightsHubModelCard />
 
       <div className="flex items-center justify-between">
         <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>

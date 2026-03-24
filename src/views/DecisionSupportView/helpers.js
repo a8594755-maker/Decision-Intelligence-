@@ -131,11 +131,123 @@ export function loadLocalConversations(userId) {
   }
 }
 
+function getConversationUpdatedAtMs(conversation) {
+  const ts = Date.parse(String(conversation?.updated_at || ''));
+  return Number.isFinite(ts) ? ts : 0;
+}
+
+function getConversationMessageCount(conversation) {
+  return Array.isArray(conversation?.messages) ? conversation.messages.length : 0;
+}
+
+export function mergeConversationRecords(remoteConversation, localConversation, fallbackWorkspace = 'di') {
+  if (!remoteConversation && !localConversation) return null;
+  if (!remoteConversation) {
+    return {
+      ...localConversation,
+      workspace: localConversation?.workspace || fallbackWorkspace,
+    };
+  }
+  if (!localConversation) {
+    return {
+      ...remoteConversation,
+      workspace: remoteConversation?.workspace || fallbackWorkspace,
+    };
+  }
+
+  const remoteUpdatedAtMs = getConversationUpdatedAtMs(remoteConversation);
+  const localUpdatedAtMs = getConversationUpdatedAtMs(localConversation);
+  const remoteMessageCount = getConversationMessageCount(remoteConversation);
+  const localMessageCount = getConversationMessageCount(localConversation);
+
+  const preferLocal = localUpdatedAtMs > remoteUpdatedAtMs
+    || (localUpdatedAtMs === remoteUpdatedAtMs && localMessageCount > remoteMessageCount);
+
+  const preferred = preferLocal ? localConversation : remoteConversation;
+  const fallback = preferLocal ? remoteConversation : localConversation;
+
+  return {
+    ...fallback,
+    ...preferred,
+    title: preferred?.title && preferred.title !== 'New Conversation'
+      ? preferred.title
+      : (fallback?.title || preferred?.title || 'New Conversation'),
+    workspace: preferred?.workspace || fallback?.workspace || fallbackWorkspace,
+    messages: Array.isArray(preferred?.messages)
+      ? preferred.messages
+      : (Array.isArray(fallback?.messages) ? fallback.messages : []),
+    created_at: preferred?.created_at || fallback?.created_at,
+    updated_at: preferred?.updated_at || fallback?.updated_at,
+  };
+}
+
+export function mergeConversationCollections(remoteConversations = [], localConversations = [], fallbackWorkspace = 'di') {
+  const safeRemote = Array.isArray(remoteConversations) ? remoteConversations : [];
+  const safeLocal = Array.isArray(localConversations) ? localConversations : [];
+  const localById = new Map(safeLocal.map((conversation) => [conversation.id, conversation]));
+  const remoteIds = new Set(safeRemote.map((conversation) => conversation.id));
+
+  const merged = safeRemote.map((remoteConversation) =>
+    mergeConversationRecords(remoteConversation, localById.get(remoteConversation.id), fallbackWorkspace)
+  );
+
+  const localOnly = safeLocal
+    .filter((conversation) => !remoteIds.has(conversation.id))
+    .map((conversation) => ({
+      ...conversation,
+      workspace: conversation?.workspace || fallbackWorkspace,
+    }));
+
+  return [...merged, ...localOnly]
+    .filter(Boolean)
+    .sort((left, right) => getConversationUpdatedAtMs(right) - getConversationUpdatedAtMs(left));
+}
+
+/**
+ * Trim heavy payload fields from messages so conversations fit in localStorage.
+ * Full payloads are preserved in Supabase; localStorage is a lightweight cache.
+ */
+export function trimMessagesForLocalStorage(conversations) {
+  const HEAVY_TYPES = new Set([
+    'analysis_result_card', 'forecast_result_card', 'plan_table_card',
+    'inventory_projection_card', 'plan_summary_card', 'plan_exceptions_card',
+    'bom_bottlenecks_card', 'downloads_card', 'risk_aware_plan_comparison_card',
+    'eda_report_card',
+  ]);
+
+  return conversations.map((conv) => {
+    if (!Array.isArray(conv.messages)) return conv;
+    const trimmed = conv.messages.map((msg) => {
+      if (!msg.type || !HEAVY_TYPES.has(msg.type) || !msg.payload) return msg;
+      // Keep a skeleton: title, summary, analysisType, metrics — drop charts/tables/rows/code/data
+      const p = msg.payload;
+      const skeleton = {
+        _trimmedForLocalStorage: true,
+        title: p.title,
+        summary: p.summary,
+        analysisType: p.analysisType,
+      };
+      if (p.metrics && typeof p.metrics === 'object') skeleton.metrics = p.metrics;
+      if (p.highlights) skeleton.highlights = p.highlights;
+      if (p.kpis) skeleton.kpis = p.kpis;
+      return { ...msg, payload: skeleton };
+    });
+    return { ...conv, messages: trimmed };
+  });
+}
+
 export function saveLocalConversations(userId, conversations) {
   try {
     localStorage.setItem(`${STORAGE_KEY}_${userId}`, JSON.stringify(conversations));
-  } catch {
-    // Ignore localStorage quota errors.
+  } catch (err) {
+    // localStorage quota exceeded — retry with trimmed payloads
+    console.warn('[DI] localStorage quota exceeded, trimming heavy payloads and retrying…', err?.message);
+    try {
+      const trimmed = trimMessagesForLocalStorage(conversations);
+      localStorage.setItem(`${STORAGE_KEY}_${userId}`, JSON.stringify(trimmed));
+    } catch (retryErr) {
+      console.error('[DI] localStorage save failed even after trimming. Conversations will reload from Supabase on next visit.', retryErr?.message);
+    }
   }
 }
 
@@ -698,7 +810,7 @@ export async function loadDomainContext(userId, supabase) {
   return ctx;
 }
 
-export function buildSystemPrompt(domainCtx, activeDatasetContext, dataProfile = null, insights = null) {
+export function buildSystemPrompt(domainCtx, activeDatasetContext, dataProfile = null, insights = null, pinnedDatasetKey = null, userDatasetDigest = null) {
   let prompt = `You are **${ASSISTANT_NAME}**, an expert supply-chain AI.
 Answer in the same language the user writes in. Use Markdown formatting (tables, bold, lists) for clarity.
 Be concise, data-driven, and actionable.\n\n`;
@@ -767,11 +879,22 @@ Be concise, data-driven, and actionable.\n\n`;
 | goods_receipts | MKPF | supplier_name, material_code, qty, is_on_time |
 `;
 
+  // ── Dataset C: User-uploaded data schema ──
+  if (userDatasetDigest) {
+    prompt += `\n### Dataset C: User-Uploaded Data\n${userDatasetDigest}\n`;
+    prompt += '\nWhen the user asks about "my data", "uploaded file", or references columns from Dataset C, use **run_python_analysis** (NOT query_sap_data — user data is not in the SQL database).\n';
+  }
+
   // Accumulated data insights — helps Agent write better SQL, NOT skip queries
   if (insights?.length > 0) {
     prompt += '\n### Data Hints (from previous queries — use these to write better SQL, but ALWAYS re-query for exact numbers)\n';
     prompt += insights.map(i => `- ${i.fact}`).join('\n');
     prompt += '\n';
+  }
+
+  if (pinnedDatasetKey) {
+    const dsLabels = { olist: 'Dataset A: Olist E-Commerce', di_ops: 'Dataset B: DI Operations' };
+    prompt += `\n> **User has pinned data source: ${dsLabels[pinnedDatasetKey] || pinnedDatasetKey}**. Focus queries on this dataset unless the user explicitly asks about other data.\n`;
   }
 
   prompt += `\n**CRITICAL**: When the user asks about ANY data, you MUST call **query_sap_data** with a SQL SELECT query. NEVER just describe SQL — execute it directly.

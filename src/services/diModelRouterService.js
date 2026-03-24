@@ -19,6 +19,7 @@ import {
   buildAgentQaRepairSynthesisPrompt,
   buildAgentQaSelfReviewPrompt,
   validateAgentBrief,
+  validateAgentBriefRepair,
   validateAgentCandidateJudge,
   validateAgentBriefReview,
   validateAgentQaReview,
@@ -31,7 +32,7 @@ import { invokeAiProxy } from './aiProxyService';
 const DEEPSEEK_API_KEY = import.meta.env.VITE_DEEPSEEK_API_KEY || '';
 const DEEPSEEK_BASE_URL = String(import.meta.env.VITE_DI_DEEPSEEK_BASE_URL || 'https://api.deepseek.com').replace(/\/+$/, '');
 const DEFAULT_DI_KIMI_MODEL = import.meta.env.VITE_DI_KIMI_MODEL || 'kimi-k2.5';
-const EDGE_FN_TIMEOUT_MS = 25000;
+const EDGE_FN_TIMEOUT_MS = 55000;
 
 const withTimeout = (promiseOrFn, ms) => {
   const controller = new AbortController();
@@ -106,11 +107,15 @@ const JUDGE_PROMPT_IDS = new Set([
 ]);
 
 function getPromptProvider(promptId) {
+  // Cross-review uses Claude Sonnet for better instruction-following and scoring calibration
+  if (promptId === DI_PROMPT_IDS.AGENT_QA_CROSS_REVIEW) return 'anthropic';
   const role = JUDGE_PROMPT_IDS.has(promptId) ? 'judge' : 'primary';
   return getModelConfig(role).provider;
 }
 
 function getPromptDefaultModel(promptId) {
+  // Cross-review uses Claude Sonnet for better instruction-following and scoring calibration
+  if (promptId === DI_PROMPT_IDS.AGENT_QA_CROSS_REVIEW) return 'claude-sonnet-4-6';
   const role = JUDGE_PROMPT_IDS.has(promptId) ? 'judge' : 'primary';
   return getModelConfig(role).model;
 }
@@ -213,7 +218,7 @@ const validatePromptContract = (promptId, parsed) => {
   }
 
   if (promptId === DI_PROMPT_IDS.AGENT_QA_REPAIR_SYNTHESIS) {
-    return validateAgentBrief(parsed);
+    return validateAgentBriefRepair(parsed);
   }
 
   if (promptId === DI_PROMPT_IDS.AGENT_CANDIDATE_JUDGE) {
@@ -520,12 +525,21 @@ export const runDiPrompt = async ({
     throw new Error(`No DI provider route configured for prompt: ${promptId}`);
   }
 
-  const requestedModel = String(modelOverride || getPromptDefaultModel(promptId) || getModelConfig('primary').model).trim();
+  const rawRequestedModel = String(modelOverride || getPromptDefaultModel(promptId) || getModelConfig('primary').model).trim();
+  // Thinking models (e.g. gpt-5.4-thinking, deepseek-reasoner) reject response_format:json_object.
+  // For strict-JSON prompts (QA review, brief synthesis, etc.) strip the thinking suffix so the
+  // ai-proxy doesn't silently fall back to a weaker model like gpt-4.1-mini.
+  const strictJson = STRICT_JSON_PROMPTS.has(promptId);
+  // Tool-calling prompts (agent loops) should not use thinking models — they add 3-5x latency
+  // per tool call and risk exceeding Edge Function timeouts.
+  const isToolCallingPrompt = /^agent_(?:chat|optimizer)_loop$/i.test(promptId);
+  const requestedModel = (strictJson || isToolCallingPrompt)
+    ? rawRequestedModel.replace(/-thinking$/i, '')
+    : rawRequestedModel;
   const model = provider === 'gemini'
     ? resolveGeminiModel(requestedModel)
     : requestedModel;
   const promptText = toPromptText(promptId, input);
-  const strictJson = STRICT_JSON_PROMPTS.has(promptId);
   const responseSchema = strictJson ? buildPromptResponseSchema(promptId) : null;
   const recoveryAttempts = strictJson
     ? buildStrictJsonRecoveryAttempts({ provider, model, promptText, promptId })

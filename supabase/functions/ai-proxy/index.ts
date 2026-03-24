@@ -2507,12 +2507,12 @@ const handleGeminiChatTools = async (payload: Record<string, unknown>) => {
 
 const handleGeminiChatToolsStream = async (payload: Record<string, unknown>, cors: Record<string, string>) => {
   if (!GEMINI_API_KEY) {
-    return jsonResponse({ error: 'GEMINI_API_KEY is not configured on Edge Function.', code: 'missing_server_keys' }, 500);
+    return jsonResponse({ error: 'GEMINI_API_KEY is not configured on Edge Function.', code: 'missing_server_keys' }, 500, cors);
   }
 
   const messages = payload?.messages;
   if (!Array.isArray(messages) || messages.length === 0) {
-    return jsonResponse({ error: 'Missing required field: messages (array)' }, 400);
+    return jsonResponse({ error: 'Missing required field: messages (array)' }, 400, cors);
   }
 
   const model = normalizeGeminiModelName(payload?.model) || DEFAULT_GEMINI_MODEL_FAST;
@@ -2553,6 +2553,7 @@ const handleGeminiChatToolsStream = async (payload: Record<string, unknown>, cor
     return jsonResponse(
       { error: String(request.errorMessage || 'Gemini compat stream request failed.'), code: 'gemini_stream_failed' },
       status >= 400 && status < 600 ? status : 500,
+      cors,
     );
   }
 
@@ -2584,6 +2585,7 @@ const handleGeminiNative = async (
       return jsonResponse(
         { error: String(request.errorMessage || 'Gemini native stream request failed.'), code: 'gemini_native_stream_failed' },
         status >= 400 && status < 600 ? status : 500,
+        cors,
       );
     }
 
@@ -2731,12 +2733,12 @@ const sanitizeDeepSeekParams = (
 
 const handleDeepSeekChatToolsStream = async (payload: Record<string, unknown>, cors: Record<string, string>) => {
   if (!DEEPSEEK_API_KEY) {
-    return jsonResponse({ error: 'DEEPSEEK_API_KEY is not configured on Edge Function.', code: 'missing_server_keys' }, 500);
+    return jsonResponse({ error: 'DEEPSEEK_API_KEY is not configured on Edge Function.', code: 'missing_server_keys' }, 500, cors);
   }
 
   const messages = payload?.messages;
   if (!Array.isArray(messages) || messages.length === 0) {
-    return jsonResponse({ error: 'Missing required field: messages (array)' }, 400);
+    return jsonResponse({ error: 'Missing required field: messages (array)' }, 400, cors);
   }
 
   const tools = Array.isArray(payload?.tools) ? payload.tools : undefined;
@@ -2811,7 +2813,7 @@ const handleDeepSeekChatToolsStream = async (payload: Record<string, unknown>, c
     const errorData = await parseJsonSafe(response);
     const errorMessage = String((errorData?.error as { message?: string })?.message || 'DeepSeek stream request failed');
     console.warn(`[ai-proxy] DeepSeek stream model=${model} failed (${response.status}) in ${elapsed}ms: ${errorMessage}`);
-    return jsonResponse({ error: errorMessage, code: 'deepseek_stream_failed' }, response.status >= 400 && response.status < 600 ? response.status : 500);
+    return jsonResponse({ error: errorMessage, code: 'deepseek_stream_failed' }, response.status >= 400 && response.status < 600 ? response.status : 500, cors);
   }
 
   console.info(`[ai-proxy] DeepSeek stream model=${model} connected in ${elapsed}ms`);
@@ -2990,12 +2992,12 @@ const handleAnthropicChatTools = async (payload: Record<string, unknown>) => {
 
 const handleAnthropicChatToolsStream = async (payload: Record<string, unknown>, cors: Record<string, string>) => {
   if (!ANTHROPIC_API_KEY) {
-    return jsonResponse({ error: 'ANTHROPIC_API_KEY is not configured on Edge Function.', code: 'missing_server_keys' }, 500);
+    return jsonResponse({ error: 'ANTHROPIC_API_KEY is not configured on Edge Function.', code: 'missing_server_keys' }, 500, cors);
   }
 
   const messages = payload?.messages;
   if (!Array.isArray(messages) || messages.length === 0) {
-    return jsonResponse({ error: 'Missing required field: messages (array)' }, 400);
+    return jsonResponse({ error: 'Missing required field: messages (array)' }, 400, cors);
   }
 
   const tools = Array.isArray(payload?.tools) ? payload.tools : [];
@@ -3039,6 +3041,7 @@ const handleAnthropicChatToolsStream = async (payload: Record<string, unknown>, 
     return jsonResponse(
       { error: String(request.errorMessage || 'Anthropic stream request failed.'), code: 'anthropic_stream_failed' },
       status >= 400 && status < 600 ? status : 500,
+      cors,
     );
   }
 
@@ -3175,12 +3178,12 @@ const handleOpenAIChatTools = async (payload: Record<string, unknown>) => {
 
 const handleOpenAIChatToolsStream = async (payload: Record<string, unknown>, cors: Record<string, string>) => {
   if (!OPENAI_API_KEY) {
-    return jsonResponse({ error: 'OPENAI_API_KEY is not configured on Edge Function.', code: 'missing_server_keys' }, 500);
+    return jsonResponse({ error: 'OPENAI_API_KEY is not configured on Edge Function.', code: 'missing_server_keys' }, 500, cors);
   }
 
   const messages = payload?.messages;
   if (!Array.isArray(messages) || messages.length === 0) {
-    return jsonResponse({ error: 'Missing required field: messages (array)' }, 400);
+    return jsonResponse({ error: 'Missing required field: messages (array)' }, 400, cors);
   }
 
   const tools = Array.isArray(payload?.tools) ? payload.tools : undefined;
@@ -3216,7 +3219,7 @@ const handleOpenAIChatToolsStream = async (payload: Record<string, unknown>, cor
     const errorData = await parseJsonSafe(response);
     const errorMessage = String((errorData?.error as { message?: string })?.message || 'OpenAI stream request failed');
     console.warn(`[ai-proxy] OpenAI stream model=${model} failed (${response.status}) in ${elapsed}ms: ${errorMessage}`);
-    return jsonResponse({ error: errorMessage, code: 'openai_stream_failed' }, response.status >= 400 && response.status < 600 ? response.status : 500);
+    return jsonResponse({ error: errorMessage, code: 'openai_stream_failed' }, response.status >= 400 && response.status < 600 ? response.status : 500, cors);
   }
 
   console.info(`[ai-proxy] OpenAI stream model=${model} connected in ${elapsed}ms`);

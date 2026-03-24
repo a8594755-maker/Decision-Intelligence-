@@ -37,6 +37,7 @@ import RiskAwarePlanComparisonCard from '../../components/chat/RiskAwarePlanComp
 import RiskReplanCard from '../../components/risk/RiskReplanCard';
 import PODelayAlertCard from '../../components/chat/PODelayAlertCard';
 import DataQualityCard from '../../components/chat/DataQualityCard';
+import EdaReportCard from '../../components/chat/EdaReportCard';
 import RiskTriggerNotificationCard from '../../components/chat/RiskTriggerNotificationCard';
 import ProactiveAlertCard from '../../components/chat/ProactiveAlertCard';
 import AIErrorCard from '../../components/chat/AIErrorCard';
@@ -67,8 +68,11 @@ import AnalysisInsightCard from '../../components/chat/AnalysisInsightCard';
 import AgentBriefCard from '../../components/chat/AgentBriefCard';
 import AgentAlternativeCard from '../../components/chat/AgentAlternativeCard';
 import AgentQualityCard from '../../components/chat/AgentQualityCard';
+import StepInputCard from '../../components/chat/StepInputCard';
 import ExecutionTraceCard from '../../components/chat/ExecutionTraceCard';
 import ThinkingStepsDisplay from '../../components/chat/ThinkingStepsDisplay';
+import CopyAllButton from '../../components/chat/CopyAllButton';
+import { serializeAgentResponseToText } from '../../utils/serializeMessageToText';
 import { extractAnalysisPayloadsFromToolCall, isRenderableAnalysisToolCall } from '../../services/analysisToolResultService.js';
 import { toPositiveRunId } from './helpers.js';
 
@@ -111,6 +115,8 @@ export default function MessageCardRenderer({ message, handlers, state }) {
     sessionCtx,
     batchApprove,
     batchReject,
+    handleProvideStepInput,
+    handleSkipWaitingStep,
   } = handlers;
 
   const {
@@ -232,6 +238,20 @@ export default function MessageCardRenderer({ message, handlers, state }) {
       />
     );
   }
+  if (message.type === 'step_input_card') {
+    return (
+      <StepInputCard
+        taskId={message.payload?.taskId}
+        stepName={message.payload?.stepName}
+        stepIndex={message.payload?.stepIndex ?? 0}
+        reason={message.payload?.reason}
+        message={message.payload?.message}
+        datasets={message.payload?.datasets || []}
+        onProvideInput={(input) => handleProvideStepInput?.(message.payload?.taskId, input)}
+        onSkip={() => handleSkipWaitingStep?.(message.payload?.taskId)}
+      />
+    );
+  }
   if (message.type === 'workflow_report_card') {
     return <WorkflowReportCard payload={message.payload} />;
   }
@@ -332,6 +352,9 @@ export default function MessageCardRenderer({ message, handlers, state }) {
   }
   if (message.type === 'data_quality_card') {
     return <DataQualityCard payload={message.payload} />;
+  }
+  if (message.type === 'eda_report_card') {
+    return <EdaReportCard payload={message.payload} />;
   }
   if (message.type === 'plan_summary_card') {
     return <PlanSummaryCard payload={message.payload} />;
@@ -488,8 +511,8 @@ export default function MessageCardRenderer({ message, handlers, state }) {
       : (candidates[0] || null);
     const briefAttribution = {
       label: judgeDecision?.winnerLabel || winnerCandidate?.label || '',
-      provider: winnerCandidate?.provider || judgeDecision?.winnerProvider || '',
-      model: winnerCandidate?.model || judgeDecision?.winnerModel || '',
+      provider: winnerCandidate?.provider || judgeDecision?.winnerProvider || message.meta?.provider || '',
+      model: winnerCandidate?.model || judgeDecision?.winnerModel || message.meta?.model || '',
     };
     const trace = message.payload?.trace || null;
     const sqlCalls = toolCalls.filter((tc) => tc.name === 'query_sap_data' || tc.name === 'list_sap_tables');
@@ -526,7 +549,10 @@ export default function MessageCardRenderer({ message, handlers, state }) {
 
       return (
         <div className="space-y-3">
-          {brief ? <AgentBriefCard brief={brief} attribution={briefAttribution} /> : null}
+          <div className="flex justify-end">
+            <CopyAllButton getText={() => serializeAgentResponseToText(message)} />
+          </div>
+          {brief ? <AgentBriefCard brief={brief} attribution={briefAttribution} dataSource={analysisPayloads[0]?.payload?._dataSource || null} /> : null}
           {analysisPayloads.map(({ key, payload }) => (
             <AnalysisResultCard key={key} payload={payload} />
           ))}
@@ -547,6 +573,9 @@ export default function MessageCardRenderer({ message, handlers, state }) {
 
     return (
       <div className="space-y-3">
+        <div className="flex justify-end">
+          <CopyAllButton getText={() => serializeAgentResponseToText(message)} />
+        </div>
         {analysisPayloads.map(({ key, payload }) => (
           <AnalysisResultCard key={key} payload={payload} />
         ))}

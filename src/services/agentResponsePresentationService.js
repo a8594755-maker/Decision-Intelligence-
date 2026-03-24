@@ -1,5 +1,6 @@
 import { extractAnalysisPayloadsFromToolCall } from './analysisToolResultService.js';
 import { DI_PROMPT_IDS, runDiPrompt } from './diModelRouterService.js';
+import { isProviderCircuitOpen } from './aiProxyService.js';
 import { SAP_TABLE_REGISTRY, SAP_DATASET_INFO } from './sapDataQueryService.js';
 import { detectDomain, verifyFormulaConsistency } from './analysisDomainEnrichment.js';
 import { WARNING_ACKNOWLEDGMENT_PATTERNS } from './preAnalysisDataValidator.js';
@@ -94,27 +95,26 @@ const DEBUG_PATTERNS = [
   /\bstatus:\s*(success|failed?)\b/i,
   /^SELECT\b/i,
   /^WITH\b/i,
+  /<\/?(?:thought|thinking|reasoning|reflection)>/i,
 ];
 
 const PSEUDO_TABLE_PATTERN = /\S+\s{2,}\S+/;
 const MARKDOWN_TABLE_PATTERN = /^\|.*\|$/;
 const QA_PASS_THRESHOLD = 8.0;
 const QA_DIMENSION_WEIGHTS = Object.freeze({
-  correctness: 0.35,
-  completeness: 0.18,
+  correctness: 0.28,
+  completeness: 0.12,
   evidence_alignment: 0.13,
   visualization_fit: 0.08,
-  caveat_quality: 0.08,
-  clarity: 0.05,
+  caveat_quality: 0.12,
+  clarity: 0.04,
   methodology_transparency: 0.07,
   actionability: 0.06,
+  information_density: 0.10,
 });
 const QA_DIMENSION_KEYS = Object.freeze(Object.keys(QA_DIMENSION_WEIGHTS));
-const CROSS_MODEL_REVIEW_PROVIDER = import.meta.env.VITE_DI_AGENT_QA_REVIEW_PROVIDER || 'gemini';
-const CROSS_MODEL_REVIEW_MODEL = import.meta.env.VITE_DI_AGENT_QA_REVIEW_MODEL
-  || import.meta.env.VITE_DI_GEMINI_MODEL
-  || import.meta.env.VITE_GEMINI_MODEL
-  || 'gemini-3.1-pro-preview';
+const CROSS_MODEL_REVIEW_PROVIDER = import.meta.env.VITE_DI_AGENT_QA_REVIEW_PROVIDER || 'anthropic';
+const CROSS_MODEL_REVIEW_MODEL = import.meta.env.VITE_DI_AGENT_QA_REVIEW_MODEL || 'claude-sonnet-4-6';
 const METRIC_ALIAS_PATTERNS = Object.freeze([
   { key: 'median', patterns: [/\bmedian\b/i, /\bp50\b/i, /(中位數|中央値)/] },
   { key: 'p10', patterns: [/\bp10\b/i, /\b10(th)? percentile\b/i, /(10分位|第10分位)/] },
@@ -138,6 +138,22 @@ function isPlainObject(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
+/**
+ * Convert Unix ms timestamps (2000-2040 range) to ISO date strings in row objects.
+ */
+function formatTimestampValues(row) {
+  if (!row || typeof row !== 'object') return row;
+  const out = {};
+  for (const [key, val] of Object.entries(row)) {
+    if (typeof val === 'number' && val > 9.46e11 && val < 2.21e12) {
+      out[key] = new Date(val).toISOString().slice(0, 10);
+    } else {
+      out[key] = val;
+    }
+  }
+  return out;
+}
+
 function uniqueStrings(items = []) {
   const seen = new Set();
   const result = [];
@@ -154,6 +170,14 @@ function uniqueStrings(items = []) {
 
 function clamp(text, maxChars = 5000) {
   return String(text || '').slice(0, maxChars);
+}
+
+function stripThinkingTags(text) {
+  if (!text || typeof text !== 'string') return text || '';
+  return text
+    .replace(/<(?:thought|thinking|reasoning|reflection)>[\s\S]*?<\/(?:thought|thinking|reasoning|reflection)>/gi, '')
+    .replace(/<\/?(?:thought|thinking|reasoning|reflection)>/gi, '')
+    .trim();
 }
 
 function detectAudienceLanguage(text) {
@@ -389,6 +413,57 @@ function formatValue(value) {
   return String(value);
 }
 
+/**
+ * Format metric pill values for business readability (e.g., 1010271.37 → "1.01M").
+ * Already-formatted strings (with K/M/B/% suffix) pass through unchanged.
+ */
+function formatPillValue(raw) {
+  const str = String(raw ?? '').trim();
+  // Already formatted (has K/M/B suffix or % sign) — pass through
+  if (/[KMB%]$/i.test(str)) return str;
+  const num = parseFloat(str.replace(/,/g, ''));
+  if (!Number.isFinite(num)) return str;
+  const abs = Math.abs(num);
+  if (abs >= 1_000_000_000) return `${(num / 1_000_000_000).toFixed(2)}B`;
+  if (abs >= 1_000_000) return `${(num / 1_000_000).toFixed(2)}M`;
+  if (abs >= 10_000) return `${(num / 1_000).toFixed(1)}K`;
+  if (abs >= 100) return num.toLocaleString('en-US', { maximumFractionDigits: 0 });
+  if (abs >= 1) return num.toLocaleString('en-US', { maximumFractionDigits: 2 });
+  return str;
+}
+
+/**
+ * Clean floating point residuals and extreme percentages in any string.
+ * "1010271.3700000371" → "1,010,271.37"
+ * "1103687.798%" → ">10,000%"
+ */
+function cleanFloatingPointInText(text) {
+  if (typeof text !== 'string') return text;
+  // Fix floating-point residuals: numbers with 5+ decimal places → truncate to 2
+  let cleaned = text.replace(/(\d+\.\d{2})\d{5,}/g, '$1');
+  // Cap extreme percentages (|value| > 10000%)
+  cleaned = cleaned.replace(
+    /([+-]?\d{5,}(?:\.\d+)?)\s*%/g,
+    (_match, num) => {
+      const val = parseFloat(num);
+      if (Math.abs(val) > 10000) return val > 0 ? '>10,000%' : '<-10,000%';
+      return _match;
+    },
+  );
+  // Format large unformatted numbers in narrative (e.g., 1010271.37 → 1,010,271.37)
+  cleaned = cleaned.replace(
+    /(?<![.\d])(\d{4,})\.(\d{1,2})(?!\d)/g,
+    (_match, intPart, decPart) => Number(intPart).toLocaleString('en-US') + '.' + decPart,
+  );
+  return cleaned;
+}
+
+/** Round float to 2 decimal places for table cells */
+function cleanFloatNumber(num) {
+  if (!Number.isFinite(num)) return num;
+  return Math.round(num * 100) / 100;
+}
+
 function normalizeSentence(text) {
   return String(text || '')
     .replace(/\*\*/g, '')
@@ -416,7 +491,8 @@ function isDebugLine(line) {
 }
 
 function extractCleanNarrativeSentences(text) {
-  return splitNarrativeIntoSentences(text).filter((line) => !isDebugLine(line) && !MARKDOWN_TABLE_PATTERN.test(line));
+  const sanitized = stripThinkingTags(text);
+  return splitNarrativeIntoSentences(sanitized).filter((line) => !isDebugLine(line) && !MARKDOWN_TABLE_PATTERN.test(line));
 }
 
 function buildMetricPills(toolCalls = [], { brevity } = {}) {
@@ -479,6 +555,59 @@ function buildEvidenceTables(toolCalls = [], answerContract, { brevity } = {}) {
   }
 
   return [];
+}
+
+/**
+ * Auto-infer xKey/yKey from chart data if missing.
+ * Returns the chart with inferred keys, or null if chart is unrenderable.
+ */
+function inferChartKeys(chart) {
+  if (!isPlainObject(chart) || !Array.isArray(chart.data) || chart.data.length === 0) return null;
+  const sample = chart.data[0];
+  if (!isPlainObject(sample)) return null;
+  const keys = Object.keys(sample);
+  if (keys.length < 2) return null;
+  const numericKeys = keys.filter((k) => typeof sample[k] === 'number');
+  const stringKeys = keys.filter((k) => typeof sample[k] === 'string');
+  if (!chart.xKey) chart.xKey = stringKeys[0] || keys[0];
+  if (!chart.yKey) chart.yKey = numericKeys[0] || keys.find((k) => k !== chart.xKey) || keys[1];
+  return chart;
+}
+
+function buildChartsFromToolCalls(toolCalls = [], { brevity } = {}) {
+  const maxCharts = brevity === 'analysis' ? 4 : 2;
+  const charts = [];
+  for (const toolCall of Array.isArray(toolCalls) ? toolCalls : []) {
+    const payloads = extractAnalysisPayloadsFromToolCall(toolCall);
+    for (const payload of payloads) {
+      if (!Array.isArray(payload?.charts)) continue;
+      for (const chart of payload.charts) {
+        if (!isPlainObject(chart) || !chart.type || !Array.isArray(chart.data) || chart.data.length === 0) continue;
+        const cleanData = chart.data.filter(d => isPlainObject(d) && Object.keys(d).length > 0);
+        if (cleanData.length === 0) continue;
+        const built = {
+          type: String(chart.type),
+          data: cleanData,
+          xKey: chart.xKey ? String(chart.xKey) : '',
+          yKey: chart.yKey ? String(chart.yKey) : '',
+          ...(Array.isArray(chart.series) ? { series: chart.series.map(String) } : {}),
+          ...(chart.title ? { title: String(chart.title) } : {}),
+          ...(chart.xAxisLabel ? { xAxisLabel: String(chart.xAxisLabel) } : {}),
+          ...(chart.yAxisLabel ? { yAxisLabel: String(chart.yAxisLabel) } : {}),
+          ...(Array.isArray(chart.referenceLines) ? { referenceLines: chart.referenceLines } : {}),
+          ...(isPlainObject(chart.colorMap) ? { colorMap: chart.colorMap } : {}),
+          ...(Array.isArray(chart.colors) ? { colors: chart.colors } : {}),
+          ...(chart.tickFormatter ? { tickFormatter: chart.tickFormatter } : {}),
+          ...(Array.isArray(chart.compatibleTypes) ? { compatibleTypes: chart.compatibleTypes } : {}),
+        };
+        // Auto-infer xKey/yKey if not provided by the recipe
+        if (!built.xKey || !built.yKey) inferChartKeys(built);
+        charts.push(built);
+        if (charts.length >= maxCharts) return charts;
+      }
+    }
+  }
+  return charts;
 }
 
 function pickHeadline({ finalAnswerText, toolCalls, trace, answerContract }) {
@@ -612,38 +741,81 @@ export function buildDeterministicAgentBrief({
   toolCalls = [],
   finalAnswerText = '',
 }) {
+  const cleanedText = stripThinkingTags(finalAnswerText);
   const normalizedContract = normalizeAnswerContract(answerContract, userMessage);
   const brevity = normalizedContract?.brevity;
-  const trace = buildTrace(toolCalls, finalAnswerText);
+  const trace = buildTrace(toolCalls, cleanedText);
 
   return {
-    headline: pickHeadline({ finalAnswerText, toolCalls, trace, answerContract: normalizedContract }),
-    summary: pickSummary({ finalAnswerText, trace, answerContract: normalizedContract, toolCalls }),
+    headline: pickHeadline({ finalAnswerText: cleanedText, toolCalls, trace, answerContract: normalizedContract }),
+    summary: pickSummary({ finalAnswerText: cleanedText, trace, answerContract: normalizedContract, toolCalls }),
     metric_pills: buildMetricPills(toolCalls, { brevity }),
     tables: buildEvidenceTables(toolCalls, normalizedContract, { brevity }),
+    charts: buildChartsFromToolCalls(toolCalls, { brevity }),
     key_findings: inferKeyFindings({
-      finalAnswerText,
+      finalAnswerText: cleanedText,
       toolCalls,
       answerContract: normalizedContract,
       trace,
     }),
     implications: inferImplications({ answerContract: normalizedContract, toolCalls }),
-    caveats: inferCaveats({ finalAnswerText, trace, toolCalls }),
+    caveats: inferCaveats({ finalAnswerText: cleanedText, trace, toolCalls }),
     next_steps: inferNextSteps({ answerContract: normalizedContract, trace }),
   };
 }
 
+/**
+ * Sanitize a brief that may contain raw markdown dumps or malformed fields
+ * (common with DeepSeek Reasoner or similar models that resist JSON structure).
+ */
+function sanitizeBrief(brief) {
+  if (!isPlainObject(brief)) return brief;
+
+  // Strip markdown headers from headline
+  if (brief.headline && typeof brief.headline === 'string') {
+    brief.headline = brief.headline.replace(/^#{1,4}\s*/, '').replace(/^\*{2}|[\*]{2}$/g, '').trim();
+  }
+
+  // Truncate summary if it contains markdown headers (sign of raw narrative dump)
+  if (brief.summary && typeof brief.summary === 'string' && /^##\s/m.test(brief.summary)) {
+    brief.summary = brief.summary.split(/\n##\s/)[0].trim();
+  }
+
+  // Cap summary length — if > 3000 chars, take first paragraph
+  if (brief.summary && typeof brief.summary === 'string' && brief.summary.length > 3000) {
+    const firstPara = brief.summary.split(/\n\n/)[0];
+    brief.summary = firstPara.length > 200 ? firstPara : brief.summary.slice(0, 3000);
+  }
+
+  // Filter metric_pills: remove raw timestamps and non-numeric pills
+  if (Array.isArray(brief.metric_pills)) {
+    brief.metric_pills = brief.metric_pills.filter((p) => {
+      if (!isPlainObject(p)) return false;
+      const val = String(p.value || '');
+      // Remove raw unix timestamps (10-13 digit numbers with no other content)
+      if (/^\d{10,13}$/.test(val.trim())) return false;
+      return true;
+    });
+  }
+
+  return brief;
+}
+
 function normalizeBrief(brief, fallbackBrief, { brevity } = {}) {
   const isAnalysis = brevity === 'analysis';
-  const source = isPlainObject(brief) ? brief : {};
+  const source = isPlainObject(brief) ? sanitizeBrief({ ...brief }) : {};
+  // Map agent's chart_specs field to charts for normalization
+  if (!source.charts && Array.isArray(source.chart_specs)) {
+    source.charts = source.chart_specs;
+  }
   const fallback = isPlainObject(fallbackBrief) ? fallbackBrief : {};
   const normalized = {
-    headline: normalizeSentence(source.headline || fallback.headline || 'Analysis complete.'),
-    summary: normalizeSentence(source.summary || fallback.summary || ''),
+    headline: normalizeSentence(cleanFloatingPointInText(source.headline || fallback.headline || 'Analysis complete.')),
+    summary: normalizeSentence(cleanFloatingPointInText(source.summary || fallback.summary || '')),
     metric_pills: Array.isArray(source.metric_pills)
       ? source.metric_pills
         .filter((item) => isPlainObject(item) && item.label && item.value != null)
-        .map((item) => ({ label: String(item.label), value: formatValue(item.value) }))
+        .map((item) => ({ label: String(item.label), value: formatPillValue(item.value), ...(item.source ? { source: String(item.source) } : {}) }))
       : (fallback.metric_pills || []),
     tables: Array.isArray(source.tables)
       ? source.tables
@@ -651,29 +823,42 @@ function normalizeBrief(brief, fallbackBrief, { brevity } = {}) {
         .map((table) => ({
           title: table.title ? String(table.title) : '',
           columns: table.columns.map((column) => String(column)),
-          rows: table.rows.map((row) => Array.isArray(row) ? row.map((value) => (typeof value === 'number' ? value : formatValue(value))) : []),
+          rows: table.rows.map((row) => Array.isArray(row) ? row.map((value) => (typeof value === 'number' ? cleanFloatNumber(value) : cleanFloatingPointInText(formatValue(value)))) : []),
         }))
       : (fallback.tables || []),
     charts: Array.isArray(source.charts)
       ? source.charts
         .filter((chart) => isPlainObject(chart) && chart.type && Array.isArray(chart.data))
-        .map((chart) => ({
-          type: String(chart.type),
-          data: chart.data,
-          xKey: chart.xKey ? String(chart.xKey) : '',
-          yKey: chart.yKey ? String(chart.yKey) : '',
-          ...(Array.isArray(chart.series) ? { series: chart.series.map(String) } : {}),
-          ...(chart.title ? { title: String(chart.title) } : {}),
-          ...(chart.xAxisLabel ? { xAxisLabel: String(chart.xAxisLabel) } : {}),
-          ...(chart.yAxisLabel ? { yAxisLabel: String(chart.yAxisLabel) } : {}),
-          ...(Array.isArray(chart.referenceLines) ? { referenceLines: chart.referenceLines } : {}),
-        }))
+        .map((chart) => {
+          const cleanData = chart.data.filter(d => isPlainObject(d) && Object.keys(d).length > 0);
+          return {
+            type: String(chart.type),
+            data: cleanData,
+            xKey: chart.xKey ? String(chart.xKey) : '',
+            yKey: chart.yKey ? String(chart.yKey) : '',
+            ...(Array.isArray(chart.series) ? { series: chart.series.map(String) } : {}),
+            ...(chart.title ? { title: String(chart.title) } : {}),
+            ...(chart.xAxisLabel ? { xAxisLabel: String(chart.xAxisLabel) } : {}),
+            ...(chart.yAxisLabel ? { yAxisLabel: String(chart.yAxisLabel) } : {}),
+            ...(Array.isArray(chart.referenceLines) ? { referenceLines: chart.referenceLines } : {}),
+            ...(isPlainObject(chart.colorMap) ? { colorMap: chart.colorMap } : {}),
+            ...(Array.isArray(chart.colors) ? { colors: chart.colors } : {}),
+            ...(chart.tickFormatter ? { tickFormatter: chart.tickFormatter } : {}),
+            ...(Array.isArray(chart.compatibleTypes) ? { compatibleTypes: chart.compatibleTypes } : {}),
+          };
+        })
+        .map((chart) => (!chart.xKey || !chart.yKey) ? (inferChartKeys(chart) || chart) : chart)
+        .filter((chart) => chart.data.length > 0)
       : (fallback.charts || []),
-    key_findings: uniqueStrings(Array.isArray(source.key_findings) ? source.key_findings : fallback.key_findings || []).slice(0, isAnalysis ? 10 : 5),
-    implications: uniqueStrings(Array.isArray(source.implications) ? source.implications : fallback.implications || []).slice(0, isAnalysis ? 6 : 4),
-    caveats: uniqueStrings(Array.isArray(source.caveats) ? source.caveats : fallback.caveats || []).slice(0, isAnalysis ? 6 : 4),
+    key_findings: uniqueStrings(Array.isArray(source.key_findings) ? source.key_findings.map(cleanFloatingPointInText) : fallback.key_findings || []).slice(0, isAnalysis ? 10 : 5),
+    implications: uniqueStrings(Array.isArray(source.implications) ? source.implications.map(cleanFloatingPointInText) : fallback.implications || []).slice(0, isAnalysis ? 6 : 4),
+    caveats: uniqueStrings(Array.isArray(source.caveats) ? source.caveats.map(cleanFloatingPointInText) : fallback.caveats || []).slice(0, isAnalysis ? 6 : 4),
     next_steps: uniqueStrings(Array.isArray(source.next_steps) ? source.next_steps : fallback.next_steps || []).slice(0, isAnalysis ? 6 : 4),
-    methodology_note: typeof source.methodology_note === 'string' ? source.methodology_note.trim() : (fallback.methodology_note || null),
+    methodology_note: typeof source.methodology_note === 'string' ? cleanFloatingPointInText(source.methodology_note.trim()) : (fallback.methodology_note || null),
+    executive_summary: typeof source.executive_summary === 'string' ? cleanFloatingPointInText(source.executive_summary.trim()) : (fallback.executive_summary || null),
+    data_lineage: Array.isArray(source.data_lineage)
+      ? source.data_lineage.filter((item) => isPlainObject(item) && item.metric)
+      : (fallback.data_lineage || []),
   };
 
   if (!normalized.summary) normalized.summary = fallback.summary || '';
@@ -750,6 +935,7 @@ function buildDefaultQaDimensionScores() {
     completeness: 10,
     evidence_alignment: 10,
     visualization_fit: 10,
+    information_density: 10,
     caveat_quality: 10,
     clarity: 10,
     methodology_transparency: 10,
@@ -1044,6 +1230,97 @@ function hasMethodologyCaveat(brief) {
 }
 
 // ── Magnitude cross-validation: SQL result values vs narrative claims ──────
+// ── Scope mismatch: detect when brief mixes data from different scopes ──────
+/**
+ * Detect when the brief mixes numbers from different data scopes.
+ * E.g., SQL filters to delivered-only but brief cites unfiltered chart totals.
+ */
+function detectScopeMismatch({ brief, toolCalls = [] }) {
+  const tcs = Array.isArray(toolCalls) ? toolCalls : [];
+  const sqlCalls = tcs.filter(tc => tc?.name === 'query_sap_data' && tc?.result?.success);
+  const chartCalls = tcs.filter(tc => tc?.name === 'generate_chart' && tc?.result?.success);
+  if (sqlCalls.length === 0 || chartCalls.length === 0) return null;
+
+  // Check if SQL uses a scope filter that the chart doesn't
+  const sqlFilters = sqlCalls.map(tc => {
+    const sql = String(tc?.args?.sql || tc?.input?.sql || '').toLowerCase();
+    const scopeMatch = sql.match(/where\s+.*?(?:order_status|status)\s*=\s*'(\w+)'/i);
+    return scopeMatch ? scopeMatch[1] : null;
+  }).filter(Boolean);
+  if (sqlFilters.length === 0) return null;
+
+  const briefText = [brief?.headline, brief?.summary, ...(brief?.key_findings || [])].filter(Boolean).join(' ');
+  const claimsDeliveredOnly = /delivered.only|delivered orders only|已交付|僅.*delivered/i.test(briefText);
+
+  if (claimsDeliveredOnly && sqlFilters.includes('delivered')) {
+    const pillsFromChart = (brief?.metric_pills || []).filter(p =>
+      /generate_chart|chart/i.test(String(p?.source || '')),
+    );
+    if (pillsFromChart.length > 0) {
+      return 'Brief claims "delivered orders only" but metric pills cite chart artifact data which includes all order statuses. Use consistent data scope.';
+    }
+  }
+  return null;
+}
+
+// ── Derived value consistency: check averages match totals/counts ────────────
+
+/** Parse a pill value string like "R$13.59M" or "543,666" into a number */
+function parsePillNumber(str) {
+  if (typeof str !== 'string') return 0;
+  const cleaned = str.replace(/[R$€¥£,\s]/g, '');
+  const match = cleaned.match(/^([+-]?\d+(?:\.\d+)?)\s*([KMBkmb])?/);
+  if (!match) return 0;
+  let num = parseFloat(match[1]);
+  const suffix = (match[2] || '').toUpperCase();
+  if (suffix === 'K') num *= 1000;
+  if (suffix === 'M') num *= 1_000_000;
+  if (suffix === 'B') num *= 1_000_000_000;
+  return num;
+}
+
+/**
+ * Check internal consistency of derived values in the brief.
+ * E.g., if brief says "24 months" and "average R$543K", verify 543K * 24 ≈ total.
+ */
+function checkDerivedValueConsistency({ brief }) {
+  const issues = [];
+  const pills = brief?.metric_pills || [];
+  const text = [brief?.summary, ...(brief?.key_findings || [])].filter(Boolean).join(' ');
+
+  // Extract total and average from pills
+  const totalRevenuePill = pills.find(p => /total.*revenue|revenue.*total/i.test(p?.label));
+  const avgRevenuePill = pills.find(p => /avg|average|mean/i.test(p?.label) && /revenue/i.test(p?.label));
+  const monthsPill = pills.find(p => /month/i.test(p?.label) && !/missing/i.test(p?.label));
+
+  if (totalRevenuePill && avgRevenuePill && monthsPill) {
+    const total = parsePillNumber(totalRevenuePill.value);
+    const avg = parsePillNumber(avgRevenuePill.value);
+    const months = parsePillNumber(monthsPill.value);
+
+    if (total > 0 && avg > 0 && months > 0) {
+      const expectedAvg = total / months;
+      const ratio = avg / expectedAvg;
+      if (ratio < 0.9 || ratio > 1.1) {
+        issues.push(
+          `Monthly average (${avgRevenuePill.value}) does not match total (${totalRevenuePill.value}) ÷ months (${monthsPill.value}). Expected ≈${formatPillValue(String(Math.round(expectedAvg)))}.`,
+        );
+      }
+    }
+  }
+
+  // Check for contradictory month counts in text
+  const monthCounts = [...text.matchAll(/(\d{1,2})\s*(?:months?|個月)/gi)].map(m => parseInt(m[1], 10));
+  const uniqueMonthCounts = [...new Set(monthCounts)].filter(n => n >= 12 && n <= 36);
+  if (uniqueMonthCounts.length > 2) {
+    issues.push(
+      `Multiple contradictory month counts found in narrative: ${uniqueMonthCounts.join(', ')}. Reconcile with explicit explanation.`,
+    );
+  }
+
+  return issues;
+}
+
 // Extracts large numeric values from SQL result rows and checks whether the
 // brief text cites any number that is >3x or <0.33x of a SQL-returned value
 // sharing the same column-name keyword.  This catches the "24-month total
@@ -1067,7 +1344,7 @@ function detectMagnitudeMismatches({ brief, toolCalls = [] }) {
   }
   if (sqlValues.size === 0) return mismatches;
 
-  // 2. Collect numeric claims from brief narrative
+  // 2. Collect numeric claims from brief narrative, tagged by metric type
   const briefText = [
     brief?.headline,
     brief?.summary,
@@ -1075,44 +1352,170 @@ function detectMagnitudeMismatches({ brief, toolCalls = [] }) {
     ...(brief?.implications || []),
   ].filter(Boolean).join(' ');
 
-  // Extract all R$ or plain large numbers from brief
-  const briefNumbers = [];
-  const moneyPattern = /R?\$\s*([\d,.]+)/g;
+  // Extract currency numbers (R$, $, €, ¥) and plain large numbers separately
+  const briefMoneyNumbers = [];
+  const briefPlainNumbers = [];
+  const moneyPattern = /[R$€¥£]?\$\s*([\d,.]+)/g;
   const plainNumPattern = /\b(\d{3,}(?:[,.]\d+)?)\b/g;
-  for (const pattern of [moneyPattern, plainNumPattern]) {
-    for (const match of briefText.matchAll(new RegExp(pattern.source, pattern.flags))) {
-      const parsed = parseFloat(match[1].replace(/,/g, ''));
-      if (Number.isFinite(parsed) && parsed >= 100) briefNumbers.push(parsed);
-    }
+  for (const match of briefText.matchAll(new RegExp(moneyPattern.source, moneyPattern.flags))) {
+    const parsed = parseFloat(match[1].replace(/,/g, ''));
+    if (Number.isFinite(parsed) && parsed >= 100) briefMoneyNumbers.push(parsed);
   }
-  if (briefNumbers.length === 0) return mismatches;
+  for (const match of briefText.matchAll(new RegExp(plainNumPattern.source, plainNumPattern.flags))) {
+    const parsed = parseFloat(match[1].replace(/,/g, ''));
+    if (Number.isFinite(parsed) && parsed >= 100) briefPlainNumbers.push(parsed);
+  }
+  const allBriefNumbers = [...new Set([...briefMoneyNumbers, ...briefPlainNumbers])];
+  if (allBriefNumbers.length === 0) return mismatches;
 
-  // 3. For each SQL column, check if any brief number is wildly different
-  //    from ALL values in that column (>3x or <0.33x every value)
+  // 3. Categorize SQL columns into monetary vs count/quantity
+  const MONETARY_COL = /revenue|price|value|amount|cost|payment|freight|金額|營收|價格/i;
+  const COUNT_COL = /order_count|count|quantity|qty|items|num_|total_orders|total_items|筆數|數量/i;
+  // Columns that are averages/aggregates — should only compare with similar scale
+  const AVG_COL = /^avg_|^mean_|average/i;
+  // Percentage / ratio columns — never treat as monetary or count
+  const PCT_COL = /pct|percent|ratio|rate|growth|change|_mom|_yoy|_qoq|delta|diff/i;
+
+  // 4. Build a "column → value range" index for smart matching
+  const columnRanges = new Map();
   for (const [col, valueSet] of sqlValues) {
-    const sqlNums = [...valueSet];
-    // Only check revenue/price/value columns (most prone to aggregation errors)
-    if (!/revenue|price|value|total|amount|sum|avg|mean|月均|營收/i.test(col)) continue;
-    const maxSql = Math.max(...sqlNums);
-    const minSql = Math.min(...sqlNums.filter((v) => v > 0));
+    if (PCT_COL.test(col)) continue;
+    const isMonetary = MONETARY_COL.test(col);
+    const isCount = COUNT_COL.test(col);
+    if (!isMonetary && !isCount) continue;
+    const nums = [...valueSet];
+    columnRanges.set(col, {
+      isMonetary,
+      isCount,
+      isAvg: AVG_COL.test(col),
+      max: Math.max(...nums),
+      min: Math.min(...nums.filter(v => v > 0)),
+      values: nums,
+    });
+  }
 
-    for (const briefNum of briefNumbers) {
-      // Brief claims a number >3x the largest SQL value for this column
-      if (briefNum > maxSql * 3 && maxSql > 100) {
-        mismatches.push(
-          `Narrative cites ${briefNum.toLocaleString()} but SQL column "${col}" max is ${maxSql.toLocaleString()} — possible ${Math.round(briefNum / maxSql)}x inflation.`
-        );
+  // 5. For each brief number, find the BEST matching column by value proximity
+  // instead of comparing against ALL columns of a type
+  for (const briefNum of allBriefNumbers) {
+    if (briefNum < 100) continue;
+
+    // Check if this number exists exactly (within 1%) in any SQL column → not a mismatch
+    let foundExactMatch = false;
+    for (const [, range] of columnRanges) {
+      if (range.values.some(v => Math.abs(v - briefNum) / Math.max(Math.abs(v), 1) < 0.01)) {
+        foundExactMatch = true;
+        break;
       }
-      // Brief claims a number <0.33x the smallest SQL value (possible under-reporting)
-      if (briefNum > 0 && briefNum < minSql * 0.33 && minSql > 100) {
-        mismatches.push(
-          `Narrative cites ${briefNum.toLocaleString()} but SQL column "${col}" min is ${minSql.toLocaleString()} — possible under-reporting.`
-        );
+    }
+    if (foundExactMatch) continue;
+
+    // Check if this number is within tolerance of ANY column's range
+    // Only flag if it's wildly outside ALL plausible columns
+    let closestCol = null;
+    let closestRatio = Infinity;
+    for (const [col, range] of columnRanges) {
+      // Skip avg columns when brief number is clearly a raw total (> 10x the avg max)
+      if (range.isAvg && briefNum > range.max * 10) continue;
+      // Skip count columns for numbers that look like monetary values (have decimals)
+      if (range.isCount && !range.isMonetary && briefNum % 1 !== 0 && briefNum > 1000) continue;
+
+      const ratio = briefNum / range.max;
+      if (Math.abs(Math.log10(ratio)) < Math.abs(Math.log10(closestRatio))) {
+        closestRatio = ratio;
+        closestCol = col;
       }
+    }
+
+    if (!closestCol) continue;
+    const range = columnRanges.get(closestCol);
+
+    // Tolerance: 3x for large values, 1.5x for small
+    const upperTolerance = range.max < 1000 ? 1.5 : 3;
+    const lowerTolerance = range.min < 1000 ? 0.67 : 0.33;
+    const minThreshold = range.max < 1000 ? 10 : 100;
+
+    if (briefNum > range.max * upperTolerance && range.max > minThreshold) {
+      mismatches.push(
+        `Narrative cites ${briefNum.toLocaleString()} but SQL column "${closestCol}" max is ${range.max.toLocaleString()} — possible ${Math.round(briefNum / range.max)}x inflation.`
+      );
+    }
+    if (briefNum > 0 && briefNum < range.min * lowerTolerance && range.min > minThreshold) {
+      mismatches.push(
+        `Narrative cites ${briefNum.toLocaleString()} but SQL column "${closestCol}" min is ${range.min.toLocaleString()} — possible under-reporting.`
+      );
     }
   }
 
   return mismatches;
+}
+
+/**
+ * Fact-check: verify that metric_pill values can be traced to tool call evidence.
+ * Returns an array of failure descriptions for pills with no matching evidence.
+ */
+function verifyMetricPillsAgainstEvidence(brief, toolCalls = []) {
+  const pills = Array.isArray(brief?.metric_pills) ? brief.metric_pills : [];
+  if (pills.length === 0) return [];
+
+  // Collect all numeric values from successful tool calls
+  const evidenceNumbers = new Set();
+  for (const tc of (Array.isArray(toolCalls) ? toolCalls : [])) {
+    if (tc?.result?.success === false) continue;
+    const rows = getStructuredRows(tc);
+    for (const row of rows) {
+      if (!isPlainObject(row)) continue;
+      for (const val of Object.values(row)) {
+        if (typeof val === 'number' && Number.isFinite(val)) {
+          evidenceNumbers.add(val);
+        } else if (typeof val === 'string') {
+          const parsed = parseFloat(val.replace(/,/g, ''));
+          if (Number.isFinite(parsed)) evidenceNumbers.add(parsed);
+        }
+      }
+    }
+    // Also check analysis payloads (metrics, highlights)
+    const payloads = extractAnalysisPayloadsFromToolCall(tc);
+    for (const p of payloads) {
+      if (p?.metrics && isPlainObject(p.metrics)) {
+        for (const val of Object.values(p.metrics)) {
+          if (typeof val === 'number' && Number.isFinite(val)) evidenceNumbers.add(val);
+        }
+      }
+      if (Array.isArray(p?.highlights)) {
+        for (const h of p.highlights) {
+          if (h?.value != null) {
+            const n = typeof h.value === 'number' ? h.value : parseFloat(String(h.value).replace(/,/g, ''));
+            if (Number.isFinite(n)) evidenceNumbers.add(n);
+          }
+        }
+      }
+    }
+  }
+  if (evidenceNumbers.size === 0) return [];
+
+  const failures = [];
+  for (const pill of pills) {
+    const rawVal = String(pill?.value || '');
+    // Extract the numeric part from formatted pill value (e.g., "R$210,000" → 210000, "+23.5%" → 23.5)
+    const numMatch = rawVal.match(/([\d,.]+)/);
+    if (!numMatch) continue;
+    const pillNum = parseFloat(numMatch[1].replace(/,/g, ''));
+    if (!Number.isFinite(pillNum) || pillNum === 0) continue;
+
+    // Check if any evidence number is within 5% tolerance of pill value
+    let matched = false;
+    for (const evNum of evidenceNumbers) {
+      if (evNum === 0) continue;
+      const ratio = pillNum / evNum;
+      if (ratio >= 0.95 && ratio <= 1.05) { matched = true; break; }
+      // Also check if pill is a rounded version (e.g., 210000 vs 210432)
+      if (Math.abs(pillNum - evNum) < 1) { matched = true; break; }
+    }
+    if (!matched) {
+      failures.push(`Metric pill "${pill.label}: ${rawVal}" has no matching value (±5%) in tool call evidence`);
+    }
+  }
+  return failures;
 }
 
 function collectContradictoryClaims({ brief, toolCalls = [] }) {
@@ -1127,15 +1530,41 @@ function collectContradictoryClaims({ brief, toolCalls = [] }) {
 
   return Object.entries(groupedFacts).flatMap(([metricKey, metricFacts]) => {
     if (metricFacts.length < 2) return [];
-    const distinctFacts = [];
-    for (const fact of metricFacts) {
-      if (!distinctFacts.some((entry) => !areNumbersMeaningfullyDifferent(entry.value, fact.value))) {
-        distinctFacts.push(fact);
+
+    // Only flag conflicts between facts whose labels describe the same specific metric.
+    // e.g. "Revenue Std Dev: 33273" vs "Sales Volume Std Dev: 245" are different metrics
+    // sharing the same alias key "std" — NOT a real conflict.
+    // But "Median Revenue: 821" vs "Median seller revenue: 1250" ARE about the same thing.
+    const conflicts = [];
+    for (let i = 0; i < metricFacts.length; i++) {
+      for (let j = i + 1; j < metricFacts.length; j++) {
+        const a = metricFacts[i];
+        const b = metricFacts[j];
+        if (!areNumbersMeaningfullyDifferent(a.value, b.value)) continue;
+        // Strip numeric values from raw labels before comparing, to focus on the descriptor.
+        // We need to distinguish "Revenue Std Dev" vs "Sales Volume Std Dev" (different metrics)
+        // from "Median Revenue: 821" vs "Median seller revenue: 1250" (same metric, conflict).
+        // Strategy: extract words only from the label portion (before colon or number).
+        const labelPart = (s) => String(s || '').replace(/[:=].*$/, '').toLowerCase().replace(/[\d,.%$]+/g, '').trim();
+        const descA = labelPart(a.raw);
+        const descB = labelPart(b.raw);
+        // If both descriptions exist and differ significantly in qualifying words, skip
+        if (descA && descB) {
+          const wordsA = new Set(descA.split(/\s+/).filter(Boolean));
+          const wordsB = new Set(descB.split(/\s+/).filter(Boolean));
+          // Find words unique to each side
+          const uniqueA = [...wordsA].filter((w) => !wordsB.has(w));
+          const uniqueB = [...wordsB].filter((w) => !wordsA.has(w));
+          // If either side has 2+ unique qualifying words, these are different metrics
+          if (uniqueA.length >= 2 || uniqueB.length >= 2) continue;
+        }
+        conflicts.push({ a, b });
       }
     }
-    if (distinctFacts.length < 2) return [];
+    if (conflicts.length === 0) return [];
 
-    const detail = distinctFacts.slice(0, 3).map((fact) => `${formatValue(fact.value)} (${fact.source})`);
+    const first = conflicts[0];
+    const detail = [first.a, first.b].map((fact) => `${formatValue(fact.value)} (${fact.source})`);
     return [`Conflicting ${metricKey} values detected: ${detail.join(' vs ')}`];
   });
 }
@@ -1170,12 +1599,87 @@ function requiresCaveat({ trace, finalAnswerText, toolCalls, brief }) {
 function hasCoveredDimension({ dimension, briefText, structuredCoverage }) {
   const normalized = String(dimension || '').trim().toLowerCase();
   if (!normalized) return true;
-  const coveredDimensions = new Set((structuredCoverage?.coveredDimensions || []).map((item) => String(item || '').toLowerCase()));
+
+  const coveredDimensions = new Set(
+    (structuredCoverage?.coveredDimensions || []).map((item) => String(item || '').toLowerCase())
+  );
+
+  // 1. Exact match in structured coverage
   if (coveredDimensions.has(normalized)) return true;
-  if (normalized === 'quantiles' || normalized === 'percentiles') {
-    return (structuredCoverage?.foundPercentiles || []).length > 0 || /\bquantiles?\b|\bpercentiles?\b|分位數|百分位/.test(briefText);
+
+  // 2. Composite dimension: split "revenue trend" into tokens,
+  //    check if ALL tokens are individually covered or appear as substring in a covered dimension
+  const tokens = normalized.split(/\s+/).filter(Boolean);
+  if (tokens.length > 1) {
+    const allTokensCovered = tokens.every((token) => {
+      if (coveredDimensions.has(token)) return true;
+      for (const covered of coveredDimensions) {
+        if (covered.includes(token)) return true;
+      }
+      return briefText.includes(token);
+    });
+    if (allTokensCovered) return true;
   }
+
+  // 3. Check if any covered dimension contains the full normalized string or vice versa
+  for (const covered of coveredDimensions) {
+    if (covered.includes(normalized) || normalized.includes(covered)) return true;
+  }
+
+  // 4. Special handling for quantiles/percentiles
+  if (normalized === 'quantiles' || normalized === 'percentiles') {
+    return (structuredCoverage?.foundPercentiles || []).length > 0
+      || /\bquantiles?\b|\bpercentiles?\b|分位數|百分位/.test(briefText);
+  }
+
+  // 5. Fuzzy text search: match with plurals and word-boundary variants
+  const fuzzyPattern = new RegExp(
+    tokens.map(t => t.replace(/s$/, '') + 's?').join('\\b.*\\b'),
+    'i'
+  );
+  if (fuzzyPattern.test(briefText)) return true;
+
+  // 6. Original fallback: exact substring
   return briefText.includes(normalized);
+}
+
+function extractTrendClaims(text) {
+  const claims = [];
+  const patterns = [
+    { regex: /(\w+(?:\s+\w+)?)\s+(?:grew|increased|rose|surged|jumped|成長|增長|上升)/gi, direction: 'up' },
+    { regex: /(\w+(?:\s+\w+)?)\s+(?:declined|decreased|dropped|fell|shrank|下降|減少|衰退)/gi, direction: 'down' },
+  ];
+  for (const { regex, direction } of patterns) {
+    let match;
+    while ((match = regex.exec(text)) !== null) {
+      claims.push({ metric: match[1].trim(), direction });
+    }
+  }
+  return claims;
+}
+
+function extractTrendFromToolCalls(toolCalls = []) {
+  const trends = [];
+  for (const tc of toolCalls) {
+    if (tc?.name !== 'query_sap_data' || !tc?.result?.success) continue;
+    const rows = tc?.result?.rows || [];
+    if (rows.length < 2) continue;
+    const numericKeys = Object.keys(rows[0] || {}).filter(k => typeof rows[0][k] === 'number');
+    for (const key of numericKeys) {
+      const firstVal = rows[0][key];
+      const lastVal = rows[rows.length - 1][key];
+      if (firstVal != null && lastVal != null && firstVal !== 0) {
+        trends.push({
+          metric: key,
+          direction: lastVal > firstVal ? 'up' : 'down',
+          startValue: firstVal,
+          endValue: lastVal,
+          isDefault: numericKeys.indexOf(key) === 0,
+        });
+      }
+    }
+  }
+  return trends;
 }
 
 export function computeDeterministicQa({
@@ -1244,6 +1748,40 @@ export function computeDeterministicQa({
     dimensionScores.evidence_alignment = Math.max(0, dimensionScores.evidence_alignment - 4);
   }
 
+  // ── Scope consistency: detect mixed data scopes ──
+  const scopeMismatch = detectScopeMismatch({ brief, toolCalls });
+  if (scopeMismatch) {
+    const issue = `Scope inconsistency: ${scopeMismatch}`;
+    issues.push(issue);
+    repairInstructions.push('Ensure all numbers come from the same data scope. If mixing scopes, explicitly label each set of numbers.');
+    dimensionScores.correctness = Math.max(0, dimensionScores.correctness - 3);
+    dimensionScores.evidence_alignment = Math.max(0, dimensionScores.evidence_alignment - 2);
+  }
+
+  // ── Derived value consistency: check if averages match totals/counts ──
+  const derivedIssues = checkDerivedValueConsistency({ brief });
+  for (const issue of derivedIssues) {
+    issues.push(issue);
+    repairInstructions.push('Verify and correct the derived value calculation.');
+    dimensionScores.correctness = Math.max(0, dimensionScores.correctness - 2);
+  }
+
+  // ── Trend direction consistency: brief claims "growth/increase" but data shows decline ──
+  const trendClaims = extractTrendClaims(combinedNarrativeText);
+  const sqlTrendData = extractTrendFromToolCalls(toolCalls);
+  if (trendClaims.length > 0 && sqlTrendData.length > 0) {
+    for (const claim of trendClaims) {
+      const matchingData = sqlTrendData.find(d => d.metric === claim.metric || d.isDefault);
+      if (matchingData && claim.direction !== matchingData.direction) {
+        const issue = `Trend mismatch: brief claims "${claim.metric} ${claim.direction}" but data shows ${matchingData.direction} (${matchingData.startValue} → ${matchingData.endValue})`;
+        blockers.push(issue);
+        issues.push(issue);
+        repairInstructions.push(`Correct the trend direction for ${claim.metric} to match the data: ${matchingData.direction}.`);
+        dimensionScores.correctness = Math.max(0, dimensionScores.correctness - 5);
+      }
+    }
+  }
+
   if (trace.failed_attempts.length === 0 && containsInventedToolFailure(combinedNarrativeText)) {
     const issue = 'The answer claims a SQL, worker, connection, or tool failure that does not exist in the execution trace.';
     blockers.push(issue);
@@ -1301,6 +1839,63 @@ export function computeDeterministicQa({
     dimensionScores.clarity = Math.max(0, dimensionScores.clarity - 4);
   }
 
+  // ── Content redundancy: pill values repeated verbatim in narrative ──
+  const pillValues = (brief?.metric_pills || [])
+    .map((p) => String(p?.value || '').trim())
+    .filter((v) => v.length > 3);
+  if (pillValues.length > 0) {
+    const summaryText = String(brief?.summary || '');
+    const findingsText = (brief?.key_findings || []).join(' ');
+    const pillsInSummary = pillValues.filter((v) => summaryText.includes(v)).length;
+    const pillsInFindings = pillValues.filter((v) => findingsText.includes(v)).length;
+
+    if (pillsInSummary >= 3) {
+      const issue = `Summary restates ${pillsInSummary} of ${pillValues.length} metric pill values verbatim — must interpret, not restate.`;
+      blockers.push(issue);
+      issues.push(issue);
+      repairInstructions.push('Rewrite summary to interpret metric pills contextually (e.g., "the high Gini coefficient suggests severe inequality") instead of restating exact values. Each pill value should appear in at most one narrative reference.');
+      dimensionScores.information_density = Math.max(0, dimensionScores.information_density - 5);
+    }
+    if (pillsInFindings >= 3) {
+      const issue = `Key findings restate ${pillsInFindings} of ${pillValues.length} metric pill values — findings must add new analysis.`;
+      blockers.push(issue);
+      issues.push(issue);
+      repairInstructions.push('Replace restated values in key_findings with derived insights (e.g., instead of "Gini is 0.792", write "the bottom 50% of sellers collectively earn less than the top 10 sellers individually").');
+      dimensionScores.information_density = Math.max(0, dimensionScores.information_density - 5);
+    }
+
+    // Check for values appearing in 3+ sections (headline, summary, findings, pills)
+    const headlineText = String(brief?.headline || '');
+    const tripleRepeat = pillValues.filter((v) => {
+      let count = 0;
+      if (headlineText.includes(v)) count++;
+      if (summaryText.includes(v)) count++;
+      if (findingsText.includes(v)) count++;
+      count++; // pill itself
+      return count >= 3;
+    }).length;
+    if (tripleRepeat > 0) {
+      const issue = `${tripleRepeat} metric value(s) appear in 3+ sections (pills + headline/summary/findings).`;
+      issues.push(issue);
+      repairInstructions.push('Each numeric value should appear in metric pills and at most one narrative reference with interpretation.');
+      dimensionScores.information_density = Math.max(0, dimensionScores.information_density - Math.min(6, tripleRepeat * 2));
+    }
+  }
+
+  // ── Findings–summary overlap: check n-gram overlap ──
+  if (brief?.summary && brief?.key_findings?.length > 0) {
+    const summaryTokens = tokenizeWords(brief.summary);
+    const findingsTokens = tokenizeWords(brief.key_findings.join(' '));
+    if (summaryTokens.length >= 8 && findingsTokens.length >= 8) {
+      const overlap = textSimilarity(brief.summary, brief.key_findings.join(' '));
+      if (overlap >= 0.5) {
+        issues.push('Key findings share >50% content with summary — findings should provide additional analysis.');
+        repairInstructions.push('Differentiate key_findings from summary: findings should explain WHY, not restate WHAT.');
+        dimensionScores.information_density = Math.max(0, dimensionScores.information_density - 4);
+      }
+    }
+  }
+
   const evidenceTables = Array.isArray(brief?.tables) ? brief.tables : [];
   const emptyEvidence = evidenceTables.length === 0;
   const singleColumnTable = evidenceTables.some((table) => Array.isArray(table?.columns) && table.columns.length <= 1);
@@ -1346,6 +1941,25 @@ export function computeDeterministicQa({
     repairInstructions.push(`Align the chart type with the requested ${requestedSpecialChart}.`);
     dimensionScores.visualization_fit = Math.max(0, dimensionScores.visualization_fit - 6);
   }
+
+  // ── Chart data passthrough: tool calls produced charts but brief has none ──
+  const toolCallsHaveChartData = (Array.isArray(toolCalls) ? toolCalls : []).some((tc) => {
+    const payloads = extractAnalysisPayloadsFromToolCall(tc);
+    return payloads.some((p) => Array.isArray(p?.charts) && p.charts.some((c) => Array.isArray(c?.data) && c.data.length > 0));
+  });
+  const briefHasChartData = Array.isArray(brief?.charts) && brief.charts.some((c) => Array.isArray(c?.data) && c.data.length > 0);
+  if (toolCallsHaveChartData && !briefHasChartData) {
+    const issue = 'Tool calls produced charts with data but the brief contains no renderable charts — chart data was lost in synthesis.';
+    blockers.push(issue);
+    issues.push(issue);
+    repairInstructions.push('Include the chart data from tool results in the brief charts array.');
+    dimensionScores.visualization_fit = Math.max(0, dimensionScores.visualization_fit - 8);
+    if (wantsChart) {
+      dimensionScores.completeness = Math.max(0, dimensionScores.completeness - 3);
+      dimensionScores.evidence_alignment = Math.max(0, dimensionScores.evidence_alignment - 2);
+    }
+  }
+
   if (answerContract?.task_type === 'trend' && chartTypes.length > 0 && !chartTypes.some((type) => ['line', 'area', 'stacked_area'].includes(type))) {
     issues.push('Trend analysis is not using a trend-oriented chart type.');
     repairInstructions.push('Use a line or area chart framing for trend-focused requests.');
@@ -1396,18 +2010,8 @@ export function computeDeterministicQa({
     dimensionScores.caveat_quality = Math.max(0, dimensionScores.caveat_quality - 6);
   }
 
-  // Soft caveat: analysis relies solely on pre-computed chart artifact without raw SQL verification
-  const successfulToolCalls = toolCalls.filter((tc) => tc?.result?.success);
-  const hasOnlyChartEvidence = successfulToolCalls.length > 0
-    && successfulToolCalls.every((tc) => tc?.name === 'generate_chart');
-  const hasRawDataSource = successfulToolCalls.some((tc) =>
-    tc?.name === 'query_sap_data' || tc?.name === 'run_python_analysis');
-  if (hasOnlyChartEvidence && !hasRawDataSource && !hasMethodologyCaveat(brief)) {
-    const issue = 'Analysis relies on a pre-computed chart artifact without independent data verification.';
-    issues.push(issue);
-    repairInstructions.push('Add a brief note that the analysis uses pre-computed chart metrics rather than live SQL queries.');
-    dimensionScores.caveat_quality = Math.max(0, dimensionScores.caveat_quality - 3);
-  }
+  // Note: generate_chart recipes compute from raw dataset at query time — they are NOT pre-cached.
+  // We no longer penalise chart-only evidence as "pre-computed" since it is deterministic and authoritative.
 
   const hasStructuredEvidencePresentation = (Array.isArray(brief?.metric_pills) && brief.metric_pills.length > 0)
     || (Array.isArray(brief?.tables) && brief.tables.length > 0);
@@ -1609,6 +2213,49 @@ export function computeDeterministicQa({
     dimensionScores.methodology_transparency = Math.max(0, dimensionScores.methodology_transparency - 4);
   }
 
+  // ── Caveat contradiction: caveats that question generate_chart results ──
+  const chartToolSucceeded = (Array.isArray(toolCalls) ? toolCalls : []).some(
+    (tc) => tc?.name === 'generate_chart' && tc?.success !== false
+      && (tc?.result?.success !== false),
+  );
+  if (chartToolSucceeded) {
+    const suspiciousCaveats = (brief?.caveats || []).filter((c) =>
+      /pre-computed|conceptual|narrative.based|chart metrics|zero rows.*chart|not.*live.*sql|pre-cached/i.test(String(c || '')),
+    );
+    if (suspiciousCaveats.length > 0) {
+      const issue = 'Caveat contradicts tool evidence: a successful generate_chart recipe is authoritative, not "conceptual" or "pre-computed".';
+      blockers.push(issue);
+      issues.push(issue);
+      repairInstructions.push('Remove caveats that question the reliability of successfully executed chart recipes. Recipe outputs are computed from raw data at query time.');
+      dimensionScores.caveat_quality = Math.max(0, dimensionScores.caveat_quality - 5);
+    }
+  }
+
+  // ── Fact-check: verify metric_pill values exist in tool call evidence ──
+  const pillFactCheckFailures = verifyMetricPillsAgainstEvidence(brief, toolCalls);
+  if (pillFactCheckFailures.length > 0) {
+    for (const failure of pillFactCheckFailures.slice(0, 3)) {
+      issues.push(failure);
+    }
+    if (pillFactCheckFailures.length >= 2) {
+      blockers.push(`${pillFactCheckFailures.length} metric pill(s) have no matching evidence in tool results`);
+    }
+    repairInstructions.push('Remove or correct metric pills whose values cannot be traced to any tool call result.');
+    dimensionScores.correctness = Math.max(0, dimensionScores.correctness - Math.min(5, pillFactCheckFailures.length * 2));
+    dimensionScores.evidence_alignment = Math.max(0, dimensionScores.evidence_alignment - Math.min(4, pillFactCheckFailures.length * 1.5));
+  }
+
+  // ── Fact-check: verify chart data completeness ──
+  const briefCharts = Array.isArray(brief?.charts) ? brief.charts : [];
+  const emptyCharts = briefCharts.filter(c => !Array.isArray(c.data) || c.data.length === 0);
+  if (emptyCharts.length > 0 && briefCharts.length > 0) {
+    const issue = `${emptyCharts.length} of ${briefCharts.length} chart(s) have empty data arrays — charts will render blank.`;
+    blockers.push(issue);
+    issues.push(issue);
+    repairInstructions.push('Remove charts with empty data arrays or populate them from tool call results.');
+    dimensionScores.visualization_fit = Math.max(0, dimensionScores.visualization_fit - emptyCharts.length * 3);
+  }
+
   const score = scoreFromDimensionScores(dimensionScores);
 
   return {
@@ -1632,10 +2279,38 @@ export function computeDeterministicQa({
 
 function normalizeQaReviewResult(review) {
   const dimensionScores = buildDefaultQaDimensionScores();
+  const imputedDimensions = [];
+  // First pass: collect present scores
+  const presentScores = [];
   for (const key of QA_DIMENSION_KEYS) {
     const raw = review?.dimension_scores?.[key];
-    // If the reviewer did not score a dimension (e.g. new dimensions not yet in model output), keep the default of 10
-    dimensionScores[key] = raw != null ? roundScore(raw) : 10;
+    if (raw != null) {
+      dimensionScores[key] = roundScore(raw);
+      presentScores.push(dimensionScores[key]);
+    }
+  }
+  // Impute missing dimensions using weighted avg of present scores × 0.8 (penalized estimate).
+  // Weight by QA_DIMENSION_WEIGHTS so high-weight dimensions influence imputation more.
+  let weightedSum = 0;
+  let weightTotal = 0;
+  for (const key of QA_DIMENSION_KEYS) {
+    if (review?.dimension_scores?.[key] != null) {
+      const w = QA_DIMENSION_WEIGHTS[key] || 0;
+      weightedSum += dimensionScores[key] * w;
+      weightTotal += w;
+    }
+  }
+  const fallbackValue = weightTotal > 0
+    ? roundScore((weightedSum / weightTotal) * 0.8)
+    : 5.0;
+  for (const key of QA_DIMENSION_KEYS) {
+    if (dimensionScores[key] == null || review?.dimension_scores?.[key] == null) {
+      dimensionScores[key] = fallbackValue;
+      imputedDimensions.push(key);
+    }
+  }
+  if (imputedDimensions.length > 0) {
+    console.warn(`[validateAgentQaReview] imputed missing dimension_scores to ${fallbackValue}: ${imputedDimensions.join(', ')}`);
   }
 
   return {
@@ -1644,19 +2319,34 @@ function normalizeQaReviewResult(review) {
     issues: uniqueStrings(review?.issues || []),
     repair_instructions: uniqueStrings(review?.repair_instructions || []),
     dimension_scores: dimensionScores,
+    _imputedDimensions: imputedDimensions.length > 0 ? imputedDimensions : undefined,
   };
 }
 
 function mergeQaResults({ deterministicQa, selfReview = null, crossReview = null, repairAttempted = false }) {
   const dimensionScores = buildDefaultQaDimensionScores();
 
+  // Dimension-level cap: LLM reviewers cannot drag any dimension more than
+  // CAP_DELTA below the deterministic baseline. This prevents a single harsh
+  // reviewer from collapsing scores (e.g. visualization_fit=0 when det=10).
+  const CAP_DELTA = 3;
+
   for (const key of QA_DIMENSION_KEYS) {
-    const candidates = [
-      deterministicQa?.dimension_scores?.[key],
+    const deterministicVal = deterministicQa?.dimension_scores?.[key];
+    const reviewerVals = [
       selfReview?.qa?.dimension_scores?.[key],
       crossReview?.qa?.dimension_scores?.[key],
     ].filter((value) => typeof value === 'number');
-    dimensionScores[key] = roundScore(candidates.length > 0 ? Math.min(...candidates) : 10);
+
+    if (typeof deterministicVal === 'number') {
+      const floor = Math.max(0, deterministicVal - CAP_DELTA);
+      const cappedReviewerVals = reviewerVals.map(v => Math.max(v, floor));
+      const allVals = [deterministicVal, ...cappedReviewerVals];
+      dimensionScores[key] = roundScore(Math.min(...allVals));
+    } else if (reviewerVals.length > 0) {
+      dimensionScores[key] = roundScore(Math.min(...reviewerVals));
+    }
+    // else: keep default 10
   }
 
   // Cap how far LLM reviewers can drag the score below the deterministic baseline.
@@ -1783,36 +2473,57 @@ async function synthesizeBrief({
         userMessage,
         answerContract,
         toolCalls: summarizeToolCallsForPrompt(toolCalls),
-        finalAnswerText: clamp(finalAnswerText, 2500),
+        finalAnswerText: clamp(stripThinkingTags(finalAnswerText), 2500),
         mode,
         repairInstructions,
       },
       temperature: 0.1,
       maxOutputTokens: 4096,
     });
-    return normalizeBrief(result?.parsed, fallbackBrief, { brevity: answerContract?.brevity });
+    const brief = normalizeBrief(result?.parsed, fallbackBrief, { brevity: answerContract?.brevity });
+    autoInjectMissingCaveats(brief, toolCalls);
+    return brief;
   } catch (error) {
     console.warn('[agentResponsePresentation] Brief synthesis fallback:', error?.message);
     return fallbackBrief;
   }
 }
 
-function summarizeToolCallsForPrompt(toolCalls = []) {
+/**
+ * Auto-inject caveats when failed tool calls exist but caveats array is empty.
+ * Mutates the brief in place.
+ */
+function autoInjectMissingCaveats(brief, toolCalls = []) {
+  if (!isPlainObject(brief)) return;
+  const caveats = Array.isArray(brief.caveats) ? brief.caveats : [];
+  const failedTools = (Array.isArray(toolCalls) ? toolCalls : []).filter(
+    (tc) => tc?.result && !tc.result.success
+  );
+  if (failedTools.length > 0 && caveats.length === 0) {
+    const failedNames = uniqueStrings(failedTools.map((tc) => tc?.name || 'unknown')).join(', ');
+    brief.caveats = [
+      `Analysis used alternative methods due to sandbox or execution limitations (${failedNames} failed). Results may be less precise than originally intended.`,
+    ];
+  }
+}
+
+export function summarizeToolCallsForPrompt(toolCalls = []) {
   return (Array.isArray(toolCalls) ? toolCalls : []).map((toolCall) => {
-    const rows = getStructuredRows(toolCall).slice(0, 3);
+    const rows = getStructuredRows(toolCall).slice(0, 15);
     const analysisPayloads = extractAnalysisPayloadsFromToolCall(toolCall)
-      .slice(0, 2)
+      .slice(0, 4)
       .map((payload) => ({
         title: payload?.title,
         analysisType: payload?.analysisType,
         summary: payload?.summary || '',
+        highlights: Array.isArray(payload?.highlights) ? payload.highlights.slice(0, 8) : [],
         chartTypes: Array.isArray(payload?.charts) ? payload.charts.map((chart) => chart?.type).filter(Boolean) : [],
         tableTitles: Array.isArray(payload?.tables) ? payload.tables.map((table) => table?.title).filter(Boolean) : [],
         referenceLineLabels: Array.isArray(payload?.charts)
           ? payload.charts.flatMap((chart) => Array.isArray(chart?.referenceLines) ? chart.referenceLines.map((line) => line?.label).filter(Boolean) : [])
           : [],
         metrics: isPlainObject(payload?.metrics)
-          ? Object.entries(payload.metrics).slice(0, 10).map(([label, value]) => ({ label, value }))
+          ? Object.entries(payload.metrics).slice(0, 16).map(([label, value]) => ({ label, value }))
           : [],
         referenceLineValues: Array.isArray(payload?.charts)
           ? payload.charts.flatMap((chart) =>
@@ -1821,10 +2532,10 @@ function summarizeToolCallsForPrompt(toolCalls = []) {
               .filter((entry) => entry.label))
           : [],
         tableData: Array.isArray(payload?.tables)
-          ? payload.tables.slice(0, 2).map((table) => ({
+          ? payload.tables.slice(0, 3).map((table) => ({
             title: table?.title,
             columns: table?.columns,
-            rows: (table?.rows || []).slice(0, 8),
+            rows: (table?.rows || []).slice(0, 20).map(formatTimestampValues),
           }))
           : [],
       }));
@@ -1835,7 +2546,7 @@ function summarizeToolCallsForPrompt(toolCalls = []) {
       error: toolCall?.result?.success ? null : String(toolCall?.result?.error || ''),
       args: toolCall?.args || {},
       rowCount: getRowCount(toolCall),
-      sampleRows: rows,
+      sampleRows: rows.map(formatTimestampValues),
       analysisPayloads,
       artifactTypes: toolCall?.result?.artifactTypes || toolCall?.result?.result?.artifactTypes || [],
     };
@@ -1863,7 +2574,7 @@ async function requestQaReview({
         answerContract,
         brief,
         toolCalls: summarizeToolCallsForPrompt(toolCalls),
-        finalAnswerText: clamp(finalAnswerText, 3000),
+        finalAnswerText: clamp(stripThinkingTags(finalAnswerText), 3000),
         deterministicQa,
         artifactSummary,
       },
@@ -1916,7 +2627,7 @@ function shouldEscalateQa({ deterministicQa, selfReview, forceCrossReview = fals
   );
 }
 
-async function repairBrief({
+export async function repairBrief({
   userMessage,
   answerContract,
   brief,
@@ -1942,7 +2653,7 @@ async function repairBrief({
         answerContract,
         brief,
         toolCalls: summarizeToolCallsForPrompt(toolCalls),
-        finalAnswerText: clamp(finalAnswerText, 3000),
+        finalAnswerText: clamp(stripThinkingTags(finalAnswerText), 3000),
         deterministicQa,
         qaScorecard,
         artifactSummary,
@@ -1950,6 +2661,8 @@ async function repairBrief({
       },
       temperature: 0.1,
       maxOutputTokens: 4096,
+      providerOverride: CROSS_MODEL_REVIEW_PROVIDER,
+      modelOverride: CROSS_MODEL_REVIEW_MODEL,
     });
     return normalizeBrief(result?.parsed, fallbackBrief, { brevity: answerContract?.brevity });
   } catch (error) {
@@ -1965,19 +2678,180 @@ export async function buildAgentPresentationPayload({
   mode = 'default',
   answerContract: providedAnswerContract = null,
   forceCrossReview = false,
+  complexityTier = 'complex', // 'meta' | 'simple' | 'complex'
+  agentProvider = '',
+  agentModel = '',
 }) {
+  // ── Meta tier: skip all LLM calls, use deterministic builders only ──
+  if (complexityTier === 'meta') {
+    const answerContract = normalizeAnswerContract(providedAnswerContract, userMessage, mode);
+    const brief = buildDeterministicAgentBrief({ userMessage, answerContract, toolCalls, finalAnswerText });
+    const deterministicQa = computeDeterministicQa({ userMessage, answerContract, brief, toolCalls, finalAnswerText });
+    return {
+      brief,
+      trace: deterministicQa.trace,
+      answerContract,
+      review: buildCompatReview({ qa: { status: 'pass', score: 10, skipped: true }, deterministicQa }),
+      qa: { status: 'pass', score: 10, skipped: true },
+      skippedSteps: ['answer_contract_llm', 'brief_synthesis_llm', 'self_review', 'cross_review', 'repair'],
+    };
+  }
+
   const answerContract = providedAnswerContract
     ? normalizeAnswerContract(providedAnswerContract, userMessage, mode)
     : await deriveAnswerContract({ userMessage, mode });
   const artifactSummary = summarizeArtifacts(toolCalls);
 
-  const initialBrief = await synthesizeBrief({
-    userMessage,
-    answerContract,
-    toolCalls,
-    finalAnswerText,
-    mode,
-  });
+  // ── Simple tier: deterministic contract + LLM brief + deterministic QA only ──
+  if (complexityTier === 'simple') {
+    const brief = await synthesizeBrief({ userMessage, answerContract, toolCalls, finalAnswerText, mode });
+    const deterministicQa = computeDeterministicQa({ userMessage, answerContract, brief, toolCalls, finalAnswerText });
+    const qa = mergeQaResults({ deterministicQa, selfReview: null, crossReview: null, repairAttempted: false });
+    return {
+      brief,
+      trace: deterministicQa.trace,
+      answerContract,
+      review: buildCompatReview({ qa, deterministicQa }),
+      qa,
+      skippedSteps: ['self_review', 'cross_review', 'repair'],
+    };
+  }
+
+  // ── Complex tier: full pipeline ──
+  // Primary path (analysis mode): Direct JSON Brief from agent output — no synthesis LLM.
+  // synthesizeBrief is fallback only, used when agent fails to produce valid JSON.
+  let initialBrief;
+  if (mode === 'analysis') {
+    // Attempt 1: raw JSON parse
+    try {
+      const directBrief = JSON.parse(finalAnswerText);
+      if (directBrief.headline && directBrief.summary) {
+        initialBrief = directBrief;
+      }
+    } catch { /* not raw JSON */ }
+
+    // Attempt 2: extract JSON from markdown fences (```json ... ```)
+    if (!initialBrief) {
+      const fenceMatch = (finalAnswerText || '').match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/);
+      if (fenceMatch) {
+        try {
+          const fencedBrief = JSON.parse(fenceMatch[1]);
+          if (fencedBrief.headline && fencedBrief.summary) {
+            initialBrief = fencedBrief;
+          }
+        } catch { /* fenced content not valid JSON */ }
+      }
+    }
+
+    // Attempt 3: Partial JSON recovery — find largest valid JSON substring
+    if (!initialBrief) {
+      const text = finalAnswerText;
+      const jsonStart = text.indexOf('{');
+      const jsonEnd = text.lastIndexOf('}');
+      if (jsonStart >= 0 && jsonEnd > jsonStart) {
+        try {
+          const partialBrief = JSON.parse(text.slice(jsonStart, jsonEnd + 1));
+          if (partialBrief.headline || partialBrief.summary) {
+            initialBrief = partialBrief;
+            console.info('[Presentation] Recovered partial JSON brief from agent output');
+          }
+        } catch { /* still malformed */ }
+      }
+    }
+
+    // Attempt 4: Lenient JSON repair — fix common LLM JSON mistakes
+    if (!initialBrief) {
+      try {
+        let repaired = finalAnswerText;
+        const jsonStart = repaired.indexOf('{');
+        const jsonEnd = repaired.lastIndexOf('}');
+        if (jsonStart >= 0 && jsonEnd > jsonStart) {
+          repaired = repaired.slice(jsonStart, jsonEnd + 1);
+        }
+        repaired = repaired.replace(/,\s*([}\]])/g, '$1');
+        repaired = repaired.replace(/[\x00-\x1F\x7F]/g, ' ');
+        const repairedBrief = JSON.parse(repaired);
+        if (repairedBrief.headline || repairedBrief.summary) {
+          initialBrief = repairedBrief;
+          console.info('[Presentation] Recovered JSON brief after lenient repair');
+        }
+      } catch { /* repair failed */ }
+    }
+
+    // Attempt 5: Field extraction — regex extract individual fields
+    if (!initialBrief) {
+      const extractField = (fieldName) => {
+        const regex = new RegExp(`"${fieldName}"\\s*:\\s*"([^"]*)"`, 'i');
+        const match = finalAnswerText.match(regex);
+        return match ? match[1] : null;
+      };
+      const headline = extractField('headline');
+      const summary = extractField('summary');
+      if (headline || summary) {
+        initialBrief = {
+          headline: headline || 'Analysis complete.',
+          summary: summary || '',
+        };
+        console.info('[Presentation] Extracted individual fields from malformed JSON');
+      }
+    }
+
+    if (initialBrief) {
+      console.info('[Presentation] Using direct JSON brief from agent (no synthesis LLM needed)');
+    }
+  }
+
+  // Backfill empty chart data from tool calls (agent can't embed full data in JSON)
+  if (initialBrief?.chart_specs || initialBrief?.charts) {
+    const chartField = initialBrief.chart_specs ? 'chart_specs' : 'charts';
+    const toolCharts = buildChartsFromToolCalls(toolCalls, { brevity: 'analysis' });
+    const hasEmptyCharts = (initialBrief[chartField] || []).some(
+      c => !Array.isArray(c.data) || c.data.length === 0
+    );
+    if (hasEmptyCharts && toolCharts.length > 0) {
+      const filledCharts = (initialBrief[chartField] || []).map((agentChart, idx) => {
+        if (Array.isArray(agentChart.data) && agentChart.data.length > 0) return agentChart;
+        const match = toolCharts.find(
+          tc => tc.type === agentChart.type && tc.title === agentChart.title
+        ) || toolCharts[idx];
+        if (match) {
+          return {
+            ...agentChart,
+            data: match.data,
+            xKey: agentChart.xKey || match.xKey,
+            yKey: agentChart.yKey || match.yKey,
+            ...(match.series && !agentChart.series ? { series: match.series } : {}),
+          };
+        }
+        return agentChart;
+      }).filter(c => Array.isArray(c.data) && c.data.length > 0);
+
+      if (filledCharts.length < toolCharts.length) {
+        const usedTypes = new Set(filledCharts.map(c => `${c.type}:${c.title}`));
+        for (const tc of toolCharts) {
+          if (!usedTypes.has(`${tc.type}:${tc.title}`)) {
+            filledCharts.push(tc);
+          }
+        }
+      }
+
+      initialBrief[chartField] = filledCharts;
+      console.info(`[Presentation] Backfilled ${filledCharts.length} charts from tool calls`);
+    }
+  }
+
+  if (!initialBrief) {
+    if (mode === 'analysis') {
+      console.warn('[Presentation] Agent did not produce valid JSON brief — falling back to synthesis LLM (quality may degrade)');
+    }
+    initialBrief = await synthesizeBrief({
+      userMessage,
+      answerContract,
+      toolCalls,
+      finalAnswerText,
+      mode,
+    });
+  }
   const initialDeterministicQa = computeDeterministicQa({
     userMessage,
     answerContract,
@@ -1985,26 +2859,15 @@ export async function buildAgentPresentationPayload({
     toolCalls,
     finalAnswerText,
   });
-  const initialSelfReview = await requestQaReview({
-    promptId: DI_PROMPT_IDS.AGENT_QA_SELF_REVIEW,
-    stage: 'self',
-    userMessage,
-    answerContract,
-    brief: initialBrief,
-    toolCalls,
-    finalAnswerText,
-    deterministicQa: initialDeterministicQa,
-    artifactSummary,
-  });
-  const shouldCrossReview = shouldEscalateQa({
-    deterministicQa: initialDeterministicQa,
-    selfReview: initialSelfReview,
-    forceCrossReview,
-  });
-  const initialCrossReview = shouldCrossReview
-    ? await requestQaReview({
-      promptId: DI_PROMPT_IDS.AGENT_QA_CROSS_REVIEW,
-      stage: 'cross_model',
+  const skippedSteps = [];
+
+  // ── Simplified QA pipeline (S3): 1-2 LLM calls instead of 4-6 ──
+  // Step 1: Single unified LLM review (replaces separate self + cross reviews)
+  let singleReview = null;
+  if (!isProviderCircuitOpen(CROSS_MODEL_REVIEW_PROVIDER)) {
+    singleReview = await requestQaReview({
+      promptId: DI_PROMPT_IDS.AGENT_QA_SELF_REVIEW,
+      stage: 'unified',
       userMessage,
       answerContract,
       brief: initialBrief,
@@ -2014,16 +2877,25 @@ export async function buildAgentPresentationPayload({
       artifactSummary,
       providerOverride: CROSS_MODEL_REVIEW_PROVIDER,
       modelOverride: CROSS_MODEL_REVIEW_MODEL,
-    })
-    : null;
+    });
+  } else {
+    skippedSteps.push('llm_review');
+    console.warn(`[QA] Skipping LLM review — ${CROSS_MODEL_REVIEW_PROVIDER} circuit breaker is open`);
+  }
+
   const initialQa = mergeQaResults({
     deterministicQa: initialDeterministicQa,
-    selfReview: initialSelfReview,
-    crossReview: initialCrossReview,
+    selfReview: singleReview,
+    crossReview: null,
     repairAttempted: false,
   });
+  skippedSteps.push('cross_review');
 
-  if (initialQa.status === 'warning') {
+  // Step 2: Conditional repair — only for severe issues (score < 5.0 or blockers)
+  const hasBlockers = (initialQa.blockers || []).length > 0;
+  const needsRepair = (initialQa.score < 5.0 || hasBlockers) && !isProviderCircuitOpen(CROSS_MODEL_REVIEW_PROVIDER);
+
+  if (needsRepair) {
     const repairedBrief = await repairBrief({
       userMessage,
       answerContract,
@@ -2042,36 +2914,11 @@ export async function buildAgentPresentationPayload({
       toolCalls,
       finalAnswerText,
     });
-    const repairedSelfReview = await requestQaReview({
-      promptId: DI_PROMPT_IDS.AGENT_QA_SELF_REVIEW,
-      stage: 'self',
-      userMessage,
-      answerContract,
-      brief: repairedBrief,
-      toolCalls,
-      finalAnswerText,
-      deterministicQa: repairedDeterministicQa,
-      artifactSummary,
-    });
-    const repairedCrossReview = shouldCrossReview
-      ? await requestQaReview({
-        promptId: DI_PROMPT_IDS.AGENT_QA_CROSS_REVIEW,
-        stage: 'cross_model',
-        userMessage,
-        answerContract,
-        brief: repairedBrief,
-        toolCalls,
-        finalAnswerText,
-        deterministicQa: repairedDeterministicQa,
-        artifactSummary,
-        providerOverride: CROSS_MODEL_REVIEW_PROVIDER,
-        modelOverride: CROSS_MODEL_REVIEW_MODEL,
-      })
-      : null;
+    // Re-merge with deterministic QA only (no re-review LLM call)
     const repairedQa = mergeQaResults({
       deterministicQa: repairedDeterministicQa,
-      selfReview: repairedSelfReview,
-      crossReview: repairedCrossReview,
+      selfReview: singleReview,
+      crossReview: null,
       repairAttempted: true,
     });
 
@@ -2081,7 +2928,12 @@ export async function buildAgentPresentationPayload({
       answerContract,
       review: buildCompatReview({ qa: repairedQa, deterministicQa: repairedDeterministicQa }),
       qa: repairedQa,
+      skippedSteps: [...skippedSteps, 'repaired_review'],
     };
+  }
+
+  if (initialQa.status === 'warning') {
+    skippedSteps.push('repair_cycle');
   }
 
   return {
@@ -2090,13 +2942,86 @@ export async function buildAgentPresentationPayload({
     answerContract,
     review: buildCompatReview({ qa: initialQa, deterministicQa: initialDeterministicQa }),
     qa: initialQa,
+    skippedSteps,
   };
+}
+
+/**
+ * Immediate presentation: brief only, no QA.
+ * Returns in < 5 seconds for instant user feedback (S5).
+ */
+export async function buildImmediatePresentation({
+  userMessage, answerContract, toolCalls, finalAnswerText, mode,
+}) {
+  const ac = answerContract
+    ? normalizeAnswerContract(answerContract, userMessage, mode)
+    : await deriveAnswerContract({ userMessage, mode });
+
+  // Try direct JSON brief from agent output (analysis mode only — default mode doesn't output JSON)
+  let brief;
+  if (mode === 'analysis') {
+    try {
+      const parsed = JSON.parse(finalAnswerText);
+      if (parsed.headline && parsed.summary) {
+        brief = parsed;
+      } else {
+        throw new Error('not a brief');
+      }
+    } catch { /* fallback below */ }
+  }
+  if (!brief) {
+    brief = await synthesizeBrief({ userMessage, answerContract: ac, toolCalls, finalAnswerText, mode });
+  }
+
+  return {
+    brief,
+    answerContract: ac,
+    qa: { status: 'pending', score: null, message: 'Quality check in progress...' },
+  };
+}
+
+/**
+ * Background QA: runs after user has already seen the brief.
+ * Returns updated QA result for optional UI update (S5).
+ */
+export async function runBackgroundQa({
+  userMessage, answerContract, brief, toolCalls, finalAnswerText,
+}) {
+  const deterministicQa = computeDeterministicQa({
+    userMessage, answerContract, brief, toolCalls, finalAnswerText,
+  });
+
+  let review = null;
+  if (!isProviderCircuitOpen(CROSS_MODEL_REVIEW_PROVIDER)) {
+    review = await requestQaReview({
+      promptId: DI_PROMPT_IDS.AGENT_QA_SELF_REVIEW,
+      stage: 'unified',
+      userMessage,
+      answerContract,
+      brief,
+      toolCalls,
+      finalAnswerText,
+      deterministicQa,
+      artifactSummary: summarizeArtifacts(toolCalls),
+      providerOverride: CROSS_MODEL_REVIEW_PROVIDER,
+      modelOverride: CROSS_MODEL_REVIEW_MODEL,
+    });
+  }
+
+  return mergeQaResults({
+    deterministicQa,
+    selfReview: review,
+    crossReview: null,
+    repairAttempted: false,
+  });
 }
 
 export default {
   buildAgentPresentationPayload,
   buildDeterministicAnswerContract,
   buildDeterministicAgentBrief,
+  buildImmediatePresentation,
+  runBackgroundQa,
   computeDeterministicQa,
   reviewAgentBriefDeterministically,
   resolveAgentAnswerContract,

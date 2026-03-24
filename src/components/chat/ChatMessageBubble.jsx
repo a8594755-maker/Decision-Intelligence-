@@ -1,7 +1,7 @@
-import React, { memo } from 'react';
+import React, { memo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Bell, FileText, Table2 } from 'lucide-react';
+import { Bell, FileText, Table2, Copy, Check } from 'lucide-react';
 import { formatAttachmentSize } from '../../services/chatAttachmentService';
 
 const markdownComponents = {
@@ -28,6 +28,29 @@ const markdownComponents = {
     <code className={`${className || 'bg-slate-200 dark:bg-slate-600 px-1 py-0.5 rounded'} text-xs`} {...props}>{children}</code>
   )
 };
+
+function CopyInlineButton({ text }) {
+  const [copied, setCopied] = useState(false);
+  const handleCopy = async (e) => {
+    e.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(text || '');
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch { /* ignore */ }
+  };
+  if (!text) return null;
+  return (
+    <button
+      type="button"
+      onClick={handleCopy}
+      title="Copy message"
+      className="opacity-0 group-hover:opacity-100 transition-opacity inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[10px] text-slate-400 hover:text-slate-600 hover:bg-slate-100 dark:hover:text-slate-300 dark:hover:bg-slate-700"
+    >
+      {copied ? <Check size={12} className="text-emerald-500" /> : <Copy size={12} />}
+    </button>
+  );
+}
 
 function ChatMessageBubble({ message, renderSpecialMessage, timestampText = '', variant = 'default' }) {
   const isUser = message?.role === 'user';
@@ -80,7 +103,7 @@ function ChatMessageBubble({ message, renderSpecialMessage, timestampText = '', 
   };
 
   return (
-    <div className={`w-full flex ${isUser ? 'justify-end' : 'justify-start'} animate-fade-in`}>
+    <div className={`w-full flex ${isUser ? 'justify-end' : 'justify-start'} animate-fade-in group`}>
       <div className={`${isAIEmployeeVariant ? (hasSpecial ? 'w-full' : 'max-w-[min(100%,40rem)]') : `max-w-[88%] ${hasSpecial ? 'w-full' : ''}`}`}>
         {/* Proactive alert banner */}
         {isProactive && (
@@ -119,10 +142,11 @@ function ChatMessageBubble({ message, renderSpecialMessage, timestampText = '', 
                 </div>
               ) : null
             )}
-            {(timestampText || (!isUser && message?.meta?.model)) ? (
-              <p className={`mt-1 text-[11px] ${isAIEmployeeVariant ? (isUser ? 'text-slate-300 dark:text-slate-500' : 'text-slate-400') : isUser ? 'text-blue-100' : 'text-slate-400'}`}>
-                {[timestampText, !isUser && message?.meta?.model ? `· ${message.meta.model}` : null].filter(Boolean).join(' ')}
-              </p>
+            {(timestampText || (!isUser && message?.meta?.model) || (!isUser && message?.content)) ? (
+              <div className={`mt-1 flex items-center gap-2 text-[11px] ${isAIEmployeeVariant ? (isUser ? 'text-slate-300 dark:text-slate-500' : 'text-slate-400') : isUser ? 'text-blue-100' : 'text-slate-400'}`}>
+                <span>{[timestampText, !isUser && message?.meta?.model ? `· ${message.meta.model}` : null].filter(Boolean).join(' ')}</span>
+                {!isUser && message?.content ? <CopyInlineButton text={message.content} /> : null}
+              </div>
             ) : null}
           </div>
         )}

@@ -17,6 +17,14 @@ const ENTITY_COL_PATTERN = /store_id|warehouse_id|plant_id|region|location|branc
 const SELLER_PATTERN = /seller|vendor|supplier|賣家|供應商|廠商/i;
 const CUSTOMER_PATTERN = /customer|buyer|client|顧客|客戶|買家/i;
 const AGG_PREFIX_PATTERN = /^(avg|sum|count|total|mean|max|min|std|median)_/i;
+const GROUP_BY_PATTERN = /\bGROUP\s+BY\b/i;
+const AGG_FUNC_PATTERN = /\b(COUNT|SUM|AVG|MIN|MAX|MEDIAN|PERCENTILE_CONT)\s*\(/i;
+const COUNT_COL_PATTERN = /^(count|total_count|cnt|n|row_count|num_)/i;
+
+function isAggregatedQuery(sql) {
+  if (!sql || typeof sql !== 'string') return false;
+  return GROUP_BY_PATTERN.test(sql) && AGG_FUNC_PATTERN.test(sql);
+}
 
 function isDateColumn(colName) {
   return DATE_COL_PATTERN.test(colName);
@@ -143,11 +151,41 @@ export function checkSeasonality(rows, columns) {
   return warnings;
 }
 
-export function checkSampleSize(rows, columns) {
+export function checkSampleSize(rows, columns, sql) {
   const warnings = [];
   const dateCol = findDateColumn(columns);
 
-  if (rows.length < 30) {
+  if (rows.length < 30 && isAggregatedQuery(sql)) {
+    const countCol = columns.find((c) => COUNT_COL_PATTERN.test(c));
+    if (countCol) {
+      const totalCount = rows.reduce((sum, r) => {
+        const v = r[countCol];
+        return sum + (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+      }, 0);
+      if (totalCount < 30) {
+        const severity = totalCount < 12 ? 'high' : 'medium';
+        warnings.push({
+          id: 'small_sample',
+          severity,
+          category: 'statistical',
+          column: null,
+          message: `Query returned ${rows.length} aggregated groups (underlying count: ~${totalCount}). Statistics from small aggregated samples are unreliable.`,
+          instruction: `With only ~${totalCount} underlying data points across ${rows.length} groups, use robust estimators and caveat the small sample.`,
+        });
+      }
+      // totalCount >= 30 → underlying data is large enough, skip row-count warning
+    } else if (rows.length < 5) {
+      // No count column to check — only warn for very few groups
+      warnings.push({
+        id: 'small_sample',
+        severity: 'medium',
+        category: 'statistical',
+        column: null,
+        message: `Only ${rows.length} aggregated groups returned. Per-group statistics may be unreliable.`,
+        instruction: `With only ${rows.length} groups, per-group comparisons are limited. Consider fewer grouping dimensions.`,
+      });
+    }
+  } else if (rows.length < 30) {
     const severity = rows.length < 12 ? 'high' : 'medium';
     warnings.push({
       id: 'small_sample',
@@ -388,7 +426,7 @@ export function validateQueryResultData(rows, columns, sql) {
   const warnings = [
     ...checkTimeSeriesStationarity(rows, columns),
     ...checkSeasonality(rows, columns),
-    ...checkSampleSize(rows, columns),
+    ...checkSampleSize(rows, columns, sql),
     ...checkOutlierContamination(rows, columns),
     ...checkHighCardinality(rows, columns),
     ...checkDataGaps(rows, columns),

@@ -12,11 +12,15 @@ const {
   mockBuildAgentPresentationPayload,
   mockResolveAgentAnswerContract,
   mockJudgeAgentCandidates,
+  mockJudgeOptimizedCandidate,
+  mockSummarizeToolCallsForPrompt,
 } = vi.hoisted(() => ({
   mockRunAgentLoop: vi.fn(),
   mockBuildAgentPresentationPayload: vi.fn(),
   mockResolveAgentAnswerContract: vi.fn(),
   mockJudgeAgentCandidates: vi.fn(),
+  mockJudgeOptimizedCandidate: vi.fn(),
+  mockSummarizeToolCallsForPrompt: vi.fn().mockReturnValue([]),
 }));
 
 // Mock broken ESM package (dist/index.js uses extensionless imports)
@@ -35,6 +39,7 @@ vi.mock('../../services/supabaseClient', () => ({
         limit: () => ({ error: null }),
       }),
       insert: () => Promise.resolve({ data: null, error: null }),
+      upsert: () => Promise.resolve({ data: null, error: null }),
       update: () => ({
         eq: () => ({
           eq: () => Promise.resolve({ data: null, error: null }),
@@ -69,10 +74,12 @@ vi.mock('../../services/chatAgentLoop', () => ({
 vi.mock('../../services/agentResponsePresentationService.js', () => ({
   buildAgentPresentationPayload: mockBuildAgentPresentationPayload,
   resolveAgentAnswerContract: mockResolveAgentAnswerContract,
+  summarizeToolCallsForPrompt: mockSummarizeToolCallsForPrompt,
 }));
 
 vi.mock('../../services/agentCandidateJudgeService.js', () => ({
   judgeAgentCandidates: mockJudgeAgentCandidates,
+  judgeOptimizedCandidate: mockJudgeOptimizedCandidate,
 }));
 
 vi.mock('../../services/chatDatasetProfilingService', () => ({
@@ -368,11 +375,11 @@ describe('DecisionSupportView', () => {
     expect(screen.queryByTitle(/open canvas/i)).not.toBeInTheDocument();
   });
 
-  it('auto-escalates direct analysis to challenger and judge after data-tool usage', async () => {
+  it('auto-escalates to optimizer and judge when primary QA score is below threshold', async () => {
     const user = userEvent.setup();
     mockRunAgentLoop
       .mockResolvedValueOnce({
-        text: 'Primary answer',
+        text: 'Primary answer with issues',
         toolCalls: [{
           id: 'tool-primary',
           name: 'run_python_analysis',
@@ -383,9 +390,9 @@ describe('DecisionSupportView', () => {
         transport: 'native',
       })
       .mockResolvedValueOnce({
-        text: 'Challenger answer',
+        text: 'Optimizer improved answer',
         toolCalls: [{
-          id: 'tool-secondary',
+          id: 'tool-optimizer',
           name: 'query_sap_data',
           result: { success: true, result: { rowCount: 8, rows: [{ revenue: 1 }] } },
         }],
@@ -394,6 +401,26 @@ describe('DecisionSupportView', () => {
         transport: 'native',
       });
 
+    // Primary QA score < 8.0 triggers optimizer escalation
+    mockBuildAgentPresentationPayload
+      .mockResolvedValueOnce({
+        brief: { headline: 'Primary', summary: 'Incomplete', metric_pills: [], tables: [], charts: [], key_findings: [], caveats: [] },
+        qa: { score: 5.2, status: 'warning', issues: ['Missing dimension'], blockers: ['missing required dimensions: revenue, cost'] },
+        trace: { successful_queries: [{ name: 'run_python_analysis' }], failed_attempts: [] },
+        answerContract: {},
+      })
+      .mockResolvedValueOnce({
+        brief: { headline: 'Optimized', summary: 'Complete', metric_pills: [], tables: [], charts: [], key_findings: [], caveats: [] },
+        qa: { score: 8.5, status: 'pass', issues: [], blockers: [] },
+        trace: { successful_queries: [{ name: 'query_sap_data' }], failed_attempts: [] },
+        answerContract: {},
+      });
+    mockJudgeOptimizedCandidate.mockResolvedValueOnce({
+      approved: true,
+      winnerCandidateId: 'secondary',
+      reason: 'Optimizer improved QA score from 5.2 to 8.5.',
+    });
+
     render(
       <MemoryRouter>
         <DecisionSupportView user={mockUser} addNotification={mockAddNotification} />
@@ -405,12 +432,11 @@ describe('DecisionSupportView', () => {
     await user.click(screen.getByTitle(/send/i));
 
     await waitFor(() => expect(mockRunAgentLoop).toHaveBeenCalledTimes(2));
-    expect(mockRunAgentLoop.mock.calls[1][0].message).toContain('CHALLENGER analyst');
-    await waitFor(() => expect(mockJudgeAgentCandidates).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(screen.getByText(/Alternative Answer/i)).toBeInTheDocument());
+    expect(mockRunAgentLoop.mock.calls[1][0].message).toContain('OPTIMIZER agent');
+    await waitFor(() => expect(mockJudgeOptimizedCandidate).toHaveBeenCalledTimes(1));
   });
 
-  it('forces dual direct-analysis generation when thinking mode is on', async () => {
+  it('forces optimizer escalation when thinking mode is on even if QA passes', async () => {
     const user = userEvent.setup();
     mockRunAgentLoop
       .mockResolvedValueOnce({
@@ -425,9 +451,9 @@ describe('DecisionSupportView', () => {
         transport: 'native',
       })
       .mockResolvedValueOnce({
-        text: 'Challenger answer',
+        text: 'Optimizer answer',
         toolCalls: [{
-          id: 'tool-secondary',
+          id: 'tool-optimizer',
           name: 'query_sap_data',
           result: { success: true, result: { rowCount: 12 } },
         }],
@@ -436,6 +462,26 @@ describe('DecisionSupportView', () => {
         transport: 'native',
       });
 
+    // Even with QA pass (8.5), forceFullThinking triggers optimizer
+    mockBuildAgentPresentationPayload
+      .mockResolvedValueOnce({
+        brief: { headline: 'Primary', summary: 'Good', metric_pills: [], tables: [], charts: [], key_findings: [], caveats: [] },
+        qa: { score: 8.5, status: 'pass', issues: [], blockers: [] },
+        trace: { successful_queries: [{ name: 'run_python_analysis' }], failed_attempts: [] },
+        answerContract: {},
+      })
+      .mockResolvedValueOnce({
+        brief: { headline: 'Optimized', summary: 'Better', metric_pills: [], tables: [], charts: [], key_findings: [], caveats: [] },
+        qa: { score: 9.0, status: 'pass', issues: [], blockers: [] },
+        trace: { successful_queries: [{ name: 'query_sap_data' }], failed_attempts: [] },
+        answerContract: {},
+      });
+    mockJudgeOptimizedCandidate.mockResolvedValueOnce({
+      approved: true,
+      winnerCandidateId: 'secondary',
+      reason: 'Optimizer improved score.',
+    });
+
     render(
       <MemoryRouter>
         <DecisionSupportView user={mockUser} addNotification={mockAddNotification} />
@@ -443,36 +489,38 @@ describe('DecisionSupportView', () => {
     );
 
     await startConversation(user);
-    await user.click(screen.getByRole('button', { name: /thinking auto/i }));
-    await waitFor(() => expect(screen.getByRole('button', { name: /thinking on/i })).toBeInTheDocument());
+    await user.click(screen.getByRole('button', { name: /^auto$/i }));
+    await waitFor(() => expect(screen.getByRole('button', { name: /deep verify/i })).toBeInTheDocument());
     await user.type(screen.getByPlaceholderText(/message decision-intelligence/i), directAnalysisPrompt);
     await user.click(screen.getByTitle(/send/i));
 
     await waitFor(() => expect(mockRunAgentLoop).toHaveBeenCalledTimes(2));
     expect(mockRunAgentLoop.mock.calls[0][0].message).toContain('Run a direct business data analysis');
-    expect(mockRunAgentLoop.mock.calls[1][0].message).toContain('CHALLENGER analyst');
-    await waitFor(() => expect(mockJudgeAgentCandidates).toHaveBeenCalledTimes(1));
+    expect(mockRunAgentLoop.mock.calls[1][0].message).toContain('OPTIMIZER agent');
+    await waitFor(() => expect(mockJudgeOptimizedCandidate).toHaveBeenCalledTimes(1));
   });
 
-  it('skips judge when only one analysis candidate produces usable evidence but still keeps the failed candidate trace', async () => {
+  it('skips optimizer when primary QA passes', async () => {
     const user = userEvent.setup();
-    mockRunAgentLoop
-      .mockResolvedValueOnce({
-        text: 'Primary answer',
-        toolCalls: [{
-          id: 'tool-primary',
-          name: 'run_python_analysis',
-          result: { success: true },
-        }],
-        provider: 'openai',
-        model: 'gpt-5.4',
-        transport: 'native',
-      })
-      .mockRejectedValueOnce(Object.assign(new Error('Model Not Exist'), {
-        failureCategory: 'model_not_found',
-        failureMessage: 'Model Not Exist',
-        recoveryAttempts: ['stream_to_non_stream_fallback'],
-      }));
+    mockRunAgentLoop.mockResolvedValueOnce({
+      text: 'Primary answer — good quality',
+      toolCalls: [{
+        id: 'tool-primary',
+        name: 'run_python_analysis',
+        result: { success: true },
+      }],
+      provider: 'openai',
+      model: 'gpt-5.4',
+      transport: 'native',
+    });
+
+    // QA passes → no escalation
+    mockBuildAgentPresentationPayload.mockResolvedValueOnce({
+      brief: { headline: 'Good Analysis', summary: 'Complete', metric_pills: [], tables: [], charts: [], key_findings: [], caveats: [] },
+      qa: { score: 8.5, status: 'pass', issues: [], blockers: [] },
+      trace: { successful_queries: [{ name: 'run_python_analysis' }], failed_attempts: [] },
+      answerContract: {},
+    });
 
     render(
       <MemoryRouter>
@@ -484,28 +532,20 @@ describe('DecisionSupportView', () => {
     await user.type(screen.getByPlaceholderText(/message decision-intelligence/i), directAnalysisPrompt);
     await user.click(screen.getByTitle(/send/i));
 
-    await waitFor(() => expect(mockRunAgentLoop).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(mockRunAgentLoop).toHaveBeenCalledTimes(1));
+    expect(mockJudgeOptimizedCandidate).not.toHaveBeenCalled();
     expect(mockJudgeAgentCandidates).not.toHaveBeenCalled();
-    await waitFor(() => expect(screen.getAllByText(/Execution Trace/i).length).toBeGreaterThanOrEqual(2));
   });
 
-  it('marks evidence-free analysis candidates as failed instead of completed', async () => {
+  it('does not escalate to optimizer when primary has no tool calls (no QA to check)', async () => {
     const user = userEvent.setup();
-    mockRunAgentLoop
-      .mockResolvedValueOnce({
-        text: 'Generic answer with no evidence.',
-        toolCalls: [],
-        provider: 'gemini',
-        model: 'gemini-3.1-pro-preview',
-        transport: 'compat',
-      })
-      .mockResolvedValueOnce({
-        text: 'Another generic answer with no evidence.',
-        toolCalls: [],
-        provider: 'gemini',
-        model: 'gemini-3.1-pro-preview',
-        transport: 'compat',
-      });
+    mockRunAgentLoop.mockResolvedValueOnce({
+      text: 'Generic answer with no evidence.',
+      toolCalls: [],
+      provider: 'gemini',
+      model: 'gemini-3.1-pro-preview',
+      transport: 'compat',
+    });
 
     render(
       <MemoryRouter>
@@ -517,8 +557,7 @@ describe('DecisionSupportView', () => {
     await user.type(screen.getByPlaceholderText(/message decision-intelligence/i), directAnalysisPrompt);
     await user.click(screen.getByTitle(/send/i));
 
-    await waitFor(() => expect(mockRunAgentLoop).toHaveBeenCalledTimes(2));
-    expect(mockJudgeAgentCandidates).not.toHaveBeenCalled();
-    await waitFor(() => expect(screen.getByText(/Both candidate runs failed before producing a valid answer\./i)).toBeInTheDocument());
+    await waitFor(() => expect(mockRunAgentLoop).toHaveBeenCalledTimes(1));
+    expect(mockJudgeOptimizedCandidate).not.toHaveBeenCalled();
   });
 });

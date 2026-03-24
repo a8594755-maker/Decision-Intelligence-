@@ -3,13 +3,15 @@
 // Extracted from DecisionSupportView/index.jsx
 // ============================================
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { supabase } from '../../services/supabaseClient';
 import { APP_NAME, ASSISTANT_NAME } from '../../config/branding';
 import {
   STORAGE_KEY,
+  TABLE_UNAVAILABLE_KEY,
   createDefaultCanvasState,
   loadLocalConversations,
+  mergeConversationCollections,
   saveLocalConversations,
   isTableUnavailable,
   markTableUnavailable,
@@ -17,6 +19,33 @@ import {
 
 function getConversationsDb() {
   return isTableUnavailable() ? null : supabase;
+}
+
+const LAST_CONVERSATION_KEY_PREFIX = 'di_last_conversation_';
+
+function saveLastConversationId(mode, id) {
+  try { sessionStorage.setItem(`${LAST_CONVERSATION_KEY_PREFIX}${mode}`, id || ''); } catch { /* ignore */ }
+}
+
+function loadLastConversationId(mode) {
+  try { return sessionStorage.getItem(`${LAST_CONVERSATION_KEY_PREFIX}${mode}`) || null; } catch { return null; }
+}
+
+/**
+ * Synchronously merge the current workspace's conversations into localStorage.
+ * Called immediately after every setConversations so data survives page
+ * refresh / navigation even if the React effect hasn't run yet.
+ */
+function flushToLocalStorage(userId, workspaceConversations, currentMode) {
+  if (!userId) return;
+  const existing = loadLocalConversations(userId);
+  const currentIds = new Set(workspaceConversations.map((c) => c.id));
+  const otherWorkspace = existing.filter(
+    (c) => !currentIds.has(c.id) && (c.workspace || 'di') !== currentMode,
+  );
+  const toSave = [...workspaceConversations, ...otherWorkspace];
+  console.debug(`[DSV:flush] saving ${toSave.length} conversations (${workspaceConversations.length} current workspace=${currentMode}, ${otherWorkspace.length} other)`);
+  saveLocalConversations(userId, toSave);
 }
 
 /**
@@ -36,13 +65,51 @@ export default function useConversationManager({
   updateCanvasState,
   mode = 'di',
 }) {
-  const [conversations, setConversations] = useState([]);
-  const [isConversationsLoading, setIsConversationsLoading] = useState(false);
+  const [conversations, setConversationsRaw] = useState([]);
+  const [isConversationsLoading, setIsConversationsLoading] = useState(true);
+  const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
   const [conversationSearch, setConversationSearch] = useState('');
-  const [currentConversationId, setCurrentConversationId] = useState(null);
+  const [currentConversationId, setCurrentConversationIdRaw] = useState(() => loadLastConversationId(mode));
   const [showNewChatConfirm, setShowNewChatConfirm] = useState(false);
   const [conversationDatasetContext, setConversationDatasetContext] = useState({});
   const [canvasStateByConversation, setCanvasStateByConversation] = useState({});
+
+  // Wrap setCurrentConversationId to also persist to sessionStorage.
+  const setCurrentConversationId = useCallback((id) => {
+    setCurrentConversationIdRaw(id);
+    saveLastConversationId(mode, id);
+  }, [mode]);
+
+  // Keep a ref to the latest conversations for the beforeunload handler.
+  const conversationsRef = useRef(conversations);
+  conversationsRef.current = conversations;
+
+  /**
+   * Wrapper around setConversations that also synchronously writes to
+   * localStorage so data is never lost between React renders.
+   */
+  const setConversations = useCallback((updater) => {
+    setConversationsRaw((prev) => {
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      // Synchronous localStorage flush — runs INSIDE the updater so `next`
+      // is the authoritative new value before React schedules the re-render.
+      if (user?.id) {
+        flushToLocalStorage(user.id, next, mode);
+      }
+      return next;
+    });
+  }, [user?.id, mode]);
+
+  // ── Safety net: flush on page unload ────────────────────────────────────
+  useEffect(() => {
+    const onBeforeUnload = () => {
+      if (user?.id) {
+        flushToLocalStorage(user.id, conversationsRef.current, mode);
+      }
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [user?.id, mode]);
 
   // ── Load conversations on mount ──────────────────────────────────────────
   useEffect(() => {
@@ -58,9 +125,11 @@ export default function useConversationManager({
       try {
         if (isTableUnavailable()) {
           const local = loadLocalConversations(user.id);
+          console.info(`[DSV:convLoad] table unavailable, localStorage has ${local.length} conversations, ${filterByWorkspace(local).length} after workspace filter (mode=${mode})`);
           if (active) {
-            setConversations(filterByWorkspace(local));
+            setConversationsRaw(filterByWorkspace(local));
             setIsConversationsLoading(false);
+            setHasLoadedOnce(true);
           }
           return;
         }
@@ -73,41 +142,62 @@ export default function useConversationManager({
 
         if (!active) return;
         if (!error && data) {
-          // Merge Supabase data with localStorage — never blindly overwrite.
-          // localStorage may contain conversations that failed to sync to Supabase
-          // (e.g., insert failed due to schema/RLS). Supabase data takes priority
-          // for conversations that exist in both.
           const local = loadLocalConversations(user.id);
           const localById = new Map(local.map((c) => [c.id, c]));
           const supabaseIds = new Set(data.map((c) => c.id));
-          // Preserve workspace from localStorage when Supabase row lacks it
-          // (workspace column may not exist in older schemas)
-          const enrichedData = data.map((c) => {
-            if (!c.workspace && localById.has(c.id)) {
-              return { ...c, workspace: localById.get(c.id).workspace };
-            }
-            return c;
-          });
           const localOnly = local.filter((c) => !supabaseIds.has(c.id));
-          const merged = [...enrichedData, ...localOnly];
+          const merged = mergeConversationCollections(data, local, mode);
+
+          // ── Diagnostic logging ──
+          const workspaceCounts = {};
+          let localWins = 0;
+          merged.forEach((c) => { const ws = c.workspace || 'di'; workspaceCounts[ws] = (workspaceCounts[ws] || 0) + 1; });
+          data.forEach((c) => {
+            const lv = localById.get(c.id);
+            if (lv && (Array.isArray(lv.messages) ? lv.messages : []).length > (Array.isArray(c.messages) ? c.messages : []).length) localWins++;
+          });
+          const filtered = filterByWorkspace(merged);
+          console.info(
+            `[DSV:convLoad] Supabase: ${data.length} rows, localStorage: ${local.length} rows, localOnly: ${localOnly.length}, merged: ${merged.length}, localWins: ${localWins}, workspace counts:`, workspaceCounts,
+            `→ after filter (mode=${mode}): ${filtered.length} conversations`
+          );
+          if (data.length > 0 && filtered.length === 0) {
+            console.warn('[DSV:convLoad] ⚠️ All conversations filtered out! Sample workspace values:', data.slice(0, 3).map((c) => ({ id: c.id?.slice(-6), workspace: c.workspace, title: c.title?.slice(0, 20) })));
+          }
+          // Log message counts to diagnose "empty conversation" issues
+          if (filtered.length > 0) {
+            console.info('[DSV:convLoad] First 3 conversations message counts:', filtered.slice(0, 3).map((c) => ({
+              id: String(c.id).slice(-6),
+              title: String(c.title || '').slice(0, 25),
+              msgs: Array.isArray(c.messages) ? c.messages.length : 0,
+              supabaseMsgs: (Array.isArray((data.find((d) => d.id === c.id))?.messages) ? data.find((d) => d.id === c.id).messages.length : 0),
+              localMsgs: (Array.isArray(localById.get(c.id)?.messages) ? localById.get(c.id).messages.length : 0),
+            })));
+          }
+
           saveLocalConversations(user.id, merged);
-          setConversations(filterByWorkspace(merged));
+          setConversationsRaw(filtered);
           setIsConversationsLoading(false);
+          setHasLoadedOnce(true);
           return;
         }
 
-        console.warn('[DSV] conversations table unavailable, falling back to localStorage:', error?.message);
+        console.warn('[DSV:convLoad] conversations query failed, falling back to localStorage:', error?.message);
         markTableUnavailable();
         const local = loadLocalConversations(user.id);
-        setConversations(filterByWorkspace(local));
+        console.info(`[DSV:convLoad] fallback localStorage: ${local.length} total, ${filterByWorkspace(local).length} after filter (mode=${mode})`);
+        setConversationsRaw(filterByWorkspace(local));
         setIsConversationsLoading(false);
+        setHasLoadedOnce(true);
       } catch (err) {
-        console.warn('[DSV] failed to load conversations, falling back to localStorage:', err);
+        console.warn('[DSV:convLoad] load failed, falling back to localStorage:', err);
         if (!active) return;
         markTableUnavailable();
         const local = loadLocalConversations(user.id);
-        setConversations(filterByWorkspace(local));
+        console.info(`[DSV:convLoad] error fallback localStorage: ${local.length} total, ${filterByWorkspace(local).length} after filter (mode=${mode})`);
+        setConversationsRaw(filterByWorkspace(local));
         setIsConversationsLoading(false);
+        setHasLoadedOnce(true);
       }
     };
 
@@ -117,7 +207,7 @@ export default function useConversationManager({
     };
   }, [user?.id, mode]);
 
-  // ── Auto-select first conversation when list changes ─────────────────────
+  // ── Auto-select conversation when list changes ──────────────────────────
   useEffect(() => {
     if (!Array.isArray(conversations)) return;
 
@@ -128,25 +218,37 @@ export default function useConversationManager({
       return;
     }
 
+    // If the current ID is already valid, keep it.
     const hasCurrentConversation = conversations.some(
       (conversation) => conversation.id === currentConversationId
     );
-    if (!hasCurrentConversation) {
-      queueMicrotask(() => setCurrentConversationId(conversations[0].id));
-    }
-  }, [conversations, currentConversationId]);
+    if (hasCurrentConversation) return;
+
+    // Pick the best conversation to auto-select:
+    // prefer one with actual content (messages > 1) over empty ones.
+    const withContent = conversations.find(
+      (c) => Array.isArray(c.messages) && c.messages.length > 1
+    );
+    const best = withContent || conversations[0];
+    queueMicrotask(() => setCurrentConversationId(best.id));
+  }, [conversations, currentConversationId, setCurrentConversationId]);
 
   // ── Persist to localStorage whenever conversations change ────────────────
   // Merge with existing localStorage to avoid wiping conversations from other
   // workspaces (state only holds the current workspace's filtered subset).
+  // NOTE: we must NOT skip when conversations.length === 0 — that would prevent
+  // localStorage from reflecting deletions and could cause a destructive cycle
+  // where filtered-out conversations are never saved back.
+  // IMPORTANT: Skip until the initial load completes — otherwise the initial
+  // empty state overwrites localStorage and wipes the current workspace's data.
   useEffect(() => {
-    if (!user?.id || conversations.length === 0) return;
+    if (!user?.id || !hasLoadedOnce) return;
     const existing = loadLocalConversations(user.id);
     const currentIds = new Set(conversations.map((c) => c.id));
     // Keep conversations from OTHER workspaces, replace current workspace entries
     const otherWorkspace = existing.filter((c) => !currentIds.has(c.id) && (c.workspace || 'di') !== mode);
     saveLocalConversations(user.id, [...conversations, ...otherWorkspace]);
-  }, [conversations, user?.id, mode]);
+  }, [conversations, user?.id, mode, hasLoadedOnce]);
 
   // ── Derived state ────────────────────────────────────────────────────────
   const currentConversation = conversations.find(
@@ -165,29 +267,53 @@ export default function useConversationManager({
   // eslint-disable-next-line react-hooks/preserve-manual-memoization
   const persistConversation = useCallback((conversationId, payload) => {
     const db = getConversationsDb();
-    if (!db || !user?.id || !conversationId || !payload) return;
-    const updatePayload = {
+    if (!user?.id || !conversationId || !payload) return;
+    const targetDb = db || supabase;
+    if (!targetDb) return;
+
+    const upsertPayload = {
+      id: conversationId,
+      user_id: user.id,
       title: payload.title,
       messages: payload.messages,
       updated_at: payload.updated_at,
     };
-    // Include workspace if present (column may not exist in older schemas)
-    if (payload.workspace) updatePayload.workspace = payload.workspace;
-    db
+    if (payload.created_at) upsertPayload.created_at = payload.created_at;
+    if (payload.workspace) upsertPayload.workspace = payload.workspace;
+
+    targetDb
       .from('conversations')
-      .update(updatePayload)
-      .eq('id', conversationId)
-      .eq('user_id', user.id)
+      .upsert(upsertPayload, { onConflict: 'id' })
       .then(({ error }) => {
-        if (error) {
-          // If error is about unknown column 'workspace', retry without it
-          if (error.message?.includes('workspace')) {
-            const { workspace: _ws, ...withoutWorkspace } = updatePayload;
-            db.from('conversations').update(withoutWorkspace)
-              .eq('id', conversationId).eq('user_id', user.id)
-              .then(({ error: retryErr }) => { if (retryErr) markTableUnavailable(); });
-          } else {
-            markTableUnavailable();
+        if (!error) {
+          sessionStorage.removeItem(TABLE_UNAVAILABLE_KEY);
+          return;
+        }
+
+        console.warn('[DSV] Supabase persist failed:', error.message);
+        // Older schemas may still lack workspace; retry once without it.
+        if (error.message?.includes('workspace')) {
+          const { workspace: _ws, ...withoutWorkspace } = upsertPayload;
+          targetDb
+            .from('conversations')
+            .upsert(withoutWorkspace, { onConflict: 'id' })
+            .then(({ error: retryErr }) => {
+              if (retryErr) {
+                markTableUnavailable();
+              } else {
+                sessionStorage.removeItem(TABLE_UNAVAILABLE_KEY);
+              }
+            });
+          return;
+        }
+
+        if (db) {
+          markTableUnavailable();
+        } else {
+          try {
+            sessionStorage.setItem(TABLE_UNAVAILABLE_KEY, '1');
+          } catch {
+            // noop
           }
         }
       });
@@ -245,21 +371,30 @@ export default function useConversationManager({
     setCurrentConversationId(newConversation.id);
     updateCanvasState(newConversation.id, createDefaultCanvasState());
 
+    // Persist to Supabase — await to ensure the row exists before user navigates away
     const db = getConversationsDb();
     if (db) {
-      db.from('conversations').insert([newConversation]).then(({ error }) => {
-        if (error) {
-          // workspace column may not exist yet — retry without it
-          const { workspace: _ws, ...withoutWorkspace } = newConversation;
-          db.from('conversations').insert([withoutWorkspace]).then(({ error: retryErr }) => {
-            if (retryErr) markTableUnavailable();
-          });
+      const { error } = await db.from('conversations').insert([newConversation]);
+      if (error) {
+        console.warn(`[DSV:convNew] Supabase insert failed (with workspace): ${error.message}`);
+        // workspace column may not exist yet — retry without it
+        const { workspace: _ws, ...withoutWorkspace } = newConversation;
+        const { error: retryErr } = await db.from('conversations').insert([withoutWorkspace]);
+        if (retryErr) {
+          console.warn(`[DSV:convNew] Supabase insert retry also failed: ${retryErr.message}`);
+          markTableUnavailable();
+        } else {
+          console.info('[DSV:convNew] Supabase insert succeeded without workspace column');
         }
-      });
+      } else {
+        console.info(`[DSV:convNew] Supabase insert OK (id=${newConversation.id}, workspace=${newConversation.workspace})`);
+      }
+    } else {
+      console.warn('[DSV:convNew] No DB available, conversation only in localStorage');
     }
 
     addNotification?.('New conversation ready.', 'success');
-  }, [user?.id, addNotification, updateCanvasState, mode]);
+  }, [user?.id, addNotification, updateCanvasState, mode, setConversations]);
 
   // ── Delete conversation ──────────────────────────────────────────────────
   // eslint-disable-next-line react-hooks/preserve-manual-memoization
@@ -289,7 +424,7 @@ export default function useConversationManager({
     if (db) {
       db.from('conversations').delete().eq('id', conversationId).eq('user_id', user.id).then(() => {});
     }
-  }, [user?.id, currentConversationId]);
+  }, [user?.id, currentConversationId, setConversations]);
 
   return {
     // State

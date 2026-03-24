@@ -478,7 +478,7 @@ CRITICAL RULES:
    - `tables` keys: customers, orders, order_items, payments, reviews, products, sellers, geolocation, category_translation
    - Use `tables["orders"]` etc. to access DataFrames directly — no file I/O needed.
    - If `tables` is empty, fall back to `input_data["sheets"]`.
-2. Available libraries: pandas, numpy, json, re, math, datetime, collections, statistics, itertools, functools, scipy, scipy.stats
+2. Available libraries: pandas, numpy, json, re, math, datetime, collections, statistics, itertools, functools, scipy, scipy.stats, statsmodels (statsmodels.tsa.seasonal.seasonal_decompose, statsmodels.tsa.holtwinters.ExponentialSmoothing, statsmodels.tsa.stattools.adfuller), sklearn (sklearn.cluster.KMeans, sklearn.linear_model.LinearRegression, sklearn.preprocessing.StandardScaler), calendar
 3. DO NOT import os, sys, subprocess, importlib, shutil, or any I/O libraries.
 4. DO NOT use open(), exec(), eval(), __import__(), compile().
 
@@ -535,6 +535,24 @@ F. CONCENTRATION METRICS:
    for pct in [1, 5, 10, 20]:
        top_n = int(n * pct / 100)
        share = sorted_desc.head(top_n)['revenue'].sum() / sorted_desc['revenue'].sum() * 100
+   ```
+
+G. TIME SERIES DECOMPOSITION (statsmodels):
+   ```python
+   from statsmodels.tsa.seasonal import seasonal_decompose
+   ts = df.set_index('date')['revenue'].asfreq('M')
+   result = seasonal_decompose(ts, model='additive', period=12)
+   trend_data = result.trend.dropna().reset_index()
+   ```
+
+H. CUSTOMER SEGMENTATION (sklearn KMeans):
+   ```python
+   from sklearn.cluster import KMeans
+   from sklearn.preprocessing import StandardScaler
+   features = df[['total_revenue', 'order_count', 'avg_review']].dropna()
+   scaled = StandardScaler().fit_transform(features)
+   km = KMeans(n_clusters=4, random_state=42, n_init=10).fit(scaled)
+   df.loc[features.index, 'segment'] = km.labels_
    ```
 
 OUTPUT FORMAT — return artifacts matching AnalysisResultCard shape:
@@ -702,6 +720,16 @@ _ALLOWED_MODULES = frozenset({
     "decimal", "fractions", "copy", "string", "textwrap",
     "operator", "numbers", "hashlib", "base64", "uuid",
     "scipy", "scipy.stats", "scipy.interpolate", "scipy.optimize",
+    # statsmodels — time series decomposition, Holt-Winters, stationarity tests
+    "statsmodels", "statsmodels.api", "statsmodels.tsa",
+    "statsmodels.tsa.seasonal", "statsmodels.tsa.holtwinters",
+    "statsmodels.tsa.stattools", "statsmodels.formula.api",
+    # sklearn — clustering, regression, preprocessing, metrics
+    "sklearn", "sklearn.cluster", "sklearn.preprocessing",
+    "sklearn.linear_model", "sklearn.ensemble", "sklearn.metrics",
+    "sklearn.decomposition",
+    # calendar — month/day name utilities
+    "calendar",
     # openpyxl — for LLM-generated Excel workbook code
     "openpyxl", "openpyxl.styles", "openpyxl.utils", "openpyxl.chart",
     "openpyxl.chart.series", "openpyxl.chart.label", "openpyxl.chart.reference",

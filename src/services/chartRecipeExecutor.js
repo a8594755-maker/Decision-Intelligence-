@@ -77,11 +77,13 @@ export async function executeChartRecipe({ recipe_id, params, dataset } = {}) {
     // Support both the canonical backend shape ({ artifacts: [...] }) and the
     // current legacy recipe shape ({ result: { artifacts: [...] } }).
     const artifacts = extractAnalysisArtifacts(data);
+    const dataSourceLabel = dataset || 'olist';
     const analysisResults = artifacts
       .filter(a => a.type === 'analysis_result')
       .map(a => {
         const card = a.data;
         if (card && typeof card === 'object') {
+          if (dataSourceLabel) card._dataSource = dataSourceLabel;
           card._executionMeta = {
             recipe_id,
             execution_ms: data.execution_ms,

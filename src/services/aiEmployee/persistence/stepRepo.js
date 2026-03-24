@@ -3,10 +3,15 @@
  *
  * Steps are stored as rows in ai_employee_runs with step_index != null.
  * Each step is one run row tied to the task.
+ *
+ * When VITE_DI_MOCK_MODE=true, all functions delegate to in-memory mock.
  */
 
 import { supabase } from '../../supabaseClient.js';
 import { STEP_STATES } from '../stepStateMachine.js';
+
+const _MOCK = import.meta.env?.VITE_DI_MOCK_MODE === 'true';
+const _m = _MOCK ? await import('../mock/mockStepRepo.js') : null;
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -66,6 +71,7 @@ export function normalizeArtifactRefsForStorage(artifactRefs) {
  * @returns {Promise<object[]>} created step rows
  */
 export async function createSteps(taskId, employeeId, steps) {
+  if (_m) return _m.createSteps(taskId, employeeId, steps);
   const rows = steps.map((step, index) => ({
     task_id: taskId,
     employee_id: employeeId,
@@ -95,6 +101,7 @@ export async function createSteps(taskId, employeeId, steps) {
  * Update a step's status and optionally its result data.
  */
 export async function updateStep(stepId, updates) {
+  if (_m) return _m.updateStep(stepId, updates);
   // Strip unknown columns to prevent Supabase schema-cache errors
   const filtered = {};
   for (const [key, value] of Object.entries(updates || {})) {
@@ -122,10 +129,13 @@ export async function updateStep(stepId, updates) {
 /**
  * Get all steps for a task, ordered by step_index.
  */
-export async function getSteps(taskId) {
+const STEP_POLL_COLUMNS = 'id, task_id, step_index, step_name, tool_type, status, retry_count, error_message, created_at, updated_at';
+
+export async function getSteps(taskId, { lite = false } = {}) {
+  if (_m) return _m.getSteps(taskId, { lite });
   const { data, error } = await supabase
     .from('ai_employee_runs')
-    .select('*')
+    .select(lite ? STEP_POLL_COLUMNS : '*')
     .eq('task_id', taskId)
     .not('step_index', 'is', null)
     .order('step_index', { ascending: true });
@@ -139,6 +149,7 @@ export async function getSteps(taskId) {
  * @returns {Promise<object|null>} next step or null if all done/failed
  */
 export async function getNextPendingStep(taskId) {
+  if (_m) return _m.getNextPendingStep(taskId);
   const { data, error } = await supabase
     .from('ai_employee_runs')
     .select('*')
@@ -157,6 +168,7 @@ export async function getNextPendingStep(taskId) {
  * Increment retry count and set status to 'retrying'.
  */
 export async function markStepRetrying(stepId, currentRetryCount) {
+  if (_m) return _m.markStepRetrying(stepId, currentRetryCount);
   return updateStep(stepId, {
     status: STEP_STATES.RETRYING,
     retry_count: currentRetryCount + 1,
@@ -167,6 +179,7 @@ export async function markStepRetrying(stepId, currentRetryCount) {
  * Mark a step as succeeded with artifacts.
  */
 export async function markStepSucceeded(stepId, { summary, artifactRefs = [] } = {}) {
+  if (_m) return _m.markStepSucceeded(stepId, { summary, artifactRefs });
   return updateStep(stepId, {
     status: STEP_STATES.SUCCEEDED,
     summary,
@@ -179,6 +192,7 @@ export async function markStepSucceeded(stepId, { summary, artifactRefs = [] } =
  * Mark a step as failed with error message.
  */
 export async function markStepFailed(stepId, errorMessage) {
+  if (_m) return _m.markStepFailed(stepId, errorMessage);
   return updateStep(stepId, {
     status: STEP_STATES.FAILED,
     error_message: errorMessage,

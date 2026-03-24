@@ -32,6 +32,35 @@ function hasPattern(patterns, text) {
   return patterns.some((pattern) => pattern.test(text));
 }
 
+const COMPLEX_TASK_TYPES = new Set(['recommendation', 'diagnostic', 'comparison', 'trend']);
+const DUAL_THRESHOLD = 5;
+
+export function computeQueryComplexity(userMessage, answerContract) {
+  let score = 0;
+  const dims = Array.isArray(answerContract?.required_dimensions) ? answerContract.required_dimensions.length : 0;
+  const outputs = Array.isArray(answerContract?.required_outputs) ? answerContract.required_outputs.length : 0;
+  const depth = Array.isArray(answerContract?.analysis_depth) ? answerContract.analysis_depth.length : 0;
+  const taskType = answerContract?.task_type || 'mixed';
+
+  // Dimension count: 0-3 points
+  score += Math.min(3, dims);
+
+  // Output count: 0-2 points
+  score += Math.min(2, outputs);
+
+  // Task type: complex types get 2, non-lookup gets 1
+  if (COMPLEX_TASK_TYPES.has(taskType)) score += 2;
+  else if (taskType !== 'lookup') score += 1;
+
+  // Analysis depth: 1 point if >= 2 depth flags
+  if (depth >= 2) score += 1;
+
+  // Long message heuristic: likely complex question
+  if (String(userMessage || '').length > 200) score += 1;
+
+  return score;
+}
+
 function hasMutatingIntent(text) {
   const sample = String(text || '');
   if (!hasPattern(MUTATING_ACTION_PATTERNS, sample)) return false;
@@ -60,8 +89,12 @@ export function resolveAgentExecutionStrategy({
     || ['comparison', 'diagnostic', 'ranking', 'trend', 'recommendation'].includes(answerContract?.task_type || '');
   const hasMutatingSignal = hasMutatingIntent(message);
 
-  const mustJudge = hasDataAnalysisSignal || hasCodingSignal || hasNumericSignal;
-  const dualGenerate = mustJudge && !hasMutatingSignal && (mode === 'analysis' || hasAttachments || hasCodingSignal || hasNumericSignal);
+  // Require at least TWO independent signals before triggering judge pipeline.
+  // A single signal (e.g. the word "data" alone) is not enough to justify the overhead.
+  const signalCount = [hasDataAnalysisSignal, hasCodingSignal, hasNumericSignal].filter(Boolean).length;
+  const mustJudge = signalCount >= 2;
+  const complexityScore = computeQueryComplexity(message, answerContract);
+  const mayEscalate = mustJudge && !hasMutatingSignal && (complexityScore >= DUAL_THRESHOLD || hasAttachments);
 
   const triggerReasons = [];
   if (hasDataAnalysisSignal) triggerReasons.push('data_analysis');
@@ -72,12 +105,15 @@ export function resolveAgentExecutionStrategy({
 
   return {
     mustJudge,
-    dualGenerate,
+    mayEscalate,
+    dualGenerate: mayEscalate, // backward compat — consumers still read dualGenerate
+    complexityScore,
     triggerReasons,
-    riskLevel: dualGenerate ? 'high' : mustJudge ? 'medium' : 'normal',
+    riskLevel: mayEscalate ? 'high' : mustJudge ? 'medium' : 'normal',
   };
 }
 
 export default {
   resolveAgentExecutionStrategy,
+  computeQueryComplexity,
 };

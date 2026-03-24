@@ -156,3 +156,57 @@ describe('chatAgentLoop analysis recovery helpers', () => {
     expect(shouldStopAfterStructuredCoverage(answerContract, toolCalls, 'Please use a histogram to analyze seller revenue distribution and mark quantiles.')).toBe(false);
   });
 });
+
+describe('getUnmetCoreDimensions — compound dimension normalization', () => {
+  const makeToolCalls = (coveredText) => [{
+    name: 'generate_chart',
+    result: {
+      success: true,
+      result: {
+        title: coveredText,
+        metrics: {},
+        charts: [{ type: 'bar', title: coveredText }],
+      },
+    },
+  }];
+
+  it('matches compound phrase "seller revenue" against covered "revenue" and "sellers"', () => {
+    const toolCalls = makeToolCalls('Seller Revenue Distribution with sellers breakdown');
+    const unmet = getUnmetCoreDimensions(
+      { required_dimensions: ['seller revenue'] },
+      toolCalls,
+      'analyze seller revenue',
+    );
+    expect(unmet).toEqual([]);
+  });
+
+  it('matches "profit margins" against covered "profit"', () => {
+    const toolCalls = makeToolCalls('Profit analysis by category');
+    const unmet = getUnmetCoreDimensions(
+      { required_dimensions: ['profit margins'] },
+      toolCalls,
+      'show profit margins',
+    );
+    expect(unmet).toEqual([]);
+  });
+
+  it('does not match unrelated compound phrase', () => {
+    const toolCalls = makeToolCalls('Revenue trend by month');
+    const unmet = getUnmetCoreDimensions(
+      { required_dimensions: ['inventory optimization'] },
+      toolCalls,
+      'optimize inventory',
+    );
+    expect(unmet).toContain('inventory optimization');
+  });
+
+  it('exact match still works', () => {
+    const toolCalls = makeToolCalls('Delivery days analysis');
+    const unmet = getUnmetCoreDimensions(
+      { required_dimensions: ['delivery days'] },
+      toolCalls,
+      'show delivery days',
+    );
+    expect(unmet).toEqual([]);
+  });
+});

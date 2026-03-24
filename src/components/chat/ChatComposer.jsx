@@ -1,6 +1,7 @@
 import React, { memo, useState, useMemo } from 'react';
 import { Brain, FileText, Loader2, Paperclip, Send, Square, Table2, X } from 'lucide-react';
 import { CHAT_ATTACHMENT_ACCEPT, formatAttachmentSize } from '../../services/chatAttachmentService';
+import DataSourcePicker from './DataSourcePicker';
 
 const STATUS_TONE_CLASSES = {
   neutral: 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300',
@@ -45,9 +46,14 @@ function ChatComposer({
   onRemoveAttachment,
   status = null,
   variant = 'default',
-  thinkingEnabled = false,
-  onToggleThinkingEnabled,
+  deepVerifyEnabled = false,
+  onToggleDeepVerify,
   onStopGeneration,
+  // Data source picker
+  availableDatasets = [],
+  selectedDatasetId = null,
+  onSelectDataset,
+  isDatasetsLoading = false,
 }) {
   const isAIEmployeeVariant = variant === 'ai_employee';
   const statusTone = STATUS_TONE_CLASSES[status?.tone || 'neutral'] || STATUS_TONE_CLASSES.neutral;
@@ -181,22 +187,33 @@ function ChatComposer({
           </div>
         ) : null}
 
-        {typeof onToggleThinkingEnabled === 'function' ? (
-          <div className="mb-2 flex items-center justify-end">
-            <button
-              type="button"
-              onClick={onToggleThinkingEnabled}
-              disabled={isTyping || isUploading}
-              className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] font-medium transition-colors disabled:opacity-50 ${
-                thinkingEnabled
-                  ? 'border-blue-300 bg-blue-50 text-blue-700 dark:border-blue-700 dark:bg-blue-950/40 dark:text-blue-300'
-                  : 'border-slate-200 bg-white text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300'
-              }`}
-              title={thinkingEnabled ? 'Thinking mode is forced on for this conversation' : 'Thinking mode follows automatic routing for this conversation'}
-            >
-              <Brain className="h-3.5 w-3.5" />
-              <span>{thinkingEnabled ? 'Thinking On' : 'Thinking Auto'}</span>
-            </button>
+        {(typeof onToggleDeepVerify === 'function' || typeof onSelectDataset === 'function') ? (
+          <div className="mb-2 flex items-center justify-end gap-2">
+            {typeof onSelectDataset === 'function' && (
+              <DataSourcePicker
+                datasets={availableDatasets}
+                selectedId={selectedDatasetId}
+                onSelect={onSelectDataset}
+                isLoading={isDatasetsLoading}
+                disabled={isTyping || isUploading}
+              />
+            )}
+            {typeof onToggleDeepVerify === 'function' && (
+              <button
+                type="button"
+                onClick={onToggleDeepVerify}
+                disabled={isTyping || isUploading}
+                className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] font-medium transition-colors disabled:opacity-50 ${
+                  deepVerifyEnabled
+                    ? 'border-blue-300 bg-blue-50 text-blue-700 dark:border-blue-700 dark:bg-blue-950/40 dark:text-blue-300'
+                    : 'border-slate-200 bg-white text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300'
+                }`}
+                title={deepVerifyEnabled ? 'Deep Verify — always runs optimizer agent for quality assurance' : 'Auto — optimizer runs only when QA detects issues'}
+              >
+                <Brain className="h-3.5 w-3.5" />
+                <span>{deepVerifyEnabled ? 'Deep Verify' : 'Auto'}</span>
+              </button>
+            )}
           </div>
         ) : null}
 

@@ -58,13 +58,27 @@ export function resolveDirectAnalysisRequest(query, opts = {}) {
   return null;
 }
 
-export function buildDirectAnalysisAgentPrompt(query) {
+export function buildDirectAnalysisAgentPrompt(query, answerContract = null) {
   const normalized = normalizeQuery(query);
-  return [
+  const deepDives = Array.isArray(answerContract?.suggested_deep_dives)
+    ? answerContract.suggested_deep_dives
+    : [];
+
+  const parts = [
     'Run a direct business data analysis for the following request.',
     `User request: "${normalized}"`,
     '',
     'Choose the best tool per the Tool Selection Rules in your system prompt.',
     'Return structured analysis with metrics, charts, tables, and concise findings.',
-  ].join('\n');
+  ];
+
+  if (deepDives.length > 0) {
+    parts.push('');
+    parts.push('## Suggested Deep Dives (attempt at least one if data supports it)');
+    deepDives.forEach((dd, i) => parts.push(`${i + 1}. ${dd}`));
+    parts.push('');
+    parts.push('After completing the primary analysis, run one additional query or analysis to explore a suggested deep dive. This adds depth beyond surface-level descriptive statistics.');
+  }
+
+  return parts.join('\n');
 }

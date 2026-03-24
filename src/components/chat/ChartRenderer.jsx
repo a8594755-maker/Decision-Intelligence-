@@ -14,7 +14,7 @@
 
 import React, { useState } from 'react';
 import {
-  BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
+  BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, Rectangle,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
   ScatterChart, Scatter, ZAxis,
   AreaChart, Area,
@@ -28,9 +28,23 @@ import { ChevronDown } from 'lucide-react';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
-const CHART_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16'];
-const HEATMAP_COLORS = ['#dbeafe', '#93c5fd', '#3b82f6', '#1d4ed8', '#1e3a8a'];
+const CHART_PALETTES = {
+  default: ['#2563eb', '#0891b2', '#059669', '#d97706', '#dc2626', '#7c3aed', '#db2777', '#0d9488', '#4f46e5', '#ca8a04'],
+  diverging: ['#059669', '#dc2626'],
+  sequential: ['#dbeafe', '#93c5fd', '#60a5fa', '#3b82f6', '#2563eb', '#1d4ed8'],
+  categorical: ['#2563eb', '#dc2626', '#059669', '#d97706', '#7c3aed', '#db2777', '#0891b2', '#ca8a04'],
+};
+
+// Default palette — backward-compatible export
+const CHART_COLORS = CHART_PALETTES.default;
+const HEATMAP_COLORS = CHART_PALETTES.sequential;
 const WEEKDAY_ORDER = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+
+function selectPalette(chartType) {
+  if (chartType === 'waterfall') return CHART_PALETTES.diverging;
+  if (chartType === 'heatmap') return CHART_PALETTES.sequential;
+  return CHART_PALETTES.default;
+}
 
 const CHART_TYPE_LABELS = {
   bar: 'Bar',
@@ -54,9 +68,10 @@ const CHART_TYPE_LABELS = {
   pareto: 'Pareto',
 };
 
-const MARGIN = { top: 5, right: 20, left: 10, bottom: 5 };
-const TICK_STYLE = { fontSize: 10 };
-const TOOLTIP_STYLE = { fontSize: 11 };
+const MARGIN = { top: 8, right: 20, left: 10, bottom: 5 };
+const TICK_STYLE = { fontSize: 10, fill: '#64748b' };
+const GRID_PROPS = { strokeDasharray: '3 3', stroke: '#f1f5f9', strokeOpacity: 0.7 };
+const TOOLTIP_STYLE = { fontSize: 11, borderRadius: 8, boxShadow: '0 4px 12px rgba(0,0,0,0.08)', border: 'none', padding: '8px 12px' };
 
 function isNumericLike(value) {
   if (typeof value === 'number') return Number.isFinite(value);
@@ -100,22 +115,92 @@ function buildTickFormatter(fmt) {
   return TICK_FORMATTERS[fmt] || undefined;
 }
 
+/**
+ * Deconflict reference lines that are too close together.
+ * When two lines on the same axis are within MIN_GAP_PX pixels of each other
+ * (estimated via value proximity), merge their labels or offset them.
+ */
+function deconflictReferenceLines(lines = [], maxLines = 3) {
+  if (lines.length <= 1) return lines;
+
+  // Cap at maxLines — keep first, last, and middle ones
+  let capped = lines;
+  if (lines.length > maxLines) {
+    const sorted = [...lines].sort((a, b) => {
+      const aVal = typeof a.value === 'number' ? a.value : String(a.value || '');
+      const bVal = typeof b.value === 'number' ? b.value : String(b.value || '');
+      return aVal < bVal ? -1 : aVal > bVal ? 1 : 0;
+    });
+    // Keep first, last, and evenly-spaced middle lines
+    const step = Math.max(1, Math.floor((sorted.length - 1) / (maxLines - 1)));
+    const indices = new Set([0, sorted.length - 1]);
+    for (let i = step; i < sorted.length - 1; i += step) indices.add(i);
+    capped = [...indices].sort((a, b) => a - b).map((idx) => sorted[idx]);
+  }
+
+  // Merge labels for lines with identical values
+  const merged = [];
+  const seen = new Map();
+  for (const line of capped) {
+    const key = `${line.axis || 'y'}:${line.value}`;
+    if (seen.has(key)) {
+      const existing = seen.get(key);
+      if (line.label && existing.label) {
+        existing.label = `${existing.label}/${line.label}`;
+      }
+    } else {
+      const copy = { ...line };
+      seen.set(key, copy);
+      merged.push(copy);
+    }
+  }
+
+  // Alternate label positions when lines on the same axis are close by value
+  const byAxis = { x: [], y: [] };
+  for (const line of merged) byAxis[line.axis === 'x' ? 'x' : 'y'].push(line);
+  for (const group of Object.values(byAxis)) {
+    if (group.length < 2) continue;
+    group.sort((a, b) => {
+      const av = typeof a.value === 'number' ? a.value : 0;
+      const bv = typeof b.value === 'number' ? b.value : 0;
+      return av - bv;
+    });
+    const allNumeric = group.every((l) => typeof l.value === 'number');
+    if (!allNumeric) continue;
+    const range = (group[group.length - 1].value || 1) - (group[0].value || 0);
+    for (let i = 1; i < group.length; i++) {
+      const gap = Math.abs(group[i].value - group[i - 1].value);
+      if (range > 0 && gap / range < 0.06) {
+        // Too close — alternate label position to avoid overlap
+        group[i]._labelOffset = i % 2 === 0 ? 'top' : 'insideTopRight';
+      }
+    }
+  }
+
+  return merged;
+}
+
 function renderReferenceLines(lines = [], yAxisId) {
-  return lines.map((ref, i) => (
-    <ReferenceLine
-      key={`ref-${i}`}
-      {...(ref.axis === 'x' ? { x: ref.value } : { y: ref.value })}
-      {...(yAxisId ? { yAxisId } : {})}
-      stroke={ref.color || '#ef4444'}
-      strokeDasharray={ref.strokeDasharray || '4 4'}
-      label={ref.label ? {
-        value: ref.label,
-        position: ref.axis === 'x' ? 'top' : 'right',
-        fontSize: 9,
-        fill: ref.color || '#ef4444',
-      } : undefined}
-    />
-  ));
+  const deconflicted = deconflictReferenceLines(lines);
+  return deconflicted.map((ref, i) => {
+    const position = ref._labelOffset
+      || (ref.axis === 'x' ? 'top' : 'right');
+    return (
+      <ReferenceLine
+        key={`ref-${i}`}
+        {...(ref.axis === 'x' ? { x: ref.value } : { y: ref.value })}
+        {...(yAxisId ? { yAxisId } : {})}
+        stroke={ref.color || '#ef4444'}
+        strokeDasharray={ref.strokeDasharray || '4 4'}
+        label={ref.label ? {
+          value: ref.label,
+          position,
+          fontSize: 9,
+          fill: ref.color || '#ef4444',
+        } : undefined}
+      />
+    );
+  });
 }
 
 function resolveBarColor(chart, entry, index) {
@@ -135,18 +220,19 @@ function axisLabelProp(text, axis) {
 
 // ── Main Component ───────────────────────────────────────────────────────────
 
-export default function ChartRenderer({ chart, height = 260, compatibleTypes, showSwitcher }) {
+export default function ChartRenderer({ chart, height = 260, compatibleTypes, showSwitcher, mini = false }) {
   const [overrideType, setOverrideType] = useState(null);
 
   if (!chart) return null;
 
   const effectiveType = overrideType || chart.type;
   const effectiveChart = { ...chart, type: effectiveType };
-  const canSwitch = showSwitcher !== false && compatibleTypes && compatibleTypes.length > 1;
+  const canSwitch = !mini && showSwitcher !== false && compatibleTypes && compatibleTypes.length > 1;
+  const effectiveHeight = mini ? Math.min(height, 140) : height;
 
   return (
     <div>
-      {/* Chart type switcher */}
+      {/* Chart type switcher (hidden in mini mode) */}
       {canSwitch && (
         <div className="flex items-center justify-end gap-1.5 mb-1.5">
           <span className="text-[10px] text-slate-400">Chart:</span>
@@ -165,17 +251,17 @@ export default function ChartRenderer({ chart, height = 260, compatibleTypes, sh
         </div>
       )}
 
-      {/* Chart title */}
-      {chart.title && (
+      {/* Chart title (hidden in mini mode) */}
+      {!mini && chart.title && (
         <div className="text-xs font-medium text-slate-600 dark:text-slate-300 mb-2">{chart.title}</div>
       )}
 
       {/* Chart body — heatmap uses custom SVG, skip ResponsiveContainer */}
-      <div className="bg-white dark:bg-gray-800/40 rounded-lg p-2 border border-slate-100 dark:border-slate-700">
+      <div className={mini ? 'rounded-lg overflow-hidden' : 'bg-white dark:bg-gray-800/40 rounded-lg p-2 border border-slate-100 dark:border-slate-700'}>
         {effectiveType === 'heatmap' ? (
           renderChartByType(effectiveChart)
         ) : (
-          <ResponsiveContainer width="100%" height={height}>
+          <ResponsiveContainer width="100%" height={effectiveHeight}>
             {renderChartByType(effectiveChart)}
           </ResponsiveContainer>
         )}
@@ -187,10 +273,25 @@ export default function ChartRenderer({ chart, height = 260, compatibleTypes, sh
 // ── Chart Renderers ──────────────────────────────────────────────────────────
 
 function renderChartByType(chart) {
-  const { type, data = [], xKey, yKey, label, series } = chart;
+  let { type, data = [], xKey, yKey, label, series } = chart;
 
-  if (!data || data.length === 0) {
+  // ── Auto-fix: comma-separated yKey → split into series ──
+  if (yKey && typeof yKey === 'string' && yKey.includes(',')) {
+    const keys = yKey.split(',').map(k => k.trim()).filter(Boolean);
+    if (keys.length > 1) {
+      console.info('[ChartRenderer] Auto-fixing comma-separated yKey:', yKey, '→ series:', keys);
+      yKey = keys[0];
+      series = keys;
+      if (type === 'bar' && keys.length > 1) type = 'grouped_bar';
+    }
+  }
+
+  if (!data || data.length === 0 || data.every(d => !d || Object.keys(d).length === 0)) {
     return <div className="text-xs text-slate-400 text-center py-8">No chart data</div>;
+  }
+
+  if (yKey && data.every(d => d[yKey] == null)) {
+    console.warn('[ChartRenderer] yKey mismatch — data keys:', Object.keys(data[0]), 'yKey:', yKey);
   }
 
   switch (type) {
@@ -243,13 +344,13 @@ function renderLine(chart) {
   const yKeys = series || (Array.isArray(yKey) ? yKey : [yKey]);
   return (
     <LineChart data={data} margin={MARGIN}>
-      <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+      <CartesianGrid {...GRID_PROPS} />
       <XAxis dataKey={xKey} tick={TICK_STYLE} angle={-30} textAnchor="end" height={50} tickFormatter={buildTickFormatter(tf?.x)} {...axisLabelProp(xAxisLabel, 'x')} />
       <YAxis tick={TICK_STYLE} tickFormatter={buildTickFormatter(tf?.y)} {...axisLabelProp(yAxisLabel, 'y')} />
       <Tooltip contentStyle={TOOLTIP_STYLE} />
       <Legend wrapperStyle={{ fontSize: 11 }} />
       {yKeys.map((k, i) => (
-        <Line key={k} type="monotone" dataKey={k} stroke={CHART_COLORS[i % CHART_COLORS.length]} strokeWidth={2} dot={{ r: 2 }} name={yKeys.length === 1 ? (label || k) : k} />
+        <Line key={k} type="monotone" dataKey={k} stroke={CHART_COLORS[i % CHART_COLORS.length]} strokeWidth={2} dot={{ r: 2.5, strokeWidth: 1.5 }} activeDot={{ r: 5, strokeWidth: 2 }} name={yKeys.length === 1 ? (label || k) : k} />
       ))}
       {renderReferenceLines(referenceLines)}
     </LineChart>
@@ -258,18 +359,22 @@ function renderLine(chart) {
 
 function renderBar(chart) {
   const { data, xKey, yKey, label, referenceLines, colorMap, colors, xAxisLabel, yAxisLabel, tickFormatter: tf } = chart;
-  const needsCells = !!(colorMap || colors);
+  const needsCustomColor = !!(colorMap || colors);
   return (
     <BarChart data={data} margin={MARGIN}>
-      <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+      <CartesianGrid {...GRID_PROPS} />
       <XAxis dataKey={xKey} tick={TICK_STYLE} angle={-30} textAnchor="end" height={50} tickFormatter={buildTickFormatter(tf?.x)} {...axisLabelProp(xAxisLabel, 'x')} />
       <YAxis tick={TICK_STYLE} tickFormatter={buildTickFormatter(tf?.y)} {...axisLabelProp(yAxisLabel, 'y')} />
       <Tooltip contentStyle={TOOLTIP_STYLE} />
-      <Bar dataKey={yKey} fill={needsCells ? undefined : CHART_COLORS[0]} radius={[4, 4, 0, 0]} name={label || yKey}>
-        {needsCells && data.map((entry, i) => (
-          <Cell key={i} fill={resolveBarColor(chart, entry, i) || CHART_COLORS[0]} />
-        ))}
-      </Bar>
+      <Bar
+        dataKey={yKey}
+        fill={CHART_COLORS[0]}
+        radius={[6, 6, 0, 0]}
+        name={label || yKey}
+        shape={needsCustomColor
+          ? (props) => <Rectangle {...props} fill={resolveBarColor(chart, props.payload, props.index) || CHART_COLORS[0]} />
+          : undefined}
+      />
       {renderReferenceLines(referenceLines)}
     </BarChart>
   );
@@ -278,18 +383,22 @@ function renderBar(chart) {
 function renderHorizontalBar(chart) {
   const { data, xKey, yKey, label, referenceLines, colorMap, colors, xAxisLabel, yAxisLabel, tickFormatter: tf } = chart;
   const sorted = [...data].sort((a, b) => (Number(b[yKey]) || 0) - (Number(a[yKey]) || 0));
-  const needsCells = !!(colorMap || colors);
+  const needsCustomColor = !!(colorMap || colors);
   return (
     <BarChart data={sorted} layout="vertical" margin={{ ...MARGIN, left: 80 }}>
-      <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+      <CartesianGrid {...GRID_PROPS} />
       <XAxis type="number" tick={TICK_STYLE} tickFormatter={buildTickFormatter(tf?.y)} {...axisLabelProp(xAxisLabel, 'x')} />
       <YAxis dataKey={xKey} type="category" tick={TICK_STYLE} width={75} {...axisLabelProp(yAxisLabel, 'y')} />
       <Tooltip contentStyle={TOOLTIP_STYLE} />
-      <Bar dataKey={yKey} fill={needsCells ? undefined : CHART_COLORS[0]} radius={[0, 4, 4, 0]} name={label || yKey}>
-        {needsCells && sorted.map((entry, i) => (
-          <Cell key={i} fill={resolveBarColor(chart, entry, i) || CHART_COLORS[0]} />
-        ))}
-      </Bar>
+      <Bar
+        dataKey={yKey}
+        fill={CHART_COLORS[0]}
+        radius={[0, 6, 6, 0]}
+        name={label || yKey}
+        shape={needsCustomColor
+          ? (props) => <Rectangle {...props} fill={resolveBarColor(chart, props.payload, props.index) || CHART_COLORS[0]} />
+          : undefined}
+      />
       {renderReferenceLines(referenceLines)}
     </BarChart>
   );
@@ -306,8 +415,18 @@ function renderPie({ data, xKey, yKey, label }, isDonut) {
         cy="50%"
         outerRadius={80}
         innerRadius={isDonut ? 45 : 0}
-        label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
-        labelLine={{ strokeWidth: 1 }}
+        label={({ name, percent, x, y, midAngle }) => {
+          const RADIAN = Math.PI / 180;
+          const radius = 95;
+          const cx2 = x + radius * Math.cos(-midAngle * RADIAN) * 0.15;
+          const cy2 = y + radius * Math.sin(-midAngle * RADIAN) * 0.15;
+          return (
+            <text x={cx2} y={cy2} textAnchor={cx2 > x ? 'start' : 'end'} dominantBaseline="central" fontSize={10} fill="#475569">
+              {`${name} ${(percent * 100).toFixed(0)}%`}
+            </text>
+          );
+        }}
+        labelLine={{ strokeWidth: 1, stroke: '#94a3b8' }}
       >
         {data.map((_, i) => (
           <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
@@ -323,7 +442,7 @@ function renderScatter(chart) {
   const { data, xKey, yKey, label, referenceLines, xAxisLabel, yAxisLabel, tickFormatter: tf } = chart;
   return (
     <ScatterChart margin={MARGIN}>
-      <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+      <CartesianGrid {...GRID_PROPS} />
       <XAxis dataKey={xKey} name={xKey} tick={TICK_STYLE} tickFormatter={buildTickFormatter(tf?.x)} {...axisLabelProp(xAxisLabel, 'x')} />
       <YAxis dataKey={yKey} name={yKey} tick={TICK_STYLE} tickFormatter={buildTickFormatter(tf?.y)} {...axisLabelProp(yAxisLabel, 'y')} />
       <ZAxis range={[30, 30]} />
@@ -339,7 +458,7 @@ function renderStackedBar(chart) {
   const yKeys = series || (Array.isArray(yKey) ? yKey : [yKey]);
   return (
     <BarChart data={data} margin={MARGIN}>
-      <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+      <CartesianGrid {...GRID_PROPS} />
       <XAxis dataKey={xKey} tick={TICK_STYLE} angle={-30} textAnchor="end" height={50} tickFormatter={buildTickFormatter(tf?.x)} {...axisLabelProp(xAxisLabel, 'x')} />
       <YAxis tick={TICK_STYLE} tickFormatter={buildTickFormatter(tf?.y)} {...axisLabelProp(yAxisLabel, 'y')} />
       <Tooltip contentStyle={TOOLTIP_STYLE} />
@@ -357,13 +476,13 @@ function renderGroupedBar(chart) {
   const yKeys = series || (Array.isArray(yKey) ? yKey : [yKey]);
   return (
     <BarChart data={data} margin={MARGIN}>
-      <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+      <CartesianGrid {...GRID_PROPS} />
       <XAxis dataKey={xKey} tick={TICK_STYLE} angle={-30} textAnchor="end" height={50} tickFormatter={buildTickFormatter(tf?.x)} {...axisLabelProp(xAxisLabel, 'x')} />
       <YAxis tick={TICK_STYLE} tickFormatter={buildTickFormatter(tf?.y)} {...axisLabelProp(yAxisLabel, 'y')} />
       <Tooltip contentStyle={TOOLTIP_STYLE} />
       <Legend wrapperStyle={{ fontSize: 11 }} />
       {yKeys.map((k, i) => (
-        <Bar key={k} dataKey={k} fill={CHART_COLORS[i % CHART_COLORS.length]} radius={[4, 4, 0, 0]} name={k} />
+        <Bar key={k} dataKey={k} fill={CHART_COLORS[i % CHART_COLORS.length]} radius={[6, 6, 0, 0]} name={k} />
       ))}
       {renderReferenceLines(referenceLines)}
     </BarChart>
@@ -375,13 +494,13 @@ function renderArea(chart) {
   const yKeys = series || (Array.isArray(yKey) ? yKey : [yKey]);
   return (
     <AreaChart data={data} margin={MARGIN}>
-      <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+      <CartesianGrid {...GRID_PROPS} />
       <XAxis dataKey={xKey} tick={TICK_STYLE} angle={-30} textAnchor="end" height={50} tickFormatter={buildTickFormatter(tf?.x)} {...axisLabelProp(xAxisLabel, 'x')} />
       <YAxis tick={TICK_STYLE} tickFormatter={buildTickFormatter(tf?.y)} {...axisLabelProp(yAxisLabel, 'y')} />
       <Tooltip contentStyle={TOOLTIP_STYLE} />
       <Legend wrapperStyle={{ fontSize: 11 }} />
       {yKeys.map((k, i) => (
-        <Area key={k} type="monotone" dataKey={k} stroke={CHART_COLORS[i % CHART_COLORS.length]} fill={CHART_COLORS[i % CHART_COLORS.length]} fillOpacity={0.15} strokeWidth={2} name={yKeys.length === 1 ? (label || k) : k} />
+        <Area key={k} type="monotone" dataKey={k} stroke={CHART_COLORS[i % CHART_COLORS.length]} fill={CHART_COLORS[i % CHART_COLORS.length]} fillOpacity={0.12} strokeWidth={2} activeDot={{ r: 4, strokeWidth: 2 }} name={yKeys.length === 1 ? (label || k) : k} />
       ))}
       {renderReferenceLines(referenceLines)}
     </AreaChart>
@@ -390,18 +509,21 @@ function renderArea(chart) {
 
 function renderHistogram(chart) {
   const { data, xKey, yKey, label, referenceLines, colorMap, colors, xAxisLabel, yAxisLabel, tickFormatter: tf } = chart;
-  const needsCells = !!(colorMap || colors);
+  const needsCustomColor = !!(colorMap || colors);
   return (
     <BarChart data={data} margin={MARGIN} barCategoryGap={0} barGap={0}>
-      <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+      <CartesianGrid {...GRID_PROPS} />
       <XAxis dataKey={xKey} tick={TICK_STYLE} angle={-30} textAnchor="end" height={50} tickFormatter={buildTickFormatter(tf?.x)} {...axisLabelProp(xAxisLabel, 'x')} />
       <YAxis tick={TICK_STYLE} tickFormatter={buildTickFormatter(tf?.y)} {...axisLabelProp(yAxisLabel, 'y')} />
       <Tooltip contentStyle={TOOLTIP_STYLE} />
-      <Bar dataKey={yKey} fill={needsCells ? undefined : CHART_COLORS[4]} name={label || yKey}>
-        {needsCells && data.map((entry, i) => (
-          <Cell key={i} fill={resolveBarColor(chart, entry, i) || CHART_COLORS[4]} />
-        ))}
-      </Bar>
+      <Bar
+        dataKey={yKey}
+        fill={CHART_COLORS[4]}
+        name={label || yKey}
+        shape={needsCustomColor
+          ? (props) => <Rectangle {...props} fill={resolveBarColor(chart, props.payload, props.index) || CHART_COLORS[4]} />
+          : undefined}
+      />
       {renderReferenceLines(referenceLines)}
     </BarChart>
   );
@@ -418,7 +540,7 @@ function renderLorenz(chart) {
         </div>
       )}
       <LineChart data={diagonalData} margin={MARGIN}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+        <CartesianGrid {...GRID_PROPS} />
         <XAxis dataKey={xKey} tick={TICK_STYLE} unit="%" label={{ value: 'Cumulative % of Population', position: 'insideBottomRight', offset: -5, fontSize: 10 }} />
         <YAxis tick={TICK_STYLE} unit="%" label={{ value: 'Cumulative % of Value', angle: -90, position: 'insideLeft', fontSize: 10 }} />
         <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v) => `${v.toFixed(1)}%`} />
@@ -626,6 +748,7 @@ function renderWaterfall({ data, xKey = 'month', yKey = 'value' }) {
     const val = Number(d[yKey]) || 0;
     const start = Number(d.start) || 0;
     const type = d.type || (val >= 0 ? 'increase' : 'decrease');
+    const palette = CHART_PALETTES.diverging; // [green, red]
     if (type === 'total') {
       return { ...d, base: 0, change: val, fill: CHART_COLORS[0] };
     }
@@ -633,18 +756,18 @@ function renderWaterfall({ data, xKey = 'month', yKey = 'value' }) {
       ...d,
       base: val >= 0 ? start : start + val,
       change: Math.abs(val),
-      fill: val >= 0 ? CHART_COLORS[1] : CHART_COLORS[3],
+      fill: val >= 0 ? palette[0] : palette[1],
     };
   });
 
   return (
     <BarChart data={waterfallBars} margin={MARGIN}>
-      <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+      <CartesianGrid {...GRID_PROPS} />
       <XAxis dataKey={xKey} tick={TICK_STYLE} angle={-30} textAnchor="end" height={50} />
       <YAxis tick={TICK_STYLE} />
       <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v, name) => name === 'base' ? null : v.toLocaleString()} />
       <Bar dataKey="base" stackId="waterfall" fill="transparent" />
-      <Bar dataKey="change" stackId="waterfall" radius={[4, 4, 0, 0]}>
+      <Bar dataKey="change" stackId="waterfall" radius={[6, 6, 0, 0]}>
         {waterfallBars.map((d, i) => (
           <Cell key={i} fill={d.fill} />
         ))}
@@ -657,13 +780,13 @@ function renderPareto({ data, xKey = 'category', yKey = 'revenue' }) {
   const y2Key = data[0]?.cumulative_pct != null ? 'cumulative_pct' : (Object.keys(data[0] || {}).find(k => /cum|pct/i.test(k)) || 'cumulative_pct');
   return (
     <ComposedChart data={data} margin={MARGIN}>
-      <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+      <CartesianGrid {...GRID_PROPS} />
       <XAxis dataKey={xKey} tick={TICK_STYLE} angle={-30} textAnchor="end" height={50} />
       <YAxis yAxisId="left" tick={TICK_STYLE} />
       <YAxis yAxisId="right" orientation="right" tick={TICK_STYLE} unit="%" domain={[0, 100]} />
       <Tooltip contentStyle={TOOLTIP_STYLE} />
       <Legend wrapperStyle={{ fontSize: 11 }} />
-      <Bar yAxisId="left" dataKey={yKey} fill={CHART_COLORS[0]} radius={[4, 4, 0, 0]} name={yKey} />
+      <Bar yAxisId="left" dataKey={yKey} fill={CHART_COLORS[0]} radius={[6, 6, 0, 0]} name={yKey} />
       <Line yAxisId="right" type="monotone" dataKey={y2Key} stroke={CHART_COLORS[3]} strokeWidth={2} dot={{ r: 2 }} name="Cumulative %" />
       <ReferenceLine yAxisId="right" y={80} stroke="#ef4444" strokeDasharray="4 4" label={{ value: '80%', position: 'right', fontSize: 9, fill: '#ef4444' }} />
     </ComposedChart>
@@ -675,7 +798,7 @@ function renderBubble({ data, xKey, yKey, zKey = 'avg_rating', labelKey }) {
   const minZ = Math.min(...data.map(d => Number(d[zKey]) || 0));
   return (
     <ScatterChart margin={MARGIN}>
-      <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+      <CartesianGrid {...GRID_PROPS} />
       <XAxis dataKey={xKey} name={xKey} tick={TICK_STYLE} />
       <YAxis dataKey={yKey} name={yKey} tick={TICK_STYLE} />
       <ZAxis dataKey={zKey} range={[40, 400]} domain={[minZ, maxZ]} name={zKey} />

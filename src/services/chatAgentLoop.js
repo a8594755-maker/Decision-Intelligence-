@@ -29,10 +29,23 @@ import { detectToolGap, detectProactiveGap } from './gapDetectionService.js';
 import { generateToolBlueprint } from './toolBlueprintGenerator.js';
 import { getRecipeIndexForPrompt, findRecipeByUserMessage } from './chartRecipeCatalog.js';
 import { getModelConfig, resolveProviderFromModel } from './modelConfigService.js';
-import { detectRequestedSpecialChart, getStructuredAnswerCoverage } from './agentAnswerCoverageService.js';
+import { addDimensionHits, detectRequestedSpecialChart, getStructuredAnswerCoverage } from './agentAnswerCoverageService.js';
 import { buildEnrichedSchemaPrompt } from './sapDataQueryService.js';
 import { detectDomain, buildDomainEnrichmentPrompt, buildParameterSweepInstruction, isParameterOptimizationQuestion } from './analysisDomainEnrichment.js';
 import { validateQueryResultData, formatWarningsForAgent, detectBusinessContext, PROXY_DISCLOSURE_PROMPT } from './preAnalysisDataValidator.js';
+import { buildUserDatasetDigest, inferCrossSheetRelationships } from './datasetProfilingService.js';
+import { selectRelevantContext } from './datasetContextSelector.js';
+import {
+  recallQueryPatterns,
+  writeQueryPattern,
+  writeFailurePattern,
+  recallFailurePatterns,
+  attachFailureResolution,
+  classifyToolError,
+  failureDedupeKey,
+} from './aiEmployeeMemoryService.js';
+import { classifyQueryIntent } from './queryIntentClassifier.js';
+import { buildQueryPlan, formatQueryPlanForPrompt } from './queryPlannerService.js';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -82,6 +95,11 @@ function buildStepOutline(answerContract, userMessage) {
     steps.push(`${steps.length + 1}. run_python_analysis — custom computation for ${outputs.join(', ')}`);
   }
 
+  // Cross-verification step for multi-dimension requests
+  if (steps.length >= 2 || dims.length >= 2 || outputs.length >= 2) {
+    steps.push(`${steps.length + 1}. Cross-verify: run a quick SQL or Python check to confirm key numbers from prior steps`);
+  }
+
   if (steps.length === 0) return '';
   return [
     '',
@@ -96,7 +114,7 @@ const DEEPSEEK_CHAT_MODEL = import.meta.env.VITE_DI_DEEPSEEK_MODEL || 'deepseek-
 const USE_EDGE_AI_PROXY = true;
 
 // ── DuckDB dialect guidance (shared between all prompt modes) ────────────────
-const DUCKDB_DIALECT_PROMPT = [
+const DUCKDB_DIALECT_CORE = [
   'query_sap_data SQL Dialect — DuckDB (PostgreSQL-compatible, in-browser WASM):',
   '- CTEs (WITH ... AS) fully supported — use them for readability',
   '- Window functions supported: ROW_NUMBER(), RANK(), DENSE_RANK(), NTILE(), LAG(), LEAD() with OVER(PARTITION BY ... ORDER BY ...)',
@@ -113,12 +131,23 @@ const DUCKDB_DIALECT_PROMPT = [
   '',
   'TIME AGGREGATION GUARD:',
   '- When computing "monthly", "per month", "月均", or any periodic metric, ALWAYS use DATE_TRUNC(\'month\', timestamp_col) in GROUP BY or as a denominator.',
-  '- A bare SUM() across the full Olist dataset (~24 months) will be ~24x the actual monthly value. Never present an all-time SUM as a monthly figure.',
+  '- A bare SUM() across a multi-month dataset will be Nx the actual monthly value. Never present an all-time SUM as a monthly figure.',
   '- For monthly averages, use: SUM(val) / COUNT(DISTINCT DATE_TRUNC(\'month\', date_col)).',
+];
+
+const DUCKDB_OLIST_ADDENDUM = [
   '',
   'Available tables and column semantics (read column descriptions carefully to avoid wrong aggregations):',
   buildEnrichedSchemaPrompt(),
-].join('\n');
+];
+
+function buildDuckDbDialectPrompt({ hasUserData = false } = {}) {
+  if (hasUserData) return DUCKDB_DIALECT_CORE.join('\n');
+  return [...DUCKDB_DIALECT_CORE, ...DUCKDB_OLIST_ADDENDUM].join('\n');
+}
+
+// Legacy compat: module-level const for non-conditional usage
+const DUCKDB_DIALECT_PROMPT = buildDuckDbDialectPrompt({ hasUserData: false });
 
 export const ANALYSIS_AGENT_TOOL_IDS = Object.freeze([
   'query_sap_data',
@@ -434,6 +463,10 @@ export async function runAgentLoop({
 }) {
   const { onTextChunk, onToolCall, onToolResult, onThinking, onToolBlueprint } = callbacks;
 
+  // Strip thinking suffix — thinking models add 3-5x latency per tool call and risk timeouts.
+  // The agent loop needs fast tool-calling, not extended reasoning per turn.
+  agentModel = String(agentModel || '').replace(/-thinking$/i, '') || agentModel;
+
   // Build the tool definitions for the LLM
   const toolConfig = getAgentToolConfig(mode);
   const tools = getToolDefinitions(toolConfig);
@@ -456,7 +489,9 @@ export async function runAgentLoop({
         '',
         '- If uploaded dataset sheets are available, analyze that dataset with run_python_analysis instead of default Olist tables.',
         '- After generate_chart succeeds: the card already shows title, metrics, highlights, and chart. Do NOT repeat them in full. Only add a short (2-4 sentence) business insight or actionable recommendation that is NOT already in the card. **Exception**: for histogram+quantile requests, always state the core cut-point values (P25, P50, P75, P90) explicitly in your final answer, even if the chart card already shows them. If there is nothing else to add, just say "已產出圖表" or similar.',
-        '- If a successful chart or analysis artifact already covers the answer contract, stop there. Do NOT call query_sap_data just to restate the same numbers.',
+        '- After a tool succeeds, CHECK which answer contract dimensions are still uncovered. If uncovered dimensions remain, call additional tools (query_sap_data or run_python_analysis) to fill the gaps. Only stop when ALL required_dimensions and required_outputs are addressed.',
+        '- VERIFICATION STEP: After your primary analysis tool returns results, consider whether a quick cross-check query (e.g. a brief SQL aggregation confirming totals) would strengthen confidence. This is encouraged but not mandatory.',
+        '- Do NOT call query_sap_data just to restate numbers already in a chart artifact.',
         '- A successful query_sap_data call with 0 rows is not a tool failure, but it provides ZERO evidence. Do NOT cite any numbers, statistics, or counts from a 0-row query. If another tool (e.g. generate_chart) provided data, attribute findings to that source only.',
         '- You may retry query_sap_data ONCE after a 0-row result. The retry must stay in the same dataset and only relax filters or fix joins. Do NOT silently switch datasets.',
         '- Never claim a SQL, worker, connection, or tool failure unless the execution trace actually contains a failed tool call.',
@@ -465,10 +500,18 @@ export async function runAgentLoop({
         '- If a tool fails, explain the error and suggest a narrower follow-up analysis.',
         '- Always respond in the same language the user used.',
         '',
-        DUCKDB_DIALECT_PROMPT,
+        buildDuckDbDialectPrompt({ hasUserData: Boolean(toolContext.datasetProfileRow?.profile_json) }),
         '',
-        '- CRITICAL DATE RANGE: Olist e-commerce data covers 2016-09 to 2018-10. When filtering by date, use dates within this range. Using 2024/2025/2026 dates in WHERE clauses will return 0 rows.',
-        '- Dataset B tables (suppliers, materials, inventory_snapshots, po_open_lines, goods_receipts) may have 0 rows. Prefer Dataset A (Olist CSV tables) unless the user specifically asks about operational/supply chain data.',
+        ...(toolContext.datasetProfileRow?.profile_json
+          ? [
+            '- The user has uploaded their own dataset. Focus on THEIR data, not demo data. Ignore all Olist/Dataset A table names and schemas.',
+            '- Use run_python_analysis for the user\'s data. Use query_sap_data only if the user explicitly asks about the demo/Olist dataset.',
+          ]
+          : [
+            '- CRITICAL DATE RANGE: Olist e-commerce data covers 2016-09 to 2018-10. When filtering by date, use dates within this range. Using 2024/2025/2026 dates in WHERE clauses will return 0 rows.',
+            '- Dataset B tables (suppliers, materials, inventory_snapshots, po_open_lines, goods_receipts) may have 0 rows. Prefer Dataset A (Olist CSV tables) unless the user specifically asks about operational/supply chain data.',
+          ]
+        ),
         '',
         'Data Enrichment Rules:',
         '- When reporting metrics, always include both absolute and relative forms: alongside "revenue = R$50K", state "which is 3.2% of total" or "0.7x the category average". Use SQL evidence to compute ratios.',
@@ -479,46 +522,90 @@ export async function runAgentLoop({
         '- CRITICAL: Only report numbers that come directly from query results or chart artifacts. If a number is an assumption or industry benchmark (e.g., DSO, marketing budget, warehouse cost, inventory holding cost %), you MUST explicitly label it as "假設" / "assumption" — never present assumptions as data-backed findings.',
         '- Do NOT fabricate financial projections (capital requirements, marketing costs, system costs, headcount) unless the dataset contains those fields. If the dataset lacks the data, state "需業務方提供" / "requires business input" instead of inventing numbers.',
         '- Every number in your answer must be traceable: either (a) directly from a SQL result row, (b) computed from SQL results with formula shown, or (c) clearly marked as an assumption with rationale.',
+        '- NUMBER FIDELITY: COPY exact numeric values from tool results. Do NOT round, approximate, or paraphrase numbers. If you must round for readability, prefix with "~" (e.g., "~R$210") and always state the precise value at least once. When citing a specific metric, match the value exactly as returned by the tool.',
         '',
         'Final Answer Rules:',
-        '- You are a senior analyst. Write only the useful user-facing interpretation.',
-        '- Keep the final answer under 500 words. Cover all requested dimensions with specific numbers, category-level breakdowns, and data-backed recommendations. Be thorough but not redundant with chart/table artifacts.',
-        '- Do NOT output markdown tables, pseudo-tables, SQL, debug logs, tool transcripts, "thinking", or step-by-step execution details.',
-        '- Do NOT list every tool you called. The UI renders execution trace separately.',
+        '- You are a senior analyst.',
+        '- Your FINAL message MUST be a valid JSON object (no markdown fences, no prose before/after the JSON).',
+        '- Follow this exact schema:',
+        '  {',
+        '    "headline": "one-sentence conclusion",',
+        '    "executive_summary": "one sentence with 1-2 key numbers",',
+        '    "summary": "markdown narrative — the main answer (under 500 words)",',
+        '    "metric_pills": [{"label": "string", "value": "string", "source": "string"}],',
+        '    "data_lineage": [{"metric": "string", "sql_ref": "string", "row_count": 0, "confidence": "high"}],',
+        '    "tables": [{"title": "string", "columns": ["string"], "rows": [["value"]]}],',
+        '    "charts": [{"type": "bar", "title": "string", "xKey": "string", "yKey": "string", "series": ["string"], "data": [{}]}],',
+        '    "key_findings": ["string"],',
+        '    "implications": ["string"],',
+        '    "caveats": ["string"],',
+        '    "next_steps": ["string"],',
+        '    "methodology_note": "string"',
+        '  }',
+        '- CRITICAL: yKey must be a SINGLE column name. For multi-series, put extra keys in the "series" array.',
+        '- CRITICAL: metric_pills are NUMERIC KPIs only. Max 6 pills. Every pill value MUST be traceable to a tool call result.',
+        '- FORMATTING: Format numbers for business readability. Use K/M/B suffixes for large numbers (e.g., "R$1.01M" not "1010271.37"). Round to at most 2 decimal places. Order counts should be integers (e.g., "7,451" not "7451.00"). Percentages should show 1 decimal (e.g., "+23.5%").',
+        '- CRITICAL: Do NOT include debug logs, SQL text, or tool execution details in the JSON.',
+        '- CRITICAL: charts — either include real data rows in "data" or omit the chart entirely. NEVER output a chart with an empty data array "data": []. The UI will render a blank chart.',
+        '- CRITICAL: Every conclusion and key finding MUST cite at least one specific number from tool results (e.g., "revenue grew 23% from R$150K to R$185K"). Vague statements like "revenue increased significantly" are not acceptable.',
+        '- TABLE DATA ACCURACY: When including tables in your JSON brief, values MUST be copied exactly from SQL query results. NEVER round, estimate, or mentally calculate table values. If SQL returned 750.42, show 750.42, not 750 or ~750. Tables are fact-checked against SQL results — mismatched values are flagged as correctness failures.',
+        '- SCOPE CONSISTENCY (CRITICAL): When your SQL uses a WHERE filter (e.g., order_status = "delivered"), ALL numbers in the brief must come from the same filtered scope. Do NOT mix filtered SQL results with unfiltered chart/artifact totals. If the chart covers all orders but your SQL filters to delivered-only, you must EITHER: (a) re-query without the filter to match the chart scope, OR (b) explicitly state both scopes with separate numbers (e.g., "R$13.59M total across all orders; R$13.22M for delivered orders only"). Never claim "delivered orders only" while citing all-order totals.',
+        '- DERIVED VALUE AUDIT: Before outputting the final JSON, mentally verify every derived value (averages, percentages, growth rates). Check: (a) numerator and denominator are from the same scope and time range, (b) the denominator matches the count you cite elsewhere (e.g., if you say "24 actual months" then the monthly average must use 24 as divisor, not 25). (c) If you cite X months in one place and Y months in another, explicitly reconcile the discrepancy (e.g., "25 calendar months, 24 with data, 1 missing").',
+        '- EXTREME VALUE HANDLING: MoM growth from near-zero to large values produces extreme percentages (e.g., +1,103,687%). Either omit these from tables, replace with "N/A (startup period)", or add a footnote explaining the base is near zero. Never present extreme percentages without context.',
+        '- CRITICAL PANDAS COMPAT: df.fillna(method="ffill") WILL FAIL. Use df.ffill() instead. df.fillna(method="bfill") WILL FAIL. Use df.bfill() instead. resample("M") WILL FAIL. Use resample("ME") instead. resample("Q") → resample("QE"). resample("Y") → resample("YE").',
+        '- TOOL CALL DISCIPLINE: Issue at most 3 tool calls per turn. Before calling a tool, check if the information is already available from a previous tool result. Prefer one well-crafted SQL query over multiple narrow queries.',
+        '- Cover all requested dimensions with specific numbers, category-level breakdowns, and data-backed recommendations.',
         '- For histogram-plus-quantiles requests, explicitly mention the core cut points P25, P50, P75, and P90 (or P95 if P90 is unavailable) when the evidence contains them.',
         '- Focus on concise interpretation, caveats, and the next best action.',
         '',
         answerContractBlock,
         recipeIndex,
         buildStepOutline(answerContract, message),
+        formatQueryPlanForPrompt(buildQueryPlan({ userMessage: message, answerContract })),
       ]
     : [
         '- When the user asks about data (customers, orders, products, sellers, payments, etc.), ALWAYS call query_sap_data with a SQL query. NEVER just describe SQL — execute it.',
         '- You may retry query_sap_data ONCE after a 0-row result or SQL error, but the retry must stay in the same dataset and only relax filters or fix joins. Do NOT use test queries like "SELECT 1".',
-        DUCKDB_DIALECT_PROMPT,
+        buildDuckDbDialectPrompt({ hasUserData: Boolean(toolContext.datasetProfileRow?.profile_json) }),
         '- When the user asks to run an analysis, chart, visualization, forecast, plan, or any tool, call the appropriate function.',
         '- If the user asks for a chart, visualization, or any analysis that matches the recipe catalog below, use generate_chart(recipe_id). It runs pre-written Python (~2s) instead of LLM code generation (~15s).',
         '- After generate_chart succeeds: the card already shows title, metrics, highlights, and chart. Do NOT repeat them. Only add a short (2-4 sentence) business insight or actionable recommendation. If nothing to add, just say the chart is ready.',
+        '- After a tool succeeds, check if the user\'s question has remaining uncovered aspects. If so, call additional tools to address them before writing your final answer.',
         '- After other tools return results, summarize the key findings for the user.',
         '- If a tool fails, explain the error and suggest alternatives.',
         '- You can chain multiple tools: e.g., run forecast first, then generate a plan.',
-        '- To forecast from SAP data, use forecast_from_sap (NOT run_forecast). It accepts a demand_sql parameter — write a SQL that returns (material_code, plant_id, time_bucket, demand_qty). If no SQL given, defaults to Olist orders. Olist data covers 2017-01 to 2018-08.',
+        `- To forecast from SAP data, use forecast_from_sap (NOT run_forecast). It accepts a demand_sql parameter — write a SQL that returns (material_code, plant_id, time_bucket, demand_qty).${toolContext.datasetProfileRow?.profile_json ? '' : ' If no SQL given, defaults to Olist orders. Olist data covers 2017-01 to 2018-08.'}`,
         '- If you need data that is not available, try query_sap_data first before asking the user to upload.',
         '- Tools prefixed with "reg_" are user-approved registered tools. Use them when they match the task.',
         '- If a tool fails due to data format mismatch, the system may auto-generate an adapter tool for the user to approve.',
         '- Always respond in the same language the user used.',
         '- For multi-step statistical analysis (classification, stationarity testing, sensitivity analysis, ABC-XYZ), use run_python_analysis (Python/pandas/numpy). SQL (query_sap_data) is for data retrieval only — Python is for computation.',
+        '- run_python_analysis sandbox: Available libraries: pandas, numpy, scipy (scipy.stats, scipy.interpolate, scipy.optimize), statsmodels (seasonal_decompose, Holt-Winters, ADF test), sklearn (KMeans, LinearRegression, StandardScaler), calendar, statistics, collections, itertools, datetime, dateutil, math, json, re, copy, decimal, uuid, openpyxl. Do NOT attempt to import matplotlib, seaborn, plotly, os, sys, or subprocess — they will fail. Use generate_chart for visualization.',
         '- After completing a multi-step analysis, use generate_analysis_workbook to produce a professional Excel report with methodology notes, parameter tables, and sensitivity tables.',
+        '',
+        'THINKING PROTOCOL (analysis mode only):',
+        'Before writing your final JSON answer, reason through these questions internally:',
+        '1. What is the user REALLY asking? (surface question vs underlying need)',
+        '2. What did the data actually show? Any surprises or contradictions?',
+        '3. Are there confounding factors the user should know about?',
+        '4. What would a skeptical senior analyst challenge about this analysis?',
+        '5. Is there a "so what" — a concrete action the user can take?',
+        '',
+        'Wrap your reasoning in <thinking>...</thinking> tags before the JSON output.',
+        'The thinking block will be stripped before the user sees the result.',
+        'Take 200-400 words to reason. Do NOT skip this step.',
         '',
         'Final Answer Rules:',
         '- You are a senior analyst. Write only the useful user-facing interpretation.',
-        '- Keep the final answer under 160 words unless the evidence is blocked and needs a caveat.',
+        '- For brevity="short": keep the final answer under 160 words.',
+        '- For brevity="analysis": use 300-500 words. Include: (a) what the data shows, (b) why it matters (causal reasoning), (c) what the user should do next. Depth is more valuable than brevity for analysis.',
         '- Do NOT output markdown tables, pseudo-tables, SQL, debug logs, tool transcripts, "thinking", or step-by-step execution details.',
         '- Do NOT list every tool you called. The UI renders execution trace separately.',
         '- Focus on concise interpretation, caveats, and the next best action.',
         '',
         answerContractBlock,
         recipeIndex,
+        formatQueryPlanForPrompt(buildQueryPlan({ userMessage: message, answerContract })),
       ];
   // ── Domain enrichment: inject domain-specific formulas and parameter guidance ──
   const domain = detectDomain(message);
@@ -530,12 +617,18 @@ export async function runAgentLoop({
     ? buildParameterSweepInstruction(domain.domainKey)
     : '';
 
+  // ── Query intent classification ──
+  // Classify intent BEFORE evidence enforcement so meta/greeting queries skip evidence rules.
+  const queryTier = classifyQueryIntent(message, conversationHistory);
+
   // ── Provider-specific evidence enforcement ──
   // When a provider cannot use tool_choice:"required" (e.g. Gemini with thinkingConfig),
   // inject a hard-coded evidence-first mandate directly into the system prompt so the model
   // sees it on every turn — not just as a retry nudge.
+  // Skipped for meta-tier queries (greetings, capability questions) that don't need evidence.
   const resolvedProvider = resolveProviderFromModel(agentModel, agentProvider);
-  const providerNeedsEvidencePrompt = isAnalysisMode
+  const providerNeedsEvidencePrompt = queryTier.tier !== 'meta'
+    && isAnalysisMode
     && PROVIDER_REGISTRY[resolvedProvider]
     && !PROVIDER_REGISTRY[resolvedProvider].supportsRequiredToolChoiceWithThinking;
   const evidencePromptBlock = providerNeedsEvidencePrompt
@@ -550,12 +643,80 @@ export async function runAgentLoop({
       ]
     : [];
 
+  // ── User-uploaded dataset schema digest (with query-time context selection) ──
+  let userDatasetDigestBlock = '';
+  if (toolContext.datasetProfileRow?.profile_json) {
+    const focusedProfile = selectRelevantContext(
+      toolContext.datasetProfileRow.profile_json,
+      message
+    );
+    userDatasetDigestBlock = buildUserDatasetDigest({
+      ...toolContext.datasetProfileRow,
+      profile_json: focusedProfile,
+    });
+  }
+
+  // ── Execution memory: recall past successful query patterns ──
+  let patternBlock = [];
+  try {
+    const fingerprint = toolContext.datasetProfileRow?.profile_json?.global?.fingerprint;
+    if (fingerprint) {
+      const pastPatterns = await recallQueryPatterns({ datasetFingerprint: fingerprint, limit: 3 });
+      if (pastPatterns.length > 0) {
+        patternBlock = [
+          '── Past Successful Queries for This Dataset ──',
+          ...pastPatterns.map((p, i) =>
+            `${i + 1}. Q: "${p.user_question}" → Tool: ${p.tool_used}, Result: ${p.result_summary}`
+          ),
+          'Use these as reference patterns. Adapt them to the current question.',
+          '',
+        ];
+      }
+    }
+  } catch { /* non-critical */ }
+
+  // ── Execution memory: recall past FAILURE patterns ──
+  let failureBlock = [];
+  try {
+    const fp = toolContext.datasetProfileRow?.profile_json?.global?.fingerprint;
+    const pastFailures = await recallFailurePatterns({ datasetFingerprint: fp, limit: 5 });
+    if (pastFailures.length > 0) {
+      failureBlock = [
+        '── KNOWN FAILURE PATTERNS (DO NOT REPEAT) ──',
+        ...pastFailures.map((f, i) => {
+          const resolution = f.resolution ? ` → INSTEAD: ${f.resolution}` : '';
+          return `${i + 1}. ❌ ${f.tool_used}: ${f.error_type} — "${f.error_message}"${resolution} (seen ${f.occurrence_count}x)`;
+        }),
+        'CRITICAL: Do NOT attempt any of the above patterns. Use the suggested alternatives.',
+        '',
+      ];
+    }
+  } catch { /* non-critical */ }
+
   const agentSystemPrompt = [
     systemPrompt,
     '',
     '── Agent Capabilities ──',
     toolSummary,
     '',
+    ...(toolContext.datasetProfileLoadError
+      ? [`⚠️ Dataset profile failed to load: ${toolContext.datasetProfileLoadError}. Some data-related questions may not work correctly.`, '']
+      : []),
+    ...(userDatasetDigestBlock
+      ? [
+        '── User-Uploaded Dataset Schema ──',
+        userDatasetDigestBlock,
+        '',
+        '⚠️ USER DATA ROUTING RULES:',
+        '1. When the user asks about THIS uploaded dataset, ALWAYS use run_python_analysis. NEVER use query_sap_data.',
+        '2. The uploaded data is NOT in the SQL database. query_sap_data cannot access it.',
+        '3. If run_python_analysis returns an error about missing data, tell the user to re-upload the file.',
+        '4. IGNORE all Olist table references when answering questions about user data.',
+        '',
+      ]
+      : []),
+    ...patternBlock,
+    ...failureBlock,
     ...(domainEnrichmentBlock ? [domainEnrichmentBlock, ''] : []),
     ...(paramSweepBlock ? [paramSweepBlock, ''] : []),
     ...(isAnalysisMode ? [PROXY_DISCLOSURE_PROMPT, ''] : []),
@@ -590,7 +751,8 @@ export async function runAgentLoop({
   let businessContextDetected = false;
   let forcedEvidenceTurns = 0;
   const recoveryAttempts = [];
-  const requiresAnalysisEvidence = isAnalysisMode || answerContractNeedsAnalysisEvidence(answerContract);
+  const requiresAnalysisEvidence = queryTier.tier !== 'meta'
+    && (isAnalysisMode || answerContractNeedsAnalysisEvidence(answerContract));
   const resolvedAgentProvider = resolveProviderFromModel(agentModel, agentProvider);
   const agentTransport = getAgentProviderTransport(resolvedAgentProvider);
   const providerSupportsStreaming = Boolean(getAgentToolStreamingMode(resolvedAgentProvider));
@@ -605,7 +767,7 @@ export async function runAgentLoop({
     }
 
     totalIterations = i + 1;
-    onThinking?.({ step: i + 1, type: 'step_start', content: '', fullContent: '' });
+    onThinking?.({ step: i + 1, type: 'step_start', content: `Step ${i + 1} — Reasoning…`, fullContent: '' });
 
     const t0 = Date.now();
     let response;
@@ -659,48 +821,79 @@ export async function runAgentLoop({
       }
     };
 
-    try {
-      response = await callLLMWithToolsStream(messages, tools, {
+    // ── Compat-transport first-call fast path ────────────────────────────────
+    // For compat-transport providers (Gemini) in analysis mode, the first call
+    // with thinkingConfig almost always returns prose instead of tool_calls.
+    // Skip directly to no-thinking + toolChoice:"required" to save round trips.
+    const useNoThinkingFastPath = (
+      i === 0
+      && requiresAnalysisEvidence
+      && toolCalls.length === 0
+      && agentTransport === 'compat'
+    );
+
+    if (useNoThinkingFastPath) {
+      console.info(`[agentLoop] ${resolvedAgentProvider}: using no-thinking fast path for first evidence call`);
+      recoveryAttempts.push('compat_first_call_fast_path');
+      const fastResponse = await callLLMWithToolsNoThinking(messages, tools, {
         signal,
         provider: resolvedAgentProvider,
         model: agentModel,
-        toolChoice,
-        onPreambleChunk: preambleChunk,
       });
-      // Flush any remaining buffered chunks after stream completes
-      if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
-      flushPending();
-    } catch (err) {
-      if (err.name === 'AbortError') throw err;
-      if (!providerSupportsStreaming) {
-        console.error('[agentLoop] Non-streaming provider call failed:', err);
-        throw coerceAgentLoopError(err, 'tool_transport_failed', {
-          provider: resolvedAgentProvider,
-          model: agentModel,
-          transport: agentTransport,
-          recoveryAttempts,
-        });
+      if (fastResponse?.tool_calls?.length) {
+        response = fastResponse;
+      } else {
+        // Fast path returned prose — push context and let normal streaming take over
+        if (fastResponse?.content?.trim()) {
+          onTextChunk?.(fastResponse.content + '\n');
+          messages.push({ role: 'assistant', content: fastResponse.content });
+        }
+        continue;
       }
-      // Fallback to non-streaming if stream mode fails
-      console.warn('[agentLoop] Stream call failed, trying non-stream fallback:', err.message);
-      recoveryAttempts.push('stream_to_non_stream_fallback');
+    } else {
       try {
-        response = await callLLMWithTools(messages, tools, {
+        response = await callLLMWithToolsStream(messages, tools, {
           signal,
           provider: resolvedAgentProvider,
           model: agentModel,
           toolChoice,
           onPreambleChunk: preambleChunk,
         });
-      } catch (err2) {
-        if (err2.name === 'AbortError') throw err2;
-        console.error('[agentLoop] LLM call failed:', err2);
-        throw coerceAgentLoopError(err2, 'tool_transport_failed', {
-          provider: resolvedAgentProvider,
-          model: agentModel,
-          transport: agentTransport,
-          recoveryAttempts,
-        });
+        // Flush any remaining buffered chunks after stream completes
+        if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
+        flushPending();
+      } catch (err) {
+        if (err.name === 'AbortError') throw err;
+        if (!providerSupportsStreaming) {
+          console.error('[agentLoop] Non-streaming provider call failed:', err);
+          throw coerceAgentLoopError(err, 'tool_transport_failed', {
+            provider: resolvedAgentProvider,
+            model: agentModel,
+            transport: agentTransport,
+            recoveryAttempts,
+          });
+        }
+        // Fallback to non-streaming if stream mode fails
+        console.warn('[agentLoop] Stream call failed, trying non-stream fallback:', err.message);
+        recoveryAttempts.push('stream_to_non_stream_fallback');
+        try {
+          response = await callLLMWithTools(messages, tools, {
+            signal,
+            provider: resolvedAgentProvider,
+            model: agentModel,
+            toolChoice,
+            onPreambleChunk: preambleChunk,
+          });
+        } catch (err2) {
+          if (err2.name === 'AbortError') throw err2;
+          console.error('[agentLoop] LLM call failed:', err2);
+          throw coerceAgentLoopError(err2, 'tool_transport_failed', {
+            provider: resolvedAgentProvider,
+            model: agentModel,
+            transport: agentTransport,
+            recoveryAttempts,
+          });
+        }
       }
     }
     // Flush any reasoning from non-streaming fallback path
@@ -747,12 +940,15 @@ export async function runAgentLoop({
         requiresAnalysisEvidence
         && toolCalls.length === 0
         && text.trim()
-        && forcedEvidenceTurns < 2
+        && forcedEvidenceTurns < (agentTransport === 'compat' ? 1 : 2)
       ) {
+        // For compat-transport providers (Gemini), limit to 1 prompt nudge instead of 2.
+        // Gemini rarely complies with prompt-based evidence mandates, so we save an LLM
+        // call and fall through to no-thinking recovery faster.
         const attempt = forcedEvidenceTurns;
         forcedEvidenceTurns += 1;
         recoveryAttempts.push(`forced_evidence_turn_${attempt}`);
-        console.warn(`[agentLoop] ${resolvedAgentProvider} returned prose without tool_calls in evidence-required mode; forcing evidence tool turn (attempt ${attempt + 1}/2).`);
+        console.warn(`[agentLoop] ${resolvedAgentProvider} returned prose without tool_calls in evidence-required mode; forcing evidence tool turn (attempt ${attempt + 1}/${agentTransport === 'compat' ? 1 : 2}).`);
         messages.push({ role: 'assistant', content: text });
         messages.push({
           role: 'user',
@@ -794,6 +990,18 @@ export async function runAgentLoop({
               provider: resolvedAgentProvider,
               model: agentModel,
             });
+            // Also try embedded tool call extraction on recovery text
+            if (!recoveryResponse?.tool_calls?.length && recoveryResponse?.content) {
+              const extractedRecovery = extractEmbeddedToolCall(recoveryResponse.content, tools);
+              if (extractedRecovery) {
+                console.info('[agentLoop] Extracted embedded tool call from recovery text:', extractedRecovery.name);
+                recoveryResponse.tool_calls = [{
+                  id: `recovery_embedded_${Date.now()}`,
+                  type: 'function',
+                  function: { name: extractedRecovery.name, arguments: JSON.stringify(extractedRecovery.args) },
+                }];
+              }
+            }
             if (recoveryResponse?.tool_calls?.length) {
               // Success — inject tool calls back into the loop by re-assigning response
               // and falling through to the tool execution path (Case 2).
@@ -889,8 +1097,40 @@ export async function runAgentLoop({
 
       onToolCall?.({ id: tc.id, name: toolName, args: toolArgs });
 
-      // Execute the tool
-      const toolResult = await executeTool(toolName, toolArgs, toolContext);
+      // ── Optimizer deduplication: return cached primary result if same tool+args ──
+      let toolResult;
+      const primaryCalls = toolContext._primaryToolCalls;
+      const duplicatePrimaryCall = primaryCalls
+        ? primaryCalls.find(ptc => {
+            if (ptc.name !== toolName || !ptc.result?.success) return false;
+            // Normalize SQL for comparison
+            if (toolName === 'query_sap_data') {
+              const normSql = s => {
+                let q = (s || '').toLowerCase().trim();
+                q = q.replace(/\s*;\s*$/, '');
+                q = q.replace(/\s+/g, ' ');
+                q = q.replace(/\b(from|join)\s+(\w+)\s+(?:as\s+)?\w+\b/gi, '$1 $2');
+                q = q.replace(/\b(\w+(?:\.\w+)?)\s+as\s+\w+\b/gi, '$1');
+                q = q.replace(/\b\w+\.(\w+)/g, '$1');
+                q = q.replace(/[`"]/g, '');
+                return q.trim();
+              };
+              return normSql(ptc.args?.sql) === normSql(toolArgs?.sql);
+            }
+            return JSON.stringify(ptc.args) === JSON.stringify(toolArgs);
+          })
+        : null;
+
+      if (duplicatePrimaryCall) {
+        console.info(`[agentLoop] Optimizer: returning cached primary result for ${toolName}`);
+        toolResult = duplicatePrimaryCall.result;
+        deferredGuidance.push({
+          role: 'user',
+          content: `ℹ️ This ${toolName} call is identical to Primary Agent's call. Returning cached result. Do NOT re-query the same data — use different parameters or a different tool.`,
+        });
+      } else {
+        toolResult = await executeTool(toolName, toolArgs, toolContext);
+      }
 
       onToolResult?.({
         id: tc.id,
@@ -1006,8 +1246,9 @@ export async function runAgentLoop({
         const tablesMentioned = Array.from(new Set((sqlText.match(/\b(?:FROM|JOIN)\s+([a-z_][a-z0-9_]*)/gi) || [])
           .map((fragment) => fragment.replace(/\b(?:FROM|JOIN)\s+/i, '').trim())
           .filter(Boolean)));
+        const hasUserData = Boolean(toolContext.datasetProfileRow?.profile_json);
         const mentionsModernDate = /202[3-9]|203\d/.test(sqlText);
-        const dateHint = mentionsModernDate
+        const dateHint = (mentionsModernDate && !hasUserData)
           ? ' The SQL filters on dates outside the Olist data range (2016-09 to 2018-10). Rewrite it with dates in range.'
           : '';
         const tableHint = tablesMentioned.length > 0
@@ -1047,6 +1288,13 @@ export async function runAgentLoop({
             role: 'user',
             content: `Coverage rule: the existing successful artifacts already cover all required dimensions and structured outputs. Covered dimensions: ${coveredDimensionsText}. Covered outputs: ${coveredOutputsText}. Do NOT call query_sap_data or other retrieval tools again just to restate the same numbers. Use the current chart/artifact as the source of truth and write the final answer now.`,
           });
+        } else if (!coverageStopInstructionInjected && unmetDimensions.length > 0 && toolResult.success) {
+          // Proactive mid-loop nudge: tell agent what's still missing after each successful tool call
+          const coveredSoFar = [...(coverageStatus.coverage.coveredDimensions || [])];
+          deferredGuidance.push({
+            role: 'user',
+            content: `Progress update: covered dimensions so far: ${coveredSoFar.join(', ') || 'none'}. Still uncovered: ${unmetDimensions.join(', ')}${unmetStructuredOutputs.length > 0 ? `. Missing outputs: ${unmetStructuredOutputs.join(', ')}` : ''}. Continue calling tools to address the uncovered dimensions before writing your final answer.`,
+          });
         }
       }
 
@@ -1074,6 +1322,55 @@ export async function runAgentLoop({
             content: `query_sap_data returned 0 rows.${dateHint} Try a corrected query before giving a final answer.`,
           });
         }
+      }
+
+      // ── Failure Memory: record failure patterns for cross-session learning ──
+      if (!toolResult.success) {
+        try {
+          const errorMsg = toolResult.error || '';
+          const errorType = classifyToolError(errorMsg);
+          const failedInput = toolName === 'query_sap_data'
+            ? (toolArgs.sql || '').slice(0, 200)
+            : toolName === 'run_python_analysis'
+              ? (toolArgs.tool_hint || '').slice(0, 200)
+              : toolName === 'generate_chart'
+                ? (toolArgs.recipe_id || '')
+                : JSON.stringify(toolArgs).slice(0, 200);
+
+          const fingerprint = toolContext.datasetProfileRow?.profile_json?.global?.fingerprint;
+
+          writeFailurePattern({
+            datasetFingerprint: fingerprint,
+            toolUsed: toolName,
+            failedInput,
+            errorType,
+            errorMessage: errorMsg.slice(0, 200),
+          }).catch(() => {}); // fire-and-forget, never block agent loop
+
+          // Track dedupeKey for potential resolution attachment
+          toolCalls[toolCalls.length - 1]._failureDedupeKey = failureDedupeKey({
+            toolUsed: toolName,
+            errorType,
+            errorMessage: errorMsg,
+          });
+        } catch { /* non-critical — never block agent loop */ }
+      }
+
+      // ── Failure Resolution: if this tool succeeded after a prior same-tool failure, record resolution ──
+      if (toolResult.success && toolName) {
+        try {
+          const priorFailure = [...toolCalls].reverse().find(
+            tc => tc.name === toolName && !tc.result?.success && tc._failureDedupeKey
+          );
+          if (priorFailure) {
+            const resolution = toolName === 'run_python_analysis'
+              ? `Succeeded with hint: "${(toolArgs.tool_hint || '').slice(0, 150)}"`
+              : toolName === 'query_sap_data'
+                ? `Succeeded with SQL: "${(toolArgs.sql || '').slice(0, 150)}"`
+                : `Succeeded with: ${JSON.stringify(toolArgs).slice(0, 150)}`;
+            attachFailureResolution(priorFailure._failureDedupeKey, resolution);
+          }
+        } catch { /* non-critical */ }
       }
 
       // ── Consecutive failure detection ──────────────────────────────────
@@ -1104,6 +1401,20 @@ export async function runAgentLoop({
     // Then push any deferred guidance messages
     for (const gm of deferredGuidance) {
       messages.push(gm);
+    }
+
+    // Iteration budget awareness: tell agent how many turns remain
+    const remaining = maxIterations - (i + 1);
+    if (remaining <= 2 && remaining > 0) {
+      messages.push({
+        role: 'user',
+        content: `⏱ You have ${remaining} iteration${remaining === 1 ? '' : 's'} remaining. If uncovered dimensions remain, prioritize them now. Otherwise, write your final answer.`,
+      });
+    } else if (remaining === 0) {
+      messages.push({
+        role: 'user',
+        content: '⏱ This is your LAST iteration. Write your final answer now using the evidence collected so far. Do not call more tools.',
+      });
     }
 
     // Handle early return from gap detection (after tool responses are properly pushed)
@@ -1153,6 +1464,7 @@ export async function runAgentLoop({
     model: agentModel,
     transport: agentTransport,
     recoveryAttempts,
+    queryTier,
   };
 }
 
@@ -1512,7 +1824,16 @@ export function getUnmetCoreDimensions(answerContract, toolCalls = [], userMessa
     if (/quantiles?|percentiles?/.test(normalized)) {
       return !isQuantilesDimensionCovered(coverageStatus);
     }
-    return !coveredDimensions.has(normalized);
+    // Exact match
+    if (coveredDimensions.has(normalized)) return false;
+    // Pattern-based match: run required dimension through the same DIMENSION_PATTERNS
+    // so compound phrases like "seller revenue" match covered labels "revenue"/"sellers"
+    const matchedLabels = new Set();
+    addDimensionHits(normalized, matchedLabels);
+    for (const label of matchedLabels) {
+      if (coveredDimensions.has(label)) return false;
+    }
+    return true;
   });
 }
 

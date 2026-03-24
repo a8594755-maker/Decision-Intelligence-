@@ -55,7 +55,13 @@ export const warmupEdgeFunction = () => {
 /** Default timeout for AI proxy requests (180 seconds — long tasks are common). */
 const AI_PROXY_TIMEOUT_MS = 180_000;
 const KIMI_MAX_IN_FLIGHT = Math.max(1, Math.floor(Number(import.meta.env.VITE_DI_KIMI_MAX_INFLIGHT || 4)));
-const KIMI_OVERLOAD_RETRY_DELAYS_MS = Object.freeze([1000, 2000, 4000]);
+const KIMI_OVERLOAD_RETRY_DELAYS_MS = Object.freeze([2000, 5000, 12000, 25000]);
+
+// --- Circuit Breaker ---
+const CIRCUIT_BREAKER_FAILURE_THRESHOLD = 3;
+const CIRCUIT_BREAKER_FAILURE_WINDOW_MS = 30_000;
+const CIRCUIT_BREAKER_COOLDOWN_MS = 60_000;
+const CIRCUIT_BREAKER_MAX_COOLDOWN_MS = 120_000;
 
 class AsyncSemaphore {
   constructor(maxConcurrent) {
@@ -110,6 +116,11 @@ class AsyncSemaphore {
     };
   }
 
+  setMaxConcurrent(n) {
+    this.maxConcurrent = Math.max(1, Math.floor(Number(n) || 1));
+    this._drain();
+  }
+
   _drain() {
     while (this.active < this.maxConcurrent && this.queue.length > 0) {
       const next = this.queue.shift();
@@ -122,10 +133,98 @@ const providerSemaphores = new Map();
 
 function getProviderSemaphore(provider) {
   if (!providerSemaphores.has(provider)) {
-    const maxConcurrent = provider === 'kimi' ? KIMI_MAX_IN_FLIGHT : 1;
+    const maxConcurrent = (provider === 'kimi' || provider === 'gemini') ? KIMI_MAX_IN_FLIGHT : 1;
     providerSemaphores.set(provider, new AsyncSemaphore(maxConcurrent));
   }
   return providerSemaphores.get(provider);
+}
+
+// --- Circuit Breaker (per-provider) ---
+
+class CircuitBreaker {
+  constructor(provider, semaphore) {
+    this.provider = provider;
+    this.semaphore = semaphore;
+    this.originalMaxConcurrent = semaphore.maxConcurrent;
+    this.state = 'CLOSED';       // CLOSED | OPEN | HALF_OPEN
+    this.failures = [];          // timestamps of recent failures
+    this.cooldownMs = CIRCUIT_BREAKER_COOLDOWN_MS;
+    this.openedAt = 0;
+  }
+
+  recordFailure() {
+    const now = Date.now();
+    this.failures.push(now);
+    // prune failures outside the window
+    const cutoff = now - CIRCUIT_BREAKER_FAILURE_WINDOW_MS;
+    this.failures = this.failures.filter((t) => t > cutoff);
+
+    if (this.state === 'HALF_OPEN') {
+      // test request failed — re-open with doubled cooldown
+      this.state = 'OPEN';
+      this.openedAt = now;
+      this.cooldownMs = Math.min(this.cooldownMs * 2, CIRCUIT_BREAKER_MAX_COOLDOWN_MS);
+      this.semaphore.setMaxConcurrent(1);
+      console.warn(`[CircuitBreaker] ${this.provider} HALF_OPEN→OPEN (cooldown ${this.cooldownMs}ms)`);
+      return;
+    }
+
+    if (this.state === 'CLOSED' && this.failures.length >= CIRCUIT_BREAKER_FAILURE_THRESHOLD) {
+      this.state = 'OPEN';
+      this.openedAt = now;
+      this.semaphore.setMaxConcurrent(1);
+      console.warn(`[CircuitBreaker] ${this.provider} CLOSED→OPEN (${this.failures.length} failures in ${CIRCUIT_BREAKER_FAILURE_WINDOW_MS}ms, cooldown ${this.cooldownMs}ms)`);
+    }
+  }
+
+  recordSuccess() {
+    if (this.state === 'HALF_OPEN' || this.state === 'OPEN') {
+      console.info(`[CircuitBreaker] ${this.provider} ${this.state}→CLOSED`);
+    }
+    this.state = 'CLOSED';
+    this.failures = [];
+    this.cooldownMs = CIRCUIT_BREAKER_COOLDOWN_MS;
+    this.semaphore.setMaxConcurrent(this.originalMaxConcurrent);
+  }
+
+  canRequest() {
+    if (this.state === 'CLOSED') return true;
+    if (this.state === 'OPEN') {
+      const elapsed = Date.now() - this.openedAt;
+      if (elapsed >= this.cooldownMs) {
+        this.state = 'HALF_OPEN';
+        console.info(`[CircuitBreaker] ${this.provider} OPEN→HALF_OPEN (testing one request)`);
+        return true;
+      }
+      return false;
+    }
+    // HALF_OPEN — allow (semaphore at 1 ensures only 1 in flight)
+    return true;
+  }
+
+  getState() {
+    const cooldownRemainingMs = this.state === 'OPEN'
+      ? Math.max(0, this.cooldownMs - (Date.now() - this.openedAt))
+      : 0;
+    return { state: this.state, cooldownRemainingMs, cooldownMs: this.cooldownMs };
+  }
+}
+
+const providerCircuitBreakers = new Map();
+
+function getProviderCircuitBreaker(provider) {
+  if (!providerCircuitBreakers.has(provider)) {
+    const semaphore = getProviderSemaphore(provider);
+    providerCircuitBreakers.set(provider, new CircuitBreaker(provider, semaphore));
+  }
+  return providerCircuitBreakers.get(provider);
+}
+
+export function isProviderCircuitOpen(provider) {
+  if (!providerCircuitBreakers.has(provider)) return false;
+  const breaker = providerCircuitBreakers.get(provider);
+  // Read-only check: true if OPEN or HALF_OPEN (provider under pressure)
+  return breaker.state !== 'CLOSED';
 }
 
 function inferProxyProvider(mode, payload = {}) {
@@ -143,7 +242,7 @@ function inferProxyProvider(mode, payload = {}) {
 
 function shouldApplyProviderBackpressure(mode, payload = {}) {
   const provider = inferProxyProvider(mode, payload);
-  if (provider !== 'kimi') return false;
+  if (provider !== 'kimi' && provider !== 'gemini') return false;
   return !/billing$/i.test(String(mode || '').trim());
 }
 
@@ -175,7 +274,7 @@ function createAiProxyError(message, { status = null, mode = null, payload = {},
   if (Number.isFinite(retryAfterMs) && retryAfterMs >= 0) {
     error.retryAfterMs = retryAfterMs;
   }
-  if (provider === 'kimi' && isProviderOverloadedMessage(message)) {
+  if ((provider === 'kimi' || provider === 'gemini') && isProviderOverloadedMessage(message)) {
     error.failureCategory = 'provider_overloaded';
     error.failureMessage = message;
   }
@@ -183,7 +282,7 @@ function createAiProxyError(message, { status = null, mode = null, payload = {},
 }
 
 function isRetriableProviderOverload(error, { provider } = {}) {
-  if (provider !== 'kimi') return false;
+  if (provider !== 'kimi' && provider !== 'gemini') return false;
   const status = Number(error?.status || 0);
   const message = String(error?.failureMessage || error?.message || '').trim();
   return (
@@ -225,6 +324,22 @@ function delayWithAbort(ms, signal) {
 async function withProviderBackpressure(mode, payload, signal, task) {
   const provider = inferProxyProvider(mode, payload);
   const applyBackpressure = shouldApplyProviderBackpressure(mode, payload);
+
+  // Circuit breaker check — reject immediately if provider is overloaded
+  if (applyBackpressure) {
+    const breaker = getProviderCircuitBreaker(provider);
+    if (!breaker.canRequest()) {
+      const { cooldownRemainingMs } = breaker.getState();
+      const err = createAiProxyError(
+        `${provider} circuit breaker is open — too many recent failures. Retry in ${Math.ceil(cooldownRemainingMs / 1000)}s.`,
+        { status: 429, mode, payload }
+      );
+      err.failureCategory = 'provider_circuit_open';
+      err.retryAfterMs = cooldownRemainingMs;
+      throw err;
+    }
+  }
+
   const release = applyBackpressure
     ? await getProviderSemaphore(provider).acquire({ signal })
     : null;
@@ -233,13 +348,19 @@ async function withProviderBackpressure(mode, payload, signal, task) {
     let attempt = 0;
     while (true) {
       try {
-        return await task();
+        const result = await task();
+        if (applyBackpressure) getProviderCircuitBreaker(provider).recordSuccess();
+        return result;
       } catch (error) {
         if (!applyBackpressure || !isRetriableProviderOverload(error, { provider }) || attempt >= KIMI_OVERLOAD_RETRY_DELAYS_MS.length) {
+          if (applyBackpressure && isRetriableProviderOverload(error, { provider })) {
+            getProviderCircuitBreaker(provider).recordFailure();
+          }
           throw error;
         }
+        if (applyBackpressure) getProviderCircuitBreaker(provider).recordFailure();
         const baseDelayMs = error?.retryAfterMs ?? KIMI_OVERLOAD_RETRY_DELAYS_MS[attempt];
-        const jitterMs = Math.floor((Math.random?.() ?? 0.5) * 250);
+        const jitterMs = Math.floor((Math.random?.() ?? 0.5) * 1000);
         const delayMs = baseDelayMs + jitterMs;
         console.warn(`[aiProxy] ${provider} overloaded for mode=${mode}; retrying in ${delayMs}ms (attempt ${attempt + 2}/${KIMI_OVERLOAD_RETRY_DELAYS_MS.length + 1})`);
         attempt += 1;
@@ -436,11 +557,13 @@ export const streamTextToChunks = (text, onChunk, chunkSize = 48) => {
 
 export const __resetAiProxyBackpressureForTests = () => {
   providerSemaphores.clear();
+  providerCircuitBreakers.clear();
 };
 
 export default {
   invokeAiProxy,
   invokeAiProxyStream,
   streamTextToChunks,
+  isProviderCircuitOpen,
   __resetAiProxyBackpressureForTests,
 };

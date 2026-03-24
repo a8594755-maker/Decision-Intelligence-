@@ -46,9 +46,9 @@ describe('ChatComposer', () => {
     expect(screen.queryByText(/shift\+enter for newline/i)).not.toBeInTheDocument();
   });
 
-  it('renders a thinking toggle and handles clicks', async () => {
+  it('renders a deep verify toggle and handles clicks', async () => {
     const user = userEvent.setup();
-    const onToggleThinkingEnabled = vi.fn();
+    const onToggleDeepVerify = vi.fn();
 
     render(
       <ChatComposer
@@ -70,17 +70,17 @@ describe('ChatComposer', () => {
         onDrop={vi.fn()}
         pendingAttachments={[]}
         onRemoveAttachment={vi.fn()}
-        thinkingEnabled
-        onToggleThinkingEnabled={onToggleThinkingEnabled}
+        deepVerifyEnabled
+        onToggleDeepVerify={onToggleDeepVerify}
       />
     );
 
-    await user.click(screen.getByRole('button', { name: /thinking on/i }));
+    await user.click(screen.getByRole('button', { name: /deep verify/i }));
 
-    expect(onToggleThinkingEnabled).toHaveBeenCalledTimes(1);
+    expect(onToggleDeepVerify).toHaveBeenCalledTimes(1);
   });
 
-  it('shows auto label when thinking override is not enabled', () => {
+  it('shows auto label when deep verify is not enabled', () => {
     render(
       <ChatComposer
         input=""
@@ -101,11 +101,11 @@ describe('ChatComposer', () => {
         onDrop={vi.fn()}
         pendingAttachments={[]}
         onRemoveAttachment={vi.fn()}
-        thinkingEnabled={false}
-        onToggleThinkingEnabled={vi.fn()}
+        deepVerifyEnabled={false}
+        onToggleDeepVerify={vi.fn()}
       />
     );
 
-    expect(screen.getByRole('button', { name: /thinking auto/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^auto$/i })).toBeInTheDocument();
   });
 });

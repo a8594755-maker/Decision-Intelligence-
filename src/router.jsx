@@ -24,6 +24,8 @@ const PolicyRulesPage     = lazy(() => import('./pages/PolicyRulesPage'));
 const WebhookConfigPage   = lazy(() => import('./pages/WebhookConfigPage'));
 const ScheduleManagerPage = lazy(() => import('./pages/ScheduleManagerPage'));
 const ApprovalQueuePage  = lazy(() => import('./pages/ApprovalQueuePage'));
+// @product: insights-hub
+const InsightsHub        = lazy(() => import('./pages/InsightsHub'));
 // @product: unified-workspace (Canvas Architecture)
 const WorkspacePage      = lazy(() => import('./pages/WorkspacePage'));
 
@@ -54,6 +56,8 @@ export const router = createBrowserRouter([
       { path: 'employees/webhooks',  element: <WebhookConfigPage /> },
       { path: 'employees/schedules', element: <ScheduleManagerPage /> },
       { path: 'employees/approvals', element: <ApprovalQueuePage /> },
+      // @product: insights-hub
+      { path: 'insights', element: <InsightsHub /> },
       // @product: unified-workspace (Canvas Architecture — Trinity Layout)
       { path: 'workspace', element: <WorkspacePage /> },
       { path: 'ops', element: <OpsDashboard /> },

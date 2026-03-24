@@ -132,6 +132,75 @@ describe('checkSampleSize', () => {
   });
 });
 
+// ── checkSampleSize: aggregation-aware ─────────────────────────────────────
+
+describe('checkSampleSize — aggregated queries', () => {
+  const groupBySql = 'SELECT bracket, COUNT(*) AS count FROM sellers GROUP BY bracket';
+
+  it('skips small_sample when GROUP BY count col sums to >= 30', () => {
+    const rows = [
+      { bracket: 'low', count: 1500 },
+      { bracket: 'mid', count: 2000 },
+      { bracket: 'high', count: 1500 },
+    ];
+    const warnings = checkSampleSize(rows, ['bracket', 'count'], groupBySql);
+    const sizeWarning = warnings.find((w) => w.id === 'small_sample' && w.column === null);
+    expect(sizeWarning).toBeUndefined();
+  });
+
+  it('warns when GROUP BY count col sums to < 30', () => {
+    const rows = [
+      { bracket: 'low', count: 5 },
+      { bracket: 'mid', count: 7 },
+      { bracket: 'high', count: 3 },
+    ];
+    const warnings = checkSampleSize(rows, ['bracket', 'count'], groupBySql);
+    const sizeWarning = warnings.find((w) => w.id === 'small_sample' && w.column === null);
+    expect(sizeWarning).toBeDefined();
+    expect(sizeWarning.message).toContain('aggregated');
+    expect(sizeWarning.message).toContain('~15');
+  });
+
+  it('does not warn for GROUP BY with no count col and >= 5 rows', () => {
+    const sql = 'SELECT category, AVG(price) AS avg_price FROM products GROUP BY category';
+    const rows = Array.from({ length: 8 }, (_, i) => ({ category: `C${i}`, avg_price: 100 + i }));
+    const warnings = checkSampleSize(rows, ['category', 'avg_price'], sql);
+    const sizeWarning = warnings.find((w) => w.id === 'small_sample' && w.column === null);
+    expect(sizeWarning).toBeUndefined();
+  });
+
+  it('warns for GROUP BY with no count col and < 5 rows', () => {
+    const sql = 'SELECT region, SUM(sales) AS total FROM orders GROUP BY region';
+    const rows = [
+      { region: 'East', total: 5000 },
+      { region: 'West', total: 3000 },
+      { region: 'South', total: 4000 },
+    ];
+    const warnings = checkSampleSize(rows, ['region', 'total'], sql);
+    const sizeWarning = warnings.find((w) => w.id === 'small_sample' && w.column === null);
+    expect(sizeWarning).toBeDefined();
+    expect(sizeWarning.message).toContain('aggregated groups');
+  });
+
+  it('preserves original behavior for non-GROUP BY queries', () => {
+    const sql = 'SELECT * FROM orders LIMIT 8';
+    const rows = Array.from({ length: 8 }, (_, i) => ({ value: i }));
+    const warnings = checkSampleSize(rows, ['value'], sql);
+    const sizeWarning = warnings.find((w) => w.id === 'small_sample');
+    expect(sizeWarning).toBeDefined();
+    expect(sizeWarning.severity).toBe('high');
+  });
+
+  it('preserves original behavior when sql is null/undefined', () => {
+    const rows = Array.from({ length: 8 }, (_, i) => ({ value: i }));
+    const warnings = checkSampleSize(rows, ['value'], null);
+    expect(warnings.find((w) => w.id === 'small_sample')).toBeDefined();
+
+    const warnings2 = checkSampleSize(rows, ['value']);
+    expect(warnings2.find((w) => w.id === 'small_sample')).toBeDefined();
+  });
+});
+
 // ── checkOutlierContamination ───────────────────────────────────────────────
 
 describe('checkOutlierContamination', () => {

@@ -25,12 +25,15 @@ import {
   runTask as runTaskAction,
   submitPlan,
   createPlan,
+  provideStepInput,
+  skipWaitingInputStep,
 } from '../services/aiEmployee/index.js';
 import { buildPlanFromTemplateTask } from '../services/aiEmployee/templatePlanAdapter';
 import { EXECUTION_MODES } from '../services/aiEmployee/executionPolicy.js';
 import { createTaskDatasetContextFromFile } from '../services/aiEmployee/taskDatasetContextService.js';
 import { processIntake, INTAKE_SOURCES } from '../services/taskIntakeService.js';
 import { TASK_STATES } from '../services/aiEmployee/taskStateMachine.js';
+import StepInputCard from '../components/chat/StepInputCard';
 
 // ── Constants ─────────────────────────────────────────────────────────────
 
@@ -877,7 +880,7 @@ function StepProgressBar({ loopState }) {
 
 // ── Task detail panel ─────────────────────────────────────────────────────
 
-function TaskDetail({ task, logs, onRun, running, workers = [], onReassign }) {
+function TaskDetail({ task, logs, onRun, running, workers = [], onReassign, onProvideStepInput, onSkipStep }) {
   const canRun = [TASK_STATES.WAITING_APPROVAL, TASK_STATES.FAILED].includes(task.status);
   const canReassign = [TASK_STATES.DRAFT_PLAN, TASK_STATES.WAITING_APPROVAL].includes(task.status);
   const ctx = task.input_context || {};
@@ -1010,6 +1013,24 @@ function TaskDetail({ task, logs, onRun, running, workers = [], onReassign }) {
           Awaiting manager review — go to the Review Queue to approve.
         </div>
       )}
+
+      {/* Blocked / Needs Input — interactive dataset attachment */}
+      {task.status === TASK_STATES.BLOCKED && (() => {
+        const steps = task.loop_state?.steps || [];
+        const waitingStep = steps.find(s => s.status === 'waiting_input');
+        return (
+          <StepInputCard
+            taskId={task.id}
+            stepName={waitingStep?.step_name || 'Unknown step'}
+            stepIndex={waitingStep?.step_index ?? 0}
+            reason="dataset_required"
+            message={waitingStep?.error_message || 'This step needs a dataset to continue.'}
+            datasets={[]}
+            onProvideInput={(input) => onProvideStepInput?.(task.id, input)}
+            onSkip={() => onSkipStep?.(task.id)}
+          />
+        );
+      })()}
 
       {/* Work log */}
       {logs.length > 0 && (
@@ -1217,7 +1238,7 @@ export default function EmployeeTasksPage() {
       const snapshots = await Promise.all(
         activeTaskIds.map(async (taskId) => {
           try {
-            return await getTaskStatus(taskId);
+            return await getTaskStatus(taskId, { lite: true });
           } catch {
             return null;
           }
@@ -1243,7 +1264,7 @@ export default function EmployeeTasksPage() {
     };
 
     pollActiveTasks();
-    const intervalId = setInterval(pollActiveTasks, 2000);
+    const intervalId = setInterval(pollActiveTasks, 15000);
 
     return () => {
       cancelled = true;
@@ -1537,6 +1558,20 @@ export default function EmployeeTasksPage() {
                 running={runningId === selectedTask.id}
                 workers={workers}
                 onReassign={handleReassign}
+                onProvideStepInput={async (taskId, input) => {
+                  try {
+                    await provideStepInput(taskId, input, user?.id || 'current_user');
+                  } catch (err) {
+                    console.error('[TasksPage] provideStepInput failed:', err);
+                  }
+                }}
+                onSkipStep={async (taskId) => {
+                  try {
+                    await skipWaitingInputStep(taskId, user?.id || 'current_user');
+                  } catch (err) {
+                    console.error('[TasksPage] skipWaitingInputStep failed:', err);
+                  }
+                }}
               />
             ) : (
               <div className="flex items-center justify-center h-full">

@@ -8,81 +8,206 @@
  *   { analysisType, title, summary, metrics, charts[], tables[], highlights[], details[] }
  */
 
-import React, { useState, useCallback } from 'react';
-import { ChevronDown, ChevronUp, BarChart3, TrendingUp, Table2, Database, Code2, Copy, Check, Sparkles, Loader2 } from 'lucide-react';
+import React, { useState, useCallback, useEffect, useMemo, Suspense } from 'react';
+import { createPortal } from 'react-dom';
+import { ChevronDown, ChevronUp, BarChart3, TrendingUp, Table2, Database, Code2, Copy, Check, Sparkles, Loader2, Maximize2, X, FileSpreadsheet } from 'lucide-react';
 import ChartRenderer from './ChartRenderer.jsx';
 import { inferChartSpec, getCompatibleTypes } from '../../services/chartSpecInference.js';
 import { enhanceChartSpec } from '../../services/chartEnhancementService.js';
+import { selectTemplate } from '../../services/chartTemplateSelector.js';
+import { getTemplateComponent } from '../../services/chartTemplateLoader.js';
+import { generateArtisanChart, getCachedArtisan, clearCachedArtisan } from '../../services/chartArtisanService.js';
+import ChartIframeSandbox from '../charts/ChartIframeSandbox.jsx';
 
-// ── EnhanceableChart — wraps ChartRenderer with enhance button + toggle ─────
+// ── EnhanceableChart — 3-layer view: Original / Template (C) / Artisan (A) ──
 
-function EnhanceableChart({ chart, height = 220, title, summary }) {
-  const [enhancedSpec, setEnhancedSpec] = useState(null);
-  const [isEnhancing, setIsEnhancing] = useState(false);
-  const [view, setView] = useState('original'); // 'original' | 'enhanced'
-  const [error, setError] = useState(null);
+export function EnhanceableChart({ chart, height = 220, title, summary, context = {} }) {
+  // Restore from cache if available (survives unmount/remount)
+  const cached = useMemo(() => getCachedArtisan(chart, title || context?.title), [chart, title, context?.title]);
+  const [view, setView] = useState(() => cached ? 'artisan' : 'original');
 
-  const handleEnhance = useCallback(async () => {
-    if (isEnhancing || enhancedSpec) {
-      // If already enhanced, just toggle to enhanced view
-      if (enhancedSpec) setView('enhanced');
-      return;
+  // --- Layer C: Template (auto-triggered) ---
+  const templateId = useMemo(() => selectTemplate(chart), [chart]);
+  const TemplateComponent = templateId ? getTemplateComponent(templateId) : null;
+
+  // Auto-switch to template view once available (but not if artisan is cached)
+  useEffect(() => {
+    if (TemplateComponent && view === 'original' && !cached) {
+      const timer = setTimeout(() => setView('template'), 300);
+      return () => clearTimeout(timer);
     }
-    setIsEnhancing(true);
-    setError(null);
+  }, [TemplateComponent]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // --- Layer A: Artisan (on-demand, cached across remounts) ---
+  const [artisanHtml, setArtisanHtml] = useState(() => cached?.html || null);
+  const [artisanLoading, setArtisanLoading] = useState(false);
+  const [artisanError, setArtisanError] = useState(null);
+
+  const [artisanIsAI, setArtisanIsAI] = useState(false);
+
+  const requestArtisan = useCallback(async ({ forceAI = false } = {}) => {
+    if (artisanHtml && !forceAI) { setView('artisan'); return; }
+    if (forceAI) {
+      clearCachedArtisan(chart, title || context?.title);
+      setArtisanHtml(null);
+    }
+    setArtisanLoading(true);
+    setArtisanError(null);
     try {
-      const result = await enhanceChartSpec(chart, { title, summary });
-      setEnhancedSpec(result);
-      setView('enhanced');
+      const { html } = await generateArtisanChart(
+        chart,
+        { title: title || context.title, summary: summary || context.summary },
+        { forceAI },
+      );
+      setArtisanHtml(html);
+      setArtisanIsAI(forceAI);
+      setView('artisan');
     } catch (err) {
-      console.warn('[EnhanceableChart] Enhancement failed:', err?.message);
-      setError('Enhancement failed');
+      console.warn('[EnhanceableChart] Artisan generation failed:', err?.message);
+      setArtisanError(err.message);
     } finally {
-      setIsEnhancing(false);
+      setArtisanLoading(false);
     }
-  }, [chart, title, summary, isEnhancing, enhancedSpec]);
+  }, [chart, title, summary, context, artisanHtml]);
 
-  const activeChart = view === 'enhanced' && enhancedSpec ? enhancedSpec : chart;
+  // --- Expand modal ---
+  const [expanded, setExpanded] = useState(false);
+
+  // Close on Escape key
+  useEffect(() => {
+    if (!expanded) return;
+    const handleKey = (e) => { if (e.key === 'Escape') setExpanded(false); };
+    document.addEventListener('keydown', handleKey);
+    return () => document.removeEventListener('keydown', handleKey);
+  }, [expanded]);
+
+  // --- Toggle Pills ---
   const pillBase = 'text-[10px] font-medium px-2 py-0.5 rounded-full transition-colors';
   const pillActive = 'bg-blue-100 text-blue-700 dark:bg-blue-900/60 dark:text-blue-300';
   const pillInactive = 'text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 cursor-pointer';
 
+  const pills = [
+    { key: 'original', label: 'Original' },
+    ...(TemplateComponent ? [{ key: 'template', label: 'Enhanced' }] : []),
+    { key: 'artisan', label: '\u2728 Artisan', loading: artisanLoading && !artisanIsAI },
+    { key: 'artisan-ai', label: '\ud83e\udd16 AI', loading: artisanLoading && artisanIsAI },
+  ];
+
+  // Stable expanded height (avoid recalculating on every render)
+  const expandedHeight = useMemo(() => {
+    return typeof window !== 'undefined' ? Math.min(Math.round(window.innerHeight * 0.68), 600) : 500;
+  }, [expanded]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Chart content renderer
+  const renderChart = (renderHeight, isModal) => (
+    <>
+      {view === 'original' && (
+        <ChartRenderer
+          chart={chart}
+          height={renderHeight}
+          compatibleTypes={chart.compatibleTypes || getCompatibleTypes(chart.type, chart.data)}
+          showSwitcher={!isModal}
+        />
+      )}
+      {view === 'template' && TemplateComponent && (
+        <Suspense fallback={<ChartRenderer chart={chart} height={renderHeight} showSwitcher={false} />}>
+          <TemplateComponent chart={chart} height={renderHeight} />
+        </Suspense>
+      )}
+      {view === 'artisan' && artisanHtml && (
+        <ChartIframeSandbox
+          html={artisanHtml}
+          minHeight={renderHeight}
+          onError={() => setView(TemplateComponent ? 'template' : 'original')}
+        />
+      )}
+    </>
+  );
+
+  // Pill bar renderer (shared between inline and modal)
+  const renderPills = () => (
+    pills.map((pill) => (
+      <button
+        key={pill.key}
+        onClick={() => {
+              if (pill.key === 'artisan') requestArtisan();
+              else if (pill.key === 'artisan-ai') requestArtisan({ forceAI: true });
+              else setView(pill.key);
+            }}
+        disabled={pill.loading}
+        className={`${pillBase} ${
+              (pill.key === 'artisan' && view === 'artisan' && !artisanIsAI) ||
+              (pill.key === 'artisan-ai' && view === 'artisan' && artisanIsAI) ||
+              (pill.key !== 'artisan' && pill.key !== 'artisan-ai' && view === pill.key)
+                ? pillActive : pillInactive
+            } disabled:opacity-50`}
+      >
+        {pill.loading ? (
+          <span className="flex items-center gap-1">
+            <Loader2 size={10} className="animate-spin" />
+            Generating\u2026
+          </span>
+        ) : pill.label}
+      </button>
+    ))
+  );
+
   return (
     <div>
       <div className="flex items-center justify-between px-1 mb-1.5">
-        <div className="flex gap-1">
-          {enhancedSpec ? (
-            <>
-              <button onClick={() => setView('original')} className={`${pillBase} ${view === 'original' ? pillActive : pillInactive}`}>
-                Original
-              </button>
-              <button onClick={() => setView('enhanced')} className={`${pillBase} ${view === 'enhanced' ? pillActive : pillInactive}`}>
-                Enhanced
-              </button>
-            </>
-          ) : <div />}
+        <div className="flex items-center gap-1.5">
+          {renderPills()}
         </div>
         <button
-          onClick={handleEnhance}
-          disabled={isEnhancing}
-          className="flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 hover:bg-blue-100 hover:text-blue-600 dark:hover:bg-blue-900/40 dark:hover:text-blue-300 disabled:opacity-50 transition-colors"
+          onClick={() => setExpanded(true)}
+          className="p-1 rounded-md text-slate-400 hover:text-slate-600 hover:bg-slate-100 dark:hover:text-slate-300 dark:hover:bg-slate-800 transition-colors"
+          title="Expand chart"
         >
-          {isEnhancing ? (
-            <><Loader2 size={10} className="animate-spin" /> Enhancing…</>
-          ) : (
-            <><Sparkles size={10} /> Enhance</>
-          )}
+          <Maximize2 size={13} />
         </button>
       </div>
-      {error ? (
-        <p className="text-[10px] text-red-400 dark:text-red-500 px-1 mb-1">{error}</p>
-      ) : null}
-      <ChartRenderer
-        chart={activeChart}
-        height={height}
-        compatibleTypes={activeChart.compatibleTypes || getCompatibleTypes(activeChart.type, activeChart.data)}
-        showSwitcher={true}
-      />
+
+      {artisanError && (
+        <p className="text-[10px] text-red-400 dark:text-red-500 px-1 mb-1">Artisan failed: {artisanError}</p>
+      )}
+
+      {/* Inline chart — hidden when modal is open to prevent duplicate iframes */}
+      {!expanded && renderChart(height, false)}
+
+      {/* ── Expanded modal ── */}
+      {expanded && createPortal(
+        <div
+          className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm"
+          onClick={(e) => { if (e.target === e.currentTarget) setExpanded(false); }}
+        >
+          <div className="relative w-[92vw] max-w-[1200px] max-h-[90vh] bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-700 flex flex-col overflow-hidden">
+            {/* Header */}
+            <div className="flex items-center justify-between px-5 py-3 border-b border-slate-200 dark:border-slate-700">
+              <div className="flex items-center gap-3">
+                {(title || context?.title) && (
+                  <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-200 truncate max-w-[400px]">
+                    {title || context.title}
+                  </h3>
+                )}
+                <div className="flex items-center gap-1">
+                  {renderPills()}
+                </div>
+              </div>
+              <button
+                onClick={() => setExpanded(false)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 dark:hover:text-slate-300 dark:hover:bg-slate-800 transition-colors"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            {/* Chart body */}
+            <div className="flex-1 overflow-auto p-5">
+              {renderChart(expandedHeight, true)}
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
     </div>
   );
 }
@@ -131,7 +256,7 @@ export default function AnalysisResultCard({ payload }) {
   const [showMethodology, setShowMethodology] = useState(false);
 
   if (!payload) return null;
-  const { title, summary, metrics = {}, charts = [], tables = [], highlights = [], details = [], _methodology, _executionMeta } = payload;
+  const { title, summary, metrics = {}, charts = [], tables = [], highlights = [], details = [], _methodology, _executionMeta, _dataSource } = payload;
   const hasMethodology = _methodology?.queries?.length > 0 || _executionMeta?.code;
   const metricEntries = Object.entries(metrics);
 
@@ -143,7 +268,23 @@ export default function AnalysisResultCard({ payload }) {
           <div className="p-1.5 rounded-lg bg-blue-100 dark:bg-blue-900/50">
             <BarChart3 className="w-4 h-4 text-blue-600 dark:text-blue-400" />
           </div>
-          <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100">{title}</h3>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100">{title}</h3>
+              {_dataSource && (
+                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">
+                  <FileSpreadsheet className="w-2.5 h-2.5" />
+                  {_dataSource}
+                </span>
+              )}
+              {_executionMeta?.llm_model && (
+                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-indigo-100 text-indigo-600 dark:bg-indigo-900/40 dark:text-indigo-300">
+                  <Sparkles className="w-2.5 h-2.5" />
+                  {_executionMeta.llm_model}
+                </span>
+              )}
+            </div>
+          </div>
         </div>
         {summary && (
           <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{summary}</p>

@@ -25,6 +25,7 @@ const QA_DIMENSION_KEYS = Object.freeze([
   'clarity',
   'methodology_transparency',
   'actionability',
+  'information_density',
 ]);
 
 const clampText = (text, maxChars = 8000) => String(text || '').slice(0, maxChars);
@@ -37,6 +38,7 @@ const STRING_ARRAY_SCHEMA = Object.freeze({
 const QA_DIMENSION_SCORES_SCHEMA = Object.freeze({
   type: 'object',
   properties: Object.fromEntries(QA_DIMENSION_KEYS.map((key) => [key, { type: 'number' }])),
+  required: [...QA_DIMENSION_KEYS],
 });
 
 function buildAnalysisDepthRules(answerContract) {
@@ -71,6 +73,28 @@ function requestIncludesQuantileHistogram(answerContract, userMessage) {
   );
 }
 
+/**
+ * Format cell values: convert Unix ms timestamps (2000-2040 range) to ISO date strings.
+ */
+function formatCellValue(value) {
+  if (typeof value === 'number' && value > 9.46e11 && value < 2.21e12) {
+    return new Date(value).toISOString().slice(0, 10);
+  }
+  return value;
+}
+
+function formatSampleRows(rows) {
+  if (!Array.isArray(rows)) return rows;
+  return rows.map((row) => {
+    if (!row || typeof row !== 'object') return row;
+    const formatted = {};
+    for (const [key, val] of Object.entries(row)) {
+      formatted[key] = formatCellValue(val);
+    }
+    return formatted;
+  });
+}
+
 const summarizeToolCalls = (toolCalls = [], maxRowsPerQuery = 4) => {
   if (!Array.isArray(toolCalls) || toolCalls.length === 0) return 'No tool calls recorded.';
 
@@ -102,6 +126,10 @@ const summarizeToolCalls = (toolCalls = [], maxRowsPerQuery = 4) => {
       base.push(`args=${clampText(JSON.stringify(args), 280)}`);
     }
 
+    if (toolCall?.name === 'generate_chart') {
+      base.push('source=deterministic_recipe (computed from raw dataset at query time, not pre-cached)');
+    }
+
     if (success) {
       if (Number.isFinite(rowCount)) {
         base.push(`rows=${rowCount}`);
@@ -110,10 +138,25 @@ const summarizeToolCalls = (toolCalls = [], maxRowsPerQuery = 4) => {
         }
       }
       if (Array.isArray(sampleRows) && sampleRows.length > 0) {
-        base.push(`sample_rows=${clampText(JSON.stringify(sampleRows.slice(0, maxRowsPerQuery)), 500)}`);
+        base.push(`sample_rows=${clampText(JSON.stringify(formatSampleRows(sampleRows.slice(0, maxRowsPerQuery))), 500)}`);
       }
       if (Array.isArray(analysisCards) && analysisCards.length > 0) {
         base.push(`analysis_cards=${analysisCards.map((card) => card?.title || card?.analysisType).filter(Boolean).join(', ')}`);
+        // Inject artifact metrics so reviewers can verify cited numbers
+        for (const card of analysisCards) {
+          if (card?.metrics && typeof card.metrics === 'object') {
+            const metricsStr = Object.entries(card.metrics)
+              .slice(0, 12)
+              .map(([k, v]) => `${k}=${v}`)
+              .join(', ');
+            if (metricsStr) base.push(`artifact_metrics={${metricsStr}}`);
+          }
+          const refs = card?.charts?.[0]?.referenceLines;
+          if (Array.isArray(refs) && refs.length > 0) {
+            const refStr = refs.slice(0, 8).map((r) => `${r.label || ''}=${r.value}`).join(', ');
+            base.push(`artifact_reference_lines={${refStr}}`);
+          }
+        }
       }
     } else if (error) {
       base.push(`error=${clampText(error, 300)}`);
@@ -142,6 +185,7 @@ ${domainEnrichment ? `\n${domainEnrichment}\n` : ''}
   "task_type": "comparison | trend | ranking | lookup | diagnostic | recommendation | mixed",
   "required_dimensions": ["string"],
   "required_outputs": ["chart | table | comparison | recommendation | caveat"],
+  "suggested_deep_dives": ["string"],
   "audience_language": "short language code or language name",
   "brevity": "short | analysis",
   "analysis_depth": ["methodology_disclosure | relative_metrics | trend_context | sensitivity_range | actionable_parameters"]
@@ -159,6 +203,7 @@ ${domainEnrichment ? `\n${domainEnrichment}\n` : ''}
 - required_outputs: include only what is clearly expected from the user request.
 - audience_language should match the user's language, e.g. "zh", "en", "Chinese", "English".
 - brevity: use "analysis" for comparison, diagnostic, trend, or multi-dimension requests that need detailed breakdowns; use "short" for simple lookups, single-fact questions, or narrow queries.
+- suggested_deep_dives: 2-3 analysis angles that would deepen the answer beyond surface-level descriptive statistics. Each should combine two dimensions or introduce a causal/temporal lens. Format: "dimension_a × dimension_b (purpose)". These are suggestions for the agent, not requirements — the agent should attempt at least one if data supports it. Use empty array for simple lookups.
 - analysis_depth: an array of depth flags from ["methodology_disclosure", "relative_metrics", "trend_context", "sensitivity_range", "actionable_parameters"]. Auto-select:
   - recommendation or diagnostic → always include "methodology_disclosure", "actionable_parameters", "sensitivity_range".
   - comparison or trend → always include "relative_metrics", "trend_context".
@@ -199,8 +244,10 @@ ${repairInstructions.length > 0 ? repairInstructions.map((item) => `- ${item}`).
 ## Output JSON schema
 {
   "headline": "string",
-  "summary": "string",
-  "metric_pills": [{ "label": "string", "value": "string" }],
+  "executive_summary": "string (one-sentence executive conclusion for senior stakeholders — optional but strongly recommended)",
+  "summary": "string (supports markdown: **bold**, \`code\`, bullet lists, inline formulas. Keep professional tone. This is the main narrative.)",
+  "metric_pills": [{ "label": "string", "value": "string", "source": "string (optional — e.g. 'SQL query #2, 1247 rows')" }],
+  "data_lineage": [{ "metric": "string", "sql_ref": "string (e.g. 'query #2')", "row_count": "number", "confidence": "high|medium|low" }],
   "tables": [{
     "title": "string",
     "columns": ["string"],
@@ -224,12 +271,26 @@ ${repairInstructions.length > 0 ? repairInstructions.map((item) => `- ${item}`).
 }
 ${domainEnrichment ? `\n${domainEnrichment}\n` : ''}
 ## Rules
-- Keep the brief compact and executive-facing.
+- For brevity="short": keep the brief compact and executive-facing (under 160 words).
+- For brevity="analysis": the summary field should be 300-500 words. Go beyond describing numbers — explain WHY the patterns exist, WHAT they imply for the business, and WHAT specific actions to take. Treat the summary as a mini consulting memo, not a dashboard tooltip.
+- SUMMARY FORMAT: The summary field supports markdown. Use **bold** for emphasis on key numbers, \`code\` for formulas or parameter names, and bullet lists for multi-point summaries. Do NOT use markdown headers (#) — keep it flowing prose or short bullets.
+- EXECUTIVE SUMMARY: When possible, include executive_summary — a single sentence capturing the headline conclusion and key number(s). This is the first thing a senior stakeholder sees.
+- DATA LINEAGE: For each key metric pill, try to include a matching entry in data_lineage with the SQL query reference and row count, so the frontend can show provenance tooltips.
 - METHODOLOGY PRESERVATION: When the raw narrative contains formulas, model names, or parameter definitions (e.g., "SS = z × σ × √(L/T)", "z=1.65 for 95% service level", "ROP = d̄ × L + SS"), you MUST preserve them in the key_findings, summary, or methodology_note field. Never compress a formula into just the output number. The methodology disclosure is mandatory, not optional decoration.
 - Do not include SQL, debug logs, failure transcript, or tool-by-tool narration in headline/summary/findings.
 - If charts or analysis cards already exist, do not repeat every KPI already visible there. Add interpretation instead.
 - If the user asked for multiple dimensions, cover all of them in the brief.
-- If the evidence is partial or proxy-based, add a caveat.
+- METRIC PILLS QUALITY: Each metric pill must contain a NUMERIC KPI value that aids decision-making.
+  Do NOT use pills for: time periods, trend directions (up/down), categorical labels, metadata, or seasonal periods.
+  Good: "Revenue Growth: +2,349%" / "Peak Month Orders: 7,289" / "Avg Order Value: R$119.98"
+  Bad: "Time Period: Sep 2016 - Oct 2018" / "Trend Direction: Upward" / "Seasonal Period: 12 months"
+- CAVEATS DECISION TREE:
+  1. Any tool call FAILED? → MUST add caveat about alternative methodology used.
+  2. Using proxy metric (e.g., SQL moving average instead of statsmodels decomposition)? → MUST add caveat.
+  3. Data has known limitations (time range, coverage, sampling)? → MUST add caveat.
+  4. Recipe-generated chart from full dataset tables? → Do NOT add caveat questioning its reliability.
+  Never produce an empty caveats array when conditions 1-3 apply.
+  Self-contradictory caveats (questioning data you yourself generated) MUST be avoided — they erode user trust.
 - DATA QUALITY DISCLOSURE: If the agent's reasoning mentions data quality warnings (non-stationary trend, small sample, outliers, seasonal patterns, proxy metrics, or business context caveats like marketplace model or pre-aggregated data), these MUST appear in the "caveats" array. Never suppress a data quality warning in the final brief. Each warning should be a concise, actionable caveat sentence.
 - Only mention a SQL, worker, connection, or tool failure if the tool evidence explicitly includes a failed call.
 - A successful 0-row SQL lookup is not a tool failure, but it provides ZERO evidence. Do NOT cite any numbers, statistics, or counts from a 0-row query. If all SQL queries returned 0 rows, add a caveat explaining no SQL data was available.
@@ -240,7 +301,16 @@ ${domainEnrichment ? `\n${domainEnrichment}\n` : ''}
     ? 'Because the user requested histogram quantiles, the summary or key findings must explicitly mention P25, P50, P75, and P90 (or P95 if P90 is unavailable) when those values exist in the evidence.'
     : 'If quantiles are requested and supported by the evidence, summarize the key cut points directly instead of only saying they were marked.'}
 - Tables must be structured JSON tables, not markdown or pseudo-table text.
-- Charts: when tool evidence contains numeric comparison data (e.g. strategy A vs B, category breakdowns), generate inline chart specs in the "charts" array. Use "grouped_bar" for side-by-side comparisons, "scatter" for two-variable relationships, "bar" for single-metric rankings. Each chart needs type, title, xKey, yKey, and a data array of objects. For multi-series (grouped_bar, stacked_bar), include a "series" array of column names. Keep data to ≤25 rows per chart. If a generate_chart artifact already covers the visualization, do not duplicate it in charts.
+- Charts: when tool evidence contains numeric comparison data (e.g. strategy A vs B, category breakdowns), generate inline chart specs in the "charts" array. Use "grouped_bar" for side-by-side comparisons, "scatter" for two-variable relationships, "bar" for single-metric rankings. Each chart needs type, title, xKey, yKey, and a data array of objects. Keep data to ≤25 rows per chart. If a generate_chart artifact already covers the visualization, do not duplicate it in charts.
+- CHART yKey RULE (MANDATORY): yKey must be a SINGLE column name string. For multi-series charts (grouped_bar, stacked_bar, line with multiple series), put the extra column names in the "series" array — NOT in yKey. Example: yKey: "orders", series: ["orders", "revenue"]. NEVER use comma-separated values in yKey like "orders,revenue".
+- FIELD DEDUPLICATION (MANDATORY):
+  • headline: ONE sentence, the single most important conclusion. No numbers unless they ARE the conclusion.
+  • executive_summary: ONE sentence with 1-2 key numbers. Must NOT repeat the headline.
+  • summary: Narrative interpretation of WHY the numbers matter. Reference metric pills by name ("as shown in the Gini metric above") instead of restating values.
+  • metric_pills: The ONLY place for raw KPI values. Summary and findings must NOT restate pill values verbatim.
+  • key_findings: Insights that go BEYOND what metric pills show — patterns, comparisons, anomalies, causality. Each finding must contain information not present in any pill label+value pair.
+  • If a number already appears in metric_pills, other sections may reference it contextually ("the high Gini coefficient suggests...") but must NOT restate the exact value.
+- METRIC PILL LIMITS: Maximum 4 pills for brevity="short", maximum 6 for brevity="analysis". Pick the most decision-relevant metrics. Move supporting metrics to evidence tables.
 - FIELD PRIORITY: Always complete ALL required fields (headline, summary, key_findings, implications, caveats, next_steps) before generating optional fields (tables, charts, metric_pills). If output space is limited, use fewer table rows and chart data points rather than omitting required fields.
 - Use empty arrays when a section is not needed.
 ${buildAnalysisDepthRules(answerContract)}`;
@@ -305,7 +375,8 @@ function buildQaReviewSchemaText() {
     "caveat_quality": 0.0,
     "clarity": 0.0,
     "methodology_transparency": 0.0,
-    "actionability": 0.0
+    "actionability": 0.0,
+    "information_density": 0.0
   }
 }`;
 }
@@ -344,18 +415,28 @@ ${clampText(summarizeToolCalls(toolCalls), 3000)}
 ${buildQaReviewSchemaText()}
 
 ## Review rules
-- Prioritize correctness over writing quality.
-- Add a blocker when the answer should not pass as-is.
-- Add blockers for: contradictory numbers without explanation, missing core requested dimensions, unsupported conclusion, chart mismatch, invented tool-failure claims, missing caveat for proxy/failed/partial evidence, debug transcript leakage, or citing specific numbers from a 0-row query.
-- A successful 0-row SQL lookup is not a failure, but provides ZERO evidence. If the brief cites specific numbers that only appear in a 0-row query (not from a chart or other artifact), add a blocker.
+IMPORTANT: Numeric accuracy, chart data completeness, and evidence traceability are checked by the deterministic QA layer (see Deterministic QA input above). Do NOT re-check numbers or data — focus on narrative quality only.
+
+NUMBER FORMAT NOTE: Briefs often use K/M/B suffixes for readability (e.g. "543.67K" = "543,670" ≈ "543,666"). These are formatting shortcuts, NOT conflicting values. Do NOT flag formatted versions of the same number as contradictions or correctness errors.
+
+Your role is to evaluate:
+1. **Narrative coherence**: Does the story flow logically? Are conclusions supported by the analysis structure?
+2. **Language quality**: Is the writing clear, professional, and appropriately concise? No jargon leakage, no debug artifacts?
+3. **Interpretive depth**: Does the brief interpret the data (explain WHY, not just WHAT)? Are implications actionable?
+4. **Section differentiation**: Does each section (headline, summary, key_findings, implications) provide unique value, or do they repeat each other?
+5. **Caveat appropriateness**: Are caveats relevant and proportional, or do they undermine valid evidence?
+
+- Scores are 0.0 to 10.0 for each dimension.
+- For dimensions already covered by deterministic QA (correctness, evidence_alignment, visualization_fit), defer to the deterministic scores unless you see a clear narrative-level issue.
+- methodology_transparency: are formulas, models, or assumptions behind numeric thresholds disclosed? Score 10 if the answer is a simple lookup or does not cite thresholds; deduct if recommendation/diagnostic answers cite numbers without stating the methodology.
+- actionability: are recommendations specific enough to act on (e.g., "set safety stock to 45 units")? Score 10 if the task is not a recommendation; deduct if recommendations are vague ("use conservative approach") without specific parameters.
+- information_density: does each section add NEW information not present in other sections? Score 10 if every section provides unique value and no metric is repeated verbatim across sections. Score 7 for minor repetition (1-2 values restated). Score 4 if multiple sections restate the same numbers/conclusions. Score 1 if headline, summary, findings, and pills all contain the same information. Deduct 2 points for each metric value that appears verbatim in 3+ separate sections.
 - ${quantileHistogramRequested
     ? 'For histogram-plus-quantiles requests, the answer should explicitly summarize the core cut points P25, P50, P75, and P90/P95 when the artifact evidence contains them.'
     : 'If the artifact already contains quantiles, prefer an explicit short quantile summary over vague phrasing like "quantiles are marked".'}
-- Scores are 0.0 to 10.0 for each dimension.
-- methodology_transparency: are formulas, models, or assumptions behind numeric thresholds disclosed? Score 10 if the answer is a simple lookup or does not cite thresholds; deduct if recommendation/diagnostic answers cite numbers without stating the methodology.
-- actionability: are recommendations specific enough to act on (e.g., "set safety stock to 45 units")? Score 10 if the task is not a recommendation; deduct if recommendations are vague ("use conservative approach") without specific parameters.
 - Keep repair instructions concrete and implementation-oriented.
-- CONCISENESS: Keep each blocker and issue description to 1-2 sentences. Be specific but concise — cite the problematic field/value, not the full context.
+- CONCISENESS: Keep each blocker and issue description to 1-2 sentences.
+- MANDATORY: You MUST score ALL 9 dimensions in dimension_scores. Score 5.0 (neutral) for any dimension you cannot assess. Missing dimensions will cause a schema validation failure.
 - Do not rewrite the answer. Only judge it.`;
 }
 
@@ -409,8 +490,10 @@ ${clampText(summarizeToolCalls(toolCalls), 4500)}
 ## Output JSON schema
 {
   "headline": "string",
-  "summary": "string",
-  "metric_pills": [{ "label": "string", "value": "string" }],
+  "executive_summary": "string (optional)",
+  "summary": "string (supports markdown)",
+  "metric_pills": [{ "label": "string", "value": "string", "source": "string (optional)" }],
+  "data_lineage": [{ "metric": "string", "sql_ref": "string", "row_count": "number", "confidence": "high|medium|low" }],
   "tables": [{
     "title": "string",
     "columns": ["string"],
@@ -436,6 +519,12 @@ ${clampText(summarizeToolCalls(toolCalls), 4500)}
 - ${quantileHistogramRequested
     ? 'For histogram-plus-quantiles requests, repair the summary or key findings so they explicitly mention P25, P50, P75, and P90/P95 when those values are present in evidence.'
     : 'If quantiles are part of the request and present in evidence, mention the core cut points explicitly.'}
+- REDUNDANCY REPAIR (high priority — this is a QA blocker):
+  When repair instructions mention "verbatim restatement" or "information density":
+  1. Identify which metric pill values appear in the summary or key_findings.
+  2. For each repeated value in summary: replace exact restatement (e.g., "The Gini coefficient is 0.792") with interpretive phrasing (e.g., "The Gini coefficient indicates severe inequality, comparable to the most unequal national economies").
+  3. For each repeated value in key_findings: replace with a DERIVED insight. Instead of "Gini coefficient of 0.792 reflects inequality", write "The bottom 50% of sellers collectively earn less than the top 10 sellers individually."
+  4. After repair, NO metric pill value should appear verbatim in more than one other section.
 - Do not output SQL, pseudo-tables, or debug transcript.
 - You may rewrite headline/summary/findings/tables/caveats/next_steps.
   - If evidence is insufficient, say so clearly in caveats instead of pretending certainty.
@@ -476,6 +565,7 @@ ${domainCriteria ? `\n${domainCriteria}\n` : ''}
 ## Rules
 - Pick exactly one winner.
 - Prefer the candidate with fewer contradictions, better caveats, and stronger evidence fit.
+- If the optimizer's brief is substantively identical to the primary's brief (same numbers, same structure, similar phrasing), prefer the primary unless the optimizer fixed a specific blocker. "More words" does not mean "better answer". A concise primary that covers all dimensions should beat a verbose optimizer that restates the same points.
 ${domainCriteria ? '- When domain evaluation criteria are provided above, use them as the PRIMARY evaluation rubric. A candidate with correct formulas but poor writing beats a well-written candidate with incorrect formulas.\n' : ''}- If one candidate failed or timed out, prefer the surviving candidate unless the surviving answer is clearly unusable.
 - If the winning candidate still has QA warnings or blockers, describe it as the stronger available answer, not as a fully satisfactory or complete solution.
 - Use confidence from 0.0 to 1.0.
@@ -542,6 +632,20 @@ export function validateAgentBrief(parsed) {
   );
 }
 
+/**
+ * Relaxed validation for repair synthesis — only requires headline + summary.
+ * Missing fields (key_findings, implications, etc.) will be filled by normalizeBrief from fallback.
+ */
+export function validateAgentBriefRepair(parsed) {
+  return (
+    isPlainObject(parsed)
+    && typeof parsed.headline === 'string'
+    && parsed.headline.trim().length > 0
+    && typeof parsed.summary === 'string'
+    && parsed.summary.trim().length > 0
+  );
+}
+
 export function validateAgentBriefReview(parsed) {
   return (
     isPlainObject(parsed)
@@ -574,8 +678,16 @@ export function validateAgentQaReview(parsed) {
 
   // dimension_scores is optional — accept the review if core fields are valid
   // (LLM may truncate dimension_scores when maxOutputTokens is tight)
-  if (parsed.dimension_scores != null && !isValidQaDimensionScores(parsed.dimension_scores)) {
-    console.warn('[validateAgentQaReview] dimension_scores present but malformed — accepting core fields');
+  if (parsed.dimension_scores != null) {
+    if (isValidQaDimensionScores(parsed.dimension_scores)) {
+      // Log valid dimension scores for debugging transparency
+      const dims = parsed.dimension_scores;
+      const summary = Object.entries(dims).map(([k, v]) => `${k}=${v}`).join(', ');
+      console.info(`[validateAgentQaReview] dimension_scores: ${summary} (aggregate=${parsed.score})`);
+    } else {
+      console.warn('[validateAgentQaReview] dimension_scores present but malformed — accepting core fields');
+      console.warn('[validateAgentQaReview] malformed dimension_scores:', JSON.stringify(parsed.dimension_scores));
+    }
   }
   return true;
 }

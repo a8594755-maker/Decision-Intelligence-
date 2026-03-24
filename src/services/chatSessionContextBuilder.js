@@ -126,6 +126,7 @@ export function buildChatSessionContext({
       profile_id: sessionCtx.dataset.profile_id,
       profile_summary: sessionCtx.dataset.profile_summary || null,
       contract_confirmed: Boolean(sessionCtx.dataset.contract_confirmed),
+      schema_digest: sessionCtx.dataset.schema_digest || null,
     } : null,
 
     // ── Active baseline plan ──

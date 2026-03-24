@@ -104,6 +104,16 @@ const V1_VALIDATORS = {
   plan_comparison: validateObjectPayloadOnly,
   // Data learning — auto-generated dataset profile
   data_profile: validateObjectPayloadOnly,
+  // General-purpose data analyst — new artifact types
+  cleaned_dataset: validateObjectPayloadOnly,
+  eda_report: validateObjectPayloadOnly,
+  anomaly_report: validateObjectPayloadOnly,
+  joined_dataset: validateObjectPayloadOnly,
+  ab_test_report: validateObjectPayloadOnly,
+  regression_report: validateObjectPayloadOnly,
+  auto_insights: validateObjectPayloadOnly,
+  pivot_table: validateObjectPayloadOnly,
+  cohort_analysis: validateObjectPayloadOnly,
 };
 
 const MAX_ISSUES = 50;

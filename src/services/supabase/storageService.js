@@ -13,10 +13,11 @@ export const userFilesService = {
     return data && data.length > 0 ? data[0] : null;
   },
 
-  async getFileById(userId, fileId) {
+  async getFileById(userId, fileId, { includeData = true } = {}) {
+    const columns = includeData ? '*' : 'id, user_id, filename, created_at';
     const { data, error } = await supabase
       .from('user_files')
-      .select('*')
+      .select(columns)
       .eq('user_id', userId)
       .eq('id', fileId)
       .maybeSingle();
@@ -45,7 +46,7 @@ export const userFilesService = {
   async getAllFiles(userId) {
     const { data, error } = await supabase
       .from('user_files')
-      .select('*')
+      .select('id, user_id, filename, created_at')
       .eq('user_id', userId)
       .order('created_at', { ascending: false });
 

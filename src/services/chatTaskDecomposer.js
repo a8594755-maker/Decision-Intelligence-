@@ -45,6 +45,14 @@ const GENERAL_ANALYSIS_SIGNALS_EN = [
   'average selling price', 'ticket volume', 'resolution time',
   'complaint rate', 'roas', 'campaign', 'support ticket',
   'data validation', 'conditional formatting',
+  // General data analyst signals
+  'eda', 'exploratory', 'describe data', 'data overview', 'data summary',
+  'correlation', 'distribution', 'histogram', 'scatter plot', 'box plot',
+  'outlier detection', 'missing values', 'data profiling', 'statistical summary',
+  'a/b test', 'ab test', 'experiment analysis', 'cohort analysis',
+  'regression analysis', 'feature importance', 'segmentation',
+  'funnel analysis', 'retention analysis', 'churn analysis',
+  'auto insights', 'automated insights', 'pattern discovery',
 ];
 
 const GENERAL_ANALYSIS_SIGNALS_ZH = [
@@ -56,6 +64,13 @@ const GENERAL_ANALYSIS_SIGNALS_ZH = [
   '清洗資料', '清洗數據', '樞紐分析', '分析資料', '分析數據',
   '計算kpi', 'mbr', '月度報告', '商業報告',
   '整理後', '可分析', '管理層',
+  // General data analyst signals (ZH)
+  '探索性分析', '數據概覽', '資料概覽', '資料摘要', '資料描述',
+  '相關性', '分布', '直方圖', '散點圖', '箱線圖',
+  '離群值偵測', '缺失值', '資料剖析', '統計摘要',
+  'A/B測試', '實驗分析', '世代分析', '留存分析',
+  '迴歸分析', '特徵重要性', '分群分析',
+  '漏斗分析', '流失分析', '自動洞察', '模式發現',
 ];
 
 /**

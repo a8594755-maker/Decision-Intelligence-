@@ -49,6 +49,18 @@ export function AuthProvider({ children }) {
   // getSession() uses navigator.locks with infinite timeout, which deadlocks under
   // React 18 Strict Mode (doubleInvokeEffectsInDEV) and Vite HMR reloads.
   useEffect(() => {
+    // Mock mode: bypass Supabase auth entirely
+    if (import.meta.env?.VITE_DI_MOCK_MODE === 'true') {
+      console.info('[Auth] Mock mode — using fake user');
+      setSession({
+        user: { id: 'mock-user-001', email: 'dev@localhost', user_metadata: {} },
+        access_token: 'mock-token',
+      });
+      setRole('admin');
+      setLoading(false);
+      return;
+    }
+
     if (!isSupabaseConfigured) {
       queueMicrotask(() => setLoading(false));
       return;

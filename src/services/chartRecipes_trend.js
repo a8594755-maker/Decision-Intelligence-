@@ -13,13 +13,13 @@ export const TREND_RECIPES = [
     tags: ['revenue', 'orders', 'trend', 'time-series'],
     chartType: 'line',
     params: {
-      period: { type: 'string', default: 'M', enum: ['W', 'M', 'Q'], description: 'Aggregation period' },
+      period: { type: 'string', default: 'ME', enum: ['W', 'ME', 'QE'], description: 'Aggregation period' },
     },
     pythonCode: `
 def run(input_data, prior_artifacts, tables):
     import pandas as pd
     params = input_data.get("recipe_params", {})
-    period = params.get("period", "M")
+    period = params.get("period", "ME")
 
     orders = tables["orders"].copy()
     items  = tables["order_items"].copy()

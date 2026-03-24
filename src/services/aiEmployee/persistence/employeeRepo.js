@@ -3,10 +3,15 @@
  *
  * Manages employee status. Maps logical states to DB values
  * via EMPLOYEE_STATE_TO_DB for backward compatibility.
+ *
+ * When VITE_DI_MOCK_MODE=true, all functions delegate to in-memory mock.
  */
 
 import { supabase } from '../../supabaseClient.js';
 import { EMPLOYEE_STATES, EMPLOYEE_STATE_TO_DB, DB_TO_EMPLOYEE_STATE } from '../employeeStateMachine.js';
+
+const _MOCK = import.meta.env?.VITE_DI_MOCK_MODE === 'true';
+const _m = _MOCK ? await import('../mock/mockEmployeeRepo.js') : null;
 
 /**
  * Update employee status using logical state names.
@@ -14,6 +19,7 @@ import { EMPLOYEE_STATES, EMPLOYEE_STATE_TO_DB, DB_TO_EMPLOYEE_STATE } from '../
  * @param {string} logicalState - one of EMPLOYEE_STATES values
  */
 export async function updateEmployeeStatus(employeeId, logicalState) {
+  if (_m) return _m.updateEmployeeStatus(employeeId, logicalState);
   const dbStatus = EMPLOYEE_STATE_TO_DB[logicalState];
   if (!dbStatus) {
     throw new Error(`[EmployeeRepo] Unknown logical state: '${logicalState}'`);
@@ -31,6 +37,7 @@ export async function updateEmployeeStatus(employeeId, logicalState) {
  * Get employee by ID, returns with logical state.
  */
 export async function getEmployee(employeeId) {
+  if (_m) return _m.getEmployee(employeeId);
   const { data, error } = await supabase
     .from('ai_employees')
     .select('*')
@@ -48,6 +55,7 @@ export async function getEmployee(employeeId) {
  * Get employee by manager user ID.
  */
 export async function getEmployeeByManager(userId) {
+  if (_m) return _m.getEmployeeByManager(userId);
   const { data, error } = await supabase
     .from('ai_employees')
     .select('*')
@@ -64,6 +72,7 @@ export async function getEmployeeByManager(userId) {
  * List all employees for a manager user.
  */
 export async function listEmployeesByManager(userId, { includeArchived = false } = {}) {
+  if (_m) return _m.listEmployeesByManager(userId, { includeArchived });
   let query = supabase
     .from('ai_employees')
     .select('*')
@@ -147,6 +156,7 @@ const WORKER_TEMPLATES = {
  * @returns {Promise<object>} employee row
  */
 export async function getOrCreateWorker(userId, templateId = 'data_analyst') {
+  if (_m) return _m.getOrCreateWorker(userId, templateId);
   // Try DB-backed template first, fall back to hardcoded
   const dbTemplate = await getWorkerTemplateFromDB(templateId).catch(() => null);
   const template = dbTemplate || WORKER_TEMPLATES[templateId] || WORKER_TEMPLATES.data_analyst;
@@ -219,6 +229,7 @@ export async function getOrCreateWorker(userId, templateId = 'data_analyst') {
  * Replaces aiEmployeeService.getKpis().
  */
 export async function getKpis(employeeId) {
+  if (_m) return _m.getKpis(employeeId);
   const { data, error } = await supabase
     .from('ai_employee_kpis')
     .select('*')
@@ -241,6 +252,7 @@ export async function getKpis(employeeId) {
  * @returns {Promise<object>} Created employee row
  */
 export async function createWorkerFromTemplate(userId, templateId, overrides = {}) {
+  if (_m) return _m.createWorkerFromTemplate(userId, templateId, overrides);
   // Try DB-backed template first, fall back to hardcoded
   const dbTemplate = await getWorkerTemplateFromDB(templateId).catch(() => null);
   const template = dbTemplate || WORKER_TEMPLATES[templateId];
@@ -290,6 +302,7 @@ export async function createWorkerFromTemplate(userId, templateId, overrides = {
  * @returns {Promise<object>} Newly created employee row
  */
 export async function cloneWorker(sourceEmployeeId, userId, overrides = {}) {
+  if (_m) return _m.cloneWorker(sourceEmployeeId, userId, overrides);
   // Fetch source worker with manager scope check
   const source = await getEmployee(sourceEmployeeId);
   if (source.manager_user_id !== userId) {
@@ -324,6 +337,7 @@ export async function cloneWorker(sourceEmployeeId, userId, overrides = {}) {
  * @param {string} [userId] - Manager user ID. If provided, enforces ownership.
  */
 export async function archiveWorker(employeeId, userId) {
+  if (_m) return _m.archiveWorker(employeeId, userId);
   if (userId) {
     const emp = await getEmployee(employeeId);
     if (emp.manager_user_id !== userId) {
@@ -349,6 +363,7 @@ export const deleteWorker = archiveWorker;
  * @param {string} [userId] - Manager user ID. If provided, enforces ownership.
  */
 export async function updateWorker(employeeId, updates, userId) {
+  if (_m) return _m.updateWorker(employeeId, updates, userId);
   if (userId) {
     const emp = await getEmployee(employeeId);
     if (emp.manager_user_id !== userId) {
@@ -378,6 +393,7 @@ export async function updateWorker(employeeId, updates, userId) {
  * @returns {Promise<Object[]>}
  */
 export async function listTemplates() {
+  if (_m) return _m.listTemplates();
   try {
     const dbTemplates = await listTemplatesFromDB();
     if (dbTemplates.length > 0) return dbTemplates;
@@ -402,6 +418,7 @@ export async function listTemplates() {
  * @returns {Promise<object>} Template in the same shape as WORKER_TEMPLATES entries
  */
 export async function getWorkerTemplateFromDB(templateId) {
+  if (_m) return null;
   try {
     const { data, error } = await supabase
       .from('worker_templates')
@@ -429,6 +446,7 @@ export async function getWorkerTemplateFromDB(templateId) {
  * @returns {Promise<object[]>} Array of template objects
  */
 export async function listTemplatesFromDB() {
+  if (_m) return [];
   try {
     const { data, error } = await supabase
       .from('worker_templates')

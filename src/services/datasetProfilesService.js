@@ -266,6 +266,35 @@ export const datasetProfilesService = {
     return data || [];
   },
 
+  /** List all dataset profiles for a user (most recent first). */
+  async listAll(userId, { limit = 50 } = {}) {
+    hydrateLocalProfiles();
+    const { data, error } = await supabase
+      .from('di_dataset_profiles')
+      .select('id, fingerprint, profile_json, created_at')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(limit);
+
+    if (error) throwDatasetProfilesError(error);
+
+    // Merge local-only profiles that are not in the DB result
+    const dbIds = new Set((data || []).map((r) => String(r.id)));
+    const localExtras = [];
+    for (const [id, profile] of _localProfileCache) {
+      if (!dbIds.has(id)) {
+        localExtras.push({
+          id: profile.id,
+          fingerprint: profile.fingerprint,
+          profile_json: profile.profile_json,
+          created_at: profile.created_at,
+          _local: true,
+        });
+      }
+    }
+    return [...localExtras, ...(data || [])];
+  },
+
   // Backward-compatible alias
   async createProfile(payload = {}) {
     return this.createDatasetProfile(payload);

@@ -85,6 +85,60 @@ export const AGENT_LOOP_TEMPLATES = {
     ],
   },
 
+  // ── General Analysis Templates ─────────────────────────────────────────
+
+  general_eda: {
+    id: 'general_eda',
+    label: 'Exploratory Data Analysis',
+    description: 'Profile + Clean + EDA + Visualize + Synthesize',
+    steps: [
+      { name: 'profile',    workflow_type: 'builtin_tool', requires_review: false },
+      { name: 'clean',      workflow_type: 'builtin_tool', requires_review: false },
+      { name: 'eda',        workflow_type: 'builtin_tool', requires_review: false },
+      { name: 'visualize',  workflow_type: 'builtin_tool', requires_review: false },
+      { name: 'synthesize', workflow_type: 'synthesize',   requires_review: true },
+    ],
+  },
+
+  full_analysis_report: {
+    id: 'full_analysis_report',
+    label: 'Full Analysis Report',
+    description: 'Profile + EDA + Auto-Insights + Visualize + Synthesize + Excel',
+    steps: [
+      { name: 'profile',       workflow_type: 'builtin_tool', requires_review: false },
+      { name: 'eda',           workflow_type: 'builtin_tool', requires_review: false },
+      { name: 'auto_insights', workflow_type: 'builtin_tool', requires_review: false },
+      { name: 'visualize',     workflow_type: 'builtin_tool', requires_review: false },
+      { name: 'synthesize',    workflow_type: 'synthesize',   requires_review: false },
+      { name: 'excel_build',   workflow_type: 'excel_ops',    requires_review: true },
+    ],
+  },
+
+  data_quality_audit: {
+    id: 'data_quality_audit',
+    label: 'Data Quality Audit',
+    description: 'Profile + Clean + Quality Assessment + Report',
+    steps: [
+      { name: 'profile',    workflow_type: 'builtin_tool', requires_review: false },
+      { name: 'clean',      workflow_type: 'builtin_tool', requires_review: false },
+      { name: 'quality',    workflow_type: 'builtin_tool', requires_review: false },
+      { name: 'report',     workflow_type: 'report',       requires_review: true },
+    ],
+  },
+
+  ab_test_workflow: {
+    id: 'ab_test_workflow',
+    label: 'A/B Test Analysis',
+    description: 'Profile + Clean + A/B Test + Visualize + Synthesize',
+    steps: [
+      { name: 'profile',    workflow_type: 'builtin_tool', requires_review: false },
+      { name: 'clean',      workflow_type: 'builtin_tool', requires_review: false },
+      { name: 'ab_test',    workflow_type: 'builtin_tool', requires_review: false },
+      { name: 'visualize',  workflow_type: 'builtin_tool', requires_review: false },
+      { name: 'synthesize', workflow_type: 'synthesize',   requires_review: true },
+    ],
+  },
+
   // ── Single-step wrappers (backward compat) ──────────────────────────────
 
   forecast: {
@@ -114,14 +168,18 @@ export const AGENT_LOOP_TEMPLATES = {
  * Composite templates first, then single-step wrappers.
  */
 export const TEMPLATE_OPTIONS = [
-  { value: 'full_report',        label: 'Full Analysis Report', composite: true },
-  { value: 'forecast_then_plan', label: 'Forecast + Plan',         composite: true },
-  { value: 'risk_aware_plan',    label: 'Risk-Aware Plan',         composite: true },
-  { value: 'full_report_with_publish', label: 'Full Report + Delivery Pack', composite: true },
-  { value: 'mbr_with_excel',          label: 'Monthly Business Review (Excel)', composite: true },
-  { value: 'forecast',           label: 'Demand Forecast',         composite: false },
-  { value: 'plan',               label: 'Replenishment Plan',      composite: false },
-  { value: 'risk',               label: 'Risk Analysis',           composite: false },
+  { value: 'full_report',              label: 'Full Analysis Report',           composite: true },
+  { value: 'forecast_then_plan',       label: 'Forecast + Plan',               composite: true },
+  { value: 'risk_aware_plan',          label: 'Risk-Aware Plan',               composite: true },
+  { value: 'full_report_with_publish', label: 'Full Report + Delivery Pack',   composite: true },
+  { value: 'mbr_with_excel',           label: 'Monthly Business Review (Excel)', composite: true },
+  { value: 'general_eda',              label: 'Exploratory Data Analysis',     composite: true },
+  { value: 'full_analysis_report',     label: 'Full Analysis + Excel',         composite: true },
+  { value: 'data_quality_audit',       label: 'Data Quality Audit',            composite: true },
+  { value: 'ab_test_workflow',         label: 'A/B Test Analysis',             composite: true },
+  { value: 'forecast',                 label: 'Demand Forecast',               composite: false },
+  { value: 'plan',                     label: 'Replenishment Plan',            composite: false },
+  { value: 'risk',                     label: 'Risk Analysis',                 composite: false },
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────

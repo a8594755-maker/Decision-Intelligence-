@@ -267,8 +267,17 @@ async function callPythonAnalysisTool(entry, args, context) {
       ...(args.input_data || {}),
     };
     const hasInputSheets = Boolean(inputData.sheets && Object.keys(inputData.sheets || {}).length > 0);
+    const hasUserProfile = Boolean(context.datasetProfileRow?.profile_json || inputData.datasetProfileId || context.datasetProfileId);
     const datasetProfile = buildPythonDatasetProfile(context, args);
-    const dataset = args.dataset || (!hasInputSheets ? 'olist' : null);
+    const dataset = args.dataset || (!hasInputSheets && !hasUserProfile ? 'olist' : null);
+
+    // If user has a profile but no sheets data loaded, warn — analysis may be incomplete
+    if (hasUserProfile && !hasInputSheets && !args.dataset) {
+      console.warn(
+        '[chatToolAdapter] User has dataset profile but no sheet data in context. ' +
+        'Raw data may not have been loaded. The analysis may use incomplete data.'
+      );
+    }
     const body = {
       tool_hint: args.tool_hint || args.query || 'Analyze the dataset',
       analysis_mode: true,
@@ -297,18 +306,25 @@ async function callPythonAnalysisTool(entry, args, context) {
 
     // Format artifacts as analysis_result_card messages
     const artifacts = data.artifacts || [];
+    const dataSourceLabel = context.datasetProfileRow?.profile_json?.file_name
+      || dataset
+      || null;
     const analysisResults = artifacts
       .filter(a => a.type === 'analysis_result')
       .map(a => {
         const card = a.data;
-        // Attach Python execution metadata for transparency
-        if (data.code && card && typeof card === 'object') {
-          card._executionMeta = {
-            code: data.code,
-            execution_ms: data.execution_ms,
-            llm_model: data.llm_model,
-            engine: 'Python (pandas/numpy/scipy)',
-          };
+        if (card && typeof card === 'object') {
+          // Attach data source label so the card shows which dataset this is about
+          if (dataSourceLabel) card._dataSource = dataSourceLabel;
+          // Attach Python execution metadata for transparency
+          if (data.code) {
+            card._executionMeta = {
+              code: data.code,
+              execution_ms: data.execution_ms,
+              llm_model: data.llm_model,
+              engine: 'Python (pandas/numpy/scipy)',
+            };
+          }
         }
         return card;
       });

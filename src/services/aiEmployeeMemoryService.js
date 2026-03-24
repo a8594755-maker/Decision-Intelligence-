@@ -42,12 +42,16 @@ function now() {
   return new Date().toISOString();
 }
 
+let _memoryTableWarned = false;
 async function trySupabase(fn) {
   try {
     if (!supabase) return null;
     return await fn();
   } catch (err) {
-    console.warn('[aiEmployeeMemoryService] Supabase call failed:', err?.message || err);
+    if (!_memoryTableWarned) {
+      console.warn('[aiEmployeeMemoryService] Supabase call failed, using localStorage fallback:', err?.message || err);
+      _memoryTableWarned = true;
+    }
     return null;
   }
 }
@@ -668,6 +672,258 @@ export async function buildKnowledgeContext(employeeId, query = {}) {
   };
 }
 
+// ── Query Pattern Memory (cross-session learning for data queries) ──────────
+
+/**
+ * Record a successful query pattern for a dataset, so future similar questions
+ * can reference it.
+ */
+export async function writeQueryPattern({
+  datasetFingerprint,
+  userQuestion,
+  toolUsed,       // 'query_sap_data' | 'run_python_analysis'
+  queryOrHint,    // SQL statement or tool_hint
+  success,
+  resultSummary,  // Short description of the result
+  projectId = null,
+  userId = null,
+}) {
+  // Build a pattern_key for deduplication
+  const patternKey = `query::${toolUsed || 'unknown'}::${(userQuestion || '').slice(0, 80)}`;
+
+  // Supabase record aligned with ai_employee_memory schema
+  const sbEntry = {
+    memory_type: 'query_pattern',
+    project_id: projectId,
+    user_id: userId,
+    pattern_key: patternKey,
+    tool_name: toolUsed,
+    category: 'query',
+    error_context: {
+      dataset_fingerprint: datasetFingerprint,
+      user_question: userQuestion?.slice(0, 200),
+      query_or_hint: queryOrHint?.slice(0, 500),
+      success: Boolean(success),
+    },
+    resolution: resultSummary?.slice(0, 200),
+  };
+
+  // Local fallback entry retains original flat shape for localStorage reads
+  const localEntry = {
+    id: localId(),
+    memory_type: 'query_pattern',
+    dataset_fingerprint: datasetFingerprint,
+    user_question: userQuestion?.slice(0, 200),
+    tool_used: toolUsed,
+    query_or_hint: queryOrHint?.slice(0, 500),
+    success: Boolean(success),
+    result_summary: resultSummary?.slice(0, 200),
+    created_at: now(),
+  };
+
+  const sbResult = await trySupabase(async () => {
+    const { error } = await supabase
+      .from('ai_employee_memory')
+      .upsert(sbEntry, { onConflict: 'project_id,pattern_key' });
+    if (error) throw error;
+    return true;
+  });
+
+  if (!sbResult) {
+    const store = getLocalStore();
+    store.push(localEntry);
+    setLocalStore(store);
+  }
+}
+
+/**
+ * Recall past successful query patterns for a given dataset fingerprint.
+ */
+export async function recallQueryPatterns({
+  datasetFingerprint,
+  limit = 3,
+}) {
+  const sbResult = await trySupabase(async () => {
+    const { data, error } = await supabase
+      .from('ai_employee_memory')
+      .select('*')
+      .eq('memory_type', 'query_pattern')
+      .eq('dataset_fingerprint', datasetFingerprint)
+      .eq('success', true)
+      .order('created_at', { ascending: false })
+      .limit(limit);
+    if (error) throw error;
+    return data;
+  });
+
+  if (sbResult?.length > 0) return sbResult;
+
+  // localStorage fallback
+  const store = getLocalStore();
+  return store
+    .filter(e =>
+      (e.memory_type || e.type) === 'query_pattern' &&
+      e.dataset_fingerprint === datasetFingerprint &&
+      e.success
+    )
+    .slice(-limit);
+}
+
+// ── Failure Pattern Memory (cross-session learning from mistakes) ─────────
+
+const FAILURE_LOCAL_KEY = 'ai_failure_patterns_v1';
+const MAX_FAILURE_ENTRIES = 100;
+
+function getFailureStore() {
+  try {
+    const raw = localStorage.getItem(FAILURE_LOCAL_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch { return []; }
+}
+
+function setFailureStore(entries) {
+  try {
+    localStorage.setItem(FAILURE_LOCAL_KEY, JSON.stringify(entries.slice(-MAX_FAILURE_ENTRIES)));
+  } catch { /* quota exceeded */ }
+}
+
+/**
+ * Deduplicate key: toolUsed + errorType + first 80 chars of errorMessage.
+ */
+export function failureDedupeKey({ toolUsed, errorType, errorMessage }) {
+  return `${toolUsed}::${errorType}::${(errorMessage || '').slice(0, 80)}`;
+}
+
+/**
+ * Classify an error message into an error type.
+ */
+export function classifyToolError(errorMessage) {
+  const msg = String(errorMessage || '');
+  if (/Import.*not allowed|ImportError/i.test(msg)) return 'ImportError';
+  if (/ValueError|truth value.*DataFrame|ambiguous/i.test(msg)) return 'ValueError';
+  if (/TypeError/i.test(msg)) return 'TypeError';
+  if (/timeout|timed out/i.test(msg)) return 'Timeout';
+  if (/0 rows|zero rows|no.*rows/i.test(msg)) return 'ZeroRows';
+  if (/SyntaxError/i.test(msg)) return 'SyntaxError';
+  return 'Other';
+}
+
+/**
+ * Record a tool call failure pattern for future avoidance.
+ */
+export async function writeFailurePattern({
+  datasetFingerprint,
+  toolUsed,
+  failedInput,
+  errorType,
+  errorMessage,
+  resolution,
+}) {
+  const key = failureDedupeKey({ toolUsed, errorType, errorMessage });
+
+  // Check for existing entry (deduplicate)
+  const store = getFailureStore();
+  const existing = store.find(e => e._dedupeKey === key);
+
+  if (existing) {
+    existing.occurrence_count = (existing.occurrence_count || 1) + 1;
+    existing.last_seen = now();
+    if (resolution && !existing.resolution) {
+      existing.resolution = resolution;
+    }
+    setFailureStore(store);
+    return existing;
+  }
+
+  // Local entry retains flat shape for localStorage deduplication
+  const localEntry = {
+    id: localId(),
+    memory_type: 'failure_pattern',
+    _dedupeKey: key,
+    dataset_fingerprint: datasetFingerprint || null,
+    tool_used: toolUsed,
+    failed_input: (failedInput || '').slice(0, 300),
+    error_type: errorType,
+    error_message: (errorMessage || '').slice(0, 200),
+    resolution: resolution || null,
+    occurrence_count: 1,
+    last_seen: now(),
+    created_at: now(),
+  };
+
+  // Supabase entry aligned with ai_employee_memory schema
+  const sbEntry = {
+    memory_type: 'failure_pattern',
+    pattern_key: key,
+    tool_name: toolUsed,
+    error_message: (errorMessage || '').slice(0, 200),
+    error_context: {
+      dataset_fingerprint: datasetFingerprint || null,
+      failed_input: (failedInput || '').slice(0, 300),
+      error_type: errorType,
+    },
+    resolution: resolution || null,
+    category: 'failure',
+  };
+
+  const sbResult = await trySupabase(async () => {
+    const { error } = await supabase
+      .from('ai_employee_memory')
+      .upsert(sbEntry, { onConflict: 'project_id,pattern_key' });
+    if (error) throw error;
+    return true;
+  });
+
+  if (!sbResult) {
+    store.push(localEntry);
+    setFailureStore(store);
+  }
+
+  return localEntry;
+}
+
+/**
+ * Attach a resolution to an existing failure pattern.
+ * Called when a subsequent tool call succeeds after a failure.
+ */
+export function attachFailureResolution(dedupeKey, resolution) {
+  const store = getFailureStore();
+  const entry = store.find(e => e._dedupeKey === dedupeKey);
+  if (entry && !entry.resolution) {
+    entry.resolution = (resolution || '').slice(0, 300);
+    setFailureStore(store);
+  }
+}
+
+/**
+ * Recall past failure patterns for injection into system prompt.
+ * Returns failures sorted by occurrence_count descending.
+ */
+export async function recallFailurePatterns({
+  datasetFingerprint,
+  limit = 5,
+} = {}) {
+  const sbResult = await trySupabase(async () => {
+    const { data, error } = await supabase
+      .from('ai_employee_memory')
+      .select('*')
+      .eq('memory_type', 'failure_pattern')
+      .order('occurrence_count', { ascending: false })
+      .limit(limit);
+    if (error) throw error;
+    return data;
+  });
+
+  if (sbResult?.length > 0) return sbResult;
+
+  // localStorage fallback
+  const store = getFailureStore();
+  return store
+    .filter(e => (e.memory_type || e.type) === 'failure_pattern')
+    .sort((a, b) => (b.occurrence_count || 1) - (a.occurrence_count || 1))
+    .slice(0, limit);
+}
+
 export default {
   extractOutcomeKpis,
   extractInputParams,
@@ -683,4 +939,13 @@ export default {
   writeStylePreference,
   recallStyleProfile,
   buildKnowledgeContext,
+  // Query Pattern Memory
+  writeQueryPattern,
+  recallQueryPatterns,
+  // Failure Pattern Memory
+  writeFailurePattern,
+  recallFailurePatterns,
+  attachFailureResolution,
+  classifyToolError,
+  failureDedupeKey,
 };

@@ -15,8 +15,8 @@ import {
 describe('chartRecipeCatalog', () => {
   // ── Catalog Integrity ──────────────────────────────────────────────────
 
-  it('should have exactly 50 recipes', () => {
-    expect(CHART_RECIPES.length).toBe(50);
+  it('should have exactly 58 recipes', () => {
+    expect(CHART_RECIPES.length).toBe(58);
   });
 
   it('should have unique IDs for all recipes', () => {
@@ -62,8 +62,8 @@ describe('chartRecipeCatalog', () => {
 
   // ── Category Distribution ─────────────────────────────────────────────
 
-  it('should have 7 categories defined', () => {
-    expect(RECIPE_CATEGORIES.length).toBe(7);
+  it('should have 8 categories defined', () => {
+    expect(RECIPE_CATEGORIES.length).toBe(8);
   });
 
   it('should have recipes in each category', () => {
@@ -136,7 +136,7 @@ describe('chartRecipeCatalog', () => {
 
   it('getRecipeCatalogForUI should exclude pythonCode', () => {
     const uiCatalog = getRecipeCatalogForUI();
-    expect(uiCatalog.length).toBe(50);
+    expect(uiCatalog.length).toBe(58);
     for (const r of uiCatalog) {
       expect(r.pythonCode).toBeUndefined();
       expect(r.id).toBeTruthy();
@@ -150,7 +150,7 @@ describe('chartRecipeCatalog', () => {
     const index = getRecipeIndexForPrompt();
     expect(typeof index).toBe('string');
     expect(index.length).toBeGreaterThan(100);
-    expect(index.length).toBeLessThan(5000); // Should be compact
+    expect(index.length).toBeLessThan(6000); // Should be compact (58 recipes)
     expect(index).toContain('generate_chart');
     expect(index).toContain('monthly_revenue_order_trend');
   });

@@ -457,3 +457,94 @@ export function consumeModelConfigNormalizationNotices() {
   NORMALIZATION_NOTICES.splice(0, NORMALIZATION_NOTICES.length);
   return notices;
 }
+
+// ── Chart Artisan model config ──────────────────────────────────────────────
+// Stored separately from role-based configs. Supports "use_primary" mode
+// which mirrors the primary model, or an explicit provider+model override.
+
+const ARTISAN_CONFIG_KEY = 'di_artisan_model_config';
+const ARTISAN_DEFAULT = { mode: 'use_primary' }; // { mode: 'use_primary' } | { mode: 'custom', provider, model }
+
+/**
+ * Get the artisan chart model config.
+ * @returns {{ mode: 'use_primary' } | { mode: 'custom', provider: string, model: string }}
+ */
+export function getArtisanModelConfig() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(ARTISAN_CONFIG_KEY));
+    if (stored?.mode === 'custom' && stored.provider && stored.model) return stored;
+    if (stored?.mode === 'use_primary') return { mode: 'use_primary' };
+  } catch { /* ignore */ }
+  return ARTISAN_DEFAULT;
+}
+
+/**
+ * Resolve the effective provider+model for artisan chart generation.
+ * If mode is 'use_primary', returns the current primary model config.
+ * @returns {{ provider: string, model: string }}
+ */
+export function getResolvedArtisanModel() {
+  const artisan = getArtisanModelConfig();
+  if (artisan.mode === 'custom') {
+    return { provider: artisan.provider, model: artisan.model };
+  }
+  return getSharedModelConfig('primary');
+}
+
+/**
+ * Set artisan chart model to "same as primary".
+ */
+export function setArtisanUsePrimary() {
+  localStorage.setItem(ARTISAN_CONFIG_KEY, JSON.stringify({ mode: 'use_primary' }));
+}
+
+/**
+ * Set artisan chart model to a specific provider+model.
+ */
+export function setArtisanCustomModel(provider, model) {
+  localStorage.setItem(ARTISAN_CONFIG_KEY, JSON.stringify({ mode: 'custom', provider, model }));
+}
+
+// ── Insights Hub Agent Model ──────────────────────────────────────────────────
+
+const INSIGHTS_CONFIG_KEY = 'di_insights_hub_model_config';
+const INSIGHTS_DEFAULT = { mode: 'auto', provider: 'gemini', model: 'gemini-2.0-flash' };
+
+/**
+ * Get the Insights Hub summary agent model config.
+ * @returns {{ mode: 'auto', provider: string, model: string } | { mode: 'custom', provider: string, model: string }}
+ */
+export function getInsightsHubModelConfig() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(INSIGHTS_CONFIG_KEY));
+    if (stored?.mode === 'custom' && stored.provider && stored.model) return stored;
+    if (stored?.mode === 'auto') return INSIGHTS_DEFAULT;
+  } catch { /* ignore */ }
+  return INSIGHTS_DEFAULT;
+}
+
+/**
+ * Resolve the effective provider+model for Insights Hub summary agent.
+ * @returns {{ provider: string, model: string }}
+ */
+export function getResolvedInsightsHubModel() {
+  const config = getInsightsHubModelConfig();
+  if (config.mode === 'custom') {
+    return { provider: config.provider, model: config.model };
+  }
+  return { provider: INSIGHTS_DEFAULT.provider, model: INSIGHTS_DEFAULT.model };
+}
+
+/**
+ * Set Insights Hub model to auto (Gemini Flash default).
+ */
+export function setInsightsHubAuto() {
+  localStorage.setItem(INSIGHTS_CONFIG_KEY, JSON.stringify({ mode: 'auto' }));
+}
+
+/**
+ * Set Insights Hub model to a specific provider+model.
+ */
+export function setInsightsHubCustomModel(provider, model) {
+  localStorage.setItem(INSIGHTS_CONFIG_KEY, JSON.stringify({ mode: 'custom', provider, model }));
+}

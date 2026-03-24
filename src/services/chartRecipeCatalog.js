@@ -21,6 +21,7 @@ import { CORRELATION_RECIPES } from './chartRecipes_correlation.js';
 import { GEO_RECIPES } from './chartRecipes_geo.js';
 import { TIME_PATTERN_RECIPES } from './chartRecipes_timePattern.js';
 import { ADVANCED_RECIPES } from './chartRecipes_advanced.js';
+import { GENERIC_RECIPES } from './chartRecipes_generic.js';
 
 // ── Merged Catalog ──────────────────────────────────────────────────────────
 
@@ -32,6 +33,7 @@ export const CHART_RECIPES = Object.freeze([
   ...GEO_RECIPES,
   ...TIME_PATTERN_RECIPES,
   ...ADVANCED_RECIPES,
+  ...GENERIC_RECIPES,
 ]);
 
 // ── Category Metadata ───────────────────────────────────────────────────────
@@ -44,6 +46,7 @@ export const RECIPE_CATEGORIES = Object.freeze([
   { id: 'geo',          name: 'Geographic',              name_zh: '地理空間',           icon: 'Globe' },
   { id: 'time_pattern', name: 'Time Patterns & Cycles',  name_zh: '時間模式與週期',     icon: 'Clock' },
   { id: 'advanced',     name: 'Advanced Analysis',       name_zh: '進階分析',           icon: 'Brain' },
+  { id: 'generic',      name: 'Generic (Any Dataset)',   name_zh: '通用圖表（任意資料）', icon: 'Database' },
 ]);
 
 // ── Lookup Helpers ──────────────────────────────────────────────────────────

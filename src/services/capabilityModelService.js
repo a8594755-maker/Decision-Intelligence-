@@ -29,14 +29,15 @@ import { getWorkerTemplateFromDB, listTemplatesFromDB } from './aiEmployee/persi
  * A capability class represents "what it does" not "how it runs".
  */
 export const CAPABILITY_CLASS = {
-  PLANNING:      'planning',       // forecast, plan, risk analysis
-  ANALYSIS:      'analysis',       // data analysis, solver, ML
-  REPORTING:     'reporting',      // report generation, export, excel
-  SYNTHESIS:     'synthesis',      // LLM summarization, narrative
-  INTEGRATION:   'integration',    // external systems
-  CUSTOM_CODE:   'custom_code',    // dynamic/registered python tools
-  NEGOTIATION:   'negotiation',    // negotiation strategy
-  MONITORING:    'monitoring',     // alerts, closed-loop, dashboards
+  PLANNING:         'planning',         // forecast, plan, risk analysis
+  ANALYSIS:         'analysis',         // data analysis, solver, ML
+  REPORTING:        'reporting',        // report generation, export, excel
+  SYNTHESIS:        'synthesis',        // LLM summarization, narrative
+  INTEGRATION:      'integration',      // external systems
+  CUSTOM_CODE:      'custom_code',      // dynamic/registered python tools
+  NEGOTIATION:      'negotiation',      // negotiation strategy
+  MONITORING:       'monitoring',       // alerts, closed-loop, dashboards
+  DATA_PREPARATION: 'data_preparation', // cleaning, joining, transforming datasets
 };
 
 // ── Executor → Capability Class Mapping ─────────────────────────────────────
@@ -53,17 +54,18 @@ const EXECUTOR_TO_CLASS = {
 };
 
 const CATEGORY_TO_CLASS = {
-  [TOOL_CATEGORY.CORE_PLANNING]:  CAPABILITY_CLASS.PLANNING,
-  [TOOL_CATEGORY.RISK]:           CAPABILITY_CLASS.PLANNING,
-  [TOOL_CATEGORY.SCENARIO]:       CAPABILITY_CLASS.ANALYSIS,
-  [TOOL_CATEGORY.NEGOTIATION]:    CAPABILITY_CLASS.NEGOTIATION,
-  [TOOL_CATEGORY.COST_REVENUE]:   CAPABILITY_CLASS.ANALYSIS,
-  [TOOL_CATEGORY.BOM]:            CAPABILITY_CLASS.PLANNING,
-  [TOOL_CATEGORY.UTILITY]:        CAPABILITY_CLASS.ANALYSIS,
-  [TOOL_CATEGORY.ANALYTICS]:      CAPABILITY_CLASS.ANALYSIS,
-  [TOOL_CATEGORY.GOVERNANCE]:     CAPABILITY_CLASS.MONITORING,
-  [TOOL_CATEGORY.DATA_ACCESS]:    CAPABILITY_CLASS.ANALYSIS,
-  [TOOL_CATEGORY.MONITORING]:     CAPABILITY_CLASS.MONITORING,
+  [TOOL_CATEGORY.CORE_PLANNING]:    CAPABILITY_CLASS.PLANNING,
+  [TOOL_CATEGORY.RISK]:             CAPABILITY_CLASS.PLANNING,
+  [TOOL_CATEGORY.SCENARIO]:         CAPABILITY_CLASS.ANALYSIS,
+  [TOOL_CATEGORY.NEGOTIATION]:      CAPABILITY_CLASS.NEGOTIATION,
+  [TOOL_CATEGORY.COST_REVENUE]:     CAPABILITY_CLASS.ANALYSIS,
+  [TOOL_CATEGORY.BOM]:              CAPABILITY_CLASS.PLANNING,
+  [TOOL_CATEGORY.UTILITY]:          CAPABILITY_CLASS.ANALYSIS,
+  [TOOL_CATEGORY.ANALYTICS]:        CAPABILITY_CLASS.ANALYSIS,
+  [TOOL_CATEGORY.GOVERNANCE]:       CAPABILITY_CLASS.MONITORING,
+  [TOOL_CATEGORY.DATA_ACCESS]:      CAPABILITY_CLASS.ANALYSIS,
+  [TOOL_CATEGORY.MONITORING]:       CAPABILITY_CLASS.MONITORING,
+  [TOOL_CATEGORY.DATA_PREPARATION]: CAPABILITY_CLASS.DATA_PREPARATION,
 };
 
 // ── Capability Policies ─────────────────────────────────────────────────────
@@ -150,6 +152,16 @@ export const CAPABILITY_POLICIES = {
     review_required: false,
     max_retry: 1,
     data_access: 'read',
+    sensitive_data_allowed: false,
+    budget_tier: 'tier_a',
+  },
+  [CAPABILITY_CLASS.DATA_PREPARATION]: {
+    approval_required: false,
+    min_autonomy_level: 'A1',
+    auto_approve_at: 'A1',
+    review_required: false,
+    max_retry: 3,
+    data_access: 'read_write',
     sensitive_data_allowed: false,
     budget_tier: 'tier_a',
   },
@@ -275,6 +287,12 @@ export const DATA_ACCESS_POLICIES = {
     restricted_fields: [],
     requires_profile: false,
   },
+  [CAPABILITY_CLASS.DATA_PREPARATION]: {
+    readable_datasets: ['*'],
+    writable_datasets: ['*'],   // can create cleaned/joined datasets
+    restricted_fields: [],
+    requires_profile: false,
+  },
 };
 
 // ── Worker Templates ────────────────────────────────────────────────────────
@@ -321,6 +339,7 @@ export const WORKER_TEMPLATES = {
       CAPABILITY_CLASS.REPORTING,
       CAPABILITY_CLASS.SYNTHESIS,
       CAPABILITY_CLASS.CUSTOM_CODE,
+      CAPABILITY_CLASS.DATA_PREPARATION,
     ],
     default_autonomy: 'A1',
     max_autonomy: 'A4',

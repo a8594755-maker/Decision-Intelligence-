@@ -3,10 +3,15 @@
  *
  * NO localStorage fallback. If Supabase fails, error propagates.
  * Uses optimistic concurrency via `version` column.
+ *
+ * When VITE_DI_MOCK_MODE=true, all functions delegate to in-memory mock.
  */
 
 import { supabase } from '../../supabaseClient.js';
 import { TASK_STATES } from '../taskStateMachine.js';
+
+const _MOCK = import.meta.env?.VITE_DI_MOCK_MODE === 'true';
+const _m = _MOCK ? await import('../mock/mockTaskRepo.js') : null;
 
 /**
  * Create a new task in draft_plan state.
@@ -17,6 +22,7 @@ export async function createTask({
   sourceType = 'question_to_task', assignedByUserId,
   inputContext = {}, planSnapshot = null, dueAt = null,
 }) {
+  if (_m) return _m.createTask({ employeeId, title, description, priority, sourceType, assignedByUserId, inputContext, planSnapshot, dueAt });
   const { data, error } = await supabase
     .from('ai_employee_tasks')
     .insert({
@@ -49,6 +55,7 @@ export async function createTask({
  * @throws if version mismatch (concurrent modification)
  */
 export async function updateTaskStatus(taskId, newStatus, expectedVersion, extraFields = {}) {
+  if (_m) return _m.updateTaskStatus(taskId, newStatus, expectedVersion, extraFields);
   const { data, error } = await supabase
     .from('ai_employee_tasks')
     .update({
@@ -73,10 +80,13 @@ export async function updateTaskStatus(taskId, newStatus, expectedVersion, extra
 /**
  * Get task by ID.
  */
-export async function getTask(taskId) {
+const TASK_POLL_COLUMNS = 'id, status, loop_state, plan_snapshot, employee_id, title, priority, created_at, updated_at, template_id, input_context, due_at';
+
+export async function getTask(taskId, { lite = false } = {}) {
+  if (_m) return _m.getTask(taskId, { lite });
   const { data, error } = await supabase
     .from('ai_employee_tasks')
-    .select('*')
+    .select(lite ? TASK_POLL_COLUMNS : '*')
     .eq('id', taskId)
     .single();
 
@@ -88,6 +98,7 @@ export async function getTask(taskId) {
  * Save the approved plan snapshot.
  */
 export async function savePlanSnapshot(taskId, planSnapshot, expectedVersion) {
+  if (_m) return _m.savePlanSnapshot(taskId, planSnapshot, expectedVersion);
   return updateTaskStatus(taskId, TASK_STATES.WAITING_APPROVAL, expectedVersion, {
     plan_snapshot: planSnapshot,
   });
@@ -97,6 +108,7 @@ export async function savePlanSnapshot(taskId, planSnapshot, expectedVersion) {
  * Update the latest_run_id forward reference.
  */
 export async function setLatestRunId(taskId, runId) {
+  if (_m) return _m.setLatestRunId(taskId, runId);
   const { error } = await supabase
     .from('ai_employee_tasks')
     .update({ latest_run_id: runId })
@@ -109,6 +121,7 @@ export async function setLatestRunId(taskId, runId) {
  * List tasks for an employee, optionally filtered by status.
  */
 export async function listTasks(employeeId, { status, limit = 50 } = {}) {
+  if (_m) return _m.listTasks(employeeId, { status, limit });
   let query = supabase
     .from('ai_employee_tasks')
     .select('*')
@@ -128,6 +141,7 @@ export async function listTasks(employeeId, { status, limit = 50 } = {}) {
  * Replaces aiEmployeeService.listTasksByUser().
  */
 export async function listTasksByUser(userId, { status, limit = 100 } = {}) {
+  if (_m) return _m.listTasksByUser(userId, { status, limit });
   // Step 1: resolve all employee IDs for this user
   const { data: emps, error: empErr } = await supabase
     .from('ai_employees')
@@ -159,6 +173,7 @@ export async function listTasksByUser(userId, { status, limit = 100 } = {}) {
  * Replaces aiEmployeeService.listPendingReviews().
  */
 export async function listPendingReviews(userId) {
+  if (_m) return _m.listPendingReviews(userId);
   // Step 1: resolve all employee IDs for this user
   const { data: emps, error: empErr } = await supabase
     .from('ai_employees')
@@ -189,6 +204,7 @@ export async function listPendingReviews(userId) {
  * Uses optimistic concurrency.
  */
 export async function updateTaskInputContext(taskId, inputContext, expectedVersion) {
+  if (_m) return _m.updateTaskInputContext(taskId, inputContext, expectedVersion);
   const { data, error } = await supabase
     .from('ai_employee_tasks')
     .update({
@@ -220,6 +236,7 @@ export async function updateTaskInputContext(taskId, inputContext, expectedVersi
  * @returns {Promise<object>} Updated task row
  */
 export async function reassignTask(taskId, newEmployeeId, userId, expectedVersion) {
+  if (_m) return _m.reassignTask(taskId, newEmployeeId, userId, expectedVersion);
   // Verify manager owns the target worker
   const { data: targetEmp, error: empErr } = await supabase
     .from('ai_employees')
@@ -261,6 +278,7 @@ export async function reassignTask(taskId, newEmployeeId, userId, expectedVersio
  * List tasks filtered by multiple statuses for an employee.
  */
 export async function listTasksByStatus(employeeId, statuses, { limit = 50 } = {}) {
+  if (_m) return _m.listTasksByStatus(employeeId, statuses, { limit });
   const { data, error } = await supabase
     .from('ai_employee_tasks')
     .select('*')

@@ -22,6 +22,7 @@ const DI_NAV_ITEMS = [
   { to: '/digital-twin',  label: 'Digital Twin',    icon: Cpu },
   { to: '/scenarios',     label: 'Scenarios',       icon: GitCompare },
   { to: '/negotiation',   label: 'Negotiation',     icon: Handshake },
+  { to: '/insights',      label: 'Insights Hub',    icon: BarChart3 },
 ];
 
 const DI_ADVANCED_ITEMS = [
@@ -48,6 +49,7 @@ const AI_NAV_ITEMS = [
   { to: '/',                    label: 'Dashboard',      icon: Bot, end: true },
   { to: '/employees',           label: 'Workers',        icon: Users },
   { to: '/employees/profiles',  label: 'Profiles',       icon: FileText },
+  { to: '/insights',             label: 'Insights Hub',   icon: LayoutDashboard },
 ];
 
 const AI_ADVANCED_ITEMS = [

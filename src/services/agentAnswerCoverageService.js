@@ -28,6 +28,11 @@ const DIMENSION_PATTERNS = Object.freeze([
   { label: 'holding_cost', patterns: [/\bholding cost\b/i, /(持有成本|庫存持有)/] },
   { label: 'fill_rate', patterns: [/\bfill rate\b/i, /(充填率|滿足率)/] },
   { label: 'inventory_turns', patterns: [/\binventory turn/i, /(庫存周轉)/] },
+  // ── Composite / trend dimensions ──
+  { label: 'revenue trend', patterns: [/\brevenue\s+trend/i, /\bsales\s+trend/i, /\btrend\s+(?:in\s+)?(?:revenue|sales)/i, /(營收趨勢|收入趨勢|銷售趨勢)/] },
+  { label: 'order trend', patterns: [/\border\s+(?:volume\s+)?trend/i, /\btrend\s+(?:in\s+)?orders/i, /(訂單趨勢)/] },
+  { label: 'growth', patterns: [/\bgrowth\s+rate/i, /\byoy\b/i, /\bmom\b/i, /\bqoq\b/i, /(成長率|增長率|同比|環比)/] },
+  { label: 'seasonality', patterns: [/\bseasonal/i, /\bcyclical/i, /(季節性|週期性)/] },
 ]);
 
 const SPECIAL_CHART_REQUESTS = Object.freeze([
@@ -86,9 +91,14 @@ const METRIC_LABEL_ALIASES = Object.freeze({
   'total products': 'products',
   'product count': 'products',
   'category count': 'categories',
+  'revenue trend': 'revenue trend',
+  'sales trend': 'revenue trend',
+  'order trend': 'order trend',
+  'monthly revenue': 'revenue trend',
+  'revenue over time': 'revenue trend',
 });
 
-function addDimensionHits(text, coveredDimensions) {
+export function addDimensionHits(text, coveredDimensions) {
   const sample = String(text || '');
   for (const entry of DIMENSION_PATTERNS) {
     if (entry.patterns.some((pattern) => pattern.test(sample))) {
@@ -272,6 +282,7 @@ export function getStructuredAnswerCoverage({
 
 export default {
   REQUESTED_PERCENTILE_KEYS,
+  addDimensionHits,
   collectPercentileKeysFromText,
   detectRequestedSpecialChart,
   getStructuredAnswerCoverage,

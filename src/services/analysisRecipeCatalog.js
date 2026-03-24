@@ -245,6 +245,237 @@ export const RECIPE_CATALOG = [
     formulas: {},
     proxyDisclosures: [],
   },
+
+  // ── General Domain Recipes ─────────────────────────────────────────────
+
+  {
+    id: 'cohort_retention_analysis',
+    domain: 'ecommerce',
+    triggerConcepts: ['retention', 'churn', 'ltv'],
+    triggerTaskTypes: ['trend', 'diagnostic', 'mixed', 'comparison'],
+    label: 'Cohort Retention Analysis',
+    steps: [
+      {
+        id: 'data_assessment',
+        tool: 'query_sap_data',
+        title: 'Data Assessment',
+        instructions: [
+          'Identify the key columns:',
+          '1. Customer/user identifier column',
+          '2. Transaction/event date column',
+          '3. Revenue/amount column (if exists)',
+          '4. Full date range and total unique customers',
+        ].join('\n'),
+      },
+      {
+        id: 'cohort_definition',
+        tool: 'run_python_analysis',
+        title: 'Cohort Definition & Retention Matrix',
+        instructions: [
+          'Use Python to:',
+          '1. Assign each customer to a cohort based on their first purchase/event month',
+          '2. For each cohort, calculate how many customers were active in month 0, 1, 2, ... N',
+          '3. Build a retention matrix: rows = cohort month, columns = month offset, values = % retained',
+          '4. Calculate average retention curve across all cohorts',
+          '5. Identify best and worst retaining cohorts',
+        ].join('\n'),
+      },
+      {
+        id: 'visualization',
+        tool: 'generate_chart',
+        title: 'Retention Heatmap',
+        instructions: 'Generate a heatmap showing the retention matrix. X-axis: months since first purchase, Y-axis: cohort month.',
+      },
+      {
+        id: 'synthesis',
+        tool: 'run_python_analysis',
+        title: 'LTV Estimation & Recommendations',
+        instructions: [
+          'Calculate:',
+          '1. Average customer lifespan (months until churn, defined as 2+ months inactive)',
+          '2. Average revenue per customer per active month',
+          '3. Estimated LTV = avg_monthly_revenue × avg_lifespan',
+          '4. Churn rate by cohort age',
+          '5. Recommendations for improving retention at the highest churn points',
+        ].join('\n'),
+      },
+    ],
+    formulas: {
+      retention_rate: 'Customers active in month N / Customers in cohort × 100%',
+      ltv: 'Avg Revenue Per Active Month × Avg Customer Lifespan',
+      churn_rate: '1 - Retention Rate',
+    },
+    proxyDisclosures: [],
+  },
+
+  {
+    id: 'funnel_conversion_analysis',
+    domain: 'ecommerce',
+    triggerConcepts: ['conversion_rate', 'basket_analysis'],
+    triggerTaskTypes: ['diagnostic', 'recommendation', 'mixed'],
+    label: 'Funnel & Conversion Analysis',
+    steps: [
+      {
+        id: 'funnel_definition',
+        tool: 'query_sap_data',
+        title: 'Funnel Stage Definition',
+        instructions: [
+          'Identify funnel stages from the data:',
+          '1. What event/status columns define stages? (e.g., order_status, event_type)',
+          '2. What is the natural sequence of stages?',
+          '3. How many records at each stage?',
+        ].join('\n'),
+      },
+      {
+        id: 'conversion_calculation',
+        tool: 'run_python_analysis',
+        title: 'Stage-by-Stage Conversion',
+        instructions: [
+          'Use Python to:',
+          '1. Count unique users/sessions at each funnel stage',
+          '2. Calculate conversion rate between consecutive stages',
+          '3. Calculate overall funnel conversion (top to bottom)',
+          '4. Segment by key dimensions (channel, device, customer type) if available',
+          '5. Find the biggest drop-off point',
+        ].join('\n'),
+      },
+      {
+        id: 'visualization',
+        tool: 'generate_chart',
+        title: 'Funnel Visualization',
+        instructions: 'Generate a bar chart showing the funnel stages with count and conversion rate labels.',
+      },
+      {
+        id: 'recommendations',
+        tool: 'run_python_analysis',
+        title: 'Drop-off Analysis & Recommendations',
+        instructions: 'Analyze the biggest drop-off point. What segments have the worst conversion? What actions could improve it?',
+      },
+    ],
+    formulas: {
+      stage_conversion: 'Users at Stage N / Users at Stage N-1 × 100%',
+      overall_conversion: 'Users at Final Stage / Users at First Stage × 100%',
+    },
+    proxyDisclosures: [],
+  },
+
+  {
+    id: 'revenue_driver_analysis',
+    domain: 'finance',
+    triggerConcepts: ['revenue_growth', 'gross_margin', 'cost_structure'],
+    triggerTaskTypes: ['diagnostic', 'trend', 'comparison', 'mixed'],
+    label: 'Revenue Driver Analysis',
+    steps: [
+      {
+        id: 'data_scan',
+        tool: 'query_sap_data',
+        title: 'Revenue Data Scan',
+        instructions: [
+          'Query for:',
+          '1. Revenue, cost, and quantity columns',
+          '2. Time period range',
+          '3. Dimension columns (product, region, channel, customer segment)',
+          '4. Total records and time granularity',
+        ].join('\n'),
+      },
+      {
+        id: 'decomposition',
+        tool: 'run_python_analysis',
+        title: 'Revenue Decomposition',
+        instructions: [
+          'Use Python to decompose revenue changes:',
+          '1. Price effect: (Actual Price - Prior Price) × Actual Quantity',
+          '2. Volume effect: (Actual Quantity - Prior Quantity) × Prior Price',
+          '3. Mix effect: change in product/segment mix contribution',
+          '4. Show decomposition by time period (MoM or QoQ)',
+          '5. Identify top growth drivers and biggest decliners',
+        ].join('\n'),
+      },
+      {
+        id: 'margin_analysis',
+        tool: 'run_python_analysis',
+        title: 'Margin Analysis',
+        instructions: [
+          'Calculate:',
+          '1. Gross margin % by product/segment/channel',
+          '2. Margin trend over time',
+          '3. Cost structure breakdown (if COGS detail available)',
+          '4. Flag any margin compression (declining margin with growing revenue)',
+        ].join('\n'),
+      },
+      {
+        id: 'sensitivity',
+        tool: 'run_python_analysis',
+        title: 'Sensitivity & Recommendations',
+        instructions: 'Show impact on total revenue if: (a) price +/- 5%, (b) volume +/- 10%, (c) mix shifts toward highest-margin product. Provide 3 actionable recommendations.',
+      },
+    ],
+    formulas: {
+      gross_margin: '(Revenue - COGS) / Revenue × 100%',
+      price_effect: '(P_actual - P_prior) × Q_actual',
+      volume_effect: '(Q_actual - Q_prior) × P_prior',
+    },
+    proxyDisclosures: [],
+  },
+
+  {
+    id: 'time_series_decomposition',
+    domain: 'general',
+    triggerConcepts: ['trend', 'distribution'],
+    triggerTaskTypes: ['trend', 'diagnostic', 'mixed'],
+    label: 'Time Series Decomposition',
+    steps: [
+      {
+        id: 'data_assessment',
+        tool: 'query_sap_data',
+        title: 'Time Series Data Assessment',
+        instructions: [
+          'Identify:',
+          '1. Date/time column and its granularity (daily, weekly, monthly)',
+          '2. Numeric metric columns suitable for time series analysis',
+          '3. Full date range and data density (any gaps?)',
+        ].join('\n'),
+      },
+      {
+        id: 'decomposition',
+        tool: 'run_python_analysis',
+        title: 'Trend-Seasonality-Residual Decomposition',
+        instructions: [
+          'Use Python to:',
+          '1. Resample to regular intervals if needed',
+          '2. Apply additive decomposition: Y = Trend + Seasonal + Residual',
+          '3. Extract trend component (rolling mean or linear fit)',
+          '4. Extract seasonal component (subtract trend, average by period)',
+          '5. Residual = Original - Trend - Seasonal',
+          '6. Report: trend direction, seasonal period, residual volatility',
+        ].join('\n'),
+      },
+      {
+        id: 'visualization',
+        tool: 'generate_chart',
+        title: 'Decomposition Visualization',
+        instructions: 'Generate a multi-panel chart showing: original series, trend component, seasonal component, and residuals.',
+      },
+      {
+        id: 'forecast_and_anomaly',
+        tool: 'run_python_analysis',
+        title: 'Short-Term Forecast & Anomaly Detection',
+        instructions: [
+          'Based on the decomposition:',
+          '1. Project trend forward 3-6 periods',
+          '2. Add seasonal pattern for forecast',
+          '3. Flag any residuals > 2 std as anomalies',
+          '4. Report confidence interval for forecast',
+        ].join('\n'),
+      },
+    ],
+    formulas: {
+      additive: 'Y(t) = Trend(t) + Seasonal(t) + Residual(t)',
+      trend: 'Moving average or linear regression over full period',
+      seasonal: 'Average of (Y - Trend) grouped by period position',
+    },
+    proxyDisclosures: [],
+  },
 ];
 
 // ── Recipe Selection ────────────────────────────────────────────────────────
