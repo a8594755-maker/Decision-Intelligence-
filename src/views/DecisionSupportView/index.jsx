@@ -7,26 +7,26 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useLocation } from 'react-router-dom';
 import { Activity, Bot, FileText } from 'lucide-react';
 import { Card, Button } from '../../components/ui';
-import { supabase, userFilesService } from '../../services/supabaseClient';
-import { prepareChatUploadFromFile, prepareChatUploadFromFiles, buildDataSummaryCardPayload, MAX_UPLOAD_BYTES } from '../../services/chatDatasetProfilingService';
+import { supabase, userFilesService } from '../../services/infra/supabaseClient';
+import { prepareChatUploadFromFile, prepareChatUploadFromFiles, buildDataSummaryCardPayload, MAX_UPLOAD_BYTES } from '../../services/data-prep/chatDatasetProfilingService';
 import { getRequiredMappingStatus } from '../../utils/requiredMappingStatus';
-import { setLocalTableData, TABLE_REGISTRY } from '../../services/liveDataQueryService';
-import { createDatasetProfileFromSheets, buildUserDatasetDigest } from '../../services/datasetProfilingService';
-import { datasetProfilesService, registerLocalProfile } from '../../services/datasetProfilesService';
-import { reuseMemoryService } from '../../services/reuseMemoryService';
-import { streamChatWithAI, getLastUsedModel } from '../../services/geminiAPI';
-import { runAgentLoop, ANALYSIS_AGENT_TOOL_IDS } from '../../services/chatAgentLoop';
-import { detectDomain, buildChallengerInstruction, buildOptimizerInstruction } from '../../services/analysisDomainEnrichment';
-import { registerTool, approveTool } from '../../services/toolRegistryService';
-import { invalidateRegisteredToolsCache } from '../../services/chatToolAdapter';
-import { diResetService } from '../../services/diResetService';
+import { setLocalTableData, TABLE_REGISTRY } from '../../services/data-prep/liveDataQueryService';
+import { createDatasetProfileFromSheets, buildUserDatasetDigest } from '../../services/data-prep/datasetProfilingService';
+import { datasetProfilesService, registerLocalProfile } from '../../services/data-prep/datasetProfilesService';
+import { reuseMemoryService } from '../../services/memory/reuseMemoryService';
+import { streamChatWithAI, getLastUsedModel } from '../../services/ai-infra/geminiAPI';
+import { runAgentLoop, ANALYSIS_AGENT_TOOL_IDS } from '../../services/agent-core/chatAgentLoop';
+import { detectDomain, buildChallengerInstruction, buildOptimizerInstruction } from '../../services/data-prep/analysisDomainEnrichment';
+import { registerTool, approveTool } from '../../services/ai-infra/toolRegistryService';
+import { invalidateRegisteredToolsCache } from '../../services/agent-core/chatToolAdapter';
+import { diResetService } from '../../services/infra/diResetService';
 import {
   runPlanFromDatasetProfile,
   buildPlanSummaryCardPayload,
   buildPlanTableCardPayload,
   buildInventoryProjectionCardPayload,
   buildPlanDownloadsPayload,
-} from '../../services/chatPlanningService';
+} from '../../services/planning/chatPlanningService';
 import {
   generateTopologyGraphForRun,
   loadTopologyGraphForRun
@@ -35,7 +35,7 @@ import { buildSignature } from '../../utils/datasetSimilarity';
 import { buildReusePlan, applyContractTemplateToProfile } from '../../utils/reusePlanner';
 import { APP_NAME } from '../../config/branding';
 import { isCommandEnabled, getDisabledMessage } from '../../config/featureGateService';
-import { executeChatCanvasRun } from '../../services/chatCanvasWorkflowService';
+import { executeChatCanvasRun } from '../../services/canvas/chatCanvasWorkflowService';
 import CanvasPanel from '../../components/chat/CanvasPanel';
 import AgentExecutionPanel from '../../components/chat/AgentExecutionPanel';
 import AIEmployeeChatShell from '../../components/chat/AIEmployeeChatShell';
@@ -51,39 +51,40 @@ import ChatThread from '../../components/chat/ChatThread';
 import ChatComposer from '../../components/chat/ChatComposer';
 import EmployeeProfilePanel from '../../components/ai-employee/EmployeeProfilePanel';
 import useSessionContext from '../../hooks/useSessionContext';
-import { parseIntent, routeIntent } from '../../services/chatIntentService';
-import { buildChatSessionContext, buildContextSummaryForPrompt } from '../../services/chatSessionContextBuilder';
-import { looksLikeScenario } from '../../services/scenarioIntentParser';
-import { runScenarioFromChat } from '../../services/scenarioChatBridge';
-import { resolveActionToIntent } from '../../services/chatActionRegistry';
-import { handleParameterChange, handlePlanComparison, buildComparisonSummaryText } from '../../services/chatRefinementService';
-import { generateAnalysisBlueprint, executeModule as executeBlueprintModule } from '../../services/analysisBlueprintService';
-import { buildAgentPresentationPayload, buildImmediatePresentation, runBackgroundQa, resolveAgentAnswerContract, summarizeToolCallsForPrompt } from '../../services/agentResponsePresentationService.js';
-import { saveSnapshot } from '../../services/analysisSnapshotService.js';
-import { judgeAgentCandidates, judgeOptimizedCandidate } from '../../services/agentCandidateJudgeService.js';
-import { resolveAgentExecutionStrategy } from '../../services/agentExecutionStrategyService.js';
-import { buildDirectAnalysisAgentPrompt, resolveDirectAnalysisRequest } from '../../services/directAnalysisService.js';
-import { parseManualThinkingDirective, resolveChatThinkingPolicy } from '../../services/chatThinkingPolicyService.js';
-import { handleDataQuery } from '../../services/sapQueryChatHandler.js';
-import { SAP_DATASET_INFO } from '../../services/sapDataQueryService.js';
+import { parseIntent, routeIntent } from '../../services/chat/chatIntentService';
+import { buildChatSessionContext, buildContextSummaryForPrompt } from '../../services/chat/chatSessionContextBuilder';
+import { looksLikeScenario } from '../../services/planning/scenarioIntentParser';
+import { runScenarioFromChat } from '../../services/planning/scenarioChatBridge';
+import { resolveActionToIntent } from '../../services/chat/chatActionRegistry';
+import { handleParameterChange, handlePlanComparison, buildComparisonSummaryText } from '../../services/chat/chatRefinementService';
+import { generateAnalysisBlueprint, executeModule as executeBlueprintModule } from '../../services/data-prep/analysisBlueprintService';
+import { buildAgentPresentationPayload, buildImmediatePresentation, runBackgroundQa, resolveAgentAnswerContract, summarizeToolCallsForPrompt } from '../../services/agent-core/agentResponsePresentationService.js';
+import { saveSnapshot } from '../../services/data-prep/analysisSnapshotService.js';
+import { judgeAgentCandidates, judgeOptimizedCandidate } from '../../services/agent-core/agentCandidateJudgeService.js';
+import { resolveAgentExecutionStrategy } from '../../services/agent-core/agentExecutionStrategyService.js';
+import { resolveQaEscalationMode } from '../../services/agent-core/qaEscalationPolicy.js';
+import { buildDirectAnalysisAgentPrompt, resolveDirectAnalysisRequest } from '../../services/ai-infra/directAnalysisService.js';
+import { parseManualThinkingDirective, resolveChatThinkingPolicy } from '../../services/chat/chatThinkingPolicyService.js';
+import { handleDataQuery } from '../../services/sap-erp/sapQueryChatHandler.js';
+import { SAP_DATASET_INFO } from '../../services/sap-erp/sapDataQueryService.js';
 
-import { createAlertMonitor, buildAlertChatMessage, isAlertMonitorEnabled } from '../../services/alertMonitorService';
-import { batchApprove, batchReject } from '../../services/approvalWorkflowService';
-import { decomposeTask } from '../../services/chatTaskDecomposer';
+import { createAlertMonitor, buildAlertChatMessage, isAlertMonitorEnabled } from '../../services/governance/alertMonitorService';
+import { batchApprove, batchReject } from '../../services/planning/approvalWorkflowService';
+import { decomposeTask } from '../../services/chat/chatTaskDecomposer';
 import { getEmployee, getOrCreateWorker } from '../../services/aiEmployee/queries.js';
 // v2 orchestrator — single entry point for task lifecycle
 import { submitPlan, approvePlan as orchestratorApprovePlan, isRalphLoopEnabled, abortAllRalphLoops, resolveReviewDecision, provideStepInput, skipWaitingInputStep } from '../../services/aiEmployee/index.js';
-import { eventBus, EVENT_NAMES } from '../../services/eventBus.js';
-import { processEmailIntake } from '../../services/emailIntakeService.js';
-import { processTranscriptIntake } from '../../services/transcriptIntakeService.js';
-import { processIntake, INTAKE_SOURCES } from '../../services/taskIntakeService.js';
+import { eventBus, EVENT_NAMES } from '../../services/governance/eventBus.js';
+import { processEmailIntake } from '../../services/chat/emailIntakeService.js';
+import { processTranscriptIntake } from '../../services/chat/transcriptIntakeService.js';
+import { processIntake, INTAKE_SOURCES } from '../../services/chat/taskIntakeService.js';
 import {
   buildAttachmentPromptText,
   buildSpreadsheetAttachmentPayloads,
   isSpreadsheetAttachment,
   materializeDocumentAttachments,
   preparePendingChatAttachments,
-} from '../../services/chatAttachmentService.js';
+} from '../../services/chat/chatAttachmentService.js';
 import {
   SIDEBAR_COLLAPSED_KEY_PREFIX,
   CANVAS_SPLIT_RATIO_KEY_PREFIX,
@@ -121,7 +122,7 @@ import MessageCardRenderer from './MessageCardRenderer.jsx';
 import {
   consumeModelConfigNormalizationNotices,
   getModelConfigResolution,
-} from '../../services/modelConfigService.js';
+} from '../../services/ai-infra/modelConfigService.js';
 
 initTableAvailability();
 
@@ -937,13 +938,13 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
   // Data Learning: fetch profile + load insights on mount (non-blocking)
   useEffect(() => {
     // Load accumulated insights
-    import('../../services/dataInsightService.js').then(({ getInsights }) => {
+    import('../../services/data-prep/dataInsightService.js').then(({ getInsights }) => {
       const all = getInsights();
       if (all.length > 0) setDataInsights(all);
     }).catch(() => {});
 
     // Load data profile
-    import('../../services/dataLearningService.js').then(({ fetchDataProfile, getCachedProfile, buildProfileDigest }) => {
+    import('../../services/data-prep/dataLearningService.js').then(({ fetchDataProfile, getCachedProfile, buildProfileDigest }) => {
       const cached = getCachedProfile();
       if (cached) {
         setDataProfileDigest(buildProfileDigest(cached));
@@ -1648,7 +1649,7 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
 
     // For 'sent' and 'skip' — log the outbound action
     try {
-      const { logOutboundAction } = await import('../../services/supplierCommunicationService.js');
+      const { logOutboundAction } = await import('../../services/sap-erp/supplierCommunicationService.js');
       await logOutboundAction({
         caseId,
         channel: action === 'sent' ? 'manual' : 'skip',
@@ -1686,8 +1687,8 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
   // ── Macro-Oracle handler ─────────────────────────────────────────────────
   const handleMacroOracleCheck = useCallback(async ({ demoScenario = 'semiconductor_fire' } = {}) => {
     try {
-      const { fetchAllSignals } = await import('../../services/externalSignalAdapters.js');
-      const { processExternalSignals } = await import('../../services/macroSignalService.js');
+      const { fetchAllSignals } = await import('../../services/risk/externalSignalAdapters.js');
+      const { processExternalSignals } = await import('../../services/forecast/macroSignalService.js');
 
       const isLive = !demoScenario || demoScenario === 'live';
       const externalData = await fetchAllSignals({
@@ -2490,45 +2491,17 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
       });
       candidatePool = [selectedCandidate];
 
-      // ── QA-based escalation: three-tier logic (S4) ──
+      // ── QA-based escalation: blocker-first policy (hard blockers => optimizer, soft => repair) ──
       const primaryQaScore = Number(selectedCandidate?.presentation?.qa?.score || 0);
-      const hasBlockers = (selectedCandidate?.presentation?.qa?.blockers || []).length > 0;
-
-      let escalationMode = 'none';
-      if (forceOptimizer) {
-        escalationMode = 'full_optimizer';
-      } else if (hasBlockers) {
-        // Distinguish hard failures (no data) from soft issues (formatting/dedup)
-        const hardBlockers = (selectedCandidate?.presentation?.qa?.blockers || []).filter(b =>
-          /missing required dimensions|no.*evidence|all.*failed|0-row/i.test(b)
-        );
-        if (hardBlockers.length > 0) {
-          // Primary genuinely failed to get data — optimizer might help with different SQL strategy
-          escalationMode = 'full_optimizer';
-        } else {
-          // Soft blockers (dedup, formatting, leaked debug) — narrative repair can fix these
-          escalationMode = 'narrative_repair';
-        }
-      } else if (primaryQaScore < 6.5) {
-        // Low score but no hard blockers — narrative repair is much faster than full optimizer
-        escalationMode = 'narrative_repair';
-      }
-
-      // Downgrade full_optimizer to narrative_repair when the only hard blockers are
-      // "missing required dimensions" but queries actually returned data — this is a
-      // dimension coverage matching issue, not a genuine data absence.
-      if (escalationMode === 'full_optimizer' && !forceOptimizer) {
-        const allBlockers = selectedCandidate?.presentation?.qa?.blockers || [];
-        const onlyDimensionBlockers = allBlockers.length > 0 && allBlockers.every(b =>
-          /missing required dimensions/i.test(b)
-        );
-        const hasSuccessfulQueries = (selectedCandidate?.result?.toolCalls || []).some(tc =>
-          tc?.result?.success && (tc?.result?.rows?.length > 0 || tc?.result?.data)
-        );
-        if (onlyDimensionBlockers && hasSuccessfulQueries) {
-          escalationMode = 'narrative_repair';
-        }
-      }
+      const escalationDecision = resolveQaEscalationMode({
+        qa: selectedCandidate?.presentation?.qa,
+        toolCalls: selectedCandidate?.result?.toolCalls || [],
+        forceOptimizer,
+        lowScoreThreshold: 6.5,
+        lowScoreAction: 'narrative_repair',
+        softBlockerAction: 'narrative_repair',
+      });
+      const escalationMode = escalationDecision.mode;
 
       const shouldEscalate = escalationMode === 'full_optimizer'
         && selectedCandidate?.status === 'completed'
@@ -2541,7 +2514,7 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
         if (qaData && qaData.status !== 'pending') {
           setStreamingContent((prev) => prev + `\n✏️ QA score ${primaryQaScore.toFixed(1)}/10 — refining narrative...\n`);
           try {
-            const { repairBrief, computeDeterministicQa } = await import('../../services/agentResponsePresentationService.js');
+            const { repairBrief, computeDeterministicQa } = await import('../../services/agent-core/agentResponsePresentationService.js');
             // Ensure deterministicQa exists — compute it if missing
             const deterministicQa = qaData.deterministicQa || computeDeterministicQa({
               userMessage: query,
@@ -3779,8 +3752,6 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
         let candidatePool = [];
 
         // ── All paths: run A first, then optionally escalate to optimizer B ──
-        {
-          //
           const primaryModelConfig = resolveRoleConfig('primary', modelMode);
           appendConfigNormalizationNotes();
           selectedCandidate = await runSettledCandidatePass({
@@ -3800,11 +3771,22 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
           });
           candidatePool = [selectedCandidate];
 
-          // ── QA-based escalation: if A has quality issues (or forced), run optimizer B ──
-          const chatPrimaryQaScore = Number(selectedCandidate?.presentation?.qa?.score || 0);
-          const chatShouldEscalate = selectedCandidate?.status === 'completed'
-            && (chatPrimaryQaScore < 8.0 || chatForceOptimizer)
-            && !chatAbortRef.current?.signal?.aborted;
+      // ── QA-based escalation: hard blockers always escalate; low-score fallback stays configurable ──
+      const chatPrimaryQaScore = Number(selectedCandidate?.presentation?.qa?.score || 0);
+      const chatPrimaryStatus = selectedCandidate?.status;
+      const chatAborted = chatAbortRef.current?.signal?.aborted;
+      const chatEscalationDecision = resolveQaEscalationMode({
+        qa: selectedCandidate?.presentation?.qa,
+        toolCalls: selectedCandidate?.result?.toolCalls || [],
+        forceOptimizer: chatForceOptimizer,
+        lowScoreThreshold: 8.0,
+        lowScoreAction: 'full_optimizer',
+        softBlockerAction: 'none',
+      });
+      const chatShouldEscalate = chatPrimaryStatus === 'completed'
+        && chatEscalationDecision.mode === 'full_optimizer'
+        && !chatAborted;
+      console.log(`[DSV:escalation] QA score=${chatPrimaryQaScore}, status=${chatPrimaryStatus}, aborted=${chatAborted}, forceOptimizer=${chatForceOptimizer}, mode=${chatEscalationDecision.mode}, shouldEscalate=${chatShouldEscalate}`);
 
           if (chatShouldEscalate) {
             lastChunkAt = Date.now();
@@ -3873,8 +3855,9 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
                 alternativeCandidate = optimizerResult;
               }
             }
+          } else {
+            console.log(`[DSV:escalation] Skipped — chatShouldEscalate=${chatShouldEscalate}`);
           }
-        }
 
         fullResult = selectedCandidate?.result?.text || judgeDecision?.summary || selectedCandidate?.failedReason || '';
         agentToolCalls = selectedCandidate?.result?.toolCalls || [];
@@ -3997,7 +3980,7 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
       } finally {
         clearInterval(thinkingInterval);
         // Refresh accumulated insights after agent loop (insights may have been added)
-        import('../../services/dataInsightService.js')
+        import('../../services/data-prep/dataInsightService.js')
           .then(({ getInsights }) => { const all = getInsights(); if (all.length > 0) setDataInsights(all); })
           .catch(() => {});
       }

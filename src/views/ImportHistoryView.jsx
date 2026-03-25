@@ -9,7 +9,7 @@ import {
   AlertTriangle, Download, Search, Filter, ChevronDown, ChevronUp, Loader2, X, Database, TrendingUp
 } from 'lucide-react';
 import { Card, Button, Badge, Modal } from '../components/ui';
-import { importBatchesService } from '../services/importHistoryService';
+import { importBatchesService } from '../services/data-prep/importHistoryService';
 import UPLOAD_SCHEMAS from '../utils/uploadSchemas';
 import ViewDataModal from '../components/ViewDataModal';
 

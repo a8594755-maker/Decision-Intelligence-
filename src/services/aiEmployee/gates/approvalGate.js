@@ -8,7 +8,7 @@
 import { taskTransition, TASK_EVENTS } from '../taskStateMachine.js';
 import * as taskRepo from '../persistence/taskRepo.js';
 import { classifyStepPhase, PIPELINE_PHASES } from '../decisionPipelineService.js';
-import { enforceApprovalGate } from '../../approvalGateService.js';
+import { enforceApprovalGate } from '../../planning/approvalGateService.js';
 import { getLatestMetrics } from '../styleLearning/trustMetricsService.js';
 
 async function getAutonomyLevel(employeeId) {

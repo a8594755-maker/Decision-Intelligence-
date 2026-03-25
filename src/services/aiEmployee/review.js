@@ -4,7 +4,7 @@
  * Called by the orchestrator when a step has review_checkpoint: true.
  */
 
-import { reviewStepOutput } from '../aiReviewerService.js';
+import { reviewStepOutput } from '../ai-infra/aiReviewerService.js';
 
 /**
  * Run AI review on a completed step's output.

@@ -1,6 +1,6 @@
-import { diRunsService } from '../diRunsService';
-import { datasetProfilesService } from '../datasetProfilesService';
-import { userFilesService } from '../supabaseClient';
+import { diRunsService } from '../planning/diRunsService';
+import { datasetProfilesService } from '../data-prep/datasetProfilesService';
+import { userFilesService } from '../infra/supabaseClient';
 import { saveJsonArtifact, loadArtifact } from '../../utils/artifactStore';
 import {
   buildTopologyGraph,

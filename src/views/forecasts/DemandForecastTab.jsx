@@ -14,12 +14,12 @@ import {
   Download, RefreshCw, Package, Calendar, Brain
 } from 'lucide-react';
 import { Card, Button, Badge } from '../../components/ui';
-import { runDemandForecast } from '../../services/demandForecastEngine';
+import { runDemandForecast } from '../../services/forecast/demandForecastEngine';
 import {
   forecastRunsService,
   demandForecastService
-} from '../../services/supabaseClient';
-import dualModelForecastService from '../../services/dualModelForecastService';
+} from '../../services/infra/supabaseClient';
+import dualModelForecastService from '../../services/forecast/dualModelForecastService';
 import ModelToggle from '../../components/forecast/ModelToggle';
 import ConsensusWarning from '../../components/forecast/ConsensusWarning';
 import ConfidenceOverlayChart from '../../components/forecast/ConfidenceOverlayChart';

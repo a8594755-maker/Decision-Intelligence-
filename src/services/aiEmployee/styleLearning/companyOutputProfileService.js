@@ -1,4 +1,4 @@
-import { supabase } from '../../supabaseClient.js';
+import { supabase } from '../../infra/supabaseClient.js';
 
 const PROFILE_TABLE = 'company_output_profiles';
 const PROPOSAL_TABLE = 'company_output_profile_proposals';

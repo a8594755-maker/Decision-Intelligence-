@@ -21,9 +21,8 @@ import {
   setArtisanUsePrimary,
   setArtisanCustomModel,
   getInsightsHubModelConfig,
-  setInsightsHubAuto,
-  setInsightsHubCustomModel,
-} from '../../services/modelConfigService';
+  setInsightsHubModel,
+} from '../../services/ai-infra/modelConfigService';
 
 const ROLE_META = [
   {
@@ -258,31 +257,20 @@ function ArtisanModelCard({ configs }) {
 
 function InsightsHubModelCard() {
   const [config, setConfig] = useState(() => getInsightsHubModelConfig());
-  const isCustom = config.mode === 'custom';
-  const currentProvider = isCustom ? config.provider : 'gemini';
-  const currentModel = isCustom ? config.model : 'gemini-2.0-flash';
+  const currentProvider = config.provider;
+  const currentModel = config.model;
   const models = PROVIDER_MODELS[currentProvider] || [];
-
-  const handleModeChange = (e) => {
-    if (e.target.value === 'auto') {
-      setInsightsHubAuto();
-      setConfig({ mode: 'auto', provider: 'gemini', model: 'gemini-2.0-flash' });
-    } else {
-      setInsightsHubCustomModel(currentProvider, currentModel);
-      setConfig({ mode: 'custom', provider: currentProvider, model: currentModel });
-    }
-  };
 
   const handleProviderChange = (e) => {
     const p = e.target.value;
     const m = PROVIDER_MODELS[p]?.[0] || '';
-    setInsightsHubCustomModel(p, m);
-    setConfig({ mode: 'custom', provider: p, model: m });
+    setInsightsHubModel(p, m);
+    setConfig({ provider: p, model: m });
   };
 
   const handleModelChange = (e) => {
-    setInsightsHubCustomModel(currentProvider, e.target.value);
-    setConfig({ mode: 'custom', provider: currentProvider, model: e.target.value });
+    setInsightsHubModel(currentProvider, e.target.value);
+    setConfig({ provider: currentProvider, model: e.target.value });
   };
 
   const selectStyle = {
@@ -295,66 +283,43 @@ function InsightsHubModelCard() {
     <Card>
       <h3 className="font-semibold mb-1">Insights Hub Agent</h3>
       <p className="text-xs mb-4" style={{ color: 'var(--text-secondary)' }}>
-        The model used to generate cross-report trend summaries on the Insights Hub dashboard. Default is Gemini Flash (budget-tier, &lt;$0.001/call).
+        The AI model powering the Insights Hub data analyst. Analyzes your data, detects gaps, and recommends analyses.
       </p>
 
-      <div className="mb-4">
-        <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
-          Mode
-        </label>
-        <select
-          value={config.mode}
-          onChange={handleModeChange}
-          className="w-full rounded-md border px-3 py-2 text-sm"
-          style={selectStyle}
-        >
-          <option value="auto">Auto (Gemini Flash)</option>
-          <option value="custom">Custom Model</option>
-        </select>
-      </div>
-
-      {isCustom && (
-        <div className="grid gap-4 md:grid-cols-2">
-          <div>
-            <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
-              Provider
-            </label>
-            <select
-              value={currentProvider}
-              onChange={handleProviderChange}
-              className="w-full rounded-md border px-3 py-2 text-sm"
-              style={selectStyle}
-            >
-              {providers.map((providerKey) => (
-                <option key={providerKey} value={providerKey}>
-                  {PROVIDER_LABELS[providerKey] || providerKey}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
-              Model
-            </label>
-            <select
-              value={currentModel}
-              onChange={handleModelChange}
-              className="w-full rounded-md border px-3 py-2 text-sm"
-              style={selectStyle}
-            >
-              {models.map((m) => (
-                <option key={m} value={m}>{m}</option>
-              ))}
-            </select>
-          </div>
+      <div className="grid gap-4 md:grid-cols-2">
+        <div>
+          <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
+            Provider
+          </label>
+          <select
+            value={currentProvider}
+            onChange={handleProviderChange}
+            className="w-full rounded-md border px-3 py-2 text-sm"
+            style={selectStyle}
+          >
+            {providers.map((providerKey) => (
+              <option key={providerKey} value={providerKey}>
+                {PROVIDER_LABELS[providerKey] || providerKey}
+              </option>
+            ))}
+          </select>
         </div>
-      )}
-
-      {!isCustom && (
-        <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>
-          Currently using: Gemini · gemini-2.0-flash
-        </p>
-      )}
+        <div>
+          <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
+            Model
+          </label>
+          <select
+            value={currentModel}
+            onChange={handleModelChange}
+            className="w-full rounded-md border px-3 py-2 text-sm"
+            style={selectStyle}
+          >
+            {models.map((m) => (
+              <option key={m} value={m}>{m}</option>
+            ))}
+          </select>
+        </div>
+      </div>
     </Card>
   );
 }

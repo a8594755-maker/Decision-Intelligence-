@@ -153,7 +153,7 @@ describe('EventBus → Canvas Bridge', () => {
   let eventBus, EVENT_NAMES;
 
   beforeEach(async () => {
-    const mod = await import('../../services/eventBus.js');
+    const mod = await import('../../services/governance/eventBus.js');
     eventBus = mod.eventBus;
     EVENT_NAMES = mod.EVENT_NAMES;
   });
@@ -215,7 +215,7 @@ describe('builtinToolCatalog ui_hint', () => {
   let BUILTIN_TOOLS, hasWidget;
 
   beforeEach(async () => {
-    const catalog = await import('../../services/builtinToolCatalog.js');
+    const catalog = await import('../../services/ai-infra/builtinToolCatalog.js');
     BUILTIN_TOOLS = catalog.BUILTIN_TOOLS;
     const reg = await import('./WidgetRegistry.js');
     hasWidget = reg.hasWidget;

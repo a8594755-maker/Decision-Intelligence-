@@ -1,3 +1,9 @@
+---
+owner: di-core-team
+status: active
+last_reviewed: 2026-03-24
+---
+
 # 資料庫結構與 Payload 格式說明
 
 ## 概述
@@ -383,4 +389,3 @@ if (validRows.length > 0) {
 - Schema 定義：`src/utils/uploadSchemas.js`
 - 保存邏輯：`src/views/EnhancedExternalSystemsView.jsx`
 - Supabase 服務：`src/services/supabaseClient.js`
-

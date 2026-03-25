@@ -20,7 +20,7 @@ import {
   persistBasePlan,
   fetchRecentPlans,
   runAutoBaseline as _runAutoBaseline
-} from '../services/basePlanResolverService';
+} from '../services/planning/basePlanResolverService';
 
 const SESSION_GUARD_KEY = (userId, profileId) =>
   `autoBaselineAttempted_${userId}_${profileId}`;

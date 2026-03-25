@@ -3,7 +3,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import {
   startAiEmployeeRuntime,
   stopAiEmployeeRuntime,
-} from '../../services/aiEmployeeRuntimeService.js';
+} from '../../services/ai-infra/aiEmployeeRuntimeService.js';
 
 export default function AiEmployeeRuntimeManager() {
   const { user } = useAuth();

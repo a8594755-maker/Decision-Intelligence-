@@ -14,8 +14,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Loader2, RefreshCw, AlertCircle, Calculator, Database, Cloud } from 'lucide-react';
 import { Button } from '../components/ui';
-import { supabase } from '../services/supabaseClient';
-import { forecastRunsService, componentDemandService } from '../services/supabaseClient';
+import { supabase } from '../services/infra/supabaseClient';
+import { forecastRunsService, componentDemandService } from '../services/infra/supabaseClient';
 
 // Domain layer calculation functions
 import { calculateSupplyCoverageRiskBatch } from '../domains/risk/coverageCalculator.js';
@@ -48,7 +48,7 @@ import { buildDataQualityReport } from '../utils/dataQualityReport';
 import DataQualityCard from '../components/chat/DataQualityCard';
 
 // Sample data loading
-import { loadSampleWorkbook } from '../services/sampleDataService';
+import { loadSampleWorkbook } from '../services/data-prep/sampleDataService';
 
 // Action recommendation engine
 import { generateActionsBatch } from '../domains/risk/actionRecommender';
@@ -705,7 +705,7 @@ const RiskDashboardView = ({ addNotification, user, setView, globalDataSource, _
 
     setLoadingProb(true);
     try {
-      const { inventoryProbForecastService } = await import('../services/inventoryProbForecastService');
+      const { inventoryProbForecastService } = await import('../services/forecast/inventoryProbForecastService');
       
       // Check if prob results exist
       const hasResults = await inventoryProbForecastService.hasResults(user.id, activeForecastRun.id);
@@ -746,7 +746,7 @@ const RiskDashboardView = ({ addNotification, user, setView, globalDataSource, _
     }
 
     try {
-      const { inventoryProbForecastService } = await import('../services/inventoryProbForecastService');
+      const { inventoryProbForecastService } = await import('../services/forecast/inventoryProbForecastService');
       const series = await inventoryProbForecastService.getSeriesByRun(
         user.id,
         activeForecastRun.id,
@@ -770,7 +770,7 @@ const RiskDashboardView = ({ addNotification, user, setView, globalDataSource, _
     
     setAuditLoading(true);
     try {
-      const { listEvents } = await import('../services/auditService');
+      const { listEvents } = await import('../services/governance/auditService');
       const result = await listEvents(user.id, {
         bomRunId: activeForecastRun.id,
         limit: 100
@@ -858,7 +858,7 @@ const RiskDashboardView = ({ addNotification, user, setView, globalDataSource, _
     const startMs = Date.now();
     try {
       // Import revenue forecast service functions
-      const { getLatestRevenueRunForBomRun, getRevenueSummaryByRun } = await import('../services/revenueForecastService');
+      const { getLatestRevenueRunForBomRun, getRevenueSummaryByRun } = await import('../services/forecast/revenueForecastService');
       
       let revenueRunId;
       
@@ -926,7 +926,7 @@ const RiskDashboardView = ({ addNotification, user, setView, globalDataSource, _
     
     const startMs = Date.now();
     try {
-      const { getRiskScoresForRun } = await import('../services/riskScoreService');
+      const { getRiskScoresForRun } = await import('../services/risk/riskScoreService');
       
       const result = await getRiskScoresForRun(user.id, activeForecastRun.id);
       
@@ -967,7 +967,7 @@ const RiskDashboardView = ({ addNotification, user, setView, globalDataSource, _
     console.log('🎯 Starting risk score calculation...');
     
     try {
-      const { runRiskScoreCalculation } = await import('../services/riskScoreService');
+      const { runRiskScoreCalculation } = await import('../services/risk/riskScoreService');
       
       // Pass filteredRows for deterministic fallback
       const result = await runRiskScoreCalculation(

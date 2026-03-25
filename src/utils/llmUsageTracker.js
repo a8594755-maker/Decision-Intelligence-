@@ -10,7 +10,7 @@
  *   trackLlmUsage({ userId, source: 'gemini_api', model: 'gemini-1.5-pro', ... });
  */
 
-import { supabase } from '../services/supabaseClient';
+import { supabase } from '../services/infra/supabaseClient';
 
 // Pricing（USD per 1K tokens）— updated 2026-03-23 from official sources
 const COST_PER_1K_TOKENS = {

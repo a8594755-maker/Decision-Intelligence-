@@ -1,8 +1,8 @@
-import { datasetProfilesService } from '../services/datasetProfilesService';
-import { diRunsService } from '../services/diRunsService';
-import { reuseMemoryService } from '../services/reuseMemoryService';
-import { buildDataSummaryCardPayload } from '../services/chatDatasetProfilingService';
-import { runForecastFromDatasetProfile, buildForecastCardPayload } from '../services/chatForecastService';
+import { datasetProfilesService } from '../services/data-prep/datasetProfilesService';
+import { diRunsService } from '../services/planning/diRunsService';
+import { reuseMemoryService } from '../services/memory/reuseMemoryService';
+import { buildDataSummaryCardPayload } from '../services/data-prep/chatDatasetProfilingService';
+import { runForecastFromDatasetProfile, buildForecastCardPayload } from '../services/forecast/chatForecastService';
 import {
   runPlanFromDatasetProfile,
   buildPlanSummaryCardPayload,
@@ -12,12 +12,12 @@ import {
   buildBomBottlenecksCardPayload,
   buildPlanDownloadsPayload,
   buildRiskAwarePlanComparisonCardPayload
-} from '../services/chatPlanningService';
+} from '../services/planning/chatPlanningService';
 import { generateTopologyGraphForRun } from '../services/topology/topologyService';
 import { loadArtifact, saveJsonArtifact } from '../utils/artifactStore';
 import { runClosedLoop, isClosedLoopEnabled } from '../services/closed_loop/index.js';
 import { buildDecisionNarrative } from '../utils/buildDecisionNarrative';
-import { recordPlanGenerated } from '../services/planAuditService';
+import { recordPlanGenerated } from '../services/planning/planAuditService';
 import { applyBlockingAnswerBindings } from './blockingAnswerUtils.js';
 
 export const WORKFLOW_A_STEPS = ['profile', 'contract', 'validate', 'forecast', 'optimize', 'verify', 'topology', 'report'];

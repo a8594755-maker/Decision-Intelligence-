@@ -4,7 +4,7 @@
 // ============================================
 
 import { useState, useEffect } from 'react';
-import { supabase } from "../../services/supabaseClient";
+import { supabase } from "../../services/infra/supabaseClient";
 import { formatDistanceToNow, format } from 'date-fns';
 
 const JOB_STATUS_COLORS = {

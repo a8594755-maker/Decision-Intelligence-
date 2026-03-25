@@ -17,8 +17,8 @@ import {
   generateSheetPlansFromParsed,
   importWorkbookSheets,
   validateSheetPlans,
-} from '../services/oneShotImportService';
-import { loadSampleWorkbook } from '../services/sampleDataService';
+} from '../services/data-prep/oneShotImportService';
+import { loadSampleWorkbook } from '../services/data-prep/sampleDataService';
 import UPLOAD_SCHEMAS from '../utils/uploadSchemas';
 import MappingReviewPanel from './MappingReviewPanel';
 import MappingProfileManager from './MappingProfileManager';
@@ -28,7 +28,7 @@ import {
   generateHeaderFingerprint,
   findMappingProfile,
   validateProfileAgainstHeaders,
-} from '../services/mappingProfileService';
+} from '../services/data-prep/mappingProfileService';
 
 const UPLOAD_TYPE_OPTIONS = Object.keys(UPLOAD_SCHEMAS);
 const MAX_FILE_SIZE_MB = 100;

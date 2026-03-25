@@ -11,7 +11,7 @@
  *   - cache: Fetch from in-memory raw rows cache
  */
 
-import { supabase } from '../supabaseClient.js';
+import { supabase } from '../infra/supabaseClient.js';
 
 // ── Context Resolution Registry ─────────────────────────────────────────
 

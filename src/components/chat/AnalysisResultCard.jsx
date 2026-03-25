@@ -12,11 +12,11 @@ import React, { useState, useCallback, useEffect, useMemo, Suspense } from 'reac
 import { createPortal } from 'react-dom';
 import { ChevronDown, ChevronUp, BarChart3, TrendingUp, Table2, Database, Code2, Copy, Check, Sparkles, Loader2, Maximize2, X, FileSpreadsheet } from 'lucide-react';
 import ChartRenderer from './ChartRenderer.jsx';
-import { inferChartSpec, getCompatibleTypes } from '../../services/chartSpecInference.js';
-import { enhanceChartSpec } from '../../services/chartEnhancementService.js';
-import { selectTemplate } from '../../services/chartTemplateSelector.js';
-import { getTemplateComponent } from '../../services/chartTemplateLoader.js';
-import { generateArtisanChart, getCachedArtisan, clearCachedArtisan } from '../../services/chartArtisanService.js';
+import { inferChartSpec, getCompatibleTypes } from '../../services/charts/chartSpecInference.js';
+import { enhanceChartSpec } from '../../services/charts/chartEnhancementService.js';
+import { selectTemplate } from '../../services/charts/chartTemplateSelector.js';
+import { getTemplateComponent } from '../../services/charts/chartTemplateLoader.js';
+import { generateArtisanChart, getCachedArtisan, clearCachedArtisan } from '../../services/charts/chartArtisanService.js';
 import ChartIframeSandbox from '../charts/ChartIframeSandbox.jsx';
 
 // ── EnhanceableChart — 3-layer view: Original / Template (C) / Artisan (A) ──

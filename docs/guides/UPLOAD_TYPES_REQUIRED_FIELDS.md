@@ -1,3 +1,9 @@
+---
+owner: di-core-team
+status: active
+last_reviewed: 2026-03-24
+---
+
 # Upload Types - Required Fields 快速參考
 
 ## 📋 所有 Upload Types 必填欄位清單

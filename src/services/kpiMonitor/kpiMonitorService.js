@@ -14,7 +14,7 @@
  * @module services/kpiMonitor/kpiMonitorService
  */
 
-import { supabase } from '../supabaseClient.js';
+import { supabase } from '../infra/supabaseClient.js';
 import { getEvaluator, checkThreshold } from './metricEvaluators.js';
 
 // ── Constants ────────────────────────────────────────────────────────────────

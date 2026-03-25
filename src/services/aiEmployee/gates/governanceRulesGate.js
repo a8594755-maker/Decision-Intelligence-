@@ -14,10 +14,10 @@ import { taskTransition, TASK_EVENTS } from '../taskStateMachine.js';
 import * as stepRepo from '../persistence/stepRepo.js';
 import * as taskRepo from '../persistence/taskRepo.js';
 import { appendWorklog } from '../persistence/worklogRepo.js';
-import { resolveCapabilityClass } from '../../capabilityModelService.js';
-import { evaluateRules } from '../../policyRuleService.js';
+import { resolveCapabilityClass } from '../../ai-infra/capabilityModelService.js';
+import { evaluateRules } from '../../governance/policyRuleService.js';
 import { getLatestMetrics } from '../styleLearning/trustMetricsService.js';
-import { eventBus, EVENT_NAMES } from '../../eventBus.js';
+import { eventBus, EVENT_NAMES } from '../../governance/eventBus.js';
 
 async function getAutonomyLevel(employeeId) {
   try {

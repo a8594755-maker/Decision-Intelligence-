@@ -13,7 +13,7 @@
  * the provided context. Fabricated numbers trigger a rule-based fallback.
  */
 
-import { runDiPrompt, DI_PROMPT_IDS } from '../../diModelRouterService';
+import { runDiPrompt, DI_PROMPT_IDS } from '../../planning/diModelRouterService';
 
 // ---------------------------------------------------------------------------
 // Tone definitions

@@ -5,7 +5,7 @@
  * per (employee, team, doc_type). Handles clustering, variance detection,
  * and profile CRUD with Supabase persistence.
  */
-import { supabase } from '../../supabaseClient.js';
+import { supabase } from '../../infra/supabaseClient.js';
 
 const TABLE = 'style_profiles';
 

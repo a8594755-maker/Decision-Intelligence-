@@ -9,10 +9,10 @@ import {
 } from 'lucide-react';
 import { Card, Badge } from '../components/ui';
 import { useAuth } from '../contexts/AuthContext';
-import { getRecentAuditTrail } from '../services/planAuditService';
+import { getRecentAuditTrail } from '../services/planning/planAuditService';
 import { useSystemHealth } from '../hooks/useSystemHealth';
 import { useDecisionOverview } from '../hooks/useDecisionOverview';
-import { getApprovalDeadlineStatus, getPendingApprovals } from '../services/approvalWorkflowService';
+import { getApprovalDeadlineStatus, getPendingApprovals } from '../services/planning/approvalWorkflowService';
 import FirstRunGuide from '../components/onboarding/FirstRunGuide';
 
 /* ───── Uniform KPI Card ───── */

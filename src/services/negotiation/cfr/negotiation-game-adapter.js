@@ -13,7 +13,7 @@
  *     → re-query CFR lookup → updated strategy for next Human-in-the-Loop card
  */
 
-import { computeRiskDelta, EVENT_CONNECTOR_CONFIG } from '../../supplierEventConnectorService';
+import { computeRiskDelta, EVENT_CONNECTOR_CONFIG } from '../../sap-erp/supplierEventConnectorService';
 import { getStateTracker } from './negotiation-state-tracker.js';
 import { computeSupplierTypePriors } from './negotiation-types.js';
 import { getLookupService } from './negotiation-lookup-service.js';

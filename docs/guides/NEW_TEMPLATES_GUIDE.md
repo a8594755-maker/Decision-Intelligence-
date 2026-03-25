@@ -1,3 +1,9 @@
+---
+owner: di-core-team
+status: active
+last_reviewed: 2026-03-24
+---
+
 # 新增上傳模板說明文件
 
 ## 概述

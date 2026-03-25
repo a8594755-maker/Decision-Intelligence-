@@ -4,8 +4,8 @@
 // ============================================
 
 import { useState, useEffect } from 'react';
-import { supabase } from '../../services/supabaseClient';
-import { getStatusColor, getStatusText } from '../../services/logicVersionService';
+import { supabase } from '../../services/infra/supabaseClient';
+import { getStatusColor, getStatusText } from '../../services/governance/logicVersionService';
 
 export default function LogicTree({ 
   selectedLogic, 

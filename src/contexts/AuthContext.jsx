@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
-import { supabase, isSupabaseConfigured } from '../services/supabaseClient';
+import { supabase, isSupabaseConfigured } from '../services/infra/supabaseClient';
 import { PermissionsProvider } from '../hooks/usePermissions';
 
 const AuthContext = createContext(null);

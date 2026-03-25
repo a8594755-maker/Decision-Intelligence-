@@ -4,10 +4,10 @@
 // ============================================
 
 import { useState, useCallback } from 'react';
-import { runForecastFromDatasetProfile, buildForecastCardPayload } from '../../services/chatForecastService';
-import { buildDataSummaryCardPayload } from '../../services/chatDatasetProfilingService';
-import { buildDecisionBundle } from '../../services/decisionTaskService';
-import { assembleForecastEvidence } from '../../services/evidenceAssembler';
+import { runForecastFromDatasetProfile, buildForecastCardPayload } from '../../services/forecast/chatForecastService';
+import { buildDataSummaryCardPayload } from '../../services/data-prep/chatDatasetProfilingService';
+import { buildDecisionBundle } from '../../services/tasks/decisionTaskService';
+import { assembleForecastEvidence } from '../../services/governance/evidenceAssembler';
 import {
   buildRuntimeWorkflowSettings,
   buildExecutionGateResult,

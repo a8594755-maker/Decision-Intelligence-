@@ -1,3 +1,9 @@
+---
+owner: di-core-team
+status: active
+last_reviewed: 2026-03-24
+---
+
 # Supabase Services API Reference - 快速參考
 
 ## 📋 三個新增 Service 的 Public API

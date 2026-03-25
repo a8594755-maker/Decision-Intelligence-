@@ -12,7 +12,7 @@
  *   4. Store rules in style_feedback_rules table
  *   5. Optionally promote rules to style_policies after verification
  */
-import { supabase } from '../../supabaseClient.js';
+import { supabase } from '../../infra/supabaseClient.js';
 
 const RULES_TABLE = 'style_feedback_rules';
 const MEMORY_TABLE = 'ai_employee_task_memory';

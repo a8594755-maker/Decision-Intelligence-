@@ -5,8 +5,8 @@
  * Fixes the model_name vs model field inconsistency.
  */
 
-import { resolveModel } from '../modelRoutingService.js';
-import { checkBudget } from '../taskBudgetService.js';
+import { resolveModel } from '../ai-infra/modelRoutingService.js';
+import { checkBudget } from '../tasks/taskBudgetService.js';
 
 /**
  * Resolve the LLM config for a task, with budget check.

@@ -23,12 +23,12 @@ import {
   RefreshCw, Package, DollarSign
 } from 'lucide-react';
 import { Card, Button } from '../components/ui';
-import { executeBomExplosion, pollBomExplosionStatus } from '../services/bomExplosionService';
+import { executeBomExplosion, pollBomExplosionStatus } from '../services/planning/bomExplosionService';
 import {
   componentDemandService,
   forecastRunsService
-} from '../services/supabaseClient';
-import { importBatchesService } from '../services/importHistoryService';
+} from '../services/infra/supabaseClient';
+import { importBatchesService } from '../services/data-prep/importHistoryService';
 import { useUrlTabState } from '../hooks/useUrlTabState';
 
 // Tab components

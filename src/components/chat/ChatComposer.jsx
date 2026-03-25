@@ -1,6 +1,6 @@
 import React, { memo, useState, useMemo } from 'react';
 import { Brain, FileText, Loader2, Paperclip, Send, Square, Table2, X } from 'lucide-react';
-import { CHAT_ATTACHMENT_ACCEPT, formatAttachmentSize } from '../../services/chatAttachmentService';
+import { CHAT_ATTACHMENT_ACCEPT, formatAttachmentSize } from '../../services/chat/chatAttachmentService';
 import DataSourcePicker from './DataSourcePicker';
 
 const STATUS_TONE_CLASSES = {

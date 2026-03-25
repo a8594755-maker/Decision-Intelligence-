@@ -1,7 +1,7 @@
 import { X, Zap, GitBranch, Package, Clock, DollarSign, TrendingUp, History, Box, CheckCircle, Loader2, ChevronRight, AlertCircle } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import Button from '../ui/Button';
-import { supabase } from '../../services/supabaseClient';
+import { supabase } from '../../services/infra/supabaseClient';
 import AuditTimeline from './AuditTimeline';
 import { simulateWhatIfExpedite } from '../../domains/risk/whatIfExpedite';
 

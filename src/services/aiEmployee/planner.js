@@ -5,8 +5,8 @@
  * the orchestrator can consume directly.
  */
 
-import { decomposeTask } from '../chatTaskDecomposer.js';
-import { BUILTIN_TOOLS } from '../builtinToolCatalog.js';
+import { decomposeTask } from '../chat/chatTaskDecomposer.js';
+import { BUILTIN_TOOLS } from '../ai-infra/builtinToolCatalog.js';
 
 // Tool types that require a dataset to execute
 const DATASET_REQUIRED_TOOL_IDS = new Set([

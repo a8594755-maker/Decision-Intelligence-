@@ -73,7 +73,7 @@ import ExecutionTraceCard from '../../components/chat/ExecutionTraceCard';
 import ThinkingStepsDisplay from '../../components/chat/ThinkingStepsDisplay';
 import CopyAllButton from '../../components/chat/CopyAllButton';
 import { serializeAgentResponseToText } from '../../utils/serializeMessageToText';
-import { extractAnalysisPayloadsFromToolCall, isRenderableAnalysisToolCall } from '../../services/analysisToolResultService.js';
+import { extractAnalysisPayloadsFromToolCall, isRenderableAnalysisToolCall } from '../../services/data-prep/analysisToolResultService.js';
 import { toPositiveRunId } from './helpers.js';
 
 /**

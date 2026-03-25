@@ -1,6 +1,6 @@
 import ChartRenderer from '../../chat/ChartRenderer';
 
-export default function ChartBlock({ chart, title, height = 260, loading }) {
+export default function ChartBlock({ chart, title, height = 260, loading, sourceHeadline, sourceDate }) {
   if (loading) {
     return (
       <div className="h-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 animate-pulse">
@@ -14,7 +14,16 @@ export default function ChartBlock({ chart, title, height = 260, loading }) {
 
   return (
     <div className="h-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 flex flex-col">
-      {title && <h4 className="text-sm font-semibold text-slate-700 dark:text-slate-300 mb-3">{title}</h4>}
+      {title && (
+        <div className="mb-3">
+          <h4 className="text-sm font-semibold text-slate-700 dark:text-slate-300">{title}</h4>
+          {sourceHeadline && (
+            <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5 truncate">
+              {sourceHeadline}{sourceDate ? ` · ${sourceDate}` : ''}
+            </p>
+          )}
+        </div>
+      )}
       <div className="flex-1 min-h-0">
         <ChartRenderer chart={chart} height={height} showSwitcher={false} />
       </div>

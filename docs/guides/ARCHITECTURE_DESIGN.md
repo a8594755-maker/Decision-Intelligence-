@@ -1,3 +1,9 @@
+---
+owner: di-core-team
+status: active
+last_reviewed: 2026-03-24
+---
+
 # Decision-Intelligence 系统架构设计
 
 ## 🏗️ 整体架构

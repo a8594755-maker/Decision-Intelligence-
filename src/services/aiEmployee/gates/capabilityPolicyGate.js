@@ -14,9 +14,9 @@ import { stepTransition, STEP_EVENTS } from '../stepStateMachine.js';
 import { taskTransition, TASK_EVENTS } from '../taskStateMachine.js';
 import * as stepRepo from '../persistence/stepRepo.js';
 import * as taskRepo from '../persistence/taskRepo.js';
-import { resolveCapabilityClass, getCapabilityPolicyFromDB } from '../../capabilityModelService.js';
+import { resolveCapabilityClass, getCapabilityPolicyFromDB } from '../../ai-infra/capabilityModelService.js';
 import { getLatestMetrics } from '../styleLearning/trustMetricsService.js';
-import { eventBus, EVENT_NAMES } from '../../eventBus.js';
+import { eventBus, EVENT_NAMES } from '../../governance/eventBus.js';
 
 // ── Helpers (shared with orchestrator, now local) ──
 

@@ -4,8 +4,8 @@
 // Lists custom tools + built-in DI engine tools, with search, filter, and management actions.
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { listTools, deprecateTool, approveTool, registerTool } from '../services/toolRegistryService';
-import { listBuiltinTools, TOOL_CATEGORY } from '../services/builtinToolCatalog';
+import { listTools, deprecateTool, approveTool, registerTool } from '../services/ai-infra/toolRegistryService';
+import { listBuiltinTools, TOOL_CATEGORY } from '../services/ai-infra/builtinToolCatalog';
 
 const CUSTOM_CATEGORIES = [
   { value: '', label: 'All Categories' },

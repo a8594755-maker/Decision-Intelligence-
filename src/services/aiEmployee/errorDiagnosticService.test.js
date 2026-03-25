@@ -6,7 +6,7 @@ vi.mock('../aiProxyService.js', () => ({
   invokeAiProxy: vi.fn(),
 }));
 
-const { invokeAiProxy } = await import('../aiProxyService.js');
+const { invokeAiProxy } = await import('../ai-infra/aiProxyService.js');
 
 describe('errorDiagnosticService', () => {
   const baseStep = { step_name: 'run_forecast', tool_type: 'builtin_tool', tool_hint: 'Run demand forecast' };

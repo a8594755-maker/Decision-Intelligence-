@@ -72,7 +72,7 @@ function makeStep(taskId, index, overrides = {}) {
 
 // ── Supabase mock ───────────────────────────────────────────────────────────
 
-vi.mock('../../services/supabaseClient', () => ({ supabase: null }));
+vi.mock('../../services/infra/supabaseClient', () => ({ supabase: null }));
 
 // ── Mock persistence layer (taskRepo, stepRepo, employeeRepo) ──────────────
 
@@ -325,9 +325,9 @@ const orchestrator = await import('./orchestrator.js');
 const { tick, approvePlan, approveReview, submitPlan, getTaskStatus } = orchestrator;
 const stepRepo = await import('./persistence/stepRepo.js');
 const taskRepo = await import('./persistence/taskRepo.js');
-const { eventBus } = await import('../eventBus.js');
+const { eventBus } = await import('../governance/eventBus.js');
 const { getLatestMetrics } = await import('./styleLearning/trustMetricsService.js');
-const { getCapabilityPolicyFromDB } = await import('../capabilityModelService.js');
+const { getCapabilityPolicyFromDB } = await import('../ai-infra/capabilityModelService.js');
 const { diagnoseStepFailure } = await import('./errorDiagnosticService.js');
 const { getExecutor } = await import('./executors/executorRegistry.js');
 

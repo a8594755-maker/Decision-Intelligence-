@@ -10,7 +10,7 @@ import {
   ResponsiveContainer, BarChart, Cell,
 } from 'recharts';
 import { Card, Button, Badge, Select } from '../components/ui';
-import * as digitalTwinService from '../services/digitalTwinService';
+import * as digitalTwinService from '../services/planning/digitalTwinService';
 
 // ── Constants ───────────────────────────────────────────────────────────────
 

@@ -9,7 +9,7 @@ vi.mock('./useSSE', () => ({
   default: (...args) => sseClientMock(...args),
 }));
 
-vi.mock('../services/eventBus', () => ({
+vi.mock('../services/governance/eventBus', () => ({
   eventBus: {
     emit: (...args) => emitMock(...args),
   },

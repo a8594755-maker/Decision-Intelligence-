@@ -7,7 +7,7 @@ import React, { useState, useEffect } from 'react';
 import {
   X, Search, ChevronLeft, ChevronRight, Loader2, AlertCircle, Filter, Database, Cloud
 } from 'lucide-react';
-import { importBatchesService } from '../services/importHistoryService';
+import { importBatchesService } from '../services/data-prep/importHistoryService';
 import { Badge } from './ui';
 
 const ViewDataModal = ({ isOpen, onClose, batch, user, _addNotification }) => {

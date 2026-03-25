@@ -30,8 +30,8 @@ import ScenarioComparisonView from './ScenarioComparisonView';
 import BasePlanEmptyState from './BasePlanEmptyState';
 import StaleBaselineWarning from './StaleBaselineWarning';
 import RiskWhatIfView from './RiskWhatIfView';
-import { createScenario, listScenariosForBaseRun, getScenario } from '../../services/diScenariosService';
-import { diRunsService } from '../../services/diRunsService';
+import { createScenario, listScenariosForBaseRun, getScenario } from '../../services/planning/diScenariosService';
+import { diRunsService } from '../../services/planning/diRunsService';
 import { loadArtifact } from '../../utils/artifactStore';
 import { useBasePlanResolver } from '../../hooks/useBasePlanResolver';
 
@@ -39,7 +39,7 @@ const POLL_INTERVAL_MS = 3000;
 const MAX_POLL_ATTEMPTS = 40;
 
 async function loadScenarioEngine() {
-  return import('../../services/scenarioEngine');
+  return import('../../services/planning/scenarioEngine');
 }
 
 function StatusChip({ status }) {

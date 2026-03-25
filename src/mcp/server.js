@@ -18,7 +18,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { catalogToMcpTools, getToolMeta } from './toolBridge.js';
 import { listResources, readResource } from './resourceProvider.js';
 import { authenticateRequest, canAccessTool } from './auth.js';
-import { BUILTIN_TOOLS, TOOL_CATEGORY } from '../services/builtinToolCatalog.js';
+import { BUILTIN_TOOLS, TOOL_CATEGORY } from '../services/ai-infra/builtinToolCatalog.js';
 
 const SERVER_NAME = 'decision-intelligence';
 const SERVER_VERSION = '0.1.0';

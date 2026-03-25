@@ -28,7 +28,7 @@ import {
   getLastPlanRunId,
   buildSessionSummary,
   clearSessionContext,
-} from '../services/sessionContextService';
+} from '../services/memory/sessionContextService';
 
 /**
  * @param {string|null} userId

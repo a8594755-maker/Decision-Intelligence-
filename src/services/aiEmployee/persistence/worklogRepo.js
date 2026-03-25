@@ -7,7 +7,7 @@
  * When VITE_DI_MOCK_MODE=true, all functions delegate to in-memory mock.
  */
 
-import { supabase } from '../../supabaseClient.js';
+import { supabase } from '../../infra/supabaseClient.js';
 
 const _MOCK = import.meta.env?.VITE_DI_MOCK_MODE === 'true';
 const _m = _MOCK ? await import('../mock/mockWorklogRepo.js') : null;

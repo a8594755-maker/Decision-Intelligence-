@@ -8,7 +8,7 @@
 
 import { Suspense } from 'react';
 import BLOCK_REGISTRY from './blocks';
-import { GRID_COLUMNS } from '../../services/canvasLayoutSchema';
+import { GRID_COLUMNS } from '../../services/canvas/canvasLayoutSchema';
 
 // ── Fallback for unknown block types ─────────────────────────────────────────
 
@@ -22,16 +22,21 @@ function UnknownBlock({ type }) {
 
 // ── Single block renderer ────────────────────────────────────────────────────
 
-function CanvasBlock({ block }) {
+function CanvasBlock({ block, onAction, runningQuery }) {
   const Component = BLOCK_REGISTRY[block.type];
 
   if (!Component) {
     return <UnknownBlock type={block.type} />;
   }
 
+  // Pass loading state to suggestion blocks so the active one shows a spinner
+  const extraProps = (block.type === 'suggestion' && runningQuery)
+    ? { loading: runningQuery === block.props?.query }
+    : {};
+
   return (
     <Suspense fallback={<div className="animate-pulse h-full rounded-xl bg-slate-100 dark:bg-slate-800" />}>
-      <Component {...(block.props || {})} />
+      <Component {...(block.props || {})} {...extraProps} onAction={onAction} />
     </Suspense>
   );
 }
@@ -49,7 +54,7 @@ function computeMaxRow(blocks) {
 // Main Component
 // ═══════════════════════════════════════════════════════════════════════════════
 
-export default function CanvasRenderer({ layout }) {
+export default function CanvasRenderer({ layout, onAction, runningQuery }) {
   if (!layout?.blocks?.length) {
     return null;
   }
@@ -73,7 +78,7 @@ export default function CanvasRenderer({ layout }) {
             gridRow: `${block.row} / span ${block.rowSpan}`,
           }}
         >
-          <CanvasBlock block={block} />
+          <CanvasBlock block={block} onAction={onAction} runningQuery={runningQuery} />
         </div>
       ))}
 

@@ -8,7 +8,7 @@
  * Table: di_closed_loop_runs
  */
 
-import { supabase } from '../supabaseClient.js';
+import { supabase } from '../infra/supabaseClient.js';
 import { closedLoopStore } from './closedLoopStore.js';
 import { CLOSED_LOOP_STATUS } from './closedLoopConfig.js';
 

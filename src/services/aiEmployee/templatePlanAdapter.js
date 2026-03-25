@@ -1,5 +1,5 @@
-import { resolveTemplate } from '../agentLoopTemplates.js';
-import { datasetProfilesService } from '../datasetProfilesService.js';
+import { resolveTemplate } from '../agent-core/agentLoopTemplates.js';
+import { datasetProfilesService } from '../data-prep/datasetProfilesService.js';
 import { EXECUTION_MODES, resolveExecutionMode } from './executionPolicy.js';
 import { getDefaultDeliverableProfile } from './deliverableProfile.js';
 

@@ -15,7 +15,7 @@ import * as stepRepo from './persistence/stepRepo.js';
 import * as employeeRepo from './persistence/employeeRepo.js';
 import * as worklogRepo from './persistence/worklogRepo.js';
 import * as reviewRepo from './persistence/reviewRepo.js';
-import { diRunsService } from '../diRunsService.js';
+import { diRunsService } from '../planning/diRunsService.js';
 import { loadArtifact } from '../../utils/artifactStore.js';
 
 // ── Re-export worker template catalog ──

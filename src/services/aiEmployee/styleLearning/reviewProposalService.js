@@ -1,4 +1,4 @@
-import { callLLMJson } from '../../aiEmployeeLLMService.js';
+import { callLLMJson } from '../../ai-infra/aiEmployeeLLMService.js';
 import { buildDeliverablePreview } from '../deliverableProfile.js';
 import { getActiveOutputProfile, resolveOutputProfileScope } from './outputProfileService.js';
 import { createOutputProfileProposal } from './companyOutputProfileService.js';

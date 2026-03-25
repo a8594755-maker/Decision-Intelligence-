@@ -9,7 +9,7 @@ import { stepTransition, STEP_EVENTS } from '../stepStateMachine.js';
 import * as stepRepo from '../persistence/stepRepo.js';
 import * as employeeRepo from '../persistence/employeeRepo.js';
 import { appendWorklog } from '../persistence/worklogRepo.js';
-import { checkCapabilityPolicy } from '../../toolPermissionGuard.js';
+import { checkCapabilityPolicy } from '../../ai-infra/toolPermissionGuard.js';
 import { getLatestMetrics } from '../styleLearning/trustMetricsService.js';
 
 async function getAutonomyLevel(employeeId) {

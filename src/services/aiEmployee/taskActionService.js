@@ -1,7 +1,7 @@
 import { approvePlan, approveReview, retryTask } from './orchestrator.js';
 import { TASK_STATES } from './taskStateMachine.js';
 import { EMPLOYEE_STATES, EMPLOYEE_STATE_TO_DB } from './employeeStateMachine.js';
-import { callLLM } from '../aiEmployeeLLMService.js';
+import { callLLM } from '../ai-infra/aiEmployeeLLMService.js';
 import { buildDeliverablePreview } from './deliverableProfile.js';
 import { maybeCreateOutputProfileProposalFromReview } from './styleLearning/reviewProposalService.js';
 

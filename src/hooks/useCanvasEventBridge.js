@@ -9,7 +9,7 @@
  */
 
 import { useEffect, useRef, useCallback, useState } from 'react';
-import { eventBus, EVENT_NAMES } from '../services/eventBus.js';
+import { eventBus, EVENT_NAMES } from '../services/governance/eventBus.js';
 import { useCanvas } from '../contexts/CanvasContext.jsx';
 import { hasWidget, resolveWidget } from '../components/canvas/WidgetRegistry.js';
 

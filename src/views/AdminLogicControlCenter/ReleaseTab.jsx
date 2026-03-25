@@ -14,9 +14,9 @@ import {
   fetchChangeLog,
   getStatusColor,
   getStatusText,
-} from '../../services/logicVersionService';
-import { fetchRegressionResults, runRegressionTests, calculateRegressionSummary } from '../../services/regressionTestService';
-import { supabase, RPC_JSON_OPTIONS } from '../../services/supabaseClient';
+} from '../../services/governance/logicVersionService';
+import { fetchRegressionResults, runRegressionTests, calculateRegressionSummary } from '../../services/governance/regressionTestService';
+import { supabase, RPC_JSON_OPTIONS } from '../../services/infra/supabaseClient';
 
 function getRegressionStatusColor(status) {
   switch (status) {

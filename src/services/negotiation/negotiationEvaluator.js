@@ -13,7 +13,7 @@
  * LLM generates NO numbers here; all deltas are computed from solver outputs.
  */
 
-import { runPlanFromDatasetProfile } from '../chatPlanningService';
+import { runPlanFromDatasetProfile } from '../planning/chatPlanningService';
 
 const RANKING_METHOD =
   'lexicographic: feasibility -> service_delta -> cost_delta -> constraint_violations';

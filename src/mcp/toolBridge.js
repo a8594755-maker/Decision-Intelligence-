@@ -6,7 +6,7 @@
 // Each catalog tool becomes an MCP tool with a proper JSON Schema input.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { BUILTIN_TOOLS, isPythonApiTool } from '../services/builtinToolCatalog.js';
+import { BUILTIN_TOOLS, isPythonApiTool } from '../services/ai-infra/builtinToolCatalog.js';
 
 // ── Schema type mapping ────────────────────────────────────────────────────
 // The catalog uses informal type strings like 'string', 'number|null',

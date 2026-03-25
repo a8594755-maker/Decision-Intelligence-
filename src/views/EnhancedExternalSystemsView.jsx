@@ -11,10 +11,10 @@ import {
   Layers
 } from 'lucide-react';
 import { Card, Button } from '../components/ui';
-import { callGeminiAPI } from '../services/geminiAPI';
-import { userFilesService, uploadMappingsService } from '../services/supabaseClient';
-import { importBatchesService } from '../services/importHistoryService';
-import { getUploadStrategy } from '../services/uploadStrategies';
+import { callGeminiAPI } from '../services/ai-infra/geminiAPI';
+import { userFilesService, uploadMappingsService } from '../services/infra/supabaseClient';
+import { importBatchesService } from '../services/data-prep/importHistoryService';
+import { getUploadStrategy } from '../services/data-prep/uploadStrategies';
 import { useUploadWorkflow } from '../hooks/useUploadWorkflow';
 import UPLOAD_SCHEMAS from '../utils/uploadSchemas';
 import { validateAndCleanData } from '../utils/dataValidation';
@@ -26,12 +26,12 @@ import {
   mergeMappings,
   ruleBasedMapping
 } from '../utils/aiMappingHelper';
-import { generateSheetPlans, importWorkbookSheets, validateSheetPlans } from '../services/oneShotImportService';
-import { suggestSheetMapping } from '../services/oneShotAiSuggestService';
+import { generateSheetPlans, importWorkbookSheets, validateSheetPlans } from '../services/data-prep/oneShotImportService';
+import { suggestSheetMapping } from '../services/data-prep/oneShotAiSuggestService';
 import { runWithConcurrencyAbortable } from '../utils/concurrency';
 import { getRequiredMappingStatus, formatMissingRequiredMessage } from '../utils/requiredMappingStatus';
 import { getSearchParams, updateUrlSearch } from '../utils/router';
-import { createDatasetProfileFromSheets } from '../services/datasetProfilingService';
+import { createDatasetProfileFromSheets } from '../services/data-prep/datasetProfilingService';
 import { sendAgentLog } from '../utils/sendAgentLog';
 
 // Note: Upload type configuration has been moved to src/utils/uploadSchemas.js
@@ -1296,7 +1296,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
       });
 
       // Step 3: Always call LLM for comprehensive mapping (including optional fields)
-      const { suggestMappingWithLLM } = await import('../services/oneShotAiSuggestService');
+      const { suggestMappingWithLLM } = await import('../services/data-prep/oneShotAiSuggestService');
       
       const llmResult = await suggestMappingWithLLM({
         uploadType: plan.uploadType,
@@ -1385,7 +1385,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
       console.log(`[AI Suggest] Sheet: ${sheetName}, Headers:`, headers, 'Sample rows:', sampleRows.length);
 
       // Check if chunk idempotency is supported (affects auto-enable for >1000 rows)
-      const { checkIngestKeySupport } = await import('../services/sheetRunsService');
+      const { checkIngestKeySupport } = await import('../services/planning/sheetRunsService');
       const hasIngestKeySupport = await checkIngestKeySupport();
 
       // Call AI Suggest Service (new version has built-in error handling, won't throw)
@@ -1564,7 +1564,7 @@ const EnhancedExternalSystemsView = ({ addNotification, user, setView }) => {
         });
 
         // Check ingest key support
-        const { checkIngestKeySupport } = await import('../services/sheetRunsService');
+        const { checkIngestKeySupport } = await import('../services/planning/sheetRunsService');
         const hasIngestKeySupport = await checkIngestKeySupport();
 
         // Call AI Suggest Service

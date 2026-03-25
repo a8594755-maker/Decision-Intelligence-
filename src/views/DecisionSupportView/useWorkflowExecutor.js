@@ -30,10 +30,10 @@ import {
   submitBlockingAnswers as submitWorkflowBlockingAnswers,
   WORKFLOW_NAMES,
 } from '../../workflows/workflowRegistry';
-import asyncRunsApiClient, { isAsyncRunsConnectivityError } from '../../services/asyncRunsApiClient';
+import asyncRunsApiClient, { isAsyncRunsConnectivityError } from '../../services/infra/asyncRunsApiClient';
 import { loadTopologyGraphForRun } from '../../services/topology/topologyService';
-import { datasetProfilesService } from '../../services/datasetProfilesService';
-import * as digitalTwinService from '../../services/digitalTwinService';
+import { datasetProfilesService } from '../../services/data-prep/datasetProfilesService';
+import * as digitalTwinService from '../../services/planning/digitalTwinService';
 import {
   ASYNC_JOB_POLL_INTERVAL_MS,
   ASYNC_JOB_MAX_POLLS,
@@ -47,7 +47,7 @@ import {
   normalizeWorkflowUiError,
   toPositiveRunId,
 } from './helpers.js';
-import { buildDataSummaryCardPayload } from '../../services/chatDatasetProfilingService';
+import { buildDataSummaryCardPayload } from '../../services/data-prep/chatDatasetProfilingService';
 
 /**
  * Manages workflow execution state and handlers.

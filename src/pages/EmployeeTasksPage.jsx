@@ -10,8 +10,8 @@ import {
 import { Modal } from '../components/ui';
 import { useAuth } from '../contexts/AuthContext';
 import { getOrCreateWorker, listEmployeesByManager, listTasks, listTasksByUser, listWorklogs, reassignTask } from '../services/aiEmployee/queries.js';
-import { TEMPLATE_OPTIONS } from '../services/agentLoopTemplates';
-import { getNotifications, getUnreadCount, markAllRead } from '../services/notificationService';
+import { TEMPLATE_OPTIONS } from '../services/agent-core/agentLoopTemplates';
+import { getNotifications, getUnreadCount, markAllRead } from '../services/governance/notificationService';
 import {
   createSchedule,
   deleteSchedule,
@@ -19,7 +19,7 @@ import {
   pauseSchedule,
   resumeSchedule,
   SCHEDULE_TYPES,
-} from '../services/scheduledTaskService';
+} from '../services/tasks/scheduledTaskService';
 import {
   getTaskStatus,
   runTask as runTaskAction,
@@ -31,7 +31,7 @@ import {
 import { buildPlanFromTemplateTask } from '../services/aiEmployee/templatePlanAdapter';
 import { EXECUTION_MODES } from '../services/aiEmployee/executionPolicy.js';
 import { createTaskDatasetContextFromFile } from '../services/aiEmployee/taskDatasetContextService.js';
-import { processIntake, INTAKE_SOURCES } from '../services/taskIntakeService.js';
+import { processIntake, INTAKE_SOURCES } from '../services/chat/taskIntakeService.js';
 import { TASK_STATES } from '../services/aiEmployee/taskStateMachine.js';
 import StepInputCard from '../components/chat/StepInputCard';
 

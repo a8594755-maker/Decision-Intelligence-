@@ -47,7 +47,7 @@ const DetailsPanel = ({
     
     setRunningWhatIf(true);
     try {
-      const { runWhatIf } = await import('../../services/whatIfService');
+      const { runWhatIf } = await import('../../services/planning/whatIfService');
       
       const keyContext = {
         materialCode: details.item,

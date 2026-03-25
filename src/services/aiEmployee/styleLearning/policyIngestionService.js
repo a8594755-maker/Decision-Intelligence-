@@ -10,7 +10,7 @@
  *   - Handbook upload (extract policies from documents via LLM)
  *   - Structured policy types with search
  */
-import { supabase } from '../../supabaseClient.js';
+import { supabase } from '../../infra/supabaseClient.js';
 
 const TABLE = 'style_policies';
 

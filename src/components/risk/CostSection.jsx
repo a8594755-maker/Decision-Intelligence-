@@ -8,7 +8,7 @@
 import React, { useState, useEffect } from 'react';
 import { DollarSign, AlertCircle, TrendingDown, Package, Zap, ArrowRightLeft } from 'lucide-react';
 import { Card, Badge } from '../ui';
-import { getCostResultsByKey } from '../../services/costForecastService';
+import { getCostResultsByKey } from '../../services/forecast/costForecastService';
 
 const CostSection = ({ 
   userId, 

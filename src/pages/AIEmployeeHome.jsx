@@ -18,13 +18,13 @@ import {
 import { Card } from '../components/ui';
 import { useAuth } from '../contexts/AuthContext';
 import { listEmployeesByManager, getKpis, createWorkerFromTemplate, listTemplates } from '../services/aiEmployee/queries.js';
-import { getLatestSummary } from '../services/dailySummaryService';
-import { getPendingApprovals as listPending, getGovernanceStats } from '../services/approvalWorkflowService';
-import { buildPerformanceDashboard, AUTONOMY_LABELS } from '../services/workerPerformanceService';
+import { getLatestSummary } from '../services/tasks/dailySummaryService';
+import { getPendingApprovals as listPending, getGovernanceStats } from '../services/planning/approvalWorkflowService';
+import { buildPerformanceDashboard, AUTONOMY_LABELS } from '../services/tasks/workerPerformanceService';
 import { EMPLOYEE_STATES, EMPLOYEE_STATE_TO_DB } from '../services/aiEmployee/employeeStateMachine.js';
-import { processIntake, INTAKE_SOURCES } from '../services/taskIntakeService.js';
+import { processIntake, INTAKE_SOURCES } from '../services/chat/taskIntakeService.js';
 import { submitPlan, approvePlan as orchestratorApprovePlan } from '../services/aiEmployee/index.js';
-import { decomposeTask } from '../services/chatTaskDecomposer.js';
+import { decomposeTask } from '../services/chat/chatTaskDecomposer.js';
 
 const DecisionSupportView = lazy(() => import('../views/DecisionSupportView'));
 

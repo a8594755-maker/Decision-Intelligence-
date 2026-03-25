@@ -1,3 +1,9 @@
+---
+owner: di-core-team
+status: active
+last_reviewed: 2026-03-24
+---
+
 # 資料上傳完整流程說明
 
 ## 概述
@@ -370,7 +376,45 @@ validRows
 
 ## 版本資訊
 
-- **版本**：1.0.0
-- **最後更新**：2024-01-15
+- **版本**：1.1.0
+- **最後更新**：2026-03-24
 - **作者**：Decision-Intelligence Development Team
+
+---
+
+## 附錄：Operational Costs 上傳指引
+
+> 原文件：OPERATIONAL_COSTS_UPLOAD_GUIDE.md（已合併）
+
+### Step 1: Prepare Data File
+- Use provided template: `templates/operational_costs.csv`
+- Required fields:
+  - `CostDate` (YYYY-MM-DD)
+  - `DirectLaborHours`
+  - `DirectLaborRate`
+  - `ProductionOutput`
+- Optional fields:
+  - `IndirectLaborHours`
+  - `IndirectLaborRate`
+  - `MaterialCost`
+  - `OverheadCost`
+  - `Notes`
+
+### Step 2: Upload Data
+1. Go to Data Upload page
+2. Select "Operational Costs" type
+3. Drag and drop your CSV file
+4. Map columns (automatic mapping works for template fields)
+5. Review validation results
+6. Click "Save Data"
+
+### Step 3: Verify Upload
+1. Go to Cost Analysis → Operational Cost tab
+2. Check latest date appears
+3. Verify cost per unit calculation
+
+### Troubleshooting
+- **Invalid date format**: Use YYYY-MM-DD
+- **Negative cost per unit**: Check production output value
+- **Missing data**: Ensure required fields are populated
 

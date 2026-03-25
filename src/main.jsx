@@ -7,7 +7,7 @@ import { AuthProvider } from './contexts/AuthContext'
 import { router } from './router'
 import './index.css'
 import './i18n'
-import { warmupEdgeFunction } from './services/aiProxyService'
+import { warmupEdgeFunction } from './services/ai-infra/aiProxyService'
 import { setInferenceFn } from './config/headerSynonyms'
 import { inferFieldFromValues } from './utils/fieldPatternInference'
 

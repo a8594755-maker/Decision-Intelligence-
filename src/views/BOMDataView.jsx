@@ -8,7 +8,7 @@ import {
   Database, Search, ChevronLeft, ChevronRight, Loader2, Filter, X, RefreshCw, Cloud
 } from 'lucide-react';
 import { Card, Button, Badge } from '../components/ui';
-import { supabase } from '../services/supabaseClient';
+import { supabase } from '../services/infra/supabaseClient';
 import { useUrlTabState } from '../hooks/useUrlTabState';
 
 const BOMDataView = ({ user, addNotification, globalDataSource }) => {

@@ -16,14 +16,14 @@ import {
   Search, RefreshCw, Package, AlertCircle, Calendar, Hash, PlayCircle
 } from 'lucide-react';
 import { Card, Button, Badge } from '../../components/ui';
-import { supplyForecastService } from '../../services/supplyForecastService';
+import { supplyForecastService } from '../../services/forecast/supplyForecastService';
 import {
   loadInventoryProjection,
   computeSeriesForKey,
   FORECAST_WARN_ROWS,
   FORECAST_STOP_ROWS,
   FORECAST_TOP_N
-} from '../../services/inventoryProjectionService';
+} from '../../services/forecast/inventoryProjectionService';
 
 /**
  * Format date for display
@@ -209,7 +209,7 @@ const InventoryTab = ({ user, addNotification, forecastRuns, loadForecastRuns })
 
     try {
       // Dynamic import to avoid circular dependency
-      const { inventoryProbForecastService } = await import('../../services/inventoryProbForecastService');
+      const { inventoryProbForecastService } = await import('../../services/forecast/inventoryProbForecastService');
 
       const result = await inventoryProbForecastService.run(
         user.id,
@@ -248,7 +248,7 @@ const InventoryTab = ({ user, addNotification, forecastRuns, loadForecastRuns })
     if (!user?.id || !selectedRunId) return;
 
     try {
-      const { inventoryProbForecastService } = await import('../../services/inventoryProbForecastService');
+      const { inventoryProbForecastService } = await import('../../services/forecast/inventoryProbForecastService');
 
       // Check if results exist
       const hasResults = await inventoryProbForecastService.hasResults(user.id, selectedRunId);
@@ -270,7 +270,7 @@ const InventoryTab = ({ user, addNotification, forecastRuns, loadForecastRuns })
     if (!user?.id || !selectedRunId) return;
 
     try {
-      const { inventoryProbForecastService } = await import('../../services/inventoryProbForecastService');
+      const { inventoryProbForecastService } = await import('../../services/forecast/inventoryProbForecastService');
       const series = await inventoryProbForecastService.getSeriesByRun(
         user.id,
         selectedRunId,

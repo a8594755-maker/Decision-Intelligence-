@@ -8,14 +8,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ── Mock external services BEFORE importing modules under test ────────────
 
-vi.mock('../../services/supabaseClient', () => ({
+vi.mock('../../services/infra/supabaseClient', () => ({
   userFilesService: {
     getFileById: vi.fn(),
     saveFile: vi.fn().mockResolvedValue({ id: 'file-saved-1' }),
   },
 }));
 
-vi.mock('../../services/diRunsService', () => ({
+vi.mock('../../services/planning/diRunsService', () => ({
   diRunsService: {
     createRun: vi.fn().mockResolvedValue({ id: 'run-dr-1', status: 'created' }),
     updateRunStatus: vi.fn().mockResolvedValue({ id: 'run-dr-1', status: 'succeeded' }),
@@ -45,11 +45,11 @@ vi.mock('../../services/diRunsService', () => ({
   },
 }));
 
-vi.mock('../../services/reuseMemoryService', () => ({
+vi.mock('../../services/memory/reuseMemoryService', () => ({
   reuseMemoryService: { upsertRunSettingsTemplate: vi.fn().mockResolvedValue({}) },
 }));
 
-vi.mock('../../services/optimizationApiClient', () => ({
+vi.mock('../../services/planning/optimizationApiClient', () => ({
   default: { createReplenishmentPlan: vi.fn() },
 }));
 
@@ -84,7 +84,7 @@ vi.mock('../../utils/artifactStore', () => ({
   ),
 }));
 
-vi.mock('../../services/diModelRouterService', () => ({
+vi.mock('../../services/planning/diModelRouterService', () => ({
   DI_PROMPT_IDS: { WORKFLOW_A_READINESS: 'readiness', WORKFLOW_A_REPORT: 'report' },
   runDiPrompt: vi.fn().mockResolvedValue({
     parsed: { minimal_questions: [], summary: 'Test report' },
@@ -98,11 +98,11 @@ vi.mock('../../utils/buildDecisionNarrative', () => ({
   }),
 }));
 
-vi.mock('../../services/planAuditService', () => ({
+vi.mock('../../services/planning/planAuditService', () => ({
   recordPlanGenerated: vi.fn().mockResolvedValue({}),
 }));
 
-vi.mock('../../services/multiEchelonBomService', () => ({
+vi.mock('../../services/planning/multiEchelonBomService', () => ({
   MULTI_ECHELON_MODES: { OFF: 'off', AUTO: 'auto', FORCE: 'force' },
   resolveMultiEchelonConfig: vi.fn().mockReturnValue({ mode: 'off', max_bom_depth: 1 }),
   normalizeSkuKey: vi.fn((s) => s),
@@ -113,9 +113,9 @@ vi.mock('../../services/multiEchelonBomService', () => ({
 
 // ── Now import modules under test ─────────────────────────────────────────
 
-import { runPlanFromDatasetProfile } from '../../services/chatPlanningService';
-import { userFilesService } from '../../services/supabaseClient';
-import optimizationApiClient from '../../services/optimizationApiClient';
+import { runPlanFromDatasetProfile } from '../../services/planning/chatPlanningService';
+import { userFilesService } from '../../services/infra/supabaseClient';
+import optimizationApiClient from '../../services/planning/optimizationApiClient';
 import { saveJsonArtifact } from '../../utils/artifactStore';
 import { logger } from '../../services/observability';
 import { validateArtifactOrThrow } from '../../contracts/diArtifactContractV1';
@@ -124,7 +124,7 @@ import { evaluateCapabilities } from '../../config/capabilityMatrix';
 
 // Pure function imports for mapping/inference tests
 import { normalizeHeader } from '../../utils/headerNormalize';
-import { generateHeaderFingerprint } from '../../services/mappingProfileService';
+import { generateHeaderFingerprint } from '../../services/data-prep/mappingProfileService';
 import { REASON_CODES, buildQuarantineReport } from '../../utils/dataValidation';
 
 // ── Test data ─────────────────────────────────────────────────────────────

@@ -1,3 +1,9 @@
+---
+owner: di-core-team
+status: active
+last_reviewed: 2026-03-24
+---
+
 # 🎉 Domain-Driven 架構開發完成
 
 ## 完成日期

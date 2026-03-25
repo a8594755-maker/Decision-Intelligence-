@@ -1,5 +1,5 @@
-import { supabase, userFilesService } from '../services/supabaseClient';
-import { diRunsService } from '../services/diRunsService';
+import { supabase, userFilesService } from '../services/infra/supabaseClient';
+import { diRunsService } from '../services/planning/diRunsService';
 import {
   ARTIFACT_CONTRACT_VERSION,
   validateArtifactOrThrow

@@ -7,7 +7,7 @@
  * @module services/eventLoop/eventQueueClient
  */
 
-import { supabase } from '../supabaseClient.js';
+import { supabase } from '../infra/supabaseClient.js';
 
 const ML_API = typeof import.meta !== 'undefined' && import.meta.env?.VITE_ML_API_URL
   ? import.meta.env.VITE_ML_API_URL

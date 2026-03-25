@@ -16,11 +16,11 @@ import {
 import { useAuth } from '../contexts/AuthContext';
 import { listPendingReviews, createReview } from '../services/aiEmployee/queries.js';
 import { appendWorklog } from '../services/aiEmployee/persistence/worklogRepo.js';
-import { attachFeedback } from '../services/aiEmployeeMemoryService';
+import { attachFeedback } from '../services/memory/aiEmployeeMemoryService';
 import { resolveReviewDecision } from '../services/aiEmployee/index.js';
 import { buildDeliverablePreview } from '../services/aiEmployee/deliverableProfile.js';
-import { buildTaskTimeline, computeReplayCompleteness, EVIDENCE_EVENTS } from '../services/taskTimelineService';
-import { listGovernanceByTask, GOVERNANCE_STATUS } from '../services/approvalWorkflowService';
+import { buildTaskTimeline, computeReplayCompleteness, EVIDENCE_EVENTS } from '../services/tasks/taskTimelineService';
+import { listGovernanceByTask, GOVERNANCE_STATUS } from '../services/planning/approvalWorkflowService';
 import AuditTimelineCard from '../components/chat/AuditTimelineCard';
 import { TASK_STATES } from '../services/aiEmployee/taskStateMachine.js';
 import { STEP_STATES } from '../services/aiEmployee/stepStateMachine.js';

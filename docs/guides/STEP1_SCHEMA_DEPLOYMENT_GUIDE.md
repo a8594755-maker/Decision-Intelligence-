@@ -1,3 +1,9 @@
+---
+owner: di-core-team
+status: active
+last_reviewed: 2026-03-24
+---
+
 # Step 1 Supply, Inventory & Financials Schema - 部署指南
 
 ## 📋 概述

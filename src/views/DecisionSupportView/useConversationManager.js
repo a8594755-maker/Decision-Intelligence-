@@ -4,7 +4,7 @@
 // ============================================
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { supabase } from '../../services/supabaseClient';
+import { supabase } from '../../services/infra/supabaseClient';
 import { APP_NAME, ASSISTANT_NAME } from '../../config/branding';
 import {
   STORAGE_KEY,

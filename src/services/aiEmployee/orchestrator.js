@@ -29,12 +29,12 @@ import * as employeeRepo from './persistence/employeeRepo.js';
 import { appendWorklog } from './persistence/worklogRepo.js';
 
 import { getExecutor } from './executors/executorRegistry.js';
-import { analyzeStepFailure, getAlternativeModel } from '../selfHealingService.js';
-import { eventBus, EVENT_NAMES } from '../eventBus.js';
+import { analyzeStepFailure, getAlternativeModel } from '../governance/selfHealingService.js';
+import { eventBus, EVENT_NAMES } from '../governance/eventBus.js';
 import { extractFromSingleRevision } from './styleLearning/feedbackStyleExtractor.js';
-import { reviewStepOutput, shouldReview } from '../aiReviewerService.js';
+import { reviewStepOutput, shouldReview } from '../ai-infra/aiReviewerService.js';
 import { getLatestMetrics, recordReviewOutcome } from './styleLearning/trustMetricsService.js';
-import { resolveCapabilityClass } from '../capabilityModelService.js';
+import { resolveCapabilityClass } from '../ai-infra/capabilityModelService.js';
 import { annotateStepsWithPhases, getPipelineProgress } from './decisionPipelineService.js';
 import { WORKLOG_EVENTS, buildWorklogEntry } from './worklogTaxonomy.js';
 import { buildDecisionBrief } from '../artifacts/decisionArtifactBuilder.js';
@@ -80,7 +80,7 @@ function _autonomyAtLeast(level, threshold) {
  * Gate-level checks are now in gates/capabilityPolicyGate.js.
  */
 async function _getCapabilityPolicy(capabilityClass, capabilityId = null) {
-  const { getCapabilityPolicyFromDB } = await import('../capabilityModelService.js');
+  const { getCapabilityPolicyFromDB } = await import('../ai-infra/capabilityModelService.js');
   return getCapabilityPolicyFromDB(capabilityClass, capabilityId);
 }
 

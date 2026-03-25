@@ -8,8 +8,8 @@ import {
   BarChart3, DollarSign, FileText, ArrowRight,
 } from 'lucide-react';
 import { getEmployee, getOrCreateWorker, listTasks } from '../../services/aiEmployee/queries.js';
-import { getLatestSummary } from '../../services/dailySummaryService';
-import { getEmployeeCostSummary } from '../../services/modelRoutingService';
+import { getLatestSummary } from '../../services/tasks/dailySummaryService';
+import { getEmployeeCostSummary } from '../../services/ai-infra/modelRoutingService';
 
 const STATUS_STYLE = {
   idle:           { label: 'Idle',            dot: 'bg-slate-400',  text: 'text-slate-600 dark:text-slate-400' },

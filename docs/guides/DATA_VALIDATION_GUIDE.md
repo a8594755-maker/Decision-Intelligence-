@@ -1,3 +1,9 @@
+---
+owner: di-core-team
+status: active
+last_reviewed: 2026-03-24
+---
+
 # 資料驗證與清洗功能說明
 
 ## 概述
@@ -195,4 +201,63 @@
 - 驗證函數：`src/utils/dataValidation.js`
 - Schema 定義：`src/utils/uploadSchemas.js`
 - UI 介面：`src/views/EnhancedExternalSystemsView.jsx`
+
+---
+
+## 附錄：驗證規則快速參考
+
+> 原文件：VALIDATION_RULES_QUICK_REFERENCE.md（已合併）
+
+### A) po_open_lines
+
+| 欄位 | 類型 | 必填 | 驗證規則 | 預設值 | 錯誤訊息 |
+|-----|------|------|---------|--------|---------|
+| `po_number` | string | Yes | - | - | 必填欄位 |
+| `po_line` | string | Yes | - | - | 必填欄位 |
+| `material_code` | string | Yes | - | - | 必填欄位 |
+| `plant_id` | string | Yes | - | - | 必填欄位 |
+| `open_qty` | number | Yes | >= 0 | - | open_qty 不能小於 0 |
+| `week_bucket` | string | 與 date 二選一 | YYYY-W## | - | 週桶格式不正確 |
+| `date` | date | 與 week_bucket 二選一 | YYYY-MM-DD | - | 日期格式不正確 |
+| `time_bucket` | string | 自動填入 | 必須存在 | - | 必須填寫 week_bucket 或 date |
+| `uom` | string | No | - | 'pcs' | - |
+| `supplier_id` | string | No | - | - | - |
+| `status` | string | No | open/closed/cancelled | 'open' | 自動修正為 'open' |
+| `notes` | string | No | - | - | - |
+
+**特殊處理：**
+- **time_bucket 自動處理：** 優先使用 `date`，若無則使用 `week_bucket`
+- **status 自動修正：** 無效值自動改為 `open`，產生 warning 而非 error
+
+### B) inventory_snapshots
+
+| 欄位 | 類型 | 必填 | 驗證規則 | 預設值 | 錯誤訊息 |
+|-----|------|------|---------|--------|---------|
+| `material_code` | string | Yes | - | - | 必填欄位 |
+| `plant_id` | string | Yes | - | - | 必填欄位 |
+| `snapshot_date` | date | Yes | YYYY-MM-DD | - | snapshot_date 為必填欄位 |
+| `onhand_qty` | number | Yes | >= 0 | - | onhand_qty 不能小於 0 |
+| `allocated_qty` | number | No | >= 0 | 0 | allocated_qty 不能小於 0 |
+| `safety_stock` | number | No | >= 0 | 0 | safety_stock 不能小於 0 |
+| `uom` | string | No | - | 'pcs' | - |
+| `notes` | string | No | - | - | - |
+
+### C) fg_financials
+
+| 欄位 | 類型 | 必填 | 驗證規則 | 預設值 | 錯誤訊息 |
+|-----|------|------|---------|--------|---------|
+| `material_code` | string | Yes | - | - | 必填欄位 |
+| `unit_margin` | number | Yes | >= 0 | - | unit_margin 不能小於 0 |
+| `plant_id` | string | No | - | - | 空值代表全球通用定價 |
+| `unit_price` | number | No | >= 0 (若填) | - | unit_price 不能小於 0 |
+| `currency` | string | No | - | 'USD' | - |
+| `valid_from` | date | No | <= valid_to | - | valid_from 不能晚於 valid_to |
+| `valid_to` | date | No | >= valid_from | - | - |
+| `notes` | string | No | - | - | - |
+
+### 驗證執行順序
+
+1. **基本欄位驗證** — 必填欄位、類型轉換、數值範圍
+2. **time_bucket 處理** — demand_fg 和 po_open_lines 自動填入
+3. **業務規則驗證** — 各 upload type 的特殊邏輯
 

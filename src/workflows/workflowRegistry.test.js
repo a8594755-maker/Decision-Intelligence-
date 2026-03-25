@@ -11,11 +11,11 @@ const { datasetProfilesServiceMock, diRunsServiceMock, startWorkflowAMock, start
   startWorkflowBMock: vi.fn(),
 }));
 
-vi.mock('../services/datasetProfilesService', () => ({
+vi.mock('../services/data-prep/datasetProfilesService', () => ({
   datasetProfilesService: datasetProfilesServiceMock,
 }));
 
-vi.mock('../services/diRunsService', () => ({
+vi.mock('../services/planning/diRunsService', () => ({
   diRunsService: diRunsServiceMock,
 }));
 

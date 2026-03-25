@@ -1,7 +1,7 @@
-import { datasetProfilesService } from '../services/datasetProfilesService';
-import { diRunsService } from '../services/diRunsService';
-import { reuseMemoryService } from '../services/reuseMemoryService';
-import { buildDataSummaryCardPayload } from '../services/chatDatasetProfilingService';
+import { datasetProfilesService } from '../services/data-prep/datasetProfilesService';
+import { diRunsService } from '../services/planning/diRunsService';
+import { reuseMemoryService } from '../services/memory/reuseMemoryService';
+import { buildDataSummaryCardPayload } from '../services/data-prep/chatDatasetProfilingService';
 import {
   computeRiskArtifactsFromDatasetProfile,
   buildRiskSummaryCardPayload,
@@ -11,12 +11,12 @@ import {
   buildPODelayAlertCardPayload,
   buildRiskReportJson,
   buildRiskDownloadsPayload
-} from '../services/chatRiskService';
+} from '../services/risk/chatRiskService';
 import { generateTopologyGraphForRun } from '../services/topology/topologyService';
 import { loadArtifact, saveCsvArtifact, saveJsonArtifact } from '../utils/artifactStore';
-import { evaluateRiskReplanRecommendation } from '../services/riskClosedLoopService';
+import { evaluateRiskReplanRecommendation } from '../services/risk/riskClosedLoopService';
 import { evaluateClosedLoopAfterWorkflowB } from '../services/closed_loop/workflowBClosedLoopBridge.js';
-import { generateAlerts } from '../services/proactiveAlertService.js';
+import { generateAlerts } from '../services/governance/proactiveAlertService.js';
 import { applyBlockingAnswerBindings } from './blockingAnswerUtils.js';
 
 export const WORKFLOW_B_STEPS = ['profile', 'contract', 'validate', 'compute_risk', 'exceptions', 'topology', 'report'];

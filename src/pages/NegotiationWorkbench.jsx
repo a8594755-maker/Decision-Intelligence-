@@ -24,8 +24,8 @@ import {
 import { Card } from '../components/ui';
 import { useAuth } from '../contexts/AuthContext';
 import NegotiationActionCard from '../components/chat/NegotiationActionCard';
-import * as persistence from '../services/negotiationPersistenceService';
-import { determineStrategy, generateCounterOffer, evaluateOutcome } from '../services/negotiationStrategyEngine';
+import * as persistence from '../services/planning/negotiationPersistenceService';
+import { determineStrategy, generateCounterOffer, evaluateOutcome } from '../services/planning/negotiationStrategyEngine';
 
 // ── Status config ───────────────────────────────────────────────────────────
 

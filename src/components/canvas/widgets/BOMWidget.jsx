@@ -140,7 +140,7 @@ function BOMWidgetLiveInner({ user, globalDataSource, initialTab }) {
     setError(null);
 
     try {
-      const { supabase } = await import('../../../services/supabaseClient');
+      const { supabase } = await import('../../../services/infra/supabaseClient');
       const offset = (currentPage - 1) * ITEMS_PER_PAGE;
 
       let query = supabase

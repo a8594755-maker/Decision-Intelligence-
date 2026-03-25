@@ -16,7 +16,7 @@
  */
 
 import { useEffect, useRef } from 'react';
-import { eventBus } from '../services/eventBus';
+import { eventBus } from '../services/governance/eventBus';
 
 export default function useEventBus(eventName, callback) {
   const callbackRef = useRef(callback);

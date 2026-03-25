@@ -10,7 +10,7 @@ import { Database, ChevronLeft, ChevronRight, Search, X, History, ArrowUpDown } 
 import { Button } from '../ui';
 import InlineEditCell from './InlineEditCell';
 import { useLiveTableData } from '../../hooks/useLiveTableData';
-import { TABLE_REGISTRY, getAvailableTables } from '../../services/liveDataQueryService';
+import { TABLE_REGISTRY, getAvailableTables } from '../../services/data-prep/liveDataQueryService';
 
 const TABLES = getAvailableTables();
 

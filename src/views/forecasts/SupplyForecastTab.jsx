@@ -14,8 +14,8 @@ import {
   RefreshCw, Package, Calendar, Database
 } from 'lucide-react';
 import { Card, Button, Badge } from '../../components/ui';
-import { runSupplyForecast, supplyForecastService } from '../../services/supplyForecastService';
-import { forecastRunsService } from '../../services/supabaseClient';
+import { runSupplyForecast, supplyForecastService } from '../../services/forecast/supplyForecastService';
+import { forecastRunsService } from '../../services/infra/supabaseClient';
 
 /**
  * Format date for display

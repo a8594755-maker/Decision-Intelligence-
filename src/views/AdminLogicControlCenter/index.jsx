@@ -4,7 +4,7 @@
 // ============================================
 
 import { useState, useEffect } from 'react';
-import { supabase } from '../../services/supabaseClient';
+import { supabase } from '../../services/infra/supabaseClient';
 import {
   fetchLogicVersions,
   fetchPublishedLogicVersion,
@@ -12,7 +12,7 @@ import {
   DEFAULT_LOGIC_CONFIG,
   getStatusColor,
   getStatusText,
-} from '../../services/logicVersionService';
+} from '../../services/governance/logicVersionService';
 import LogicTree from './LogicTree';
 import OverviewTab from './OverviewTab';
 import EditTab from './EditTab';

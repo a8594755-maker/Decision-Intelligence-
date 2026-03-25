@@ -16,7 +16,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import useSSE from './useSSE';
-import { eventBus, EVENT_NAMES } from '../services/eventBus';
+import { eventBus, EVENT_NAMES } from '../services/governance/eventBus';
 
 const ML_API_BASE = import.meta.env?.VITE_ML_API_URL || 'http://localhost:8000';
 

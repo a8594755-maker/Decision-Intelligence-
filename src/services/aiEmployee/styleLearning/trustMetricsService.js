@@ -18,7 +18,7 @@
  *   - avg_review_score: average AI review score (0-100)
  *   - artifact_completeness_rate: % tasks with all expected artifacts
  */
-import { supabase } from '../../supabaseClient.js';
+import { supabase } from '../../infra/supabaseClient.js';
 import { TASK_STATES } from '../taskStateMachine.js';
 
 const TABLE = 'trust_metrics';

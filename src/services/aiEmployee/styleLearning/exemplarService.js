@@ -13,7 +13,7 @@
  *   - Full style fingerprint (same as styleExtractionService output)
  *   - Skeleton (structure without data — for few-shot injection)
  */
-import { supabase } from '../../supabaseClient.js';
+import { supabase } from '../../infra/supabaseClient.js';
 import { extractStyleFromExcel } from './styleExtractionService.js';
 
 const TABLE = 'style_exemplars';

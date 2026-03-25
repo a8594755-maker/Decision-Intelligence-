@@ -7,7 +7,7 @@
  * @module services/roi/valueTrackingService
  */
 
-import { supabase } from '../supabaseClient.js';
+import { supabase } from '../infra/supabaseClient.js';
 import { extractValueEvents, summarizeValueEvents } from './roiCalculators.js';
 
 // ── Record values on task completion ────────────────────────────────────────

@@ -14,12 +14,12 @@ import {
   Download, RefreshCw, Calendar
 } from 'lucide-react';
 import { Card, Button, Badge } from '../../components/ui';
-import { forecastRunsService } from '../../services/supabaseClient';
+import { forecastRunsService } from '../../services/infra/supabaseClient';
 import {
   runRevenueForecast,
   getMarginAtRiskResults,
   getRevenueTerms
-} from '../../services/revenueForecastService';
+} from '../../services/forecast/revenueForecastService';
 
 /**
  * Format date for display

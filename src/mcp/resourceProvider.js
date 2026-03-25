@@ -6,7 +6,7 @@
 // Resources let AI clients browse available data before calling tools.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { BUILTIN_TOOLS, TOOL_CATEGORY } from '../services/builtinToolCatalog.js';
+import { BUILTIN_TOOLS, TOOL_CATEGORY } from '../services/ai-infra/builtinToolCatalog.js';
 
 // ── Static resources ───────────────────────────────────────────────────────
 

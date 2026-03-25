@@ -1,7 +1,7 @@
-import { prepareChatUploadFromFile } from '../chatDatasetProfilingService.js';
-import { createDatasetProfileFromSheets } from '../datasetProfilingService.js';
-import { registerLocalProfile } from '../datasetProfilesService.js';
-import { userFilesService } from '../supabaseClient.js';
+import { prepareChatUploadFromFile } from '../data-prep/chatDatasetProfilingService.js';
+import { createDatasetProfileFromSheets } from '../data-prep/datasetProfilingService.js';
+import { registerLocalProfile } from '../data-prep/datasetProfilesService.js';
+import { userFilesService } from '../infra/supabaseClient.js';
 
 export async function createTaskDatasetContextFromFile({ userId, file }) {
   if (!userId) {

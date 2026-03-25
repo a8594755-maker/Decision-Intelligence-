@@ -17,7 +17,7 @@ import { Card, Button, Badge } from '../../components/ui';
 import {
   componentDemandService,
   componentDemandTraceService
-} from '../../services/supabaseClient';
+} from '../../services/infra/supabaseClient';
 
 const itemsPerPage = 100;
 

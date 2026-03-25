@@ -10,7 +10,7 @@ import {
   generateHeaderFingerprint,
   saveMappingProfile,
   findMappingProfile,
-} from '../../services/mappingProfileService';
+} from '../../services/data-prep/mappingProfileService';
 
 // ── Tests ─────────────────────────────────────────────────────────────────
 

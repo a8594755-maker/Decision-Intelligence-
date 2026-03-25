@@ -5,7 +5,7 @@
  * No localStorage fallback.
  */
 
-import { supabase } from '../../supabaseClient.js';
+import { supabase } from '../../infra/supabaseClient.js';
 
 /**
  * Create a review record.

@@ -16,7 +16,7 @@ import {
   X, Search,
   TrendingUp, BarChart3, PieChart, ScatterChart, Globe, Clock, Brain,
 } from 'lucide-react';
-import { getRecipeCatalogForUI, RECIPE_CATEGORIES } from '../../services/chartRecipeCatalog.js';
+import { getRecipeCatalogForUI, RECIPE_CATEGORIES } from '../../services/charts/chartRecipeCatalog.js';
 
 // ── Category Icon Map ──────────────────────────────────────────────────────
 

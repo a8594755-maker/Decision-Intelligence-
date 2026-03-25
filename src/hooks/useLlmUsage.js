@@ -6,9 +6,9 @@
  */
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
-import { supabase } from '../services/supabaseClient';
+import { supabase } from '../services/infra/supabaseClient';
 import { fetchTodayUsage } from '../utils/llmUsageTracker';
-import { invokeAiProxy } from '../services/aiProxyService';
+import { invokeAiProxy } from '../services/ai-infra/aiProxyService';
 import { useAuth } from '../contexts/AuthContext';
 
 /**

@@ -543,7 +543,7 @@ function renderLorenz(chart) {
         <CartesianGrid {...GRID_PROPS} />
         <XAxis dataKey={xKey} tick={TICK_STYLE} unit="%" label={{ value: 'Cumulative % of Population', position: 'insideBottomRight', offset: -5, fontSize: 10 }} />
         <YAxis tick={TICK_STYLE} unit="%" label={{ value: 'Cumulative % of Value', angle: -90, position: 'insideLeft', fontSize: 10 }} />
-        <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v) => `${v.toFixed(1)}%`} />
+        <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v) => { const n = typeof v === 'number' ? v : parseFloat(v); return Number.isFinite(n) ? `${n.toFixed(1)}%` : String(v ?? ''); }} />
         <Legend wrapperStyle={{ fontSize: 11 }} />
         <Line type="monotone" dataKey="equality" stroke="#9ca3af" strokeWidth={1.5} strokeDasharray="6 4" dot={false} name="Perfect Equality" />
         <Line type="monotone" dataKey={yKey} stroke={CHART_COLORS[4]} strokeWidth={2.5} dot={false} name={label || 'Lorenz Curve'} />

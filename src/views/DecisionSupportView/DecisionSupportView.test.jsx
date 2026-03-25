@@ -31,7 +31,7 @@ vi.mock('ralph-loop-agent', () => ({
 }));
 
 // Mock all heavy service dependencies before importing component
-vi.mock('../../services/supabaseClient', () => ({
+vi.mock('../../services/infra/supabaseClient', () => ({
   supabase: {
     from: () => ({
       select: () => ({
@@ -62,38 +62,38 @@ vi.mock('../../services/supabaseClient', () => ({
   },
 }));
 
-vi.mock('../../services/geminiAPI', () => ({
+vi.mock('../../services/ai-infra/geminiAPI', () => ({
   streamChatWithAI: vi.fn(),
 }));
 
-vi.mock('../../services/chatAgentLoop', () => ({
+vi.mock('../../services/agent-core/chatAgentLoop', () => ({
   runAgentLoop: mockRunAgentLoop,
   ANALYSIS_AGENT_TOOL_IDS: ['query_sap_data', 'list_sap_tables', 'run_python_analysis', 'generate_chart'],
 }));
 
-vi.mock('../../services/agentResponsePresentationService.js', () => ({
+vi.mock('../../services/agent-core/agentResponsePresentationService.js', () => ({
   buildAgentPresentationPayload: mockBuildAgentPresentationPayload,
   resolveAgentAnswerContract: mockResolveAgentAnswerContract,
   summarizeToolCallsForPrompt: mockSummarizeToolCallsForPrompt,
 }));
 
-vi.mock('../../services/agentCandidateJudgeService.js', () => ({
+vi.mock('../../services/agent-core/agentCandidateJudgeService.js', () => ({
   judgeAgentCandidates: mockJudgeAgentCandidates,
   judgeOptimizedCandidate: mockJudgeOptimizedCandidate,
 }));
 
-vi.mock('../../services/chatDatasetProfilingService', () => ({
+vi.mock('../../services/data-prep/chatDatasetProfilingService', () => ({
   prepareChatUploadFromFile: vi.fn(),
   prepareChatUploadFromFiles: vi.fn(),
   buildDataSummaryCardPayload: vi.fn(),
   MAX_UPLOAD_BYTES: 50_000_000,
 }));
 
-vi.mock('../../services/datasetProfilingService', () => ({
+vi.mock('../../services/data-prep/datasetProfilingService', () => ({
   createDatasetProfileFromSheets: vi.fn(),
 }));
 
-vi.mock('../../services/datasetProfilesService', () => ({
+vi.mock('../../services/data-prep/datasetProfilesService', () => ({
   datasetProfilesService: {
     list: vi.fn().mockResolvedValue([]),
     get: vi.fn().mockResolvedValue(null),
@@ -106,22 +106,22 @@ vi.mock('../../services/datasetProfilesService', () => ({
   registerLocalProfile: vi.fn(),
 }));
 
-vi.mock('../../services/reuseMemoryService', () => ({
+vi.mock('../../services/memory/reuseMemoryService', () => ({
   reuseMemoryService: {
     findSimilar: vi.fn().mockResolvedValue([]),
   },
 }));
 
-vi.mock('../../services/diResetService', () => ({
+vi.mock('../../services/infra/diResetService', () => ({
   diResetService: { reset: vi.fn() },
 }));
 
-vi.mock('../../services/chatForecastService', () => ({
+vi.mock('../../services/forecast/chatForecastService', () => ({
   runForecastFromDatasetProfile: vi.fn(),
   buildForecastCardPayload: vi.fn(),
 }));
 
-vi.mock('../../services/chatPlanningService', () => ({
+vi.mock('../../services/planning/chatPlanningService', () => ({
   runPlanFromDatasetProfile: vi.fn(),
   buildPlanSummaryCardPayload: vi.fn(),
   buildPlanTableCardPayload: vi.fn(),
@@ -132,14 +132,14 @@ vi.mock('../../services/chatPlanningService', () => ({
   buildRiskAwarePlanComparisonCardPayload: vi.fn(),
 }));
 
-vi.mock('../../services/planGovernanceService', () => ({
+vi.mock('../../services/planning/planGovernanceService', () => ({
   requestPlanApproval: vi.fn(),
   approvePlanApproval: vi.fn(),
   rejectPlanApproval: vi.fn(),
   isPlanGovernanceConfigured: vi.fn().mockReturnValue(false),
 }));
 
-vi.mock('../../services/planAuditService', () => ({
+vi.mock('../../services/planning/planAuditService', () => ({
   recordPlanApproved: vi.fn(),
   recordPlanRejected: vi.fn(),
 }));
@@ -154,12 +154,12 @@ vi.mock('../../services/negotiation/negotiationOrchestrator', () => ({
   checkNegotiationTrigger: vi.fn().mockResolvedValue(null),
 }));
 
-vi.mock('../../services/digitalTwinService', () => ({
+vi.mock('../../services/planning/digitalTwinService', () => ({
   runSimulation: vi.fn().mockResolvedValue({ success: false }),
   buildDigitalTwinCardPayload: vi.fn().mockReturnValue({}),
 }));
 
-vi.mock('../../services/planWritebackService', () => ({
+vi.mock('../../services/planning/planWritebackService', () => ({
   writeApprovedPlanBaseline: vi.fn().mockResolvedValue(null),
 }));
 
@@ -173,7 +173,7 @@ vi.mock('../../workflows/workflowRegistry', () => ({
   WORKFLOW_NAMES: { A: 'workflowA', B: 'workflowB' },
 }));
 
-vi.mock('../../services/asyncRunsApiClient', () => ({
+vi.mock('../../services/infra/asyncRunsApiClient', () => ({
   default: {
     submitRun: vi.fn(),
     pollStatus: vi.fn(),
@@ -182,7 +182,7 @@ vi.mock('../../services/asyncRunsApiClient', () => ({
   isAsyncRunsConnectivityError: vi.fn().mockReturnValue(false),
 }));
 
-vi.mock('../../services/chatCanvasWorkflowService', () => ({
+vi.mock('../../services/canvas/chatCanvasWorkflowService', () => ({
   executeChatCanvasRun: vi.fn(),
   RUN_STEP_ORDER: [],
 }));
@@ -209,7 +209,7 @@ vi.mock('../../hooks/useSessionContext', () => ({
   }),
 }));
 
-vi.mock('../../services/chatIntentService', () => ({
+vi.mock('../../services/chat/chatIntentService', () => ({
   parseUserIntent: vi.fn().mockResolvedValue({ intent: 'chat', entities: {} }),
   parseIntent: vi.fn().mockResolvedValue({ intent: 'GENERAL_CHAT', confidence: 0.5 }),
   routeIntent: vi.fn().mockResolvedValue({ handled: false }),
@@ -217,24 +217,24 @@ vi.mock('../../services/chatIntentService', () => ({
   buildActionParams: vi.fn().mockReturnValue({}),
 }));
 
-vi.mock('../../services/chatRefinementService', () => ({
+vi.mock('../../services/chat/chatRefinementService', () => ({
   detectRefinement: vi.fn().mockReturnValue(null),
   handleParameterChange: vi.fn().mockResolvedValue(null),
   handlePlanComparison: vi.fn().mockReturnValue(null),
   buildComparisonSummaryText: vi.fn().mockReturnValue(''),
 }));
 
-vi.mock('../../services/evidenceResponseService', () => ({
+vi.mock('../../services/governance/evidenceResponseService', () => ({
   generateEvidenceResponse: vi.fn(),
 }));
 
-vi.mock('../../services/alertMonitorService', () => ({
+vi.mock('../../services/governance/alertMonitorService', () => ({
   createAlertMonitor: vi.fn().mockReturnValue({ start: vi.fn(), stop: vi.fn() }),
   buildAlertChatMessage: vi.fn(),
   isAlertMonitorEnabled: vi.fn().mockReturnValue(false),
 }));
 
-vi.mock('../../services/approvalWorkflowService', () => ({
+vi.mock('../../services/planning/approvalWorkflowService', () => ({
   default: {
     getStatus: vi.fn().mockReturnValue(null),
     request: vi.fn(),
@@ -419,6 +419,85 @@ describe('DecisionSupportView', () => {
       approved: true,
       winnerCandidateId: 'secondary',
       reason: 'Optimizer improved QA score from 5.2 to 8.5.',
+    });
+
+    render(
+      <MemoryRouter>
+        <DecisionSupportView user={mockUser} addNotification={mockAddNotification} />
+      </MemoryRouter>
+    );
+
+    await startConversation(user);
+    await user.type(screen.getByPlaceholderText(/message decision-intelligence/i), directAnalysisPrompt);
+    await user.click(screen.getByTitle(/send/i));
+
+    await waitFor(() => expect(mockRunAgentLoop).toHaveBeenCalledTimes(2));
+    expect(mockRunAgentLoop.mock.calls[1][0].message).toContain('OPTIMIZER agent');
+    await waitFor(() => expect(mockJudgeOptimizedCandidate).toHaveBeenCalledTimes(1));
+  });
+
+  it('auto-escalates to optimizer when primary has hard methodology blockers even with a passing score', async () => {
+    const user = userEvent.setup();
+    mockRunAgentLoop
+      .mockResolvedValueOnce({
+        text: 'Primary answer with invalid growth method',
+        toolCalls: [{
+          id: 'tool-primary',
+          name: 'query_sap_data',
+          result: {
+            success: true,
+            result: {
+              rowCount: 1,
+              rows: [{ revenue: 1 }],
+            },
+          },
+        }],
+        provider: 'openai',
+        model: 'gpt-5.4',
+        transport: 'native',
+      })
+      .mockResolvedValueOnce({
+        text: 'Optimizer corrected the methodology',
+        toolCalls: [{
+          id: 'tool-optimizer',
+          name: 'query_sap_data',
+          result: {
+            success: true,
+            result: {
+              rowCount: 1,
+              rows: [{ revenue: 2 }],
+            },
+          },
+        }],
+        provider: 'anthropic',
+        model: 'claude-opus-4-6',
+        transport: 'native',
+      });
+
+    mockBuildAgentPresentationPayload
+      .mockResolvedValueOnce({
+        brief: { headline: 'Primary', summary: 'Uses an invalid growth basis', metric_pills: [], tables: [], charts: [], key_findings: [], caveats: [] },
+        qa: {
+          score: 8.6,
+          status: 'warning',
+          issues: ['Replace the current growth metric with a comparable full-coverage or aligned same-period comparison.'],
+          blockers: ['The brief uses normalized growth with base period 2016, but the base period has only 1 month(s) of coverage.'],
+          hard_blockers: ['The brief uses normalized growth with base period 2016, but the base period has only 1 month(s) of coverage.'],
+          soft_blockers: [],
+        },
+        trace: { successful_queries: [{ name: 'query_sap_data' }], failed_attempts: [] },
+        answerContract: {},
+      })
+      .mockResolvedValueOnce({
+        brief: { headline: 'Optimized', summary: 'Uses a comparable same-period growth basis', metric_pills: [], tables: [], charts: [], key_findings: [], caveats: [] },
+        qa: { score: 9.0, status: 'pass', issues: [], blockers: [], hard_blockers: [], soft_blockers: [] },
+        trace: { successful_queries: [{ name: 'query_sap_data' }], failed_attempts: [] },
+        answerContract: {},
+      });
+    mockJudgeOptimizedCandidate.mockResolvedValueOnce({
+      approved: true,
+      winnerCandidateId: 'secondary',
+      reason: 'Optimizer fixed the invalid growth methodology.',
     });
 
     render(

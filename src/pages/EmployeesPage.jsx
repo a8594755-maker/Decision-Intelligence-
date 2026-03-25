@@ -5,7 +5,7 @@ import { Bot, CheckCircle2, Clock, AlertTriangle, BarChart3, ChevronRight, Plus,
 import { Card, Modal } from '../components/ui';
 import { useAuth } from '../contexts/AuthContext';
 import { getOrCreateWorker, listEmployeesByManager, getKpis, WORKER_TEMPLATES, listTemplatesFromDB } from '../services/aiEmployee/queries.js';
-import { getEmployeeCostSummary } from '../services/modelRoutingService';
+import { getEmployeeCostSummary } from '../services/ai-infra/modelRoutingService';
 import { getLatestMetrics } from '../services/aiEmployee/styleLearning/trustMetricsService';
 
 // ── Status badge ──────────────────────────────────────────────────────────

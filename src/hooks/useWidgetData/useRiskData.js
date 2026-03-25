@@ -88,7 +88,7 @@ export default function useRiskData({ user, globalDataSource } = {}) {
         { normalizeOpenPOBatch },
         { aggregateComponentDemandToDaily, normalizeKey },
       ] = await Promise.all([
-        import('../../services/supabaseClient'),
+        import('../../services/infra/supabaseClient'),
         import('../../domains/risk/coverageCalculator.js'),
         import('../../domains/inventory/calculator.js'),
         import('../../domains/risk/profitAtRiskCalculator.js'),

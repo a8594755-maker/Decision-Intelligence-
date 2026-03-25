@@ -1,5 +1,5 @@
-import { datasetProfilesService } from '../services/datasetProfilesService';
-import { diRunsService } from '../services/diRunsService';
+import { datasetProfilesService } from '../services/data-prep/datasetProfilesService';
+import { diRunsService } from '../services/planning/diRunsService';
 import {
   startWorkflowA,
   runNextStep as runNextWorkflowAStep,

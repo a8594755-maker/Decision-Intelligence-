@@ -9,7 +9,7 @@
 
 import React, { useState } from 'react';
 import { ShieldAlert, Play, Loader2, AlertTriangle, X, ArrowLeft } from 'lucide-react';
-import { runAutoBaseline } from '../../services/basePlanResolverService';
+import { runAutoBaseline } from '../../services/planning/basePlanResolverService';
 import ScenarioOverridesForm, { getDefaultOverrides } from './ScenarioOverridesForm';
 
 // Pre-seed sensible risk-focused defaults for the form

@@ -5,7 +5,7 @@
  * Follows the same strict-JSON contract pattern as diJsonContracts.js.
  */
 
-import { buildSessionSummary } from '../services/sessionContextService';
+import { buildSessionSummary } from '../services/memory/sessionContextService';
 
 const clampText = (text, maxChars = 8000) => String(text || '').slice(0, maxChars);
 

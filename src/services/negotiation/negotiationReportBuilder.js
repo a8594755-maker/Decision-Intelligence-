@@ -12,7 +12,7 @@
  *   rule-based fallback is used.
  */
 
-import { runDiPrompt, DI_PROMPT_IDS } from '../diModelRouterService';
+import { runDiPrompt, DI_PROMPT_IDS } from '../planning/diModelRouterService';
 
 // ---------------------------------------------------------------------------
 // Evidence number extraction

@@ -1,3 +1,9 @@
+---
+owner: di-core-team
+status: active
+last_reviewed: 2026-03-24
+---
+
 # Decision-Intelligence 使用指南
 
 > 此目錄包含所有使用者指南、操作手冊和功能說明文件

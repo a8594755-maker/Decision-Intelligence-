@@ -6,7 +6,7 @@
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { supabase } from '../../services/supabaseClient';
+import { supabase } from '../../services/infra/supabaseClient';
 import { escapeIlike } from '../../utils/dataServiceHelpers';
 
 const ITEMS_PER_PAGE = 100;

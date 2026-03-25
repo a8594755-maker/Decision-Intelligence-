@@ -2,9 +2,9 @@ import React, { useState, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { Database, Search, Plus, Edit2, Trash2, X, Building2, Upload, FileSpreadsheet, TrendingUp, TrendingDown, AlertTriangle } from 'lucide-react';
 import { Card, Button, Badge, Modal } from '../components/ui';
-import { suppliersService } from '../services/supabaseClient';
+import { suppliersService } from '../services/infra/supabaseClient';
 import { extractSuppliers, validateFile } from '../utils/dataProcessing';
-import { getSupplierKpiSummary } from '../services/supplierKpiService';
+import { getSupplierKpiSummary } from '../services/sap-erp/supplierKpiService';
 import { useAuth } from '../contexts/AuthContext';
 
 /**

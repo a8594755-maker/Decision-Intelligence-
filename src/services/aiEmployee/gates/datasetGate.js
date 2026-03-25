@@ -11,7 +11,7 @@ import * as stepRepo from '../persistence/stepRepo.js';
 import * as taskRepo from '../persistence/taskRepo.js';
 import { appendWorklog } from '../persistence/worklogRepo.js';
 import { resolveContext } from '../lazyContextService.js';
-import { eventBus, EVENT_NAMES } from '../../eventBus.js';
+import { eventBus, EVENT_NAMES } from '../../governance/eventBus.js';
 
 /**
  * @param {import('./stepPipeline.js').StepContext} ctx

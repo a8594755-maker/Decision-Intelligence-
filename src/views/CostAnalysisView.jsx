@@ -12,9 +12,9 @@ import {
 import ReactMarkdown from 'react-markdown';
 import { Card, Button, Badge } from '../components/ui';
 import { SimpleLineChart, SimpleBarChart } from '../components/charts';
-import * as costAnalysisService from '../services/costAnalysisService';
-import * as materialCostService from '../services/materialCostService';
-import { analyzeCostAnomaly, generateCostOptimizationSuggestions, callGeminiAPI } from '../services/geminiAPI';
+import * as costAnalysisService from '../services/forecast/costAnalysisService';
+import * as materialCostService from '../services/sap-erp/materialCostService';
+import { analyzeCostAnomaly, generateCostOptimizationSuggestions, callGeminiAPI } from '../services/ai-infra/geminiAPI';
 
 const ABC_COLORS = { A: '#ef4444', B: '#f59e0b', C: '#22c55e' };
 const CHART_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4', '#6366f1', '#f43f5e'];

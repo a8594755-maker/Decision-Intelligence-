@@ -6,7 +6,7 @@
 
 import { stepTransition, STEP_EVENTS } from '../stepStateMachine.js';
 import * as stepRepo from '../persistence/stepRepo.js';
-import { checkBudget } from '../../taskBudgetService.js';
+import { checkBudget } from '../../tasks/taskBudgetService.js';
 
 /**
  * @param {import('./stepPipeline.js').StepContext} ctx

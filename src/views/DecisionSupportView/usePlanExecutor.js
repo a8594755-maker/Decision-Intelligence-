@@ -13,21 +13,21 @@ import {
   buildBomBottlenecksCardPayload,
   buildPlanDownloadsPayload,
   buildRiskAwarePlanComparisonCardPayload,
-} from '../../services/chatPlanningService';
+} from '../../services/planning/chatPlanningService';
 import {
   requestPlanApproval,
   approvePlanApproval,
   rejectPlanApproval,
   isPlanGovernanceConfigured,
-} from '../../services/planGovernanceService';
+} from '../../services/planning/planGovernanceService';
 import {
   recordPlanApproved,
   recordPlanRejected,
-} from '../../services/planAuditService';
-import { writeApprovedPlanBaseline } from '../../services/planWritebackService';
+} from '../../services/planning/planAuditService';
+import { writeApprovedPlanBaseline } from '../../services/planning/planWritebackService';
 import { checkNegotiationTrigger } from '../../services/negotiation/negotiationOrchestrator';
-import { buildPlanDecisionBundle } from '../../services/decisionTaskService';
-import { assemblePlanEvidence } from '../../services/evidenceAssembler';
+import { buildPlanDecisionBundle } from '../../services/tasks/decisionTaskService';
+import { assemblePlanEvidence } from '../../services/governance/evidenceAssembler';
 import {
   buildRuntimeWorkflowSettings,
   buildInventoryProjectionRowsFromCard,

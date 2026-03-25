@@ -12,14 +12,14 @@
 // Falls back to template-based diagnosis if LLM is unavailable.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { classifyError } from '../selfHealingService';
+import { classifyError } from '../governance/selfHealingService';
 
 // ── LLM call (lazy import to avoid circular deps) ──────────────────────────
 
 let _invokeAiProxy = null;
 async function getInvokeAiProxy() {
   if (!_invokeAiProxy) {
-    const mod = await import('../aiProxyService.js');
+    const mod = await import('../ai-infra/aiProxyService.js');
     _invokeAiProxy = mod.invokeAiProxy;
   }
   return _invokeAiProxy;

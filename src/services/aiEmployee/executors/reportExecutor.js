@@ -4,7 +4,7 @@
  * Wraps reportGeneratorService.generateReport().
  */
 
-import { generateReport } from '../../reportGeneratorService.js';
+import { generateReport } from '../../infra/reportGeneratorService.js';
 
 /**
  * @param {object} stepInput

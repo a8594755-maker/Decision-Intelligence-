@@ -14,7 +14,7 @@ import { CLOSED_LOOP_CONFIG, CLOSED_LOOP_STATUS } from './closedLoopConfig.js';
 import { derivePlanningParams } from './forecastToPlanParams.js';
 import { evaluateTriggers, getDefaultCooldownManager } from './triggerEngine.js';
 import { closedLoopStore } from './closedLoopStore.js';
-import { processIntake, INTAKE_SOURCES } from '../taskIntakeService.js';
+import { processIntake, INTAKE_SOURCES } from '../chat/taskIntakeService.js';
 
 // ─── Feature flag ─────────────────────────────────────────────────────────────
 

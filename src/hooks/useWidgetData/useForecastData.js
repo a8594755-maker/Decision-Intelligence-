@@ -38,7 +38,7 @@ export default function useForecastData({ user } = {}) {
   const loadRuns = useCallback(async () => {
     if (!user?.id) return;
     try {
-      const { forecastRunsService } = await import('../../services/supabaseClient');
+      const { forecastRunsService } = await import('../../services/infra/supabaseClient');
       const runs = await forecastRunsService.listRuns(user.id, { limit: 20 });
       setForecastRuns(runs || []);
       if (runs?.length) {
@@ -58,7 +58,7 @@ export default function useForecastData({ user } = {}) {
     setError(null);
 
     try {
-      const { componentDemandService } = await import('../../services/supabaseClient');
+      const { componentDemandService } = await import('../../services/infra/supabaseClient');
 
       // Load component demands for this run
       const result = await componentDemandService.getComponentDemandsByForecastRun(
@@ -77,7 +77,7 @@ export default function useForecastData({ user } = {}) {
 
       // Load trace records
       try {
-        const { supabase } = await import('../../services/supabaseClient');
+        const { supabase } = await import('../../services/infra/supabaseClient');
         const { data: traces } = await supabase
           .from('bom_explosion_trace')
           .select('*')

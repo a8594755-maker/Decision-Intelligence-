@@ -12,7 +12,7 @@
  */
 
 import { createContext, useContext, useEffect, useState, useCallback } from 'react';
-import { supabase } from '../services/supabaseClient';
+import { supabase } from '../services/infra/supabaseClient';
 
 const USER_PROFILES_TABLE = 'user_profiles';
 let isUserProfilesUnavailable = false;

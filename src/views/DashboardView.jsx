@@ -9,7 +9,7 @@ import {
   CheckCircle, XCircle, Upload, BarChart3, Layers, ShieldAlert, Cloud,
   ChevronRight, Loader2, Box, FileText, Target, Truck
 } from 'lucide-react';
-import { supabase } from '../services/supabaseClient';
+import { supabase } from '../services/infra/supabaseClient';
 import { Card } from '../components/ui';
 
 // ─── Color Palette ───

@@ -17,8 +17,8 @@ import { useAuth } from '../contexts/AuthContext';
 import {
   listRules, createRule, updateRule, deleteRule,
   RULE_TYPES, RULE_TEMPLATES,
-} from '../services/policyRuleService.js';
-import { CAPABILITY_CLASS } from '../services/capabilityModelService.js';
+} from '../services/governance/policyRuleService.js';
+import { CAPABILITY_CLASS } from '../services/ai-infra/capabilityModelService.js';
 
 const RULE_TYPE_LABELS = {
   [RULE_TYPES.APPROVAL_THRESHOLD]: 'Approval Threshold',

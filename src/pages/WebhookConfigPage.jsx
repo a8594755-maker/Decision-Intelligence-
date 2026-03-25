@@ -19,7 +19,7 @@ import { useAuth } from '../contexts/AuthContext';
 import {
   registerWebhook, listWebhooks, updateWebhook, deleteWebhook,
   processWebhook, WEBHOOK_SOURCES,
-} from '../services/webhookIntakeService.js';
+} from '../services/chat/webhookIntakeService.js';
 import { listEmployeesByManager } from '../services/aiEmployee/queries.js';
 
 const SOURCE_LABELS = {

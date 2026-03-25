@@ -2,7 +2,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { renderHook, waitFor } from '@testing-library/react';
 
-vi.mock('../services/basePlanResolverService', () => ({
+vi.mock('../services/planning/basePlanResolverService', () => ({
   resolveBasePlan: vi.fn(),
   validateBasePlan: vi.fn(() => ({ valid: true, reason: null })),
   persistBasePlan: vi.fn(),
@@ -11,7 +11,7 @@ vi.mock('../services/basePlanResolverService', () => ({
 }));
 
 import { useBasePlanResolver } from './useBasePlanResolver.js';
-import { resolveBasePlan } from '../services/basePlanResolverService';
+import { resolveBasePlan } from '../services/planning/basePlanResolverService';
 
 describe('useBasePlanResolver', () => {
   beforeEach(() => {

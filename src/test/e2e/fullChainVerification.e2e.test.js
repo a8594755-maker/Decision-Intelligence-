@@ -15,7 +15,7 @@ import { describe, it, expect, vi } from 'vitest';
 
 const _mockStore = { tasks: [], steps: [], worklogs: [], reviews: [] };
 
-vi.mock('../../services/supabaseClient', () => ({
+vi.mock('../../services/infra/supabaseClient', () => ({
   supabase: {
     from: (_table) => ({
       select: () => ({
@@ -53,11 +53,11 @@ if (typeof globalThis.localStorage === 'undefined') {
 import { taskTransition, TASK_STATES, TASK_EVENTS, isTaskTerminal } from '../../services/aiEmployee/taskStateMachine.js';
 import { stepTransition, STEP_STATES, STEP_EVENTS, isStepTerminal, isStepFailed } from '../../services/aiEmployee/stepStateMachine.js';
 import { employeeTransition, EMPLOYEE_STATES, EMPLOYEE_EVENTS } from '../../services/aiEmployee/employeeStateMachine.js';
-import { decomposeTask, validateDecomposition } from '../../services/chatTaskDecomposer';
-import { buildDynamicTemplate, initDynamicLoopState } from '../../services/dynamicTemplateBuilder';
-import { normalizeIntake, INTAKE_SOURCES } from '../../services/taskIntakeService';
-import { computeReplayCompleteness } from '../../services/taskTimelineService';
-import { TIMELINE_EVENT, TIMELINE_PHASE } from '../../services/taskTimelineService';
+import { decomposeTask, validateDecomposition } from '../../services/chat/chatTaskDecomposer';
+import { buildDynamicTemplate, initDynamicLoopState } from '../../services/agent-core/dynamicTemplateBuilder';
+import { normalizeIntake, INTAKE_SOURCES } from '../../services/chat/taskIntakeService';
+import { computeReplayCompleteness } from '../../services/tasks/taskTimelineService';
+import { TIMELINE_EVENT, TIMELINE_PHASE } from '../../services/tasks/taskTimelineService';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 

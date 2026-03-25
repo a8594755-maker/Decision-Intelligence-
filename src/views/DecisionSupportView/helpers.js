@@ -11,7 +11,7 @@ import { getRequiredMappingStatus } from '../../utils/requiredMappingStatus';
 import { ruleBasedMapping } from '../../utils/aiMappingHelper';
 import { ASSISTANT_NAME } from '../../config/branding';
 import { WORKFLOW_NAMES } from '../../workflows/workflowRegistry';
-import { RUN_STEP_ORDER } from '../../services/chatCanvasWorkflowService';
+import { RUN_STEP_ORDER } from '../../services/canvas/chatCanvasWorkflowService';
 
 // ── Storage & config constants ──────────────────────────────────────
 export const STORAGE_KEY = 'decision_intelligence_conversations';

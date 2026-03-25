@@ -18,14 +18,14 @@ import { generateNegotiationOptions, detectTrigger } from './negotiationOptionsG
 import { evaluateNegotiationOptions } from './negotiationEvaluator';
 import { buildNegotiationReport } from './negotiationReportBuilder';
 import { saveJsonArtifact, loadArtifact } from '../../utils/artifactStore';
-import { diRunsService } from '../diRunsService';
+import { diRunsService } from '../planning/diRunsService';
 import { getLookupService } from './cfr/negotiation-lookup-service.js';
 import { computePositionBucket } from './cfr/negotiation-position-buckets.js';
 import { DEFAULT_CFR_INFLUENCE, computeSupplierTypePriors } from './cfr/negotiation-types.js';
 import { deriveSolverParamsFromStrategy, applyCfrAdjustments, buildAdjustmentArtifact } from './cfr/cfr-solver-bridge.js';
 import { generateAllDrafts, buildDraftContext } from './cfr/negotiation-draft-generator.js';
 import { getStateTracker } from './cfr/negotiation-state-tracker.js';
-import * as negotiationPersistence from '../negotiationPersistenceService.js';
+import * as negotiationPersistence from '../planning/negotiationPersistenceService.js';
 
 const ARTIFACT_SIZE_THRESHOLD = 200 * 1024;
 const nowIso = () => new Date().toISOString();
@@ -820,7 +820,7 @@ export async function onNegotiationResolved({
     let scenarioRunId = null;
     if (patchResult.should_replan && planRunId && datasetProfileRow) {
       try {
-        const { executeScenario } = await import('../scenarioEngine.js');
+        const { executeScenario } = await import('../planning/scenarioEngine.js');
         const scenarioResult = await executeScenario({
           userId,
           baseRunId: planRunId,

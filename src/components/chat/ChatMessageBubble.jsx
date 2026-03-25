@@ -2,7 +2,7 @@ import React, { memo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Bell, FileText, Table2, Copy, Check } from 'lucide-react';
-import { formatAttachmentSize } from '../../services/chatAttachmentService';
+import { formatAttachmentSize } from '../../services/chat/chatAttachmentService';
 
 const markdownComponents = {
   table: ({ children }) => (

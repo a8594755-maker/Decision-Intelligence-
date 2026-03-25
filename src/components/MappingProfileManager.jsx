@@ -8,7 +8,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { ChevronDown, ChevronRight, Trash2, Database, ArrowRight, RefreshCw } from 'lucide-react';
 import { Badge, Button } from './ui';
-import { listMappingProfiles, deleteMappingProfileById } from '../services/mappingProfileService';
+import { listMappingProfiles, deleteMappingProfileById } from '../services/data-prep/mappingProfileService';
 import UPLOAD_SCHEMAS from '../utils/uploadSchemas';
 
 const UPLOAD_TYPE_LABELS = Object.fromEntries(

@@ -1,7 +1,7 @@
 import { vi } from 'vitest';
 
 // Supabase mock — prevent real DB calls in tests
-vi.mock('../services/supabaseClient', () => ({
+vi.mock('../services/infra/supabaseClient', () => ({
   supabase: {
     from: vi.fn(() => ({
       select: vi.fn().mockReturnThis(),

@@ -17,7 +17,7 @@ import {
   GOVERNANCE_TYPES,
   GOVERNANCE_STATUS,
   ESCALATION_REASONS,
-} from '../services/approvalWorkflowService';
+} from '../services/planning/approvalWorkflowService';
 import {
   CheckCircle, XCircle, AlertTriangle, Clock, Shield,
   ChevronDown, ChevronUp, Filter, RefreshCw, ArrowUpRight,

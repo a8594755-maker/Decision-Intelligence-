@@ -3,7 +3,7 @@ import { AlertCircle, Loader2, TrendingUp, Calculator, RefreshCw } from 'lucide-
 import { Card, Badge } from '../ui';
 
 async function loadRiskScoreService() {
-  return import('../../services/riskScoreService');
+  return import('../../services/risk/riskScoreService');
 }
 
 /**

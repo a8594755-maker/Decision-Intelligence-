@@ -1,3 +1,9 @@
+---
+owner: di-core-team
+status: active
+last_reviewed: 2026-03-24
+---
+
 # One-shot Import Framework - 泛用架構文件
 
 ## 📋 實作完成總結

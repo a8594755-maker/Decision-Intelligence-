@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { TrendingUp, AlertCircle, Loader2 } from 'lucide-react';
 import { Card, Badge } from '../ui';
-import { getRevenueSeriesForKey } from '../../services/revenueForecastService';
+import { getRevenueSeriesForKey } from '../../services/forecast/revenueForecastService';
 
 /**
  * RevenueSection - Display revenue/margin at risk for a key in Risk Dashboard

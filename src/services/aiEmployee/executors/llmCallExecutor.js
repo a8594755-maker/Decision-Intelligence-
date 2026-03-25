@@ -5,7 +5,7 @@
  * Routes through Supabase ai-proxy (same as reportGeneratorService).
  */
 
-import { invokeAiProxy } from '../../aiProxyService.js';
+import { invokeAiProxy } from '../../ai-infra/aiProxyService.js';
 
 /**
  * @param {object} stepInput

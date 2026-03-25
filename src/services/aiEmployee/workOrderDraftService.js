@@ -7,7 +7,7 @@
 // expensive decomposeTask() call runs.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { findToolsByQuery } from '../builtinToolCatalog.js';
+import { findToolsByQuery } from '../ai-infra/builtinToolCatalog.js';
 
 // ── Data-hint patterns ──────────────────────────────────────────────────────
 

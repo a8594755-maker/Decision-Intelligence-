@@ -11,6 +11,7 @@ import DonutGroupBlock from './DonutGroupBlock';
 import HorizontalBarBlock from './HorizontalBarBlock';
 import KpiRowBlock from './KpiRowBlock';
 import ProgressBlock from './ProgressBlock';
+import SuggestionBlock from './SuggestionBlock';
 
 const BLOCK_REGISTRY = {
   metric: MetricBlock,
@@ -23,6 +24,7 @@ const BLOCK_REGISTRY = {
   horizontal_bar: HorizontalBarBlock,
   kpi_row: KpiRowBlock,
   progress: ProgressBlock,
+  suggestion: SuggestionBlock,
 };
 
 export default BLOCK_REGISTRY;

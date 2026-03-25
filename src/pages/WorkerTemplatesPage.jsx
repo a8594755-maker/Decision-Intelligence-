@@ -14,8 +14,8 @@ import { Bot, Plus, Edit3, Trash2, Shield, Check, X, ChevronRight, Save, RotateC
 import { Card, Modal } from '../components/ui';
 import { useAuth } from '../contexts/AuthContext';
 import { listTemplatesFromDB } from '../services/aiEmployee/persistence/employeeRepo.js';
-import { CAPABILITY_CLASS } from '../services/capabilityModelService.js';
-import { supabase } from '../services/supabaseClient';
+import { CAPABILITY_CLASS } from '../services/ai-infra/capabilityModelService.js';
+import { supabase } from '../services/infra/supabaseClient';
 
 const ALL_CAPABILITIES = Object.values(CAPABILITY_CLASS);
 

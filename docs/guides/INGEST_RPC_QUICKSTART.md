@@ -1,3 +1,9 @@
+---
+owner: di-core-team
+status: active
+last_reviewed: 2026-03-24
+---
+
 # Ingest RPC Functions - 快速入門指南
 
 ## 📋 概述

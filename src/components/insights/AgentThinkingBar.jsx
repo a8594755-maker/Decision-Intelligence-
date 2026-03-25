@@ -1,19 +1,20 @@
 /**
  * AgentThinkingBar.jsx
  *
- * Shows the agent's thinking/reasoning process with a typewriter effect.
- * Collapses into an expandable bar once thinking is complete.
+ * Shows the agent's thinking/reasoning process.
+ * During loading: shows real-time iteration progress from the agent.
+ * After completion: shows the agent's analytical reasoning (collapsible).
  */
 
 import { useState, useEffect, useRef } from 'react';
 import { Brain, ChevronDown, ChevronUp, Loader2 } from 'lucide-react';
 
-export default function AgentThinkingBar({ thinking, loading }) {
+export default function AgentThinkingBar({ thinking, loading, progress }) {
   const [expanded, setExpanded] = useState(true);
   const [displayText, setDisplayText] = useState('');
   const intervalRef = useRef(null);
 
-  // Typewriter effect
+  // Typewriter effect for final thinking
   useEffect(() => {
     if (!thinking) { setDisplayText(''); return; }
 
@@ -55,7 +56,9 @@ export default function AgentThinkingBar({ thinking, loading }) {
           <Brain className="w-4 h-4 text-indigo-500" />
         )}
         <span className="text-sm font-medium text-indigo-700 dark:text-indigo-300">
-          {loading ? 'Agent is analyzing your data...' : 'Agent reasoning'}
+          {loading
+            ? (progress || 'Agent is analyzing your data...')
+            : 'Agent reasoning'}
         </span>
         <span className="ml-auto">
           {expanded
@@ -67,10 +70,16 @@ export default function AgentThinkingBar({ thinking, loading }) {
       {/* Body */}
       {expanded && (
         <div className="px-4 pb-3">
-          <p className="text-sm text-indigo-600/80 dark:text-indigo-400/80 leading-relaxed whitespace-pre-wrap">
-            {displayText || (loading ? 'Gathering insights from your analysis reports...' : '')}
-            {loading && <span className="inline-block w-1.5 h-4 bg-indigo-500 ml-0.5 animate-pulse" />}
-          </p>
+          {loading ? (
+            <p className="text-sm text-indigo-600/80 dark:text-indigo-400/80 leading-relaxed">
+              {progress || 'Gathering insights from your analysis reports...'}
+              <span className="inline-block w-1.5 h-4 bg-indigo-500 ml-0.5 animate-pulse" />
+            </p>
+          ) : displayText ? (
+            <p className="text-sm text-indigo-600/80 dark:text-indigo-400/80 leading-relaxed whitespace-pre-wrap">
+              {displayText}
+            </p>
+          ) : null}
         </div>
       )}
     </div>

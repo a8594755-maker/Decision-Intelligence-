@@ -4,7 +4,7 @@
  * @module services/kpiMonitor/kpiWatchClient
  */
 
-import { supabase } from '../supabaseClient.js';
+import { supabase } from '../infra/supabaseClient.js';
 
 // ── Watch Rules CRUD ────────────────────────────────────────────────────────
 

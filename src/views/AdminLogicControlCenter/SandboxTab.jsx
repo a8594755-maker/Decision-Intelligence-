@@ -5,13 +5,13 @@
 
 import { useState, useEffect } from 'react';
 // import { formatDistanceToNow } from 'date-fns';
-import { supabase } from '../../services/supabaseClient';
+import { supabase } from '../../services/infra/supabaseClient';
 import { 
   startSandboxTest, 
   fetchTestRun,
   getStatusColor,
   getStatusText 
-} from '../../services/logicVersionService';
+} from '../../services/governance/logicVersionService';
 
 export default function SandboxTab({ draftVersion, publishedVersion, canEdit }) {
   const [testParams, setTestParams] = useState({

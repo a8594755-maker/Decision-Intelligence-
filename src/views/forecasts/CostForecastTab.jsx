@@ -14,8 +14,8 @@ import {
   Download, RefreshCw, Calendar, DollarSign, Database
 } from 'lucide-react';
 import { Card, Button, Badge } from '../../components/ui';
-import { forecastRunsService } from '../../services/supabaseClient';
-import { runCostForecast, getCostResultsByKey, getCostRuleSets } from '../../services/costForecastService';
+import { forecastRunsService } from '../../services/infra/supabaseClient';
+import { runCostForecast, getCostResultsByKey, getCostRuleSets } from '../../services/forecast/costForecastService';
 
 /**
  * Format date for display

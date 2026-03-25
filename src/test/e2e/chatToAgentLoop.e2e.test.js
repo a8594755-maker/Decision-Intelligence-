@@ -6,7 +6,7 @@
 import { describe, it, expect, vi } from 'vitest';
 
 // Mock supabase
-vi.mock('../../services/supabaseClient', () => ({ supabase: null }));
+vi.mock('../../services/infra/supabaseClient', () => ({ supabase: null }));
 
 // Polyfill localStorage
 if (typeof globalThis.localStorage === 'undefined') {
@@ -19,10 +19,10 @@ if (typeof globalThis.localStorage === 'undefined') {
   };
 }
 
-import { decomposeTask, validateDecomposition } from '../../services/chatTaskDecomposer';
-import { buildDynamicTemplate, isDynamicTemplate, initDynamicLoopState } from '../../services/dynamicTemplateBuilder';
-import { getBuiltinTool, resolveDependencies } from '../../services/builtinToolCatalog';
-import { PERMISSION_REGISTRY, checkPermission } from '../../services/toolPermissionGuard';
+import { decomposeTask, validateDecomposition } from '../../services/chat/chatTaskDecomposer';
+import { buildDynamicTemplate, isDynamicTemplate, initDynamicLoopState } from '../../services/agent-core/dynamicTemplateBuilder';
+import { getBuiltinTool, resolveDependencies } from '../../services/ai-infra/builtinToolCatalog';
+import { PERMISSION_REGISTRY, checkPermission } from '../../services/ai-infra/toolPermissionGuard';
 
 // ── Full pipeline: decompose → validate → template → loop state ─────────────
 

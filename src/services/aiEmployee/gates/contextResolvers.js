@@ -16,8 +16,8 @@ import * as stepRepo from '../persistence/stepRepo.js';
 import { STEP_STATES } from '../stepStateMachine.js';
 import { appendWorklog } from '../persistence/worklogRepo.js';
 import { composeOutputProfileContext } from '../styleLearning/outputProfileService.js';
-import { recall, summarizeMemories } from '../../aiEmployeeMemoryService.js';
-import { datasetProfilesService } from '../../datasetProfilesService.js';
+import { recall, summarizeMemories } from '../../memory/aiEmployeeMemoryService.js';
+import { datasetProfilesService } from '../../data-prep/datasetProfilesService.js';
 import { resolveContext, detectMissingContext } from '../lazyContextService.js';
 
 /**

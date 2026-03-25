@@ -7,7 +7,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import '@testing-library/jest-dom';
 import ModelConfigTab from './ModelConfigTab.jsx';
-import { getActiveThinkingMode, resetModelConfig } from '../../services/modelConfigService.js';
+import { getActiveThinkingMode, resetModelConfig } from '../../services/ai-infra/modelConfigService.js';
 
 describe('ModelConfigTab', () => {
   beforeEach(() => {

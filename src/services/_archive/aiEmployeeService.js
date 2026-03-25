@@ -25,7 +25,7 @@ export {
   createReview,
   listReviewsForTask,
   enrichRunsWithArtifacts,
-} from './aiEmployee/queries.js';
+} from '../aiEmployee/queries.js';
 
 // ── Mutation functions (from orchestrator / repos) ───────────────────────────
 // These are re-exported from the persistence layer to preserve the old API
@@ -33,12 +33,12 @@ export {
 
 export {
   updateEmployeeStatus,
-} from './aiEmployee/persistence/employeeRepo.js';
+} from '../aiEmployee/persistence/employeeRepo.js';
 
 export {
   createTask,
   updateTaskStatus,
-} from './aiEmployee/persistence/taskRepo.js';
+} from '../aiEmployee/persistence/taskRepo.js';
 
 // Legacy loop_state function — loop_state is no longer used in the new stack.
 // Steps are stored as separate rows in ai_employee_runs via stepRepo.
@@ -55,20 +55,20 @@ export function listRunsForTask() { throw new Error('Deprecated: listRunsForTask
 // ── Default export (preserves backward compat for `import svc from ...`) ────
 
 export default {
-  getOrCreateAiden: (...args) => import('./aiEmployee/queries.js').then(m => m.getOrCreateWorker(...args)),
-  getEmployee: (...args) => import('./aiEmployee/queries.js').then(m => m.getEmployee(...args)),
-  getKpis: (...args) => import('./aiEmployee/queries.js').then(m => m.getKpis(...args)),
-  getTask: (...args) => import('./aiEmployee/queries.js').then(m => m.getTask(...args)),
-  listTasks: (...args) => import('./aiEmployee/queries.js').then(m => m.listTasks(...args)),
-  listTasksByUser: (...args) => import('./aiEmployee/queries.js').then(m => m.listTasksByUser(...args)),
-  listPendingReviews: (...args) => import('./aiEmployee/queries.js').then(m => m.listPendingReviews(...args)),
-  listWorklogs: (...args) => import('./aiEmployee/queries.js').then(m => m.listWorklogs(...args)),
-  appendWorklog: (...args) => import('./aiEmployee/queries.js').then(m => m.appendWorklog(...args)),
-  createReview: (...args) => import('./aiEmployee/queries.js').then(m => m.createReview(...args)),
-  listReviewsForTask: (...args) => import('./aiEmployee/queries.js').then(m => m.listReviewsForTask(...args)),
-  updateEmployeeStatus: (...args) => import('./aiEmployee/persistence/employeeRepo.js').then(m => m.updateEmployeeStatus(...args)),
-  createTask: (...args) => import('./aiEmployee/persistence/taskRepo.js').then(m => m.createTask(...args)),
-  updateTaskStatus: (...args) => import('./aiEmployee/persistence/taskRepo.js').then(m => m.updateTaskStatus(...args)),
+  getOrCreateAiden: (...args) => import('../aiEmployee/queries.js').then(m => m.getOrCreateWorker(...args)),
+  getEmployee: (...args) => import('../aiEmployee/queries.js').then(m => m.getEmployee(...args)),
+  getKpis: (...args) => import('../aiEmployee/queries.js').then(m => m.getKpis(...args)),
+  getTask: (...args) => import('../aiEmployee/queries.js').then(m => m.getTask(...args)),
+  listTasks: (...args) => import('../aiEmployee/queries.js').then(m => m.listTasks(...args)),
+  listTasksByUser: (...args) => import('../aiEmployee/queries.js').then(m => m.listTasksByUser(...args)),
+  listPendingReviews: (...args) => import('../aiEmployee/queries.js').then(m => m.listPendingReviews(...args)),
+  listWorklogs: (...args) => import('../aiEmployee/queries.js').then(m => m.listWorklogs(...args)),
+  appendWorklog: (...args) => import('../aiEmployee/queries.js').then(m => m.appendWorklog(...args)),
+  createReview: (...args) => import('../aiEmployee/queries.js').then(m => m.createReview(...args)),
+  listReviewsForTask: (...args) => import('../aiEmployee/queries.js').then(m => m.listReviewsForTask(...args)),
+  updateEmployeeStatus: (...args) => import('../aiEmployee/persistence/employeeRepo.js').then(m => m.updateEmployeeStatus(...args)),
+  createTask: (...args) => import('../aiEmployee/persistence/taskRepo.js').then(m => m.createTask(...args)),
+  updateTaskStatus: (...args) => import('../aiEmployee/persistence/taskRepo.js').then(m => m.updateTaskStatus(...args)),
   updateTaskLoopState,
   createRun,
   updateRun,

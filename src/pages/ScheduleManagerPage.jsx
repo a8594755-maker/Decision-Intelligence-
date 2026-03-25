@@ -20,7 +20,7 @@ import {
   createSchedule, getSchedules, deleteSchedule, pauseSchedule,
   resumeSchedule, instantiateScheduledTask, getDueTasks,
   SCHEDULE_TYPES,
-} from '../services/scheduledTaskService.js';
+} from '../services/tasks/scheduledTaskService.js';
 import { listEmployeesByManager } from '../services/aiEmployee/queries.js';
 
 const SCHEDULE_TYPE_LABELS = {

@@ -13,7 +13,7 @@
  * The onboarding flow is tracked via style_ingestion_jobs table
  * and can be resumed if interrupted.
  */
-import { supabase } from '../../supabaseClient.js';
+import { supabase } from '../../infra/supabaseClient.js';
 import { extractStyleBatch } from './styleExtractionService.js';
 import { compileProfile, saveProfile, updateProfileIncremental } from './styleProfileService.js';
 import { extractPoliciesFromText, importPoliciesBatch } from './policyIngestionService.js';

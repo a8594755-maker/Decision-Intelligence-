@@ -9,7 +9,7 @@ import {
   getStatusText,
   compareConfigs,
   DEFAULT_LOGIC_CONFIG 
-} from '../../services/logicVersionService';
+} from '../../services/governance/logicVersionService';
 
 export default function OverviewTab({ 
   publishedVersion, 

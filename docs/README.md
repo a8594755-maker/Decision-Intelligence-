@@ -35,9 +35,23 @@
 - [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md): staging 到 production 的可執行流程
 - [QA_GO_LIVE_GATE.md](QA_GO_LIVE_GATE.md): 上線前回歸測試矩陣
 
+## 核心指南（docs/guides/ — 上限 12 份）
+
+| 文件 | 用途 | 最後審核 |
+|------|------|---------|
+| [ARCHITECTURE_DESIGN.md](guides/ARCHITECTURE_DESIGN.md) | 系統架構總覽 | 2026-03-24 |
+| [DATABASE_SCHEMA_GUIDE.md](guides/DATABASE_SCHEMA_GUIDE.md) | 資料庫表結構 | 2026-03-24 |
+| [DATA_VALIDATION_GUIDE.md](guides/DATA_VALIDATION_GUIDE.md) | 資料驗證規則（含快速參考） | 2026-03-24 |
+| [DOMAIN_ARCHITECTURE_COMPLETE.md](guides/DOMAIN_ARCHITECTURE_COMPLETE.md) | 領域架構 | 2026-03-24 |
+| [INGEST_RPC_QUICKSTART.md](guides/INGEST_RPC_QUICKSTART.md) | 資料匯入快速上手 | 2026-03-24 |
+| [NEW_TEMPLATES_GUIDE.md](guides/NEW_TEMPLATES_GUIDE.md) | 模板指南 | 2026-03-24 |
+| [ONE_SHOT_FRAMEWORK_GUIDE.md](guides/ONE_SHOT_FRAMEWORK_GUIDE.md) | One-shot 框架 | 2026-03-24 |
+| [STEP1_SCHEMA_DEPLOYMENT_GUIDE.md](guides/STEP1_SCHEMA_DEPLOYMENT_GUIDE.md) | Schema 部署 | 2026-03-24 |
+| [SUPABASE_SERVICES_API_REFERENCE.md](guides/SUPABASE_SERVICES_API_REFERENCE.md) | Supabase API | 2026-03-24 |
+| [UPLOAD_TYPES_REQUIRED_FIELDS.md](guides/UPLOAD_TYPES_REQUIRED_FIELDS.md) | 上傳欄位規格 | 2026-03-24 |
+| [UPLOAD_WORKFLOW_GUIDE.md](guides/UPLOAD_WORKFLOW_GUIDE.md) | 上傳流程（含 Operational Costs） | 2026-03-24 |
+
 ## 歷史資料
 
-- [archive/](archive/)
-- [guides/](guides/)
-
-`archive/` 與 `guides/` 仍保留大量實作細節、驗收記錄與故障排查，但不再是理解 repo 的主入口。重構報告、狀態報告、AI Agent 執行紀錄等內部整理文件也已視為歷史材料。
+- [archive/](archive/) — 歷史文件，僅供參考，不主動維護
+- [archive/improvement-plans/](archive/improvement-plans/) — 歸檔的改善計畫文件

@@ -6,8 +6,8 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { queryTable, updateField, TABLE_REGISTRY } from '../services/liveDataQueryService';
-import { getRecentEdits } from '../services/dataEditAuditService';
+import { queryTable, updateField, TABLE_REGISTRY } from '../services/data-prep/liveDataQueryService';
+import { getRecentEdits } from '../services/data-prep/dataEditAuditService';
 
 const DEFAULT_PAGE_SIZE = 50;
 

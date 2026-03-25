@@ -9,7 +9,7 @@
  */
 
 import { useState, useEffect } from 'react';
-import { supabase } from '../services/supabaseClient';
+import { supabase } from '../services/infra/supabaseClient';
 
 /* ── circuit-breaker: skip tables that returned 404 / schema-cache miss ── */
 const TABLE_BLACKLIST_TTL_MS = 5 * 60 * 1000; // 5 minutes

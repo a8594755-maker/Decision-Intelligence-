@@ -33,28 +33,28 @@ const {
   saveCsvArtifactMock: vi.fn(),
 }));
 
-vi.mock('../services/datasetProfilesService', () => ({
+vi.mock('../services/data-prep/datasetProfilesService', () => ({
   datasetProfilesService: datasetProfilesServiceMock,
 }));
 
-vi.mock('../services/diRunsService', () => ({
+vi.mock('../services/planning/diRunsService', () => ({
   diRunsService: diRunsServiceMock,
 }));
 
-vi.mock('../services/reuseMemoryService', () => ({
+vi.mock('../services/memory/reuseMemoryService', () => ({
   reuseMemoryService: reuseMemoryServiceMock,
 }));
 
-vi.mock('../services/chatDatasetProfilingService', () => ({
+vi.mock('../services/data-prep/chatDatasetProfilingService', () => ({
   buildDataSummaryCardPayload: vi.fn(() => ({})),
 }));
 
-vi.mock('../services/chatForecastService', () => ({
+vi.mock('../services/forecast/chatForecastService', () => ({
   runForecastFromDatasetProfile: vi.fn(),
   buildForecastCardPayload: vi.fn(() => ({})),
 }));
 
-vi.mock('../services/chatPlanningService', () => ({
+vi.mock('../services/planning/chatPlanningService', () => ({
   runPlanFromDatasetProfile: vi.fn(),
   buildPlanSummaryCardPayload: vi.fn(() => ({})),
   buildPlanTableCardPayload: vi.fn(() => ({})),
@@ -65,7 +65,7 @@ vi.mock('../services/chatPlanningService', () => ({
   buildRiskAwarePlanComparisonCardPayload: vi.fn(() => ({})),
 }));
 
-vi.mock('../services/chatRiskService', () => ({
+vi.mock('../services/risk/chatRiskService', () => ({
   computeRiskArtifactsFromDatasetProfile: vi.fn(),
   buildRiskSummaryCardPayload: vi.fn(() => ({})),
   buildRiskDrilldownCardPayload: vi.fn(() => ({})),
@@ -95,11 +95,11 @@ vi.mock('../utils/buildDecisionNarrative', () => ({
   buildDecisionNarrative: vi.fn(() => null),
 }));
 
-vi.mock('../services/planAuditService', () => ({
+vi.mock('../services/planning/planAuditService', () => ({
   recordPlanGenerated: vi.fn(),
 }));
 
-vi.mock('../services/riskClosedLoopService', () => ({
+vi.mock('../services/risk/riskClosedLoopService', () => ({
   evaluateRiskReplanRecommendation: vi.fn(() => ({ shouldReplan: false, recommendationCard: null, analysis: { highRiskSkus: [] } })),
 }));
 
@@ -107,7 +107,7 @@ vi.mock('../services/closed_loop/workflowBClosedLoopBridge.js', () => ({
   evaluateClosedLoopAfterWorkflowB: vi.fn(() => null),
 }));
 
-vi.mock('../services/proactiveAlertService.js', () => ({
+vi.mock('../services/governance/proactiveAlertService.js', () => ({
   generateAlerts: vi.fn(() => ({ alerts: [] })),
 }));
 

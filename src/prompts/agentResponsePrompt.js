@@ -206,8 +206,9 @@ ${domainEnrichment ? `\n${domainEnrichment}\n` : ''}
 - suggested_deep_dives: 2-3 analysis angles that would deepen the answer beyond surface-level descriptive statistics. Each should combine two dimensions or introduce a causal/temporal lens. Format: "dimension_a × dimension_b (purpose)". These are suggestions for the agent, not requirements — the agent should attempt at least one if data supports it. Use empty array for simple lookups.
 - analysis_depth: an array of depth flags from ["methodology_disclosure", "relative_metrics", "trend_context", "sensitivity_range", "actionable_parameters"]. Auto-select:
   - recommendation or diagnostic → always include "methodology_disclosure", "actionable_parameters", "sensitivity_range".
-  - comparison or trend → always include "relative_metrics", "trend_context".
-  - brevity "analysis" → always include "relative_metrics".
+  - comparison or trend → always include "relative_metrics", "trend_context", "methodology_disclosure".
+  - mixed → always include "methodology_disclosure", "relative_metrics".
+  - brevity "analysis" → always include "relative_metrics", "methodology_disclosure".
   - lookup or ranking with brevity "short" → empty array.`;
 }
 
@@ -270,20 +271,66 @@ ${repairInstructions.length > 0 ? repairInstructions.map((item) => `- ${item}`).
   "methodology_note": "string (optional — formula/model/assumption disclosure, preserved from raw narrative)"
 }
 ${domainEnrichment ? `\n${domainEnrichment}\n` : ''}
+## CRITICAL RULES (violation of any is a hard failure)
+
+1. NUMERIC FIDELITY: Every number in metric_pills, tables, summary, and key_findings
+   MUST be directly traceable to a value in the tool evidence. You may NOT:
+   - Round a value differently than the source (e.g., 5,202,955 → "5.2M" is OK; → "5M" is NOT)
+   - Perform mental arithmetic on source values (e.g., summing rows, computing averages)
+   - Convert units without explicit columnMeta guidance (e.g., ratio → percentage)
+   If you need a derived value (sum, average, growth rate), it MUST already exist in the
+   tool evidence or analysisPayloads. If it doesn't exist, state "data not available" rather
+   than computing it yourself.
+
+2. UNIT FIDELITY: When columnMeta provides a "unit" field, obey it:
+   - "ratio_multiplier" → keep the raw ratio-like value or "Nx" form (e.g., 11.18 or 11.18x). Do NOT convert to % unless the evidence explicitly provides a percent-form field such as *_pct.
+   - "currency" + "likely_currency" → use the indicated currency symbol
+   - "percentage" → display with % sign, do not divide by 100
+   - "count" → display as integer, no decimal places
+
+3. MANDATORY CAVEATS: You MUST include at least one caveat if ANY of the following is true:
+   - Any tool call has success=false
+   - You are using a SQL moving average or proxy instead of exact statistical decomposition
+   - The data covers less than 12 months or fewer than 100 rows
+   Do NOT produce an empty caveats array when these conditions apply.
+
+4. EVIDENCE PRIORITY: When a tool call has both sampleRows and analysisPayloads.metrics,
+   ALWAYS prefer the metrics values. These are pre-computed by Python/SQL and are
+   authoritative. sampleRows are just a preview of raw data — do NOT aggregate them yourself.
+
 ## Rules
 - For brevity="short": keep the brief compact and executive-facing (under 160 words).
-- For brevity="analysis": the summary field should be 300-500 words. Go beyond describing numbers — explain WHY the patterns exist, WHAT they imply for the business, and WHAT specific actions to take. Treat the summary as a mini consulting memo, not a dashboard tooltip.
+- For brevity="analysis": the summary field should be 220-420 words. Go beyond describing numbers — explain WHY the patterns exist, WHAT they imply for the business, and WHAT specific actions to take. Treat the summary as a mini consulting memo, not a dashboard tooltip.
 - SUMMARY FORMAT: The summary field supports markdown. Use **bold** for emphasis on key numbers, \`code\` for formulas or parameter names, and bullet lists for multi-point summaries. Do NOT use markdown headers (#) — keep it flowing prose or short bullets.
+- DIRECT ANSWER FIRST: The first 1-2 sentences of summary must answer the user's question directly before adding background detail.
 - EXECUTIVE SUMMARY: When possible, include executive_summary — a single sentence capturing the headline conclusion and key number(s). This is the first thing a senior stakeholder sees.
 - DATA LINEAGE: For each key metric pill, try to include a matching entry in data_lineage with the SQL query reference and row count, so the frontend can show provenance tooltips.
 - METHODOLOGY PRESERVATION: When the raw narrative contains formulas, model names, or parameter definitions (e.g., "SS = z × σ × √(L/T)", "z=1.65 for 95% service level", "ROP = d̄ × L + SS"), you MUST preserve them in the key_findings, summary, or methodology_note field. Never compress a formula into just the output number. The methodology disclosure is mandatory, not optional decoration.
 - Do not include SQL, debug logs, failure transcript, or tool-by-tool narration in headline/summary/findings.
 - If charts or analysis cards already exist, do not repeat every KPI already visible there. Add interpretation instead.
 - If the user asked for multiple dimensions, cover all of them in the brief.
+- DEDUP RULE:
+  A metric pill value may appear verbatim in one additional section only if needed to satisfy a required dimension.
+  Prefer exact values in tables, business-formatted values in metric pills, and interpretation in summary.
+- If a required dimension would be missing without one exact value, keep the value in key_findings and remove it from summary.
+- PRIMARY GROWTH BASELINE RULE (MANDATORY):
+  If the request involves growth, CAGR, YoY, or trend comparison, choose ONE primary growth basis for headline, executive_summary, summary, and metric_pills.
+  Examples of valid primary bases: CAGR, 2017-2018 comparable growth, normalized monthly growth.
+  Do NOT present annual growth, normalized monthly growth, and average monthly revenue as parallel headline metrics unless the user explicitly asked for all of them.
+- SUBSTITUTE METRIC DISCLOSURE (MANDATORY):
+  If the requested CAGR or YoY metric is not reliable because of partial-year coverage or weak endpoints, say that explicitly in English and name the substitute metric.
+  Good: "2016-2018 CAGR is not reliable because 2016 covers only 3 months; using 2017-2018 comparable growth instead."
+  Bad: quietly switching from CAGR to another metric without saying so.
+- SECONDARY METRIC PLACEMENT:
+  If a secondary growth lens is useful for nuance, place it in methodology_note or one key_findings item.
+  Keep the main summary anchored on the primary growth basis only.
 - METRIC PILLS QUALITY: Each metric pill must contain a NUMERIC KPI value that aids decision-making.
   Do NOT use pills for: time periods, trend directions (up/down), categorical labels, metadata, or seasonal periods.
   Good: "Revenue Growth: +2,349%" / "Peak Month Orders: 7,289" / "Avg Order Value: R$119.98"
   Bad: "Time Period: Sep 2016 - Oct 2018" / "Trend Direction: Upward" / "Seasonal Period: 12 months"
+- METRIC PILL HIERARCHY:
+  Prefer at most one growth-rate pill unless the user explicitly requested multiple growth methodologies.
+  If both a growth-rate pill and an average-monthly-value pill exist, do not compare them as if they were the same type of metric.
 - CAVEATS DECISION TREE:
   1. Any tool call FAILED? → MUST add caveat about alternative methodology used.
   2. Using proxy metric (e.g., SQL moving average instead of statsmodels decomposition)? → MUST add caveat.
@@ -292,6 +339,19 @@ ${domainEnrichment ? `\n${domainEnrichment}\n` : ''}
   Never produce an empty caveats array when conditions 1-3 apply.
   Self-contradictory caveats (questioning data you yourself generated) MUST be avoided — they erode user trust.
 - DATA QUALITY DISCLOSURE: If the agent's reasoning mentions data quality warnings (non-stationary trend, small sample, outliers, seasonal patterns, proxy metrics, or business context caveats like marketplace model or pre-aggregated data), these MUST appear in the "caveats" array. Never suppress a data quality warning in the final brief. Each warning should be a concise, actionable caveat sentence.
+- PARTIAL-YEAR COVERAGE RULE (CRITICAL):
+  Before computing CAGR or YoY growth, you MUST verify that each year in the comparison has comparable data coverage (similar number of months).
+  If year A has only 3 months of data but year B has 12 months, a "CAGR" between them is meaningless — it measures coverage expansion, not true growth.
+  When partial years are detected:
+  1. Do NOT compute CAGR using partial-year endpoints. State explicitly which years are partial and how many months each covers.
+  2. If a year has fewer than 3 months of data, do NOT use it as a CAGR endpoint AT ALL — even per-month normalization with 1-2 data points is unreliable. Use the next year with sufficient coverage as the base instead.
+  3. Preferred approach: compare only full-coverage years using same-period alignment (e.g., Jan-Aug 2017 vs Jan-Aug 2018).
+  4. If per-month normalization is used, the base period MUST have at least 6 months of data for the result to be meaningful.
+  5. Add a caveat: "Year XXXX contains only N months of data; year-over-year comparisons using this year as a base are unreliable."
+  This is a hard failure if violated — partial-year CAGR is worse than no CAGR at all.
+- LIMITED COVERAGE RULE:
+  If the evidence contains fewer than 12 time periods or only yearly aggregates, add a caveat using one of these ideas:
+  "limited annual coverage", "three yearly observations", or "insufficient periods for time-series inference".
 - Only mention a SQL, worker, connection, or tool failure if the tool evidence explicitly includes a failed call.
 - A successful 0-row SQL lookup is not a tool failure, but it provides ZERO evidence. Do NOT cite any numbers, statistics, or counts from a 0-row query. If all SQL queries returned 0 rows, add a caveat explaining no SQL data was available.
 - If no tool call succeeded, do not fabricate metric pills, evidence tables, or dataset-specific findings. Use empty arrays for unsupported sections. You may offer generic advice only if it is clearly labeled as general guidance rather than a result from this dataset.
@@ -300,6 +360,8 @@ ${domainEnrichment ? `\n${domainEnrichment}\n` : ''}
 - ${quantileHistogramRequested
     ? 'Because the user requested histogram quantiles, the summary or key findings must explicitly mention P25, P50, P75, and P90 (or P95 if P90 is unavailable) when those values exist in the evidence.'
     : 'If quantiles are requested and supported by the evidence, summarize the key cut points directly instead of only saying they were marked.'}
+- FORMAT DISCIPLINE: Do not list raw SQL-style decimals in narrative unless the value must remain exact for the requested comparison. Prefer business-formatted values in pills and exact values in tables.
+- SUMMARY DENSITY RULE: Keep summary to at most 3 exact numbers and at most 1 primary benchmark comparison. Use tables, pills, and methodology_note for supporting metrics.
 - Tables must be structured JSON tables, not markdown or pseudo-table text.
 - Charts: when tool evidence contains numeric comparison data (e.g. strategy A vs B, category breakdowns), generate inline chart specs in the "charts" array. Use "grouped_bar" for side-by-side comparisons, "scatter" for two-variable relationships, "bar" for single-metric rankings. Each chart needs type, title, xKey, yKey, and a data array of objects. Keep data to ≤25 rows per chart. If a generate_chart artifact already covers the visualization, do not duplicate it in charts.
 - CHART yKey RULE (MANDATORY): yKey must be a SINGLE column name string. For multi-series charts (grouped_bar, stacked_bar, line with multiple series), put the extra column names in the "series" array — NOT in yKey. Example: yKey: "orders", series: ["orders", "revenue"]. NEVER use comma-separated values in yKey like "orders,revenue".
@@ -307,9 +369,9 @@ ${domainEnrichment ? `\n${domainEnrichment}\n` : ''}
   • headline: ONE sentence, the single most important conclusion. No numbers unless they ARE the conclusion.
   • executive_summary: ONE sentence with 1-2 key numbers. Must NOT repeat the headline.
   • summary: Narrative interpretation of WHY the numbers matter. Reference metric pills by name ("as shown in the Gini metric above") instead of restating values.
-  • metric_pills: The ONLY place for raw KPI values. Summary and findings must NOT restate pill values verbatim.
+  • metric_pills: The default place for raw KPI values. One exact value may appear in key_findings when required to satisfy a required comparison dimension.
   • key_findings: Insights that go BEYOND what metric pills show — patterns, comparisons, anomalies, causality. Each finding must contain information not present in any pill label+value pair.
-  • If a number already appears in metric_pills, other sections may reference it contextually ("the high Gini coefficient suggests...") but must NOT restate the exact value.
+  • If a number already appears in metric_pills, summary should reference it contextually ("the high Gini coefficient suggests...") instead of restating the exact value.
 - METRIC PILL LIMITS: Maximum 4 pills for brevity="short", maximum 6 for brevity="analysis". Pick the most decision-relevant metrics. Move supporting metrics to evidence tables.
 - FIELD PRIORITY: Always complete ALL required fields (headline, summary, key_findings, implications, caveats, next_steps) before generating optional fields (tables, charts, metric_pills). If output space is limited, use fewer table rows and chart data points rather than omitting required fields.
 - Use empty arrays when a section is not needed.
@@ -415,9 +477,13 @@ ${clampText(summarizeToolCalls(toolCalls), 3000)}
 ${buildQaReviewSchemaText()}
 
 ## Review rules
-IMPORTANT: Numeric accuracy, chart data completeness, and evidence traceability are checked by the deterministic QA layer (see Deterministic QA input above). Do NOT re-check numbers or data — focus on narrative quality only.
+IMPORTANT: Deterministic QA findings are pre-classified. Treat deterministic blockers / hard findings as strong evidence. Treat deterministic heuristic_findings and non-blocking issues as ADVISORY only — independently assess whether they are real before lowering correctness.
+
+You do NOT need to recompute every number from scratch, but you SHOULD override heuristic deterministic suspicions when the brief and tool evidence appear internally consistent.
 
 NUMBER FORMAT NOTE: Briefs often use K/M/B suffixes for readability (e.g. "543.67K" = "543,670" ≈ "543,666"). These are formatting shortcuts, NOT conflicting values. Do NOT flag formatted versions of the same number as contradictions or correctness errors.
+
+CAGR / GROWTH RATE NOTE: SQL expressions like POWER(end/start, 1/periods) - 1 may be shown either as a raw multiplier (e.g. 11.18) or, when the evidence explicitly provides a *_pct field, as a percentage (e.g. 1118.0%). Flag a correctness error only when the SAME metric mixes units inside the brief or when the displayed unit is unsupported by the evidence. Extreme CAGR values still require a low-base caveat.
 
 Your role is to evaluate:
 1. **Narrative coherence**: Does the story flow logically? Are conclusions supported by the analysis structure?
@@ -425,12 +491,14 @@ Your role is to evaluate:
 3. **Interpretive depth**: Does the brief interpret the data (explain WHY, not just WHAT)? Are implications actionable?
 4. **Section differentiation**: Does each section (headline, summary, key_findings, implications) provide unique value, or do they repeat each other?
 5. **Caveat appropriateness**: Are caveats relevant and proportional, or do they undermine valid evidence?
+6. **Metric hierarchy**: When multiple valid growth metrics exist, does the brief establish one PRIMARY comparison basis and keep secondary metrics subordinate instead of mixing them in the main narrative?
 
 - Scores are 0.0 to 10.0 for each dimension.
-- For dimensions already covered by deterministic QA (correctness, evidence_alignment, visualization_fit), defer to the deterministic scores unless you see a clear narrative-level issue.
+- For correctness, evidence_alignment, and visualization_fit: respect deterministic hard findings, but independently reassess heuristic deterministic findings instead of inheriting them blindly.
 - methodology_transparency: are formulas, models, or assumptions behind numeric thresholds disclosed? Score 10 if the answer is a simple lookup or does not cite thresholds; deduct if recommendation/diagnostic answers cite numbers without stating the methodology.
 - actionability: are recommendations specific enough to act on (e.g., "set safety stock to 45 units")? Score 10 if the task is not a recommendation; deduct if recommendations are vague ("use conservative approach") without specific parameters.
 - information_density: does each section add NEW information not present in other sections? Score 10 if every section provides unique value and no metric is repeated verbatim across sections. Score 7 for minor repetition (1-2 values restated). Score 4 if multiple sections restate the same numbers/conclusions. Score 1 if headline, summary, findings, and pills all contain the same information. Deduct 2 points for each metric value that appears verbatim in 3+ separate sections.
+- clarity: deduct when the main summary mixes competing growth baselines (for example annual growth, normalized monthly growth, and average monthly revenue) without clearly naming one primary metric and one substitute or support metric.
 - ${quantileHistogramRequested
     ? 'For histogram-plus-quantiles requests, the answer should explicitly summarize the core cut points P25, P50, P75, and P90/P95 when the artifact evidence contains them.'
     : 'If the artifact already contains quantiles, prefer an explicit short quantile summary over vague phrasing like "quantiles are marked".'}
@@ -478,14 +546,14 @@ Repair the brief so it can pass QA without inventing evidence.
 - Mode: ${mode}
 - User message: "${clampText(userMessage, 2500)}"
 - Answer contract: ${clampText(JSON.stringify(answerContract || {}), 1800)}
-- Current brief: ${clampText(JSON.stringify(brief || {}), 5000)}
-- Raw final narrative: "${clampText(finalAnswerText, 3000)}"
-- Deterministic QA: ${clampText(JSON.stringify(deterministicQa || {}), 3500)}
-- Current QA scorecard: ${clampText(JSON.stringify(qaScorecard || {}), 4500)}
+- Current brief: ${clampText(JSON.stringify(brief || {}), 3500)}
+- Raw final narrative: "${clampText(finalAnswerText, 2000)}"
+- Deterministic QA: ${clampText(JSON.stringify(deterministicQa || {}), 2500)}
+- Current QA scorecard: ${clampText(JSON.stringify(qaScorecard || {}), 2500)}
 - Artifact summary:
-${clampText(artifactSummary || 'No artifacts summarized.', 3500)}
+${clampText(artifactSummary || 'No artifacts summarized.', 2000)}
 - Tool evidence:
-${clampText(summarizeToolCalls(toolCalls), 4500)}
+${clampText(summarizeToolCalls(toolCalls), 3000)}
 
 ## Output JSON schema
 {
@@ -508,7 +576,22 @@ ${clampText(summarizeToolCalls(toolCalls), 4500)}
 
 ## Repair rules
 - EVIDENCE AUTHORITY: When the brief narrative contradicts artifact metrics/tables, ALWAYS use the artifact value. Artifacts are computed from raw data and are the authoritative source; narrative text may contain rounding errors or stale numbers. When resolving contradictions, replace the narrative value with the exact artifact value.
+- FIRST-PASS REWRITE ORDER:
+  1. Restore missing required dimensions.
+  2. Fix unit inconsistencies.
+  3. Remove repeated metric pill values from summary.
+  4. Normalize caveats to validator vocabulary.
+  5. Remove pseudo-table formatting.
 - Fix missing dimensions, contradictions, caveats, evidence-table problems, chart-fit framing, and duplicate text.
+- PRIMARY GROWTH BASELINE REPAIR:
+  1. Keep only one primary growth basis in headline, executive_summary, and summary.
+  2. If CAGR or YoY is unreliable, say that explicitly and name the substitute metric in English.
+  3. Move secondary growth lenses (for example normalized monthly growth) to methodology_note or one key_findings item unless the user explicitly asked for multiple growth methodologies.
+  4. Do not compare an average monthly value and a growth rate as if they were the same metric.
+- SUMMARY SIMPLIFICATION:
+  1. Keep at most 3 exact numbers in summary.
+  2. If both annual growth and normalized monthly growth appear, keep the metric that best answers the user's request in summary and move the other to methodology_note or remove it.
+  3. Keep the main comparison sentence anchored on one benchmark only.
 - If the QA scorecard flags missing methodology disclosure, extract the methodology/formula from the raw narrative and insert it into key_findings or the methodology_note field. Do not drop formulas during repair.
 - Do not invent or alter known numeric facts.
 - Do not remove legitimate caveats or hide failed steps.
@@ -519,12 +602,20 @@ ${clampText(summarizeToolCalls(toolCalls), 4500)}
 - ${quantileHistogramRequested
     ? 'For histogram-plus-quantiles requests, repair the summary or key findings so they explicitly mention P25, P50, P75, and P90/P95 when those values are present in evidence.'
     : 'If quantiles are part of the request and present in evidence, mention the core cut points explicitly.'}
+- DEDUP RULE:
+  A metric pill value may appear verbatim in one additional section only if needed to satisfy a required dimension.
+  Prefer exact values in tables, business-formatted values in metric pills, and interpretation in summary.
+- LIMITED COVERAGE RULE:
+  If the evidence contains fewer than 12 time periods or only yearly aggregates, add a caveat using one of these ideas:
+  "limited annual coverage", "three yearly observations", or "insufficient periods for time-series inference".
+- PARTIAL-YEAR COVERAGE RULE: If CAGR or YoY growth uses a partial year (e.g., only 3 months of data in the base year), this MUST be flagged as a blocker. Replace with per-month normalized comparison or restrict to full-coverage years only.
 - REDUNDANCY REPAIR (high priority — this is a QA blocker):
   When repair instructions mention "verbatim restatement" or "information density":
   1. Identify which metric pill values appear in the summary or key_findings.
   2. For each repeated value in summary: replace exact restatement (e.g., "The Gini coefficient is 0.792") with interpretive phrasing (e.g., "The Gini coefficient indicates severe inequality, comparable to the most unequal national economies").
   3. For each repeated value in key_findings: replace with a DERIVED insight. Instead of "Gini coefficient of 0.792 reflects inequality", write "The bottom 50% of sellers collectively earn less than the top 10 sellers individually."
   4. After repair, NO metric pill value should appear verbatim in more than one other section.
+- If a metric's unit is ambiguous, remove it from metric_pills before leaving it inconsistent across sections.
 - Do not output SQL, pseudo-tables, or debug transcript.
 - You may rewrite headline/summary/findings/tables/caveats/next_steps.
   - If evidence is insufficient, say so clearly in caveats instead of pretending certainty.

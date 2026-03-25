@@ -5,7 +5,7 @@
  * No state mutation, no DB calls, no event emission.
  */
 
-import { BUILTIN_TOOLS, isPythonApiTool } from '../../builtinToolCatalog.js';
+import { BUILTIN_TOOLS, isPythonApiTool } from '../../ai-infra/builtinToolCatalog.js';
 
 function toImportPath(modulePath) {
   const normalized = modulePath.replace(/^\.\//, '');

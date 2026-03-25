@@ -188,7 +188,7 @@ function ForecastWidgetLive({ user }) {
     const load = async () => {
       if (!user?.id) { setLoading(false); setError('Sign in to view forecast runs.'); return; }
       try {
-        const { forecastRunsService } = await import('../../../services/supabaseClient');
+        const { forecastRunsService } = await import('../../../services/infra/supabaseClient');
         const runs = await forecastRunsService.listRuns(user.id, { limit: 20 });
         if (!cancelled) {
           setForecastRuns(runs || []);
@@ -213,7 +213,7 @@ function ForecastWidgetLive({ user }) {
       setError(null);
 
       try {
-        const { componentDemandService, supabase } = await import('../../../services/supabaseClient');
+        const { componentDemandService, supabase } = await import('../../../services/infra/supabaseClient');
 
         const result = await componentDemandService.getComponentDemandsByForecastRun(
           user.id, selectedRunId, { limit: 2000 }

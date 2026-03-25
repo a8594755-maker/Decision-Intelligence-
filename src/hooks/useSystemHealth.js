@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { isSupabaseConfigured } from '../services/supabaseClient';
+import { isSupabaseConfigured } from '../services/infra/supabaseClient';
 
 const ML_API_BASE = import.meta.env.VITE_ML_API_URL || '';
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || '';
