@@ -85,31 +85,43 @@ export function clearCachedSummary(key) {
   }
 }
 
-// ── Version History ─────────────────────────────────────────────────────────
+// ── Version History (IndexedDB-backed) ──────────────────────────────────────
+
+import { getCached, setCached } from '../storage/indexedDbCache.js';
 
 const HISTORY_KEY = 'di_dashboard_history';
 const MAX_VERSIONS = 10;
 
 /**
  * Get all saved dashboard versions.
- * @returns {{ version: number, title: string, timestamp: string, html: string, suggestions?: object[], review?: object }[]}
+ * Async — reads from IndexedDB. Falls back to localStorage for migration.
  */
-export function getDashboardHistory() {
+export async function getDashboardHistory() {
   try {
-    return JSON.parse(localStorage.getItem(HISTORY_KEY)) || [];
-  } catch {
-    return [];
-  }
+    const idbHistory = await getCached(HISTORY_KEY);
+    if (Array.isArray(idbHistory) && idbHistory.length > 0) return idbHistory;
+    // Fallback: migrate from localStorage
+    const lsRaw = localStorage.getItem(HISTORY_KEY);
+    if (lsRaw) {
+      const lsHistory = JSON.parse(lsRaw);
+      if (Array.isArray(lsHistory) && lsHistory.length > 0) {
+        await setCached(HISTORY_KEY, lsHistory); // migrate to IndexedDB
+        localStorage.removeItem(HISTORY_KEY); // clean up
+        return lsHistory;
+      }
+    }
+  } catch { /* */ }
+  return [];
 }
 
 /**
  * Save a dashboard version to history.
  * Keeps last MAX_VERSIONS versions.
  */
-export function saveDashboardVersion(dashResult) {
+export async function saveDashboardVersion(dashResult) {
   if (!dashResult?.html && !dashResult?.dataCards?.length) return;
   try {
-    const history = getDashboardHistory();
+    const history = await getDashboardHistory();
     const version = (history.length > 0 ? Math.max(...history.map(h => h.version || 0)) : 0) + 1;
     history.push({
       version,
@@ -123,10 +135,9 @@ export function saveDashboardVersion(dashResult) {
       review: dashResult.review,
       thinking: dashResult.thinking,
     });
-    // Keep only last MAX_VERSIONS
     while (history.length > MAX_VERSIONS) history.shift();
-    localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
-  } catch {
-    // localStorage full — silently skip
+    await setCached(HISTORY_KEY, history);
+  } catch (e) {
+    console.warn(`[dashboardCache] saveDashboardVersion failed: ${e.message}`);
   }
 }

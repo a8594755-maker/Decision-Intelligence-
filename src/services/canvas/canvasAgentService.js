@@ -11,6 +11,7 @@ import { buildEmptyLayout } from './canvasLayoutSchema.js';
 import {
   getCachedSummary, setCachedSummary, clearCachedSummary, saveDashboardVersion,
 } from '../agent-core/dashboardSummaryCache.js';
+import { getCached, setCached } from '../storage/indexedDbCache.js';
 import { runInsightsAgent, runReviewerAgent } from './insightsHubAgent.js';
 
 const CACHE_KEY = 'di_canvas_layout';
@@ -30,12 +31,17 @@ export async function generateCanvasLayout({ force = false, onProgress, userId, 
     return { result: null, source: 'empty' };
   }
 
-  // Check cache
+  // Check cache — IndexedDB first (large data), then localStorage fallback
   if (!force) {
     const fingerprint = buildFingerprint(userId);
-    const cached = getCachedSummary(CACHE_KEY, fingerprint);
-    if (cached?.html || cached?.dataCards?.length || cached?.blocks) {
-      return { result: cached, source: 'cache' };
+    const idbCached = await getCached(CACHE_KEY, fingerprint);
+    if (idbCached?.dataCards?.length || idbCached?.html) {
+      return { result: idbCached, source: 'cache' };
+    }
+    // Fallback: check localStorage (legacy)
+    const lsCached = getCachedSummary(CACHE_KEY, fingerprint);
+    if (lsCached?.html || lsCached?.dataCards?.length || lsCached?.blocks) {
+      return { result: lsCached, source: 'cache' };
     }
   }
 
@@ -91,25 +97,11 @@ export async function generateCanvasLayout({ force = false, onProgress, userId, 
     }
   }
 
-  // Cache and return — slim down dataCards to fit localStorage (~5MB limit)
+  // Cache to IndexedDB (no size limit) and save version to history
   const fingerprint = buildFingerprint(userId);
-  const slimResult = {
-    ...agentResult,
-    dataCards: (agentResult.dataCards || []).map(c => ({
-      id: c.id, title: c.title, type: c.type,
-      metrics: c.metrics, analysis: c.analysis,
-      chartData: c.chartData, tableData: c.tableData,
-      // Drop _rawHtml and any large intermediate fields
-    })),
-  };
-  try {
-    setCachedSummary(CACHE_KEY, fingerprint, slimResult);
-    console.info(`[canvasAgent] Cached: ${slimResult.dataCards?.length || 0} dataCards, fingerprint=${fingerprint}`);
-  } catch (e) {
-    console.warn(`[canvasAgent] Cache save failed: ${e.message}`);
-  }
-  saveDashboardVersion(slimResult);
-  return { result: slimResult, source: 'agent' };
+  await setCached(CACHE_KEY, agentResult, fingerprint);
+  saveDashboardVersion(agentResult);
+  return { result: agentResult, source: 'agent' };
 }
 
 /**

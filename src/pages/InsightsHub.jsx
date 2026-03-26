@@ -32,7 +32,7 @@ export default function InsightsHub() {
   const [runningQuery, setRunningQuery] = useState(null);
   const [batchRunning, setBatchRunning] = useState(false);
   const [agentError, setAgentError] = useState(null);
-  const [history, setHistory] = useState(() => getDashboardHistory()); // persisted versions
+  const [history, setHistory] = useState([]); // loaded async from IndexedDB
   const [historyIndex, setHistoryIndex] = useState(-1); // -1 = current (latest)
   const [demoLayout, setDemoLayout] = useState(null); // CanvasRenderer layout for demo mode
   const canvasAbortRef = useRef(null);
@@ -70,7 +70,7 @@ export default function InsightsHub() {
       setCanvasSource(source);
       setHistoryIndex(-1);
       // Reload history from localStorage (new version was saved by canvasAgentService)
-      if (result?.html || result?.dataCards?.length) setHistory(getDashboardHistory());
+      if (result?.html || result?.dataCards?.length) getDashboardHistory().then(h => setHistory(h));
       if (!result?.html && !result?.dataCards?.length && !result?.blocks?.length) {
         setAgentError('Agent could not generate a dashboard. Check that data has been uploaded.');
       }
@@ -82,6 +82,11 @@ export default function InsightsHub() {
       if (!abortController.signal.aborted) setCanvasLoading(false);
     }
   }, [userId]);
+
+  // Load history from IndexedDB on mount
+  useEffect(() => {
+    getDashboardHistory().then(h => setHistory(h));
+  }, []);
 
   useEffect(() => {
     if (userId && !hasGenerated.current) {
