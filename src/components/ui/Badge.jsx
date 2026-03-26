@@ -2,7 +2,9 @@ import React from 'react';
 
 export const Badge = ({ children, type = "info" }) => {
   const styles = {
-    info:    "bg-indigo-50 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300",
+    info:    "bg-[var(--brand-50)] text-[var(--brand-700)] dark:text-[var(--brand-500)]",
+    brand:   "bg-[var(--brand-50)] text-[var(--brand-700)] dark:text-[var(--brand-500)]",
+    neutral: "bg-[var(--surface-subtle)] text-[var(--text-secondary)]",
     success: "bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300",
     warning: "bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300",
     danger:  "bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-300",

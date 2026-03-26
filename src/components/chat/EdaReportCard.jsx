@@ -20,8 +20,8 @@ const TYPE_CONFIG = {
   numeric:      { icon: Hash,     color: 'text-blue-600',   bg: 'bg-blue-50',   label: 'Numeric' },
   categorical:  { icon: Type,     color: 'text-purple-600', bg: 'bg-purple-50', label: 'Categorical' },
   datetime:     { icon: Calendar, color: 'text-green-600',  bg: 'bg-green-50',  label: 'Date/Time' },
-  text:         { icon: Type,     color: 'text-gray-600',   bg: 'bg-gray-50',   label: 'Text' },
-  empty:        { icon: Type,     color: 'text-gray-400',   bg: 'bg-gray-50',   label: 'Empty' },
+  text:         { icon: Type,     color: 'text-[var(--text-secondary)]',   bg: 'bg-gray-50',   label: 'Text' },
+  empty:        { icon: Type,     color: 'text-[var(--text-muted)]',   bg: 'bg-gray-50',   label: 'Empty' },
 };
 
 function QualityBadge({ score }) {
@@ -36,21 +36,21 @@ function ColumnStats({ col, data }) {
   const TypeIcon = typeConf.icon;
 
   return (
-    <div className="border border-gray-200 dark:border-gray-700 rounded-lg mb-1">
+    <div className="border border-[var(--border-default)] rounded-lg mb-1">
       <button
-        className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm hover:bg-gray-50 dark:hover:bg-gray-800"
+        className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm hover:bg-[var(--accent-hover)]"
         onClick={() => setOpen(!open)}
       >
         {open ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
         <TypeIcon className={`w-3.5 h-3.5 ${typeConf.color}`} />
         <span className="font-medium flex-1 truncate">{col}</span>
-        <span className="text-xs text-gray-500">{typeConf.label}</span>
+        <span className="text-xs text-[var(--text-muted)]">{typeConf.label}</span>
         {data.null_pct > 0 && (
           <span className="text-xs text-amber-600">{data.null_pct.toFixed(1)}% null</span>
         )}
       </button>
       {open && (
-        <div className="px-3 pb-2 text-xs text-gray-600 dark:text-gray-400 grid grid-cols-2 gap-x-4 gap-y-1">
+        <div className="px-3 pb-2 text-xs text-[var(--text-secondary)] grid grid-cols-2 gap-x-4 gap-y-1">
           <span>Count: {data.count}</span>
           <span>Unique: {data.unique_count}</span>
           {data.mean != null && <span>Mean: {Number(data.mean).toFixed(2)}</span>}
@@ -66,7 +66,7 @@ function ColumnStats({ col, data }) {
               {data.value_counts.categories?.slice(0, 5).map((c, i) => (
                 <span key={i} className="mr-2">{c.value} ({c.count})</span>
               ))}
-              {data.value_counts.truncated && <span className="text-gray-400">...+{data.value_counts.total_unique - 5} more</span>}
+              {data.value_counts.truncated && <span className="text-[var(--text-muted)]">...+{data.value_counts.total_unique - 5} more</span>}
             </div>
           )}
         </div>
@@ -96,9 +96,9 @@ export default function EdaReportCard({ payload }) {
   const visibleColumns = showAllColumns ? columnEntries : columnEntries.slice(0, 8);
 
   return (
-    <Card className="overflow-hidden">
+    <Card category="data" className="overflow-hidden">
       {/* Header */}
-      <div className="flex items-center gap-2 px-4 py-3 bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20 border-b border-gray-200 dark:border-gray-700">
+      <div className="flex items-center gap-2 px-4 py-3 bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20 border-b border-[var(--border-default)]">
         <Database className="w-4 h-4 text-blue-600" />
         <span className="font-semibold text-sm">Exploratory Data Analysis</span>
         <div className="ml-auto flex gap-2">
@@ -109,10 +109,10 @@ export default function EdaReportCard({ payload }) {
       <div className="p-4 space-y-4">
         {/* Overview pills */}
         <div className="flex flex-wrap gap-2 text-xs">
-          <span className="px-2 py-1 bg-gray-100 dark:bg-gray-800 rounded-full">
+          <span className="px-2 py-1 bg-[var(--surface-subtle)] rounded-full">
             {sampled ? `${row_count.toLocaleString()} / ${total_rows?.toLocaleString()} rows (sampled)` : `${row_count.toLocaleString()} rows`}
           </span>
-          <span className="px-2 py-1 bg-gray-100 dark:bg-gray-800 rounded-full">{column_count} columns</span>
+          <span className="px-2 py-1 bg-[var(--surface-subtle)] rounded-full">{column_count} columns</span>
           <span className="px-2 py-1 bg-blue-100 dark:bg-blue-900/30 rounded-full text-blue-700 dark:text-blue-300">
             {column_types.numeric?.length || 0} numeric
           </span>
@@ -139,7 +139,7 @@ export default function EdaReportCard({ payload }) {
           <div className="space-y-1">
             {highlights.map((h, i) => {
               const Icon = h.type === 'warning' ? AlertTriangle : h.type === 'insight' ? Sparkles : TrendingUp;
-              const textColor = h.type === 'warning' ? 'text-amber-700 dark:text-amber-400' : h.type === 'insight' ? 'text-blue-700 dark:text-blue-400' : 'text-gray-700 dark:text-gray-300';
+              const textColor = h.type === 'warning' ? 'text-amber-700 dark:text-amber-400' : h.type === 'insight' ? 'text-blue-700 dark:text-blue-400' : 'text-[var(--text-secondary)]';
               return (
                 <div key={i} className={`flex items-start gap-2 text-xs ${textColor}`}>
                   <Icon className="w-3.5 h-3.5 mt-0.5 shrink-0" />
@@ -153,7 +153,7 @@ export default function EdaReportCard({ payload }) {
         {/* Top Correlations */}
         {top_correlations.length > 0 && (
           <div>
-            <div className="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-1">Top Correlations</div>
+            <div className="text-xs font-semibold text-[var(--text-secondary)] mb-1">Top Correlations</div>
             <div className="flex flex-wrap gap-1">
               {top_correlations.slice(0, 6).map((c, i) => (
                 <span
@@ -173,7 +173,7 @@ export default function EdaReportCard({ payload }) {
 
         {/* Column Details */}
         <div>
-          <div className="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-1">Column Details</div>
+          <div className="text-xs font-semibold text-[var(--text-secondary)] mb-1">Column Details</div>
           {visibleColumns.map(([col, data]) => (
             <ColumnStats key={col} col={col} data={data} />
           ))}

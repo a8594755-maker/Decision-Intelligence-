@@ -24,7 +24,7 @@ export default function BlockingQuestionsInteractiveCard({ payload, onSubmit }) 
   };
 
   return (
-    <Card className="w-full border border-amber-200 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-900/10">
+    <Card category="system" className="w-full border border-amber-200 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-900/10">
       <div className="space-y-3 text-xs">
         <h4 className="font-semibold inline-flex items-center gap-2">
           <HelpCircle className="w-4 h-4 text-amber-700 dark:text-amber-300" />
@@ -36,7 +36,7 @@ export default function BlockingQuestionsInteractiveCard({ payload, onSubmit }) 
           <div className="space-y-2">
             {questions.map((question, idx) => (
               <div key={idx} className="space-y-1">
-                <p className="text-slate-700 dark:text-slate-200">
+                <p className="text-[var(--text-secondary)]">
                   {typeof question === 'string' ? question : question?.question || JSON.stringify(question)}
                 </p>
                 <input
@@ -44,7 +44,7 @@ export default function BlockingQuestionsInteractiveCard({ payload, onSubmit }) 
                   value={answers[String(idx)]}
                   onChange={(e) => handleChange(idx, e.target.value)}
                   placeholder="Your answer..."
-                  className="w-full border border-amber-300 dark:border-amber-700 rounded px-2 py-1 text-xs bg-white dark:bg-slate-800"
+                  className="w-full border border-amber-300 dark:border-amber-700 rounded px-2 py-1 text-xs bg-[var(--surface-card)]"
                 />
               </div>
             ))}

@@ -100,17 +100,6 @@ export default function useConversationManager({
     });
   }, [user?.id, mode]);
 
-  // ── Safety net: flush on page unload ────────────────────────────────────
-  useEffect(() => {
-    const onBeforeUnload = () => {
-      if (user?.id) {
-        flushToLocalStorage(user.id, conversationsRef.current, mode);
-      }
-    };
-    window.addEventListener('beforeunload', onBeforeUnload);
-    return () => window.removeEventListener('beforeunload', onBeforeUnload);
-  }, [user?.id, mode]);
-
   // ── Load conversations on mount ──────────────────────────────────────────
   useEffect(() => {
     if (!user?.id) return;
@@ -318,6 +307,43 @@ export default function useConversationManager({
         }
       });
   }, [user?.id]);
+
+  // Keep a ref to current conversation ID for the beforeunload handler.
+  const currentConversationIdRef = useRef(currentConversationId);
+  currentConversationIdRef.current = currentConversationId;
+
+  // ── Safety net: flush on page unload ────────────────────────────────────
+  useEffect(() => {
+    const onBeforeUnload = () => {
+      if (user?.id) {
+        flushToLocalStorage(user.id, conversationsRef.current, mode);
+        // Best-effort: persist active conversation to Supabase
+        const active = conversationsRef.current.find(c => c.id === currentConversationIdRef.current);
+        if (active) persistConversation(active.id, active);
+      }
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [user?.id, mode, persistConversation]);
+
+  // ── Periodic Supabase sync (every 60s) + auto-recover from unavailable ──
+  useEffect(() => {
+    if (!user?.id) return;
+    const SYNC_MS = 60_000;
+    const interval = setInterval(() => {
+      const current = conversationsRef.current;
+      if (!current?.length) return;
+      // Clear unavailable flag to allow retry — if persist fails, it will re-mark
+      sessionStorage.removeItem(TABLE_UNAVAILABLE_KEY);
+      const cutoff = Date.now() - SYNC_MS - 5000;
+      for (const conv of current) {
+        if (new Date(conv.updated_at).getTime() > cutoff) {
+          persistConversation(conv.id, conv);
+        }
+      }
+    }, SYNC_MS);
+    return () => clearInterval(interval);
+  }, [user?.id, persistConversation]);
 
   // ── Append messages to the active conversation ───────────────────────────
   const appendMessagesToCurrentConversation = useCallback((messages) => {

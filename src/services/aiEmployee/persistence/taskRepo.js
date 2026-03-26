@@ -132,7 +132,10 @@ export async function listTasks(employeeId, { status, limit = 50 } = {}) {
   if (status) query = query.eq('status', status);
 
   const { data, error } = await query;
-  if (error) throw new Error(`[TaskRepo] listTasks failed: ${error.message}`);
+  if (error) {
+    if (error.name === 'AbortError' || /abort/i.test(error.message)) return [];
+    throw new Error(`[TaskRepo] listTasks failed: ${error.message}`);
+  }
   return data || [];
 }
 
@@ -272,6 +275,105 @@ export async function reassignTask(taskId, newEmployeeId, userId, expectedVersio
     throw new Error(`[TaskRepo] reassignTask failed: ${error.message}`);
   }
   return data;
+}
+
+// ── Worker Claim API (server-side task execution) ─────────────────────────────
+
+const STALE_HEARTBEAT_MS = 60_000; // 60s — if heartbeat older than this, task is reclaimable
+
+/**
+ * Find tasks that are ready for a worker to claim:
+ * - status is 'queued' or 'in_progress'
+ * - no worker_id set, OR worker heartbeat is stale (crashed worker)
+ */
+export async function findUnclaimedTasks({ limit = 10 } = {}) {
+  if (_m) return [];
+  const staleThreshold = new Date(Date.now() - STALE_HEARTBEAT_MS).toISOString();
+
+  // Unclaimed tasks
+  const { data: unclaimed, error: err1 } = await supabase
+    .from('ai_employee_tasks')
+    .select('id, status, version, worker_id, worker_heartbeat_at')
+    .in('status', [TASK_STATES.QUEUED, TASK_STATES.IN_PROGRESS])
+    .is('worker_id', null)
+    .order('created_at', { ascending: true })
+    .limit(limit);
+
+  if (err1) throw new Error(`[TaskRepo] findUnclaimedTasks failed: ${err1.message}`);
+
+  // Stale-heartbeat tasks (worker crashed)
+  const { data: stale, error: err2 } = await supabase
+    .from('ai_employee_tasks')
+    .select('id, status, version, worker_id, worker_heartbeat_at')
+    .eq('status', TASK_STATES.IN_PROGRESS)
+    .not('worker_id', 'is', null)
+    .lt('worker_heartbeat_at', staleThreshold)
+    .order('created_at', { ascending: true })
+    .limit(limit);
+
+  if (err2) throw new Error(`[TaskRepo] findUnclaimedTasks (stale) failed: ${err2.message}`);
+
+  return [...(unclaimed || []), ...(stale || [])];
+}
+
+/**
+ * Claim a task for a worker using optimistic concurrency.
+ * @param {string} taskId
+ * @param {string} workerId - unique worker instance ID
+ * @param {number} expectedVersion
+ * @returns {Promise<object|null>} updated row, or null if claim failed (race)
+ */
+export async function claimTask(taskId, workerId, expectedVersion) {
+  if (_m) return null;
+  const now = new Date().toISOString();
+  const { data, error } = await supabase
+    .from('ai_employee_tasks')
+    .update({
+      worker_id: workerId,
+      worker_claimed_at: now,
+      worker_heartbeat_at: now,
+      version: expectedVersion + 1,
+    })
+    .eq('id', taskId)
+    .eq('version', expectedVersion)
+    .select()
+    .single();
+
+  if (error) {
+    if (error.code === 'PGRST116') return null; // lost the race
+    throw new Error(`[TaskRepo] claimTask failed: ${error.message}`);
+  }
+  return data;
+}
+
+/**
+ * Release a worker claim (on completion or failure).
+ */
+export async function releaseTask(taskId) {
+  if (_m) return;
+  const { error } = await supabase
+    .from('ai_employee_tasks')
+    .update({
+      worker_id: null,
+      worker_claimed_at: null,
+      worker_heartbeat_at: null,
+    })
+    .eq('id', taskId);
+
+  if (error) console.warn(`[TaskRepo] releaseTask failed: ${error.message}`);
+}
+
+/**
+ * Update worker heartbeat timestamp (called periodically during execution).
+ */
+export async function updateWorkerHeartbeat(taskId) {
+  if (_m) return;
+  const { error } = await supabase
+    .from('ai_employee_tasks')
+    .update({ worker_heartbeat_at: new Date().toISOString() })
+    .eq('id', taskId);
+
+  if (error) console.warn(`[TaskRepo] updateWorkerHeartbeat failed: ${error.message}`);
 }
 
 /**

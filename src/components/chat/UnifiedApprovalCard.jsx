@@ -22,7 +22,7 @@ const TYPE_CONFIG = {
   risk_replan:     { label: 'Risk-Driven Replan',   icon: Shield,      color: 'text-amber-600 dark:text-amber-400',  bg: 'bg-amber-100 dark:bg-amber-900/40' },
   plan_commit:     { label: 'Plan Commit',          icon: ShieldCheck, color: 'text-emerald-600 dark:text-emerald-400', bg: 'bg-emerald-100 dark:bg-emerald-900/40' },
   negotiation:     { label: 'Negotiation',          icon: Shield,      color: 'text-purple-600 dark:text-purple-400', bg: 'bg-purple-100 dark:bg-purple-900/40' },
-  model_promotion: { label: 'Model Promotion',      icon: ShieldCheck, color: 'text-indigo-600 dark:text-indigo-400', bg: 'bg-indigo-100 dark:bg-indigo-900/40' },
+  model_promotion: { label: 'Model Promotion',      icon: ShieldCheck, color: 'text-[var(--brand-600)]', bg: 'bg-indigo-100 dark:bg-indigo-900/40' },
 };
 
 function normalizeStatus(value) {
@@ -104,7 +104,7 @@ export default function UnifiedApprovalCard({ payload, onDecision }) {
   };
 
   return (
-    <Card variant="elevated" className="!p-0 overflow-hidden">
+    <Card category="system" variant="elevated" className="!p-0 overflow-hidden">
       {/* Header */}
       <div className="flex items-center gap-3 px-4 py-3 border-b" style={{ borderColor: 'var(--border-default)' }}>
         <div className={`p-1.5 rounded-lg ${cfg.bg}`}>
@@ -153,7 +153,7 @@ export default function UnifiedApprovalCard({ payload, onDecision }) {
       {run_id && (
         <button
           onClick={() => setExpanded(!expanded)}
-          className="w-full flex items-center gap-2 px-4 py-2 text-xs hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors"
+          className="w-full flex items-center gap-2 px-4 py-2 text-xs hover:bg-[var(--accent-hover)] transition-colors"
           style={{ color: 'var(--text-muted)' }}
         >
           <span>Run #{run_id}</span>

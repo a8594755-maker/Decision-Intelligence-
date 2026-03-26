@@ -23,12 +23,12 @@ function ConversationListItem({
           ? `px-3 py-2 rounded-2xl ${
               isActive
                 ? 'bg-slate-100/95 dark:bg-slate-800/85'
-                : 'hover:bg-slate-100/75 dark:hover:bg-slate-800/55'
+                : 'hover:bg-[var(--accent-hover)]/75 dark:hover:bg-slate-800/55'
             }`
           : `px-3 py-2.5 rounded-xl ${
               isActive
                 ? 'bg-blue-50 dark:bg-blue-900/20'
-                : 'hover:bg-slate-100/80 dark:hover:bg-slate-800/60'
+                : 'hover:bg-[var(--accent-hover)]/80 dark:hover:bg-slate-800/60'
             }`
       }`}
       onClick={onSelect}
@@ -44,14 +44,14 @@ function ConversationListItem({
       ) : null}
       <div className={compact ? '' : 'pl-2'}>
         <div className="flex items-start justify-between gap-2">
-          <p className={`font-medium text-slate-800 dark:text-slate-100 line-clamp-1 ${compact ? 'text-[13px]' : 'text-sm'}`}>
+          <p className={`font-medium text-[var(--text-primary)] line-clamp-1 ${compact ? 'text-[13px]' : 'text-sm'}`}>
             {conversation.title || 'New Conversation'}
           </p>
           <span className={`whitespace-nowrap text-slate-400 ${compact ? 'text-[10px]' : 'text-[11px]'}`}>
             {formatTime(conversation.updated_at)}
           </span>
         </div>
-        <p className={`text-slate-500 dark:text-slate-400 line-clamp-1 mt-0.5 ${compact ? 'text-[11px]' : 'text-xs'}`}>
+        <p className={`text-[var(--text-muted)] line-clamp-1 mt-0.5 ${compact ? 'text-[11px]' : 'text-xs'}`}>
           {snippet.slice(0, 80)}
         </p>
         {isAiError ? (

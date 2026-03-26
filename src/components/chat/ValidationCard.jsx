@@ -9,7 +9,7 @@ export default function ValidationCard({ payload }) {
   const reasons = Array.isArray(payload.reasons) ? payload.reasons : [];
 
   return (
-    <Card className="w-full border border-slate-200 dark:border-slate-700">
+    <Card category="system" className="w-full border border-[var(--border-default)]">
       <div className="space-y-3">
         <div className="flex items-center justify-between">
           <h4 className="text-sm font-semibold">Validation Card</h4>
@@ -18,7 +18,7 @@ export default function ValidationCard({ payload }) {
           </Badge>
         </div>
 
-        <div className="text-xs text-slate-600 dark:text-slate-300 space-y-1">
+        <div className="text-xs text-[var(--text-secondary)] space-y-1">
           {reasons.length > 0 ? (
             reasons.map((reason, index) => (
               <div key={`${reason}-${index}`} className="flex items-start gap-2">

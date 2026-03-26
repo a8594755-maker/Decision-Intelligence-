@@ -59,12 +59,12 @@ const ActionProbBar = ({ action, prob, isTop }) => {
     : 'bg-slate-300 dark:bg-slate-600';
   const labelColor = isTop
     ? 'text-blue-700 dark:text-blue-300 font-semibold'
-    : 'text-slate-600 dark:text-slate-400';
+    : 'text-[var(--text-secondary)]';
 
   return (
     <div className="flex items-center gap-2">
       <span className={`text-xs w-16 capitalize ${labelColor}`}>{action}</span>
-      <div className="flex-1 h-2 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
+      <div className="flex-1 h-2 bg-[var(--surface-subtle)] rounded-full overflow-hidden">
         <div
           className={`h-full rounded-full transition-all ${barColor}`}
           style={{ width: `${pct}%` }}
@@ -121,7 +121,7 @@ const StrategyInsightSection = ({ cfrStrategy }) => {
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div className="flex items-center gap-2">
           <Target className="w-4 h-4 text-blue-500" />
-          <span className="text-sm font-semibold text-slate-800 dark:text-slate-200">
+          <span className="text-sm font-semibold text-[var(--text-primary)]">
             AI Strategy Insight
           </span>
         </div>
@@ -134,7 +134,7 @@ const StrategyInsightSection = ({ cfrStrategy }) => {
           <div className="text-xs text-blue-600 dark:text-blue-400 font-medium mb-1">
             GTO Recommendation
           </div>
-          <div className="text-sm font-semibold text-slate-800 dark:text-slate-200">
+          <div className="text-sm font-semibold text-[var(--text-primary)]">
             {Math.round(topAction[1] * 100)}% probability: <span className="capitalize">{topAction[0]}</span>
           </div>
         </div>
@@ -176,13 +176,13 @@ const DraftTab = ({ draft, isSelected, onClick }) => {
       onClick={onClick}
       className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
         isSelected
-          ? 'bg-white dark:bg-slate-700 shadow-sm text-slate-800 dark:text-slate-200'
-          : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300'
+          ? 'bg-white dark:bg-slate-700 shadow-sm text-[var(--text-primary)]'
+          : 'text-[var(--text-muted)] hover:text-slate-700 dark:hover:text-slate-300'
       }`}
     >
       <Icon className={`w-3 h-3 ${isSelected ? meta.color : ''}`} />
       <span>{meta.label}</span>
-      <span className="text-slate-400 dark:text-slate-500">({meta.labelEn})</span>
+      <span className="text-[var(--text-muted)]">({meta.labelEn})</span>
     </button>
   );
 };
@@ -203,13 +203,13 @@ const DraftSection = ({ drafts, selectedDraftIndex, onSelectDraft, editedDrafts,
     <div className="space-y-3">
       <div className="flex items-center gap-2">
         <Edit3 className="w-4 h-4 text-purple-500" />
-        <span className="text-sm font-semibold text-slate-800 dark:text-slate-200">
+        <span className="text-sm font-semibold text-[var(--text-primary)]">
           Negotiation Drafts
         </span>
       </div>
 
       {/* Tone tabs */}
-      <div className="flex gap-1 bg-slate-100 dark:bg-slate-800/60 rounded-lg p-1">
+      <div className="flex gap-1 bg-[var(--surface-subtle)]/60 rounded-lg p-1">
         {drafts.map((draft, i) => (
           <DraftTab
             key={draft.tone}
@@ -223,14 +223,14 @@ const DraftSection = ({ drafts, selectedDraftIndex, onSelectDraft, editedDrafts,
       {/* Subject line */}
       {currentDraft?.subject && (
         <div className="text-xs">
-          <span className="font-semibold text-slate-600 dark:text-slate-400">Subject: </span>
-          <span className="text-slate-800 dark:text-slate-200">{currentDraft.subject}</span>
+          <span className="font-semibold text-[var(--text-secondary)]">Subject: </span>
+          <span className="text-[var(--text-primary)]">{currentDraft.subject}</span>
         </div>
       )}
 
       {/* Draft body (editable textarea) */}
       <textarea
-        className="w-full min-h-[160px] p-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/40 text-sm text-slate-700 dark:text-slate-300 resize-y focus:ring-2 focus:ring-blue-400/50 focus:border-blue-400 outline-none transition-colors"
+        className="w-full min-h-[160px] p-3 rounded-lg border border-[var(--border-default)] bg-[var(--surface-card)]/40 text-sm text-[var(--text-secondary)] resize-y focus:ring-2 focus:ring-blue-400/50 focus:border-blue-400 outline-none transition-colors"
         value={currentDraft?.body || ''}
         onChange={(e) => onEditDraft(selectedDraftIndex, {
           ...currentDraft,
@@ -334,7 +334,7 @@ const ActionEntry = ({ action }) => {
     counter: 'Countered',
   };
   return (
-    <div className="flex items-center gap-1.5 text-xs text-slate-600 dark:text-slate-400">
+    <div className="flex items-center gap-1.5 text-xs text-[var(--text-secondary)]">
       {icons[action.player] || <Minus className="w-3 h-3" />}
       <span className="capitalize font-medium">{action.player}</span>
       <span>{labels[action.action] || action.action}</span>
@@ -382,7 +382,7 @@ const RoundHistorySection = ({ negotiationState }) => {
     <div className="space-y-2">
       <div className="flex items-center gap-2">
         <Clock className="w-4 h-4 text-slate-500" />
-        <span className="text-sm font-semibold text-slate-800 dark:text-slate-200">
+        <span className="text-sm font-semibold text-[var(--text-primary)]">
           Negotiation Timeline
         </span>
         {isResolved && (
@@ -396,10 +396,10 @@ const RoundHistorySection = ({ negotiationState }) => {
         )}
       </div>
 
-      <div className="space-y-2 pl-2 border-l-2 border-slate-200 dark:border-slate-700 ml-1">
+      <div className="space-y-2 pl-2 border-l-2 border-[var(--border-default)] ml-1">
         {rounds.map((round, i) => (
           <div key={i} className="pl-3 relative">
-            <div className="absolute -left-[7px] top-1 w-3 h-3 rounded-full bg-white dark:bg-slate-900 border-2 border-slate-300 dark:border-slate-600" />
+            <div className="absolute -left-[7px] top-1 w-3 h-3 rounded-full bg-[var(--surface-card)] border-2 border-slate-300 dark:border-slate-600" />
             <RoundBadge
               roundName={round.round_name}
               isCurrent={round.round_name === current_round_name && !isResolved}
@@ -497,10 +497,10 @@ export default function NegotiationActionCard({ payload = {}, onAction }) {
             <Shield className="w-4 h-4 text-purple-600 dark:text-purple-400" />
           </div>
           <div>
-            <div className="text-sm font-semibold text-slate-800 dark:text-slate-200">
+            <div className="text-sm font-semibold text-[var(--text-primary)]">
               Strategic Negotiation Copilot
             </div>
-            <div className="text-xs text-slate-500 dark:text-slate-400">
+            <div className="text-xs text-[var(--text-muted)]">
               {triggerLabel}
               {planRunId ? ` · Run #${planRunId}` : ''}
             </div>
@@ -508,7 +508,7 @@ export default function NegotiationActionCard({ payload = {}, onAction }) {
         </div>
         <button
           onClick={() => setExpanded((v) => !v)}
-          className="p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+          className="p-1 rounded hover:bg-[var(--accent-hover)] transition-colors"
         >
           {expanded ? (
             <ChevronDown className="w-4 h-4 text-slate-400" />

@@ -255,7 +255,7 @@ ${repairInstructions.length > 0 ? repairInstructions.map((item) => `- ${item}`).
     "rows": [["string or number"]]
   }],
   "charts": [{
-    "type": "bar | grouped_bar | stacked_bar | line | scatter | pie | horizontal_bar",
+    "type": "bar | grouped_bar | stacked_bar | horizontal_bar | line | area | scatter | pie | donut | histogram | lorenz | heatmap | treemap | waterfall | radar | funnel",
     "title": "string",
     "xKey": "string (column name for X axis)",
     "yKey": "string (column name for Y axis)",
@@ -270,6 +270,29 @@ ${repairInstructions.length > 0 ? repairInstructions.map((item) => `- ${item}`).
   "next_steps": ["string"],
   "methodology_note": "string (optional — formula/model/assumption disclosure, preserved from raw narrative)"
 }
+
+CHART TYPE SELECTION (do NOT default to "bar" for everything):
+• Time series (monthly/weekly trend) → "line" or "area"
+• Distribution of a single variable → "histogram"
+• Part-of-whole (≤7 categories) → "pie" or "donut"
+• Ranking → "bar" or "horizontal_bar" (>5 items prefer horizontal)
+• Side-by-side comparison of 2+ metrics → "grouped_bar"
+• Stacked composition → "stacked_bar"
+• Two-variable relationship → "scatter"
+• Inequality/Pareto → "lorenz"
+• Flow/breakdown → "waterfall"
+Choose based on DATA SHAPE: temporal x-axis → line, categorical → bar, proportional → pie.
+
+HEADLINE RELEVANCE RULE:
+When ranking by ratios or percentages, do NOT lead with the smallest segments even if they have the highest ratio. Lead with segments that have BOTH meaningful scale AND notable metric values. A 47% risk share in a R$2K category is less actionable than a 20% risk share in a R$400K category. Always consider absolute impact, not just relative ranking.
+
+SCALE COMPATIBILITY (MANDATORY for multi-series charts):
+- All series in a single chart MUST have similar scales (values within ~10x of each other).
+- NEVER combine: correlation coefficients (-1~1) with counts (thousands), percentages (0-100) with absolute revenue (millions), p-values (0~1) with sample sizes (hundreds+).
+- If metrics have different units or magnitudes, use SEPARATE charts — one per metric.
+- OK together: revenue_2017 vs revenue_2018, region_growth_pct vs overall_growth_pct.
+- NOT OK: pearson_corr + sample_size, gini + category_revenue, growth_pct + total_revenue.
+
 ${domainEnrichment ? `\n${domainEnrichment}\n` : ''}
 ## CRITICAL RULES (violation of any is a hard failure)
 

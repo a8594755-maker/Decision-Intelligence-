@@ -8,7 +8,7 @@ export default function WorkflowErrorCard({ payload }) {
   const actions = Array.isArray(payload.next_actions) ? payload.next_actions : [];
 
   return (
-    <Card className="w-full border border-red-200 dark:border-red-800 bg-red-50/60 dark:bg-red-900/10">
+    <Card category="system" className="w-full border border-red-200 dark:border-red-800 bg-red-50/60 dark:bg-red-900/10">
       <div className="space-y-2 text-xs">
         <div className="flex items-center justify-between gap-2">
           <h4 className="font-semibold text-red-700 dark:text-red-300 inline-flex items-center gap-2">

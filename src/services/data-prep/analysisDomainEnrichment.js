@@ -749,14 +749,16 @@ ${narrativeOnlyIssues
 4. Do NOT repeat A's successful tool calls unless you need different parameters.
 5. Do NOT start from scratch. Build on A's findings — add what's missing, fix what's wrong.
 6. Copy exact numeric values from tool results. Do NOT round or approximate.
-7. If A's tool calls covered the data correctly, acknowledge and extend rather than redo.`}
+7. If A's tool calls covered the data correctly, acknowledge and extend rather than redo.
+8. DATA SCOPE CONSISTENCY (CRITICAL): If you run new SQL queries, you MUST use the SAME date range, filters, and WHERE conditions as A's successful queries. Do NOT change date boundaries (e.g., if A used '< 2019-01-01', do NOT change to '< 2018-10-01'). Inconsistent data scopes cause conflicting numbers between your output and A's, which will be flagged as a correctness failure by the judge.
+9. METHODOLOGY CONSISTENCY: If A defines criteria (e.g., "risk = any 1 of 3 conditions", "high revenue = top 10 sellers"), you MUST use the SAME definitions. Do NOT change thresholds, criteria count, or population definitions unless explicitly fixing a methodology flaw identified in the QA issues. If you DO change methodology, CLEARLY STATE what you changed and why.`}
 
 == ANTI-DUPLICATION RULES ==
-8. Your output will be compared against A's output by a judge. If you produce a brief that is >70% similar in content to A's brief, you will be scored LOWER than A. Differentiate by:
+10. Your output will be compared against A's output by a judge. If you produce a brief that is >70% similar in content to A's brief, you will be scored LOWER than A. Differentiate by:
    - Adding NEW analysis angles A missed (e.g., time trends, category breakdowns, cohort analysis)
    - Providing deeper interpretation of A's existing numbers
    - Fixing specific QA issues WITHOUT restating A's correct findings
-9. If A's tool calls already returned the correct data, do NOT re-query. Use A's evidence directly.
+11. If A's tool calls already returned the correct data, do NOT re-query. Use A's evidence directly.
 10. Your key_findings must contain at least 2 findings NOT present in A's findings.
 
 CRITICAL FORMAT REQUIREMENT: Your final answer MUST be a single valid JSON object matching the schema above. Do NOT output prose, markdown, or any text outside the JSON. Start your response with { and end with }. No exceptions.`;

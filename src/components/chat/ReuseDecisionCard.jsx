@@ -8,7 +8,7 @@ export default function ReuseDecisionCard({ payload, onApply, onReview }) {
   if (!payload) return null;
 
   return (
-    <Card className="w-full border border-teal-200 dark:border-teal-800 bg-teal-50/60 dark:bg-teal-900/10">
+    <Card category="system" className="w-full border border-teal-200 dark:border-teal-800 bg-teal-50/60 dark:bg-teal-900/10">
       <div className="space-y-3 text-xs">
         <div className="flex items-start justify-between gap-3">
           <div>
@@ -16,11 +16,11 @@ export default function ReuseDecisionCard({ payload, onApply, onReview }) {
               <RefreshCw className="w-4 h-4 text-teal-600" />
               Reuse Suggestion
             </h4>
-            <p className="text-slate-600 dark:text-slate-300">
+            <p className="text-[var(--text-secondary)]">
               I found a previous mapping for similar data (confidence {formatConfidence(payload.confidence)}).
             </p>
             {payload.explanation && (
-              <p className="text-slate-500 dark:text-slate-400">{payload.explanation}</p>
+              <p className="text-[var(--text-muted)]">{payload.explanation}</p>
             )}
           </div>
           <Badge type="info">{payload.mode || 'ask_one_click'}</Badge>

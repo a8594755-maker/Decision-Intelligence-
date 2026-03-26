@@ -34,7 +34,7 @@ export default function RiskDrilldownCard({ payload }) {
   if (!payload) return null;
 
   return (
-    <Card className="w-full border border-cyan-200 dark:border-cyan-800 bg-cyan-50/50 dark:bg-cyan-900/10">
+    <Card category="risk" className="w-full border border-cyan-200 dark:border-cyan-800 bg-cyan-50/50 dark:bg-cyan-900/10">
       <div className="space-y-3">
         <div className="flex items-center justify-between gap-3">
           <div>
@@ -42,7 +42,7 @@ export default function RiskDrilldownCard({ payload }) {
               <Search className="w-4 h-4 text-cyan-600" />
               Risk Drilldown
             </h4>
-            <p className="text-xs text-slate-600 dark:text-slate-300">
+            <p className="text-xs text-[var(--text-secondary)]">
               Run #{payload.run_id || 'N/A'} | {items.length} entities
             </p>
           </div>
@@ -53,7 +53,7 @@ export default function RiskDrilldownCard({ payload }) {
           <select
             value={selected?.entity_id || ''}
             onChange={(event) => setEntityId(event.target.value)}
-            className="text-xs px-2 py-1 rounded border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800"
+            className="text-xs px-2 py-1 rounded border border-[var(--border-default)] bg-[var(--surface-card)]"
           >
             {items.map((item) => (
               <option key={`${item.entity_type}-${item.entity_id}`} value={item.entity_id}>
@@ -64,7 +64,7 @@ export default function RiskDrilldownCard({ payload }) {
         )}
 
         {!selected ? (
-          <p className="text-xs text-slate-500">No drilldown rows available.</p>
+          <p className="text-xs text-[var(--text-muted)]">No drilldown rows available.</p>
         ) : (
           <div className="space-y-3">
             <div className="flex flex-wrap gap-2 text-xs">
@@ -76,8 +76,8 @@ export default function RiskDrilldownCard({ payload }) {
 
             {(selected.drivers || []).length > 0 && (
               <div>
-                <p className="text-xs font-medium text-slate-700 dark:text-slate-200 mb-1">Driver breakdown</p>
-                <ul className="list-disc list-inside text-xs text-slate-600 dark:text-slate-300 space-y-1">
+                <p className="text-xs font-medium text-[var(--text-secondary)] mb-1">Driver breakdown</p>
+                <ul className="list-disc list-inside text-xs text-[var(--text-secondary)] space-y-1">
                   {(selected.drivers || []).map((driver, index) => (
                     <li key={`${driver.name}-${index}`}>
                       <strong>{driver.name}</strong>: normalized {fmt(driver.normalized_value, 3)}, contribution {fmt(driver.contribution, 3)}
@@ -89,8 +89,8 @@ export default function RiskDrilldownCard({ payload }) {
 
             {(selected.evidence_refs || []).length > 0 && (
               <div>
-                <p className="text-xs font-medium text-slate-700 dark:text-slate-200 mb-1">Evidence refs</p>
-                <p className="text-xs text-slate-600 dark:text-slate-300 break-all">
+                <p className="text-xs font-medium text-[var(--text-secondary)] mb-1">Evidence refs</p>
+                <p className="text-xs text-[var(--text-secondary)] break-all">
                   {(selected.evidence_refs || []).join(', ')}
                 </p>
               </div>

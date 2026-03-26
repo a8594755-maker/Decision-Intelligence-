@@ -12,7 +12,7 @@ const markdownComponents = {
       </table>
     </div>
   ),
-  thead: ({ children }) => <thead className="bg-slate-100 dark:bg-slate-700">{children}</thead>,
+  thead: ({ children }) => <thead className="bg-[var(--surface-subtle)]">{children}</thead>,
   th: ({ children }) => <th className="border border-slate-300 dark:border-slate-600 px-2 py-1 text-left font-semibold">{children}</th>,
   td: ({ children }) => <td className="border border-slate-300 dark:border-slate-600 px-2 py-1">{children}</td>,
   p: ({ children, node }) => {
@@ -89,7 +89,7 @@ function ChatMessageBubble({ message, renderSpecialMessage, timestampText = '', 
                     {attachment.file_name}
                   </p>
                   {secondary ? (
-                    <p className={`truncate text-[11px] ${isUser ? 'text-white/75' : 'text-slate-500 dark:text-slate-400'}`}>
+                    <p className={`truncate text-[11px] ${isUser ? 'text-white/75' : 'text-[var(--text-muted)]'}`}>
                       {secondary}
                     </p>
                   ) : null}
@@ -120,11 +120,11 @@ function ChatMessageBubble({ message, renderSpecialMessage, timestampText = '', 
               isAIEmployeeVariant
                 ? isUser
                   ? 'rounded-[24px] rounded-br-lg bg-slate-900 px-4 py-2.5 text-white shadow-sm dark:bg-slate-100 dark:text-slate-900'
-                  : 'px-1 py-1 text-slate-900 dark:text-slate-100'
+                  : 'px-1 py-1 text-[var(--text-primary)]'
                 : `rounded-2xl px-4 py-2.5 shadow-sm ${
                     isUser
                       ? 'bg-blue-600 text-white rounded-br-md'
-                      : 'bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 border border-slate-200/70 dark:border-slate-700/70 rounded-bl-md'
+                      : 'bg-[var(--surface-card)] text-[var(--text-primary)] border border-[var(--border-default)] rounded-bl-md'
               }`
             }`}
           >

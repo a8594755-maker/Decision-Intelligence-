@@ -104,7 +104,7 @@ function ChatThread({
                     variant={variant}
                   />
                 ) : (
-                  <div className={`${isAIEmployeeVariant ? 'px-1 py-1 text-slate-900 dark:text-slate-100' : 'rounded-2xl rounded-bl-md border border-slate-200/70 bg-white px-4 py-2.5 shadow-sm dark:border-slate-700/70 dark:bg-slate-800'}`}>
+                  <div className={`${isAIEmployeeVariant ? 'px-1 py-1 text-[var(--text-primary)]' : 'rounded-2xl rounded-bl-md border border-[var(--border-default)] bg-white px-4 py-2.5 shadow-sm dark:border-slate-700/70 dark:bg-slate-800'}`}>
                     <TypingIndicator />
                   </div>
                 )}

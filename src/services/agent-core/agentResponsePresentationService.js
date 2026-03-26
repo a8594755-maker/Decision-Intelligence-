@@ -1376,8 +1376,46 @@ function normalizeBrief(brief, fallbackBrief, { brevity } = {}) {
   return normalized;
 }
 
+/**
+ * Split multi-series charts where series have incompatible scales (>10x magnitude difference).
+ * E.g., Pearson correlation (-0.3) + sample_size (40,000) → split into 2 separate charts.
+ */
+function splitIncompatibleCharts(charts) {
+  if (!Array.isArray(charts)) return charts;
+  return charts.flatMap(chart => {
+    const series = Array.isArray(chart?.series) ? chart.series : [];
+    if (series.length < 2 || !Array.isArray(chart?.data) || chart.data.length === 0) return [chart];
+
+    const seriesRanges = series.map(key => {
+      const values = chart.data.map(d => Math.abs(Number(d?.[key]) || 0)).filter(v => v > 0);
+      if (values.length === 0) return { key, max: 0 };
+      return { key, max: Math.max(...values) };
+    }).filter(r => r.max > 0);
+
+    if (seriesRanges.length < 2) return [chart];
+
+    const maxVals = seriesRanges.map(r => r.max);
+    const ratio = Math.max(...maxVals) / Math.max(Math.min(...maxVals), 1e-9);
+
+    if (ratio <= 10) return [chart]; // Compatible scales — keep as-is
+
+    // Incompatible — split into separate single-series charts
+    return seriesRanges.map(({ key }) => ({
+      ...chart,
+      title: `${chart.title || 'Chart'} — ${key}`,
+      yKey: key,
+      series: [key],
+    }));
+  });
+}
+
 function normalizeBriefForQa(brief, fallbackBrief, { brevity, toolCalls = [] } = {}) {
   const normalized = normalizeBrief(brief, fallbackBrief, { brevity });
+
+  // Auto-split charts with incompatible scales before any QA checks
+  if (Array.isArray(normalized.charts)) {
+    normalized.charts = splitIncompatibleCharts(normalized.charts);
+  }
   const columnMetaMap = buildColumnMetaMap(toolCalls);
   const currencySymbol = detectPreferredCurrencySymbol(toolCalls, normalized);
   const maxPills = brevity === 'analysis' ? 6 : 4;
@@ -4019,15 +4057,15 @@ export async function repairBrief({
         answerContract,
         brief,
         toolCalls: summarizeToolCallsForPrompt(toolCalls),
-        finalAnswerText: clamp(stripThinkingTags(finalAnswerText), 3000),
+        finalAnswerText: clamp(stripThinkingTags(finalAnswerText), 2000),
         deterministicQa,
         qaScorecard,
         artifactSummary,
         mode,
       },
       temperature: 0.1,
-      maxOutputTokens: 2000,
-      timeout: /deepseek/i.test(reviewProvider || '') ? 60000 : 35000,
+      maxOutputTokens: 1500,
+      timeout: /deepseek/i.test(reviewProvider || '') ? 45000 : 30000,
       providerOverride: reviewProvider,
       modelOverride: reviewModel,
     });

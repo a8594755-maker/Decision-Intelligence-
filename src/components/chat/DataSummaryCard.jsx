@@ -67,7 +67,7 @@ function CapabilityIndicator({ capabilities }) {
         const colors = {
           full: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300',
           partial: 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300',
-          unavailable: 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400',
+          unavailable: 'bg-[var(--surface-subtle)] text-[var(--text-muted)]',
         };
         const icons = {
           full: <CheckCircle2 className="w-3 h-3" />,
@@ -126,19 +126,19 @@ export default function DataSummaryCard({
   const ignoredSheets = sheets.filter(s => IGNORED_SHEET_PATTERN.test(s.sheet_name || ''));
 
   return (
-    <Card className="w-full border border-blue-200 dark:border-blue-800 bg-blue-50/70 dark:bg-blue-900/10">
+    <Card category="data" className="w-full border border-blue-200 dark:border-blue-800 bg-blue-50/70 dark:bg-blue-900/10">
       <div className="space-y-3">
         <div className="flex items-start justify-between gap-3">
           <div>
             <h4 className="font-semibold text-sm">Data Summary Card</h4>
-            <p className="text-xs text-slate-600 dark:text-slate-300">
+            <p className="text-xs text-[var(--text-secondary)]">
               Workflow guess: <strong>{workflow.label || 'unknown'}</strong> ({formatPct(workflow.confidence)})
             </p>
-            <p className="text-xs text-slate-500">
+            <p className="text-xs text-[var(--text-muted)]">
               Time range: {timeRange.start || 'unknown'} to {timeRange.end || 'unknown'}
             </p>
             {workflow.reason && (
-              <p className="text-xs text-slate-500">{workflow.reason}</p>
+              <p className="text-xs text-[var(--text-muted)]">{workflow.reason}</p>
             )}
           </div>
           <div className="flex items-center gap-2 flex-wrap">
@@ -192,8 +192,8 @@ export default function DataSummaryCard({
         <CapabilityIndicator capabilities={capabilities} />
 
         <div className="overflow-x-auto">
-          <table className="w-full text-xs border border-slate-200 dark:border-slate-700">
-            <thead className="bg-slate-100 dark:bg-slate-700">
+          <table className="w-full text-xs border border-[var(--border-default)]">
+            <thead className="bg-[var(--surface-subtle)]">
               <tr>
                 <th className="px-2 py-1 text-left">Sheet</th>
                 <th className="px-2 py-1 text-left">Upload Type</th>
@@ -204,7 +204,7 @@ export default function DataSummaryCard({
             </thead>
             <tbody>
               {sheets.map((sheet) => (
-                <tr key={`${sheet.sheet_name}-${sheet.upload_type}`} className="border-t border-slate-200 dark:border-slate-700">
+                <tr key={`${sheet.sheet_name}-${sheet.upload_type}`} className="border-t border-[var(--border-default)]">
                   <td className="px-2 py-1">{sheet.sheet_name}</td>
                   <td className="px-2 py-1">{sheet.upload_type || 'unknown'}</td>
                   <td className="px-2 py-1">{formatPct(sheet.confidence)}</td>
@@ -231,15 +231,15 @@ export default function DataSummaryCard({
         </div>
 
         {ignoredSheets.length > 0 && (
-          <p className="text-[11px] text-slate-400 italic">
+          <p className="text-[11px] text-[var(--text-muted)] italic">
             Skipped non-data sheets: {ignoredSheets.map(s => s.sheet_name).join(', ')}
           </p>
         )}
 
         {minimalQuestions.length > 0 && (
           <div>
-            <p className="text-xs font-medium text-slate-700 dark:text-slate-200 mb-1">Minimal questions</p>
-            <ul className="list-disc list-inside text-xs text-slate-600 dark:text-slate-300 space-y-1">
+            <p className="text-xs font-medium text-[var(--text-secondary)] mb-1">Minimal questions</p>
+            <ul className="list-disc list-inside text-xs text-[var(--text-secondary)] space-y-1">
               {minimalQuestions.map((question, index) => (
                 <li key={`${question}-${index}`}>{question}</li>
               ))}

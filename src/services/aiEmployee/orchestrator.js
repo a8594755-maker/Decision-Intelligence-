@@ -89,6 +89,18 @@ const ML_API_URL = typeof import.meta !== 'undefined' && import.meta.env?.VITE_M
   ? import.meta.env.VITE_ML_API_URL
   : 'http://localhost:8000';
 
+// ── Server Execution Mode ────────────────────────────────────────────────────
+// When enabled, the browser does NOT run _runTickLoop() locally.
+// Instead, a Node.js worker process picks up queued tasks from the DB.
+const _SERVER_EXEC = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_DI_SERVER_EXECUTION === 'true')
+  || (typeof process !== 'undefined' && process.env?.VITE_DI_SERVER_EXECUTION === 'true');
+
+export function isServerExecutionMode() { return _SERVER_EXEC; }
+
+// When running inside the Node.js worker, this flag is set by the worker entry.
+let _isWorkerProcess = false;
+export function __setWorkerProcess(val) { _isWorkerProcess = !!val; }
+
 // ── SSE Publishing ────────────────────────────────────────────────────────────
 
 /**
@@ -276,8 +288,12 @@ export async function approvePlan(taskId, userId) {
     }, active.version);
   } catch { /* best-effort — capability gate will still work without this */ }
 
-  // Start the tick loop
-  _runTickLoop(taskId);
+  // Start the tick loop (or let the server worker pick it up)
+  if (_SERVER_EXEC && !_isWorkerProcess) {
+    _publishSSE(taskId, { event_type: 'task_queued', taskId });
+  } else {
+    _runTickLoop(taskId);
+  }
 }
 
 /**
@@ -318,7 +334,11 @@ export async function retryTask(taskId, _userId) {
     // Best-effort only — task execution should still resume.
   }
 
-  _runTickLoop(taskId);
+  if (_SERVER_EXEC && !_isWorkerProcess) {
+    _publishSSE(taskId, { event_type: 'task_queued', taskId });
+  } else {
+    _runTickLoop(taskId);
+  }
 }
 
 /**
@@ -407,7 +427,11 @@ export async function approveReview(taskId, userId, opts = {}) {
       console.warn('[Orchestrator] Failed to unblock review_hold steps (non-blocking):', err?.message);
     }
 
-    _runTickLoop(taskId);
+    if (_SERVER_EXEC && !_isWorkerProcess) {
+      _publishSSE(taskId, { event_type: 'task_queued', taskId });
+    } else {
+      _runTickLoop(taskId);
+    }
   } else {
     // Rejected/needs_revision — emit failure event
     eventBus.emit(EVENT_NAMES.TASK_FAILED, { taskId, reason: decision });
@@ -459,8 +483,12 @@ export async function provideStepInput(taskId, input, userId) {
 
   eventBus.emit(EVENT_NAMES.TASK_STARTED, { taskId, userId, reason: 'input_provided' });
 
-  // Resume tick loop
-  _runTickLoop(taskId);
+  // Resume tick loop (or let the server worker pick it up)
+  if (_SERVER_EXEC && !_isWorkerProcess) {
+    _publishSSE(taskId, { event_type: 'task_queued', taskId });
+  } else {
+    _runTickLoop(taskId);
+  }
 }
 
 /**
@@ -487,8 +515,12 @@ export async function skipWaitingInputStep(taskId, _userId) {
 
   console.warn(`[Orchestrator] Skipped waiting_input step ${waitingStep.step_index} "${waitingStep.step_name}" for task ${taskId}`);
 
-  // Resume tick loop to continue with remaining steps
-  _runTickLoop(taskId);
+  // Resume tick loop (or let the server worker pick it up)
+  if (_SERVER_EXEC && !_isWorkerProcess) {
+    _publishSSE(taskId, { event_type: 'task_queued', taskId });
+  } else {
+    _runTickLoop(taskId);
+  }
 
   return { skipped: true, stepName: waitingStep.step_name };
 }
@@ -570,7 +602,8 @@ export async function tick(taskId) {
 
 // ── Internal: Tick Loop ───────────────────────────────────────────────────────
 
-async function _runTickLoop(taskId) {
+/** @internal — also called by the worker process */
+export async function _runTickLoop(taskId) {
   // ── Ralph Loop mode: autonomous LLM-driven execution ──
   // Activates if globally enabled OR if the task was submitted with ralph_loop: true
   const task0 = await taskRepo.getTask(taskId);
@@ -600,6 +633,11 @@ async function _runTickLoop(taskId) {
   let running = true;
   while (running) {
     try {
+      // Update heartbeat so other workers know we're alive
+      if (_isWorkerProcess) {
+        taskRepo.updateWorkerHeartbeat(taskId).catch(() => {});
+      }
+
       const { done } = await tick(taskId);
       if (done) {
         running = false;

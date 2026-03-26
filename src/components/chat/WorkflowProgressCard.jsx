@@ -61,17 +61,17 @@ export default function WorkflowProgressCard({
   const supportsCacheReuse = workflowName.includes('workflow_a');
 
   return (
-    <Card className="w-full border border-indigo-200 dark:border-indigo-800 bg-indigo-50/60 dark:bg-indigo-900/10">
+    <Card category="system" className="w-full border-l-[3px] border-l-[var(--cat-system)] border border-[var(--border-default)] bg-[var(--surface-card)]">
       <div className="space-y-3">
         <div className="flex items-center justify-between gap-3">
           <div>
             <h4 className="text-sm font-semibold">{workflowLabel}</h4>
-            <p className="text-xs text-slate-600 dark:text-slate-300">
+            <p className="text-xs text-[var(--text-secondary)]">
               Run #{run?.id || payload?.run_id || 'N/A'} | {run?.workflow || payload?.workflow || 'workflow_unknown'} | Status: {run?.status || payload?.status || 'unknown'}
             </p>
           </div>
           <div className="flex items-center gap-2">
-            {running && <Loader2 className="w-4 h-4 animate-spin text-indigo-600" />}
+            {running && <Loader2 className="w-4 h-4 animate-spin text-[var(--brand-600)]" />}
             <Badge type={running ? 'info' : (paused ? 'warning' : (succeeded ? 'success' : failed ? 'warning' : 'default'))}>
               {paused ? 'PAUSED' : (run?.status || payload?.status || 'unknown').toUpperCase()}
             </Badge>
@@ -80,7 +80,7 @@ export default function WorkflowProgressCard({
 
         <div className="space-y-2">
           {steps.map((stepRow) => (
-            <div key={stepRow.step} className="flex items-center justify-between text-xs border border-slate-200 dark:border-slate-700 rounded px-2 py-1.5 bg-white/80 dark:bg-slate-900/40">
+            <div key={stepRow.step} className="flex items-center justify-between text-xs border border-[var(--border-default)] rounded px-2 py-1.5 bg-[var(--surface-card)]">
               <span className="font-medium">{STEP_LABELS[stepRow.step] || stepRow.step}</span>
               <div className="flex items-center gap-2">
                 {stepRow.error_code && (
@@ -122,7 +122,7 @@ export default function WorkflowProgressCard({
           </div>
         )}
         {hasAsyncJob && (
-          <div className="rounded border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-900/40 px-3 py-2 text-xs text-slate-600 dark:text-slate-300">
+          <div className="rounded border border-[var(--border-default)] bg-[var(--surface-card)] px-3 py-2 text-xs text-[var(--text-secondary)]">
             This run is managed by async job <strong>{asyncJobId}</strong>. Resume/replay from this card is not available.
           </div>
         )}

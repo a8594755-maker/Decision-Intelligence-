@@ -332,6 +332,18 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
   const [isDragOverUpload, setIsDragOverUpload] = useState(false);
   const [uploadStatusText, setUploadStatusText] = useState('');
 
+  // ── Warn on tab close during active analysis ──────────────────────────
+  useEffect(() => {
+    const handler = (e) => {
+      if (isTyping) {
+        e.preventDefault();
+        e.returnValue = 'Analysis is still running. Results will be lost if you leave.';
+      }
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [isTyping]);
+
   const clearThinkingSteps = useCallback(() => {
     thinkingStepsRef.current = [];
     thinkingAgentCountersRef.current = {};
@@ -899,6 +911,19 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
     // Clear navigation state to prevent re-trigger on route changes
     window.history.replaceState({}, '');
   }, [location.state, currentConversationId, setConversationDatasetContext, appendMessagesToCurrentConversation]);
+
+  // ── Insights Hub → Chat handoff (prefill input, user hits Enter) ─────
+  useEffect(() => {
+    const insightQuery = location.state?.insightQuery;
+    if (!insightQuery) return;
+
+    setTimeout(() => {
+      setInput(insightQuery);
+      textareaRef.current?.focus();
+    }, 200);
+
+    window.history.replaceState({}, '');
+  }, [location.state?.insightQuery]);
 
   // SmartOps 2.0: Session context for stateful conversations
   const sessionCtx = useSessionContext(user?.id, currentConversationId);
@@ -4508,10 +4533,10 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
                 <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-[22px] bg-slate-900 text-white shadow-sm dark:bg-slate-100 dark:text-slate-900">
                   <Bot className="h-8 w-8" />
                 </div>
-                <h2 className="text-3xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">
+                <h2 className="text-3xl font-semibold tracking-tight text-[var(--text-primary)]">
                   Start a chat with your worker
                 </h2>
-                <p className="mt-3 text-sm leading-6 text-slate-500 dark:text-slate-400">
+                <p className="mt-3 text-sm leading-6 text-[var(--text-muted)]">
                   Create a thread, upload a dataset, or assign a multi-step task and let the digital worker execute it transparently.
                 </p>
                 <button
@@ -4576,12 +4601,12 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
             />
           )}
           chat={(
-            <div className="h-full bg-[var(--chat-surface)] dark:bg-slate-900/80 border border-[var(--chat-border)] dark:border-slate-700/60 rounded-2xl shadow-sm overflow-hidden flex flex-col">
+            <div className="h-full bg-[var(--chat-surface)] dark:bg-slate-900/80 border border-[var(--chat-border)] dark:border-[var(--border-default)] rounded-2xl shadow-sm overflow-hidden flex flex-col">
               {currentConversation ? (
                 <>
-                  <div className="px-4 md:px-6 py-3 border-b border-[var(--chat-border)] dark:border-slate-700/60 bg-white/85 dark:bg-slate-900/75 backdrop-blur-sm flex items-center justify-between">
+                  <div className="px-4 md:px-6 py-3 border-b border-[var(--chat-border)] dark:border-[var(--border-default)] bg-white/85 dark:bg-slate-900/75 backdrop-blur-sm flex items-center justify-between">
                     <div className="min-w-0">
-                      <h3 className="text-base font-medium text-slate-800 dark:text-slate-100 truncate">
+                      <h3 className="text-base font-medium text-[var(--text-primary)] truncate">
                         {currentConversation.title}
                       </h3>
                       <div className="flex items-center gap-2 mt-1">
@@ -4589,7 +4614,7 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
                         <span className={`text-xs px-2 py-0.5 rounded-full ${contextBadge.color}`}>{contextBadge.text}</span>
                       </div>
                     </div>
-                    <button type="button" onClick={() => setShowNewChatConfirm(true)} className="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors" title="New conversation">
+                    <button type="button" onClick={() => setShowNewChatConfirm(true)} className="p-2 rounded-lg hover:bg-[var(--accent-hover)] transition-colors" title="New conversation">
                       <FileText className="w-4 h-4 text-slate-500" />
                     </button>
                   </div>

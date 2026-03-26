@@ -29,10 +29,10 @@ import { ChevronDown } from 'lucide-react';
 // ── Constants ────────────────────────────────────────────────────────────────
 
 const CHART_PALETTES = {
-  default: ['#2563eb', '#0891b2', '#059669', '#d97706', '#dc2626', '#7c3aed', '#db2777', '#0d9488', '#4f46e5', '#ca8a04'],
+  default: ['#0d9488', '#6366f1', '#2563eb', '#d97706', '#dc2626', '#7c3aed', '#db2777', '#0891b2', '#059669', '#ca8a04'],
   diverging: ['#059669', '#dc2626'],
-  sequential: ['#dbeafe', '#93c5fd', '#60a5fa', '#3b82f6', '#2563eb', '#1d4ed8'],
-  categorical: ['#2563eb', '#dc2626', '#059669', '#d97706', '#7c3aed', '#db2777', '#0891b2', '#ca8a04'],
+  sequential: ['#ccfbf1', '#99f6e4', '#5eead4', '#2dd4bf', '#14b8a6', '#0d9488'],
+  categorical: ['#0d9488', '#dc2626', '#059669', '#d97706', '#7c3aed', '#db2777', '#6366f1', '#ca8a04'],
 };
 
 // Default palette — backward-compatible export
@@ -69,9 +69,9 @@ const CHART_TYPE_LABELS = {
 };
 
 const MARGIN = { top: 8, right: 20, left: 10, bottom: 5 };
-const TICK_STYLE = { fontSize: 10, fill: '#64748b' };
-const GRID_PROPS = { strokeDasharray: '3 3', stroke: '#f1f5f9', strokeOpacity: 0.7 };
-const TOOLTIP_STYLE = { fontSize: 11, borderRadius: 8, boxShadow: '0 4px 12px rgba(0,0,0,0.08)', border: 'none', padding: '8px 12px' };
+const TICK_STYLE = { fontSize: 10, fill: '#78716c' };
+const GRID_PROPS = { strokeDasharray: '3 3', stroke: '#f5f5f4', strokeOpacity: 0.7 };
+const TOOLTIP_STYLE = { fontSize: 11, borderRadius: 8, boxShadow: '0 4px 12px rgba(0,0,0,0.08)', border: 'none', padding: '8px 12px', backgroundColor: 'var(--surface-card)', color: 'var(--text-primary)' };
 
 function isNumericLike(value) {
   if (typeof value === 'number') return Number.isFinite(value);
@@ -220,10 +220,62 @@ function axisLabelProp(text, axis) {
 
 // ── Main Component ───────────────────────────────────────────────────────────
 
-export default function ChartRenderer({ chart, height = 260, compatibleTypes, showSwitcher, mini = false }) {
+/**
+ * Detect if a multi-series chart has incompatible scales (>10x magnitude difference).
+ * Returns split single-series charts if incompatible, or null if OK.
+ */
+function splitIfIncompatibleScales(chart) {
+  const seriesKeys = Array.isArray(chart?.series) ? chart.series : [];
+  if (seriesKeys.length < 2 || !Array.isArray(chart?.data) || chart.data.length === 0) return null;
+
+  const magnitudes = seriesKeys.map(key => {
+    const vals = chart.data.map(d => Math.abs(Number(d?.[key]) || 0)).filter(v => v > 0);
+    return vals.length > 0 ? Math.max(...vals) : 0;
+  }).filter(v => v > 0);
+
+  if (magnitudes.length < 2) return null;
+
+  const ratio = Math.max(...magnitudes) / Math.max(Math.min(...magnitudes), 1e-9);
+  if (ratio <= 10) return null; // Scales compatible
+
+  // Split into separate single-series charts
+  return seriesKeys.map(key => ({
+    ...chart,
+    title: `${chart.title || 'Chart'} — ${key}`,
+    yKey: key,
+    series: [key],
+  }));
+}
+
+export default function ChartRenderer({ chart: rawChart, height = 260, compatibleTypes, showSwitcher, mini = false }) {
   const [overrideType, setOverrideType] = useState(null);
 
-  if (!chart) return null;
+  if (!rawChart) return null;
+
+  // Sanitize: ensure all numeric data values are actual numbers (not strings)
+  const chart = { ...rawChart };
+  if (Array.isArray(chart.data)) {
+    chart.data = chart.data.map(row => {
+      const clean = { ...row };
+      for (const key of Object.keys(clean)) {
+        if (key === (chart.xKey || 'name')) continue; // keep label as string
+        if (typeof clean[key] === 'string' && !isNaN(clean[key])) clean[key] = Number(clean[key]);
+      }
+      return clean;
+    });
+  }
+
+  // Auto-split multi-series charts with incompatible scales
+  const splitCharts = splitIfIncompatibleScales(chart);
+  if (splitCharts) {
+    return (
+      <div className="space-y-4">
+        {splitCharts.map((subChart, i) => (
+          <ChartRenderer key={`${subChart.title}-${i}`} chart={subChart} height={height} mini={mini} />
+        ))}
+      </div>
+    );
+  }
 
   const effectiveType = overrideType || chart.type;
   const effectiveChart = { ...chart, type: effectiveType };
@@ -256,10 +308,12 @@ export default function ChartRenderer({ chart, height = 260, compatibleTypes, sh
         <div className="text-xs font-medium text-slate-600 dark:text-slate-300 mb-2">{chart.title}</div>
       )}
 
-      {/* Chart body — heatmap uses custom SVG, skip ResponsiveContainer */}
+      {/* Chart body — heatmap/sankey use custom rendering, skip ResponsiveContainer */}
       <div className={mini ? 'rounded-lg overflow-hidden' : 'bg-white dark:bg-gray-800/40 rounded-lg p-2 border border-slate-100 dark:border-slate-700'}>
-        {effectiveType === 'heatmap' ? (
-          renderChartByType(effectiveChart)
+        {effectiveType === 'heatmap' || effectiveType === 'sankey' ? (
+          <div style={{ width: '100%', height: effectiveHeight }}>
+            {renderChartByType(effectiveChart)}
+          </div>
         ) : (
           <ResponsiveContainer width="100%" height={effectiveHeight}>
             {renderChartByType(effectiveChart)}
@@ -286,12 +340,19 @@ function renderChartByType(chart) {
     }
   }
 
-  if (!data || data.length === 0 || data.every(d => !d || Object.keys(d).length === 0)) {
-    return <div className="text-xs text-slate-400 text-center py-8">No chart data</div>;
-  }
+  // Sankey uses object-shaped data { nodes, links }, skip array validation
+  if (type === 'sankey') {
+    if (!data || (!data.nodes?.length && !data.links?.length)) {
+      return <div className="text-xs text-slate-400 text-center py-8">No chart data</div>;
+    }
+  } else {
+    if (!data || !Array.isArray(data) || data.length === 0 || data.every(d => !d || Object.keys(d).length === 0)) {
+      return <div className="text-xs text-slate-400 text-center py-8">No chart data</div>;
+    }
 
-  if (yKey && data.every(d => d[yKey] == null)) {
-    console.warn('[ChartRenderer] yKey mismatch — data keys:', Object.keys(data[0]), 'yKey:', yKey);
+    if (yKey && data.every(d => d[yKey] == null)) {
+      console.warn('[ChartRenderer] yKey mismatch — data keys:', Object.keys(data[0]), 'yKey:', yKey);
+    }
   }
 
   switch (type) {
@@ -705,7 +766,7 @@ function renderFunnel({ data, xKey = 'stage', yKey = 'count' }) {
     fill: CHART_COLORS[i % CHART_COLORS.length],
   }));
   return (
-    <FunnelChart>
+    <FunnelChart margin={{ top: 5, right: 120, left: 5, bottom: 5 }}>
       <Tooltip contentStyle={TOOLTIP_STYLE} />
       <Funnel dataKey="value" data={funnelData} isAnimationActive>
         <LabelList position="right" fill="#64748b" stroke="none" fontSize={10} dataKey="name" />
@@ -716,33 +777,39 @@ function renderFunnel({ data, xKey = 'stage', yKey = 'count' }) {
 }
 
 function renderSankey({ data }) {
-  // Sankey expects { nodes: [{name}], links: [{source, target, value}] }
-  const sankeyData = data.nodes ? data : { nodes: [], links: [] };
-  if (!sankeyData.nodes.length) {
-    return <div className="text-xs text-slate-400 text-center py-8">Invalid Sankey data</div>;
+  try {
+    // Sankey expects { nodes: [{name}], links: [{source, target, value}] }
+    const sankeyData = data?.nodes ? data : { nodes: [], links: [] };
+    if (!sankeyData.nodes.length) {
+      return <div className="text-xs text-slate-400 text-center py-8">Invalid Sankey data</div>;
+    }
+    // Convert string source/target to numeric indices
+    const nodeIndex = {};
+    sankeyData.nodes.forEach((n, i) => { nodeIndex[n.name] = i; });
+    const links = sankeyData.links.map(l => ({
+      source: typeof l.source === 'number' ? l.source : (nodeIndex[l.source] ?? 0),
+      target: typeof l.target === 'number' ? l.target : (nodeIndex[l.target] ?? 0),
+      value: l.value,
+    }));
+    return (
+      <RechartsSankey
+        width={460}
+        height={280}
+        data={{ nodes: sankeyData.nodes, links }}
+        node={{ fill: CHART_COLORS[0], opacity: 0.8 }}
+        link={{ stroke: '#93c5fd', opacity: 0.3 }}
+        nodePadding={20}
+        margin={{ top: 5, right: 5, left: 5, bottom: 5 }}
+      >
+        <Tooltip contentStyle={TOOLTIP_STYLE} />
+      </RechartsSankey>
+    );
+  } catch {
+    return <div className="text-xs text-slate-400 text-center py-8">Sankey chart unavailable</div>;
   }
-  // Convert string source/target to numeric indices
-  const nodeIndex = {};
-  sankeyData.nodes.forEach((n, i) => { nodeIndex[n.name] = i; });
-  const links = sankeyData.links.map(l => ({
-    source: typeof l.source === 'number' ? l.source : (nodeIndex[l.source] ?? 0),
-    target: typeof l.target === 'number' ? l.target : (nodeIndex[l.target] ?? 0),
-    value: l.value,
-  }));
-  return (
-    <RechartsSankey
-      data={{ nodes: sankeyData.nodes, links }}
-      node={{ fill: CHART_COLORS[0], opacity: 0.8 }}
-      link={{ stroke: '#93c5fd', opacity: 0.3 }}
-      nodePadding={20}
-      margin={MARGIN}
-    >
-      <Tooltip contentStyle={TOOLTIP_STYLE} />
-    </RechartsSankey>
-  );
 }
 
-function renderWaterfall({ data, xKey = 'month', yKey = 'value' }) {
+function renderWaterfall({ data, xKey = 'month', yKey = 'value', tickFormatter: tf }) {
   // Transform waterfall data: each bar has invisible base + visible change
   const waterfallBars = data.map((d) => {
     const val = Number(d[yKey]) || 0;
@@ -763,8 +830,8 @@ function renderWaterfall({ data, xKey = 'month', yKey = 'value' }) {
   return (
     <BarChart data={waterfallBars} margin={MARGIN}>
       <CartesianGrid {...GRID_PROPS} />
-      <XAxis dataKey={xKey} tick={TICK_STYLE} angle={-30} textAnchor="end" height={50} />
-      <YAxis tick={TICK_STYLE} />
+      <XAxis dataKey={xKey} tick={TICK_STYLE} angle={-30} textAnchor="end" height={50} tickFormatter={buildTickFormatter(tf?.x)} />
+      <YAxis tick={TICK_STYLE} tickFormatter={buildTickFormatter(tf?.y)} />
       <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v, name) => name === 'base' ? null : v.toLocaleString()} />
       <Bar dataKey="base" stackId="waterfall" fill="transparent" />
       <Bar dataKey="change" stackId="waterfall" radius={[6, 6, 0, 0]}>
@@ -776,13 +843,13 @@ function renderWaterfall({ data, xKey = 'month', yKey = 'value' }) {
   );
 }
 
-function renderPareto({ data, xKey = 'category', yKey = 'revenue' }) {
+function renderPareto({ data, xKey = 'category', yKey = 'revenue', tickFormatter: tf }) {
   const y2Key = data[0]?.cumulative_pct != null ? 'cumulative_pct' : (Object.keys(data[0] || {}).find(k => /cum|pct/i.test(k)) || 'cumulative_pct');
   return (
     <ComposedChart data={data} margin={MARGIN}>
       <CartesianGrid {...GRID_PROPS} />
-      <XAxis dataKey={xKey} tick={TICK_STYLE} angle={-30} textAnchor="end" height={50} />
-      <YAxis yAxisId="left" tick={TICK_STYLE} />
+      <XAxis dataKey={xKey} tick={TICK_STYLE} angle={-30} textAnchor="end" height={50} tickFormatter={buildTickFormatter(tf?.x)} />
+      <YAxis yAxisId="left" tick={TICK_STYLE} tickFormatter={buildTickFormatter(tf?.y)} />
       <YAxis yAxisId="right" orientation="right" tick={TICK_STYLE} unit="%" domain={[0, 100]} />
       <Tooltip contentStyle={TOOLTIP_STYLE} />
       <Legend wrapperStyle={{ fontSize: 11 }} />

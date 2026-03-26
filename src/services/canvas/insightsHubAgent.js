@@ -9,7 +9,7 @@
 import { invokeAiProxy, invokeAiProxyAsync } from '../ai-infra/aiProxyService.js';
 import { getAgentToolMode } from '../agent-core/chatAgentLoop.js';
 import { executeQuery, buildEnrichedSchemaPrompt } from '../sap-erp/sapDataQueryService.js';
-import { getInsightsChartModelConfig } from '../ai-infra/modelConfigService.js';
+// getInsightsChartModelConfig removed — SVG chart generation no longer used
 
 const TODAY = new Date().toISOString().slice(0, 10);
 
@@ -335,7 +335,7 @@ async function buildDataCard(spec, { provider, model, signal, schemaHint }) {
     const parsed = parseWorkerJSON(text);
     if (parsed) {
       console.info(`[data:${spec.id}] Done — ${parsed.metrics?.length || 0} metrics`);
-      return { id: spec.id, title: spec.title, type: spec.type, ...parsed };
+      return { id: spec.id, title: spec.title, type: spec.type, rawQueries: qr, ...parsed };
     }
     // If not parseable and this is last iteration, break
     if (i >= 7) break;
@@ -350,190 +350,20 @@ async function buildDataCard(spec, { provider, model, signal, schemaHint }) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// PHASE 3: CHART WORKER (dedicated — generates all SVGs at once)
+// PHASE 3 (LEGACY — SVG chart generation, no longer used)
+// Charts are now rendered client-side via ChartRenderer/CanvasRenderer.
+// Keeping assembleLayout() which IS still used for narrative + card ordering.
 // ═══════════════════════════════════════════════════════════════════════════════
 
-const SINGLE_CHART_PROMPT = `You generate ONE clean inline SVG chart. Follow the DATA HINTS exactly.
+/* REMOVED: SVG chart generation code (~180 lines)
+   - SINGLE_CHART_PROMPT, analyzeChartData(), buildSingleChart(), buildCharts()
+   - assembleFallback() (HTML generation)
+   Charts now rendered by CanvasRenderer → ChartBlock → ChartRenderer (Recharts)
+*/
 
-## SVG Foundation
-- style="width:100%;max-width:450px;height:auto;" on <svg>
-- font-family="system-ui,-apple-system,sans-serif"
-- Colors: #6366f1 #8b5cf6 #06b6d4 #10b981 #f59e0b #ef4444 #64748b #a855f7 #ec4899 #14b8a6
-- All numeric attributes: plain numbers (x="50" NOT escaped)
+const _LEGACY_SVG_REMOVED = true; // marker for code archaeology
 
-## Chart-Type Specific Rules
-
-### Bar Chart
-- viewBox="0 0 450 300"
-- Plot area: x=60-430, y=20-230. Y-axis labels at x=55 (right-aligned).
-- Bar width: max 35px, gap between bars ≥ 5px. If >8 bars, reduce width.
-- X-axis labels at y=250, rotated -45° with text-anchor="end" if any label >6 chars.
-- Truncate labels to 12 chars + "…" if longer.
-- Show value on top of each bar (font-size 9, centered above bar).
-
-### Line Chart
-- viewBox="0 0 450 300"
-- Plot area: x=60-420, y=30-230.
-- DUAL AXIS if series have different magnitudes (>10x difference): left axis for larger, right axis for smaller.
-- Data points: small circles r=3 on each point. Hover-friendly.
-- Grid lines: light gray (#e2e8f0) horizontal dashed lines at 4-5 intervals.
-- X-axis: show every Nth label so no overlap (if >12 points, show every 3rd).
-- Legend at bottom with colored line samples.
-
-### Donut Chart
-- viewBox="0 0 220 220"
-- Center (110,110), outer r=85, inner r=55.
-- Center text: main metric value (font-size 18, font-weight bold) + label below (font-size 10).
-- Slice labels: percentage on arc if ≥5%, else in legend only.
-- Legend below chart, 2 columns if >4 items.
-
-## Output: ONLY raw SVG
-Start with <svg, end with </svg>. No JSON. No code fences. No text before/after.`;
-
-/**
- * Analyze chart data and generate rendering hints for the LLM.
- * This makes chart generation data-aware without hardcoding specific datasets.
- */
-function analyzeChartData(cd) {
-  const hints = [];
-  const values = cd.values || [];
-  const labels = cd.labels || [];
-  const s2 = cd.series2Values || [];
-
-  if (!values.length) return 'No data available.';
-
-  const max = Math.max(...values);
-  const min = Math.min(...values);
-  const range = max - min;
-
-  // Scale detection
-  if (max >= 1_000_000) hints.push(`Y-axis scale: use M (millions). Max value: ${(max/1e6).toFixed(1)}M, Min: ${(min/1e6).toFixed(1)}M`);
-  else if (max >= 1_000) hints.push(`Y-axis scale: use K (thousands). Max value: ${(max/1e3).toFixed(1)}K, Min: ${(min/1e3).toFixed(1)}K`);
-  else hints.push(`Y-axis range: ${min} to ${max}`);
-
-  // Dual axis detection
-  if (s2.length > 0) {
-    const max2 = Math.max(...s2);
-    const ratio = max / (max2 || 1);
-    if (ratio > 10 || ratio < 0.1) {
-      hints.push(`DUAL AXIS REQUIRED: Series 1 max=${max}, Series 2 max=${max2} (${Math.round(ratio)}x difference). Use LEFT axis for larger series, RIGHT axis for smaller.`);
-    } else {
-      hints.push(`Single axis OK: both series are similar scale (ratio ${ratio.toFixed(1)}x).`);
-    }
-  }
-
-  // Label density
-  if (labels.length > 12) hints.push(`${labels.length} labels — show every ${Math.ceil(labels.length / 8)}th label on X-axis to avoid overlap.`);
-  const maxLabelLen = Math.max(...labels.map(l => String(l).length));
-  if (maxLabelLen > 8) hints.push(`Long labels (max ${maxLabelLen} chars) — rotate -45° and truncate to 10 chars.`);
-
-  // Bar count
-  if (cd.type === 'bar' && labels.length > 8) hints.push(`${labels.length} bars — use narrower bars (max 25px width).`);
-
-  // Donut: calculate percentages
-  if (cd.type === 'donut') {
-    const total = values.reduce((a, b) => a + b, 0);
-    const pcts = values.map((v, i) => `${labels[i]}: ${(v / total * 100).toFixed(1)}%`);
-    hints.push(`Total: ${total >= 1e6 ? (total/1e6).toFixed(1)+'M' : total >= 1e3 ? (total/1e3).toFixed(1)+'K' : total}. Slices: ${pcts.join(', ')}`);
-  }
-
-  // Trend detection for line charts
-  if (cd.type === 'line' && values.length >= 3) {
-    const first3avg = values.slice(0, 3).reduce((a, b) => a + b, 0) / 3;
-    const last3avg = values.slice(-3).reduce((a, b) => a + b, 0) / 3;
-    if (last3avg > first3avg * 1.5) hints.push('Trend: strong upward growth.');
-    else if (last3avg < first3avg * 0.5) hints.push('Trend: declining.');
-    else hints.push('Trend: relatively stable.');
-  }
-
-  return hints.join('\n');
-}
-
-async function buildSingleChart(card, { provider, model, signal }) {
-  const cd = card.chartData;
-  if (!cd || cd.type === 'none') return null;
-
-  const dataHints = analyzeChartData(cd);
-
-  const messages = [
-    { role: 'system', content: SINGLE_CHART_PROMPT },
-    { role: 'user', content: `Chart type: ${cd.type}\nTitle: ${cd.title || card.title}\n\n## DATA HINTS (follow these):\n${dataHints}\n\nLabels: ${JSON.stringify(cd.labels)}\nValues: ${JSON.stringify(cd.values)}${cd.series2Values ? `\nSeries 2 values: ${JSON.stringify(cd.series2Values)}` : ''}` },
-  ];
-
-  try {
-    // Use chart-specific model (default: deepseek-chat — Reasoner wastes tokens on thinking)
-    const chartConfig = getInsightsChartModelConfig();
-    const msg = await callLLM(messages, { model: chartConfig.model, provider: chartConfig.provider, maxTokens: 3000, temperature: 0.2 });
-    let svg = msg?.content || '';
-
-    // Combine all possible content sources
-    const rc = msg?.reasoning_content || '';
-    const allContent = [svg, rc].join('\n');
-    console.info(`[chart:${card.id}] content=${svg.length}, reasoning=${rc.length}, total=${allContent.length} chars`);
-
-    // Search for SVG in ALL content (content + reasoning_content)
-    // DeepSeek Reasoner may put SVG in content mixed with thinking text
-    let source = allContent;
-
-    // Strip code fences (any type)
-    const fence = source.match(/```(?:svg|xml|html|json)?\s*\n?([\s\S]*?)```/);
-    if (fence) source = fence[1].trim();
-
-    // Try JSON wrapper
-    if (!source.includes('<svg') && source.includes('"svg"')) {
-      try { const obj = JSON.parse(source); if (obj?.svg) source = obj.svg; } catch { /* */ }
-    }
-
-    // Extract SVG element from anywhere in the text
-    const svgMatch = source.match(/<svg[\s\S]*?<\/svg>/i);
-    if (svgMatch) {
-      const clean = svgMatch[0]
-        .replace(/\\"/g, '"')
-        .replace(/\\n/g, '\n')
-        .replace(/="\\+(\d[^"]*?)\\+"/g, '="$1"');
-      console.info(`[chart:${card.id}] Generated ${clean.length} chars`);
-      return [card.id, clean];
-    }
-
-    // Last resort: check if content has SVG-like tokens but malformed
-    const hasSvgTokens = source.includes('viewBox') || source.includes('<rect') || source.includes('<circle') || source.includes('<path');
-    console.warn(`[chart:${card.id}] No <svg>...</svg> found (${source.length} chars, hasSvgTokens=${hasSvgTokens})`);
-    if (hasSvgTokens) {
-      // Try wrapping fragments
-      const fragStart = source.indexOf('<');
-      const fragEnd = source.lastIndexOf('>') + 1;
-      if (fragStart >= 0 && fragEnd > fragStart) {
-        const frag = source.slice(fragStart, fragEnd);
-        if (!frag.startsWith('<svg')) {
-          const wrapped = `<svg viewBox="0 0 400 250" style="width:100%;max-width:400px;height:auto;" xmlns="http://www.w3.org/2000/svg">${frag}</svg>`;
-          console.info(`[chart:${card.id}] Wrapped SVG fragments: ${wrapped.length} chars`);
-          return [card.id, wrapped];
-        }
-      }
-    }
-  } catch (err) {
-    console.warn(`[chart:${card.id}] Failed: ${err.message}`);
-  }
-  return null;
-}
-
-async function buildCharts(dataCards, { provider, model, signal }) {
-  const needed = dataCards.filter(c => c.chartData?.type && c.chartData.type !== 'none');
-  if (!needed.length) return {};
-
-  console.info(`[charts] Generating ${needed.length} charts (parallel, max 2)`);
-  const results = await runWithConcurrency(
-    needed.map(card => () => buildSingleChart(card, { provider, model, signal })),
-    2,
-  );
-  const charts = Object.fromEntries(results.filter(Boolean));
-  console.info(`[charts] ${Object.keys(charts).length}/${needed.length} charts generated`);
-  return charts;
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// PHASE 4: ASSEMBLER (composes final HTML dashboard)
-// ═══════════════════════════════════════════════════════════════════════════════
+// ── ASSEMBLER (still used — plans card order + narrative) ────────────────────
 
 const ASSEMBLER_PROMPT = `You are a DASHBOARD LAYOUT PLANNER. Given analysis cards, output a JSON layout.
 
@@ -590,51 +420,6 @@ async function assembleLayout(dataCards, { provider, model, signal }) {
   };
 }
 
-function assembleFallback(dataCards, charts) {
-  const cards = dataCards.map(c => {
-    // If worker returned raw HTML, use it directly
-    if (c._rawHtml) {
-      return `<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:20px;">
-        <h3 style="font:600 15px system-ui;color:#1e293b;margin:0 0 12px;">${c.title}</h3>
-        ${c._rawHtml}${charts[c.id] || ''}
-      </div>`;
-    }
-
-    const metricsHtml = (c.metrics || []).map(m =>
-      `<div style="flex:1;min-width:120px;"><div style="font-size:11px;color:#64748b;">${m.label}</div><div style="font-size:20px;font-weight:700;color:#1e293b;">${m.value}</div>${m.detail ? `<div style="font-size:10px;color:#94a3b8;">${m.detail}</div>` : ''}</div>`
-    ).join('');
-
-    const chartHtml = charts[c.id] || '';
-
-    const tableHtml = c.tableData ? `<table style="width:100%;border-collapse:collapse;font-size:11px;margin-top:12px;">
-      <tr>${c.tableData.columns.map(col => `<th style="text-align:left;padding:6px;background:#f1f5f9;font-weight:600;color:#475569;">${col}</th>`).join('')}</tr>
-      ${c.tableData.rows.map(row => `<tr>${row.map(cell => `<td style="padding:4px 6px;border-bottom:1px solid #f1f5f9;">${cell}</td>`).join('')}</tr>`).join('')}
-    </table>` : '';
-
-    const analysisHtml = c.analysis ? `<p style="font-size:12px;color:#475569;margin-top:12px;padding:8px;background:#f0fdf4;border-left:3px solid #10b981;border-radius:4px;">${c.analysis}</p>` : '';
-
-    return `<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:20px;${c.type === 'kpi' ? 'grid-column:span 2;' : ''}">
-      <h3 style="font:600 15px system-ui;color:#1e293b;margin:0 0 12px;">${c.title}</h3>
-      <div style="display:flex;gap:16px;flex-wrap:wrap;">${metricsHtml}</div>
-      ${chartHtml}${tableHtml}${analysisHtml}
-    </div>`;
-  }).join('\n');
-
-  return `<!DOCTYPE html><html><head><style>
-*{margin:0;padding:0;box-sizing:border-box}
-body{font-family:system-ui,-apple-system,sans-serif;background:#f8fafc;color:#1e293b;padding:24px;max-width:1200px;margin:0 auto}
-h1{font-size:22px;font-weight:700}
-.sub{font-size:12px;color:#64748b;margin-bottom:20px}
-.grid{display:grid;grid-template-columns:repeat(2,1fr);gap:16px}
-@media(max-width:768px){.grid{grid-template-columns:1fr}}
-svg{max-width:100%;height:auto}
-</style></head><body>
-<h1>Insights Dashboard</h1>
-<p class="sub">Generated by AI Data Analyst · ${TODAY}</p>
-<div class="grid">${cards}</div>
-</body></html>`;
-}
-
 // ═══════════════════════════════════════════════════════════════════════════════
 // PHASE 5: REVIEWER (Kimi K2.5) — kept for future use
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -660,6 +445,173 @@ async function runWithConcurrency(tasks, limit) {
   }
   return Promise.all(results);
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// BLOCK BUILDER — Converts data worker output → CanvasRenderer block layout
+// Pure JS, no LLM. Deterministic transformation.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Convert InsightsChartCard format → ChartRenderer format.
+ * InsightsChartCard: { type, title, labels, values, series2Values, series1Name, series2Name }
+ * ChartRenderer:     { type, data, xKey, yKey, series, compatibleTypes, tickFormatter }
+ */
+function convertChartData(cd, fallbackTitle) {
+  if (!cd || cd.type === 'none') return null;
+
+  const labels = cd.labels || [];
+  const values = cd.values || [];
+  const hasSeries2 = cd.series2Values && cd.series2Values.length > 0;
+
+  const data = labels.map((label, i) => {
+    const row = { name: String(label), value: Number(values[i]) || 0 };
+    if (hasSeries2) row.series2 = Number(cd.series2Values[i]) || 0;
+    return row;
+  });
+
+  // Map chart type + determine compatible switches
+  let type = cd.type;
+  let compatibleTypes;
+  let series;
+
+  if (type === 'donut') {
+    compatibleTypes = ['donut', 'pie', 'bar'];
+  } else if (type === 'line') {
+    compatibleTypes = ['line', 'area', 'bar'];
+    if (hasSeries2) series = ['value', 'series2'];
+  } else {
+    type = 'bar';
+    compatibleTypes = ['bar', 'horizontal_bar', 'donut'];
+  }
+
+  return {
+    type,
+    data,
+    xKey: 'name',
+    yKey: 'value',
+    series,
+    title: cd.title || fallbackTitle,
+    compatibleTypes,
+    tickFormatter: { y: 'compact' },
+  };
+}
+
+/**
+ * Build a CanvasRenderer-compatible block layout from data worker cards + assembler layout.
+ */
+function buildBlockLayout(dataCards, layout) {
+  const blocks = [];
+  let row = 1;
+
+  // ── Narrative block (executive summary from assembler) ──
+  if (layout?.narrative) {
+    blocks.push({
+      id: 'narrative', type: 'narrative',
+      col: 1, row, colSpan: 12, rowSpan: 1,
+      props: { title: 'Executive Summary', text: layout.narrative },
+    });
+    row++;
+  }
+
+  // ── KPI card → metric blocks across top row ──
+  const kpiCard = dataCards.find(c => c.type === 'kpi');
+  if (kpiCard?.metrics?.length) {
+    const count = Math.min(kpiCard.metrics.length, 6); // max 6 metrics per row
+    const colSpan = Math.max(2, Math.floor(12 / count));
+    for (let i = 0; i < count; i++) {
+      const m = kpiCard.metrics[i];
+      blocks.push({
+        id: `metric_${i}`, type: 'metric',
+        col: 1 + i * colSpan, row, colSpan, rowSpan: 1,
+        props: { label: m.label, value: m.value, subtitle: m.detail },
+      });
+    }
+    row++;
+
+    // If KPI card has analysis text, add as a small alert/info block
+    if (kpiCard.analysis && kpiCard.analysis.length > 30) {
+      blocks.push({
+        id: 'kpi_insight', type: 'alert',
+        col: 1, row, colSpan: 12, rowSpan: 1,
+        props: { severity: 'info', title: 'Key Insight', description: kpiCard.analysis },
+      });
+      row++;
+    }
+  }
+
+  // ── Remaining cards → chart, table, or narrative blocks ──
+  const sections = layout?.sections || dataCards.map((c, i) => ({ cardId: c.id, width: i === 0 ? 'full' : 'half' }));
+  const cardMap = Object.fromEntries(dataCards.map(c => [c.id, c]));
+  const placed = new Set(kpiCard ? [kpiCard.id] : []);
+
+  let col = 1;
+  for (const section of sections) {
+    const card = cardMap[section.cardId];
+    if (!card || placed.has(card.id)) continue;
+    placed.add(card.id);
+
+    const isFull = section.width === 'full';
+    const span = isFull ? 12 : 6;
+
+    // Wrap to next row if no space
+    if (col + span - 1 > 12) { row += 2; col = 1; }
+
+    const hasChart = card.chartData?.type && card.chartData.type !== 'none';
+    const hasTable = card.tableData?.columns?.length > 0;
+
+    if (hasChart) {
+      const chart = convertChartData(card.chartData, card.title);
+      if (chart) {
+        blocks.push({
+          id: `chart_${card.id}`, type: 'chart',
+          col, row, colSpan: span, rowSpan: 2,
+          props: { title: card.title, height: 280, chart, cardId: card.id },
+        });
+      }
+    } else if (hasTable) {
+      blocks.push({
+        id: `table_${card.id}`, type: 'table',
+        col, row, colSpan: span, rowSpan: 2,
+        props: { title: card.title, columns: card.tableData.columns, rows: card.tableData.rows },
+      });
+    } else if (card.metrics?.length) {
+      // Card with only metrics (no chart/table) → KPI row
+      blocks.push({
+        id: `kpirow_${card.id}`, type: 'kpi_row',
+        col, row, colSpan: span, rowSpan: 1,
+        props: { kpis: card.metrics.map(m => ({ label: m.label, value: m.value, subtitle: m.detail })) },
+      });
+    }
+
+    col += span;
+    if (col > 12) { row += 2; col = 1; }
+  }
+
+  // ── Collect analysis texts into findings block ──
+  const findings = dataCards
+    .filter(c => c.analysis && c.analysis.length > 40 && c.id !== kpiCard?.id)
+    .map(c => c.analysis);
+  if (findings.length >= 2) {
+    if (col !== 1) { row += 2; col = 1; }
+    blocks.push({
+      id: 'findings', type: 'findings',
+      col: 1, row, colSpan: 12, rowSpan: 2,
+      props: { title: 'Key Findings', findings },
+    });
+    row += 2;
+  }
+
+  return {
+    title: 'Insights Dashboard',
+    subtitle: `${dataCards.length} analysis cards · ${blocks.length} blocks · ${TODAY}`,
+    thinking: '',
+    blocks,
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// MAIN ORCHESTRATOR
+// ═══════════════════════════════════════════════════════════════════════════════
 
 export async function runInsightsAgent({ provider, model, onProgress, userId, signal } = {}) {
   const t0 = Date.now();
@@ -693,14 +645,22 @@ export async function runInsightsAgent({ provider, model, onProgress, userId, si
   // ── Phase 3: Layout assembly (fast — just JSON ordering + narrative) ──
   onProgress?.('Phase 3: Assembling layout...');
   const layout = await assembleLayout(validCards, { provider, model, signal });
-  console.info(`[insights] Done! ${validCards.length} cards, ${((Date.now() - t0) / 1000).toFixed(0)}s total`);
+
+  // ── Phase 4: Block builder (deterministic — converts to CanvasRenderer format) ──
+  onProgress?.('Phase 4: Building block layout...');
+  const blockLayout = buildBlockLayout(validCards, layout);
+  console.info(`[insights] Done! ${validCards.length} cards → ${blockLayout.blocks.length} blocks, ${((Date.now() - t0) / 1000).toFixed(0)}s total`);
 
   return {
     dataCards: validCards,
     layout,
+    blockLayout,
     suggestions: [],
     title: 'Insights Dashboard',
-    subtitle: `${validCards.length} analysis cards · ${TODAY}`,
-    thinking: `Planned ${specs.length} cards → ${validCards.length} data collected → layout assembled`,
+    subtitle: blockLayout.subtitle,
+    thinking: `Planned ${specs.length} cards → ${validCards.length} data → ${blockLayout.blocks.length} blocks`,
   };
 }
+
+// ── Exports for per-card regeneration ────────────────────────────────────────
+export { buildDataCard, convertChartData, buildBlockLayout };

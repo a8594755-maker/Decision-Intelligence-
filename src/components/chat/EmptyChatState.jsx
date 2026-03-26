@@ -8,10 +8,10 @@ export default function EmptyChatState({ quickPrompts = [], onSelectPrompt, vari
         <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-[20px] bg-slate-900 text-white shadow-sm dark:bg-slate-100 dark:text-slate-900">
           <Bot className="h-7 w-7" />
         </div>
-        <h2 className="text-3xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">
+        <h2 className="text-3xl font-semibold tracking-tight text-[var(--text-primary)]">
           What should your worker handle?
         </h2>
-        <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-500 dark:text-slate-400">
+        <p className="mt-3 max-w-2xl text-sm leading-6 text-[var(--text-muted)]">
           Describe an analysis, upload a dataset, ask for a report, or let the digital worker break a task into steps and run it.
         </p>
 
@@ -30,8 +30,8 @@ export default function EmptyChatState({ quickPrompts = [], onSelectPrompt, vari
                   onClick={() => onSelectPrompt?.(prompt.prompt)}
                   className="rounded-[22px] border border-black/8 bg-white/90 px-5 py-4 text-left shadow-[0_20px_50px_rgba(15,23,42,0.06)] transition hover:-translate-y-0.5 hover:border-slate-300 hover:bg-white dark:border-white/10 dark:bg-[#171717] dark:hover:border-slate-600"
                 >
-                  <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">{prompt.label}</div>
-                  <div className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-400">
+                  <div className="text-sm font-semibold text-[var(--text-primary)]">{prompt.label}</div>
+                  <div className="mt-2 text-xs leading-5 text-[var(--text-muted)]">
                     {prompt.prompt}
                   </div>
                 </button>
@@ -48,8 +48,8 @@ export default function EmptyChatState({ quickPrompts = [], onSelectPrompt, vari
       <div className="w-12 h-12 rounded-2xl bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-300 flex items-center justify-center mb-3">
         <Bot className="w-6 h-6" />
       </div>
-      <h2 className="text-base font-medium text-slate-800 dark:text-slate-100">How can I help today?</h2>
-      <p className="text-sm text-slate-500 dark:text-slate-400 mt-1 max-w-lg">
+      <h2 className="text-base font-medium text-[var(--text-primary)]">How can I help today?</h2>
+      <p className="text-sm text-[var(--text-muted)] mt-1 max-w-lg">
         Upload data with the paperclip, assign a task or ask a question, and review deliverables in Canvas.
       </p>
 
@@ -65,7 +65,7 @@ export default function EmptyChatState({ quickPrompts = [], onSelectPrompt, vari
                 key={prompt.label}
                 type="button"
                 onClick={() => onSelectPrompt?.(prompt.prompt)}
-                className="rounded-full border border-slate-200 dark:border-slate-700 px-3 py-1.5 text-xs text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                className="rounded-full border border-[var(--border-default)] px-3 py-1.5 text-xs text-[var(--text-secondary)] hover:bg-[var(--accent-hover)] transition-colors"
               >
                 {prompt.label}
               </button>

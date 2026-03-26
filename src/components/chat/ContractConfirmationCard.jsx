@@ -33,20 +33,20 @@ export default function ContractConfirmationCard({ payload, onConfirm }) {
   if (!payload || questions.length === 0) return null;
 
   return (
-    <Card className="w-full border border-amber-200 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-900/10">
+    <Card category="system" className="w-full border border-amber-200 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-900/10">
       <div className="space-y-3">
         <div className="flex items-center justify-between">
           <h4 className="text-sm font-semibold">Contract Confirmation</h4>
           <Badge type="warning">Low confidence</Badge>
         </div>
 
-        <p className="text-xs text-slate-600 dark:text-slate-300">
+        <p className="text-xs text-[var(--text-secondary)]">
           Confirm inferred roles before running execution. Only ambiguous sheets are shown.
         </p>
 
         <div className="space-y-2">
           {questions.map((question) => (
-            <div key={question.sheet_name} className="rounded-lg border border-slate-200 dark:border-slate-700 p-2">
+            <div key={question.sheet_name} className="rounded-lg border border-[var(--border-default)] p-2">
               <div className="flex items-center justify-between">
                 <p className="text-xs font-medium">{question.sheet_name}</p>
                 <span className="text-xs text-slate-500">
@@ -73,12 +73,12 @@ export default function ContractConfirmationCard({ payload, onConfirm }) {
 
               {(question.missing_required_fields || []).length > 0 && (
                 <div className="mt-3 space-y-2">
-                  <p className="text-[11px] font-medium text-slate-600 dark:text-slate-300">
+                  <p className="text-[11px] font-medium text-[var(--text-secondary)]">
                     Mapping Repair (missing required fields)
                   </p>
                   {(question.missing_required_fields || []).map((field) => (
                     <div key={`${question.sheet_name}_${field}`} className="grid grid-cols-1 md:grid-cols-2 gap-1 items-center">
-                      <span className="text-[11px] text-slate-600 dark:text-slate-300">{field}</span>
+                      <span className="text-[11px] text-[var(--text-secondary)]">{field}</span>
                       <select
                         className="text-xs px-2 py-1 rounded border border-slate-300 dark:border-slate-600 bg-transparent"
                         value={mappingSelections?.[question.sheet_name]?.[field] || ''}

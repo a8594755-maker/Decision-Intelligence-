@@ -82,7 +82,7 @@ const OptionCard = ({ option, evalResult, isRecommended, onApply }) => {
       className={`rounded-lg border p-4 transition-colors ${
         isRecommended
           ? 'border-blue-400 bg-blue-50/50 dark:border-blue-500/50 dark:bg-blue-900/10'
-          : 'border-slate-200 bg-white dark:border-slate-700/60 dark:bg-slate-800/40'
+          : 'border-slate-200 bg-white dark:border-[var(--border-default)] dark:bg-slate-800/40'
       }`}
     >
       {/* Header */}
@@ -93,7 +93,7 @@ const OptionCard = ({ option, evalResult, isRecommended, onApply }) => {
           </span>
           <div className="min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-sm font-medium text-slate-800 dark:text-slate-200">
+              <span className="text-sm font-medium text-[var(--text-primary)]">
                 {option.title}
               </span>
               {isRecommended && (
@@ -151,10 +151,10 @@ const OptionCard = ({ option, evalResult, isRecommended, onApply }) => {
       </button>
 
       {expanded && (
-        <div className="mt-2 space-y-2 text-xs text-slate-600 dark:text-slate-400">
+        <div className="mt-2 space-y-2 text-xs text-[var(--text-secondary)]">
           {Array.isArray(option.why) && option.why.length > 0 && (
             <div>
-              <div className="font-semibold text-slate-700 dark:text-slate-300 mb-1">
+              <div className="font-semibold text-[var(--text-secondary)] mb-1">
                 Why:
               </div>
               <ul className="space-y-0.5 list-disc list-inside">
@@ -166,7 +166,7 @@ const OptionCard = ({ option, evalResult, isRecommended, onApply }) => {
           )}
           {evidenceRefs.length > 0 && (
             <div>
-              <div className="font-semibold text-slate-700 dark:text-slate-300 mb-1">
+              <div className="font-semibold text-[var(--text-secondary)] mb-1">
                 Evidence refs:
               </div>
               <ul className="space-y-0.5">
@@ -178,7 +178,7 @@ const OptionCard = ({ option, evalResult, isRecommended, onApply }) => {
           )}
           {notes.length > 0 && (
             <div>
-              <div className="font-semibold text-slate-700 dark:text-slate-300 mb-1">
+              <div className="font-semibold text-[var(--text-secondary)] mb-1">
                 Notes:
               </div>
               <ul className="space-y-0.5 list-disc list-inside">
@@ -250,10 +250,10 @@ export default function NegotiationPanel({
       <div className="flex items-center gap-2">
         {triggerIcon}
         <div className="min-w-0">
-          <div className="text-sm font-semibold text-slate-800 dark:text-slate-200">
+          <div className="text-sm font-semibold text-[var(--text-primary)]">
             Resolve / Improve Plan
           </div>
-          <div className="text-xs text-slate-500 dark:text-slate-400">
+          <div className="text-xs text-[var(--text-muted)]">
             {triggerLabel}
             {planRunId ? ` · Run #${planRunId}` : ''}
           </div>
@@ -280,7 +280,7 @@ export default function NegotiationPanel({
       {negotiationOptions && optionDefs.length > 0 && (
         <div className="space-y-3">
           <div className="flex items-center justify-between">
-            <div className="text-xs font-semibold text-slate-600 dark:text-slate-300 uppercase tracking-wide">
+            <div className="text-xs font-semibold text-[var(--text-secondary)] uppercase tracking-wide">
               Candidate Options
               {rankedOptions.length > 0 && negotiationEval?.ranking_method && (
                 <span className="ml-2 normal-case font-normal text-slate-400">
@@ -332,8 +332,8 @@ export default function NegotiationPanel({
           </button>
 
           {showExplain && (
-            <div className="mt-3 space-y-2 text-xs text-slate-700 dark:text-slate-300">
-              <div className="font-semibold text-slate-800 dark:text-slate-200">
+            <div className="mt-3 space-y-2 text-xs text-[var(--text-secondary)]">
+              <div className="font-semibold text-[var(--text-primary)]">
                 Summary
               </div>
               <p className="leading-relaxed">{negotiationReport.summary}</p>
@@ -341,7 +341,7 @@ export default function NegotiationPanel({
               {Array.isArray(negotiationReport.bullet_reasons) &&
                 negotiationReport.bullet_reasons.length > 0 && (
                   <div>
-                    <div className="font-semibold text-slate-800 dark:text-slate-200 mb-1">
+                    <div className="font-semibold text-[var(--text-primary)] mb-1">
                       Key points
                     </div>
                     <ul className="space-y-1 list-disc list-inside">
@@ -381,7 +381,7 @@ export default function NegotiationPanel({
 
       {/* ---- Empty state (generated but no options) ---- */}
       {negotiationOptions && optionDefs.length === 0 && (
-        <div className="text-xs text-slate-500 dark:text-slate-400 italic">
+        <div className="text-xs text-[var(--text-muted)] italic">
           No relaxation options could be generated for this evidence set.
         </div>
       )}

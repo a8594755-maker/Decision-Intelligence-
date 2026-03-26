@@ -21,7 +21,7 @@ import useEventBus from '../../hooks/useEventBus';
 // ── Status styles & icons ──────────────────────────────────────────────────
 
 const STATUS_STYLES = {
-  pending:     { bg: 'bg-slate-100 dark:bg-slate-800', text: 'text-slate-500', dot: 'bg-slate-400', label: 'Pending' },
+  pending:     { bg: 'bg-[var(--surface-subtle)]', text: 'text-slate-500', dot: 'bg-slate-400', label: 'Pending' },
   running:     { bg: 'bg-blue-50 dark:bg-blue-900/20', text: 'text-blue-600', dot: 'bg-blue-500', label: 'Running' },
   succeeded:   { bg: 'bg-emerald-50 dark:bg-emerald-900/20', text: 'text-emerald-600', dot: 'bg-emerald-500', label: 'Done' },
   failed:      { bg: 'bg-red-50 dark:bg-red-900/20', text: 'text-red-600', dot: 'bg-red-500', label: 'Failed' },
@@ -74,7 +74,7 @@ function CopyButton({ text }) {
   return (
     <button
       onClick={handleCopy}
-      className="p-1 rounded hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
+      className="p-1 rounded hover:bg-[var(--accent-hover)] transition-colors"
       title="Copy"
     >
       {copied ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5 text-slate-400" />}
@@ -163,7 +163,7 @@ function StepDetailCard({ step, stepEvent, index, isActive }) {
 
   return (
     <div className={`border rounded-xl overflow-hidden transition-all ${
-      isActive ? 'border-blue-300 dark:border-blue-700 shadow-md shadow-blue-100 dark:shadow-blue-900/20' : 'border-slate-200 dark:border-slate-700'
+      isActive ? 'border-blue-300 dark:border-blue-700 shadow-md shadow-blue-100 dark:shadow-blue-900/20' : 'border-[var(--border-default)]'
     }`}>
       {/* Header */}
       <button
@@ -184,7 +184,7 @@ function StepDetailCard({ step, stepEvent, index, isActive }) {
         {/* Name + meta */}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <span className="text-sm font-medium text-slate-800 dark:text-slate-200 truncate">
+            <span className="text-sm font-medium text-[var(--text-primary)] truncate">
               {step.name}
             </span>
             <span className={`text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded ${style.bg} ${style.text}`}>
@@ -193,12 +193,12 @@ function StepDetailCard({ step, stepEvent, index, isActive }) {
           </div>
           <div className="flex items-center gap-3 mt-0.5">
             {step.workflow_type && (
-              <span className="text-[10px] text-slate-500 dark:text-slate-400 font-mono">
+              <span className="text-[10px] text-[var(--text-muted)] font-mono">
                 {step.workflow_type}
               </span>
             )}
             {durationMs !== null && (
-              <span className="text-[10px] text-slate-500 dark:text-slate-400 flex items-center gap-0.5">
+              <span className="text-[10px] text-[var(--text-muted)] flex items-center gap-0.5">
                 <Clock className="w-2.5 h-2.5" />
                 {formatDuration(durationMs)}
               </span>
@@ -225,7 +225,7 @@ function StepDetailCard({ step, stepEvent, index, isActive }) {
 
       {/* Expandable detail body */}
       {isOpen && (
-        <div className="px-4 pb-4 space-y-3 border-t border-slate-100 dark:border-slate-700/50 bg-white dark:bg-slate-900/30">
+        <div className="px-4 pb-4 space-y-3 border-t border-slate-100 dark:border-slate-700/50 bg-[var(--surface-card)]/30">
           {/* Running indicator */}
           {step.status === 'running' && (
             <div className="flex items-center gap-2 py-2 text-blue-600">
@@ -239,7 +239,7 @@ function StepDetailCard({ step, stepEvent, index, isActive }) {
 
           {/* Summary */}
           {details.summary && (
-            <div className="text-sm text-slate-700 dark:text-slate-300 bg-slate-50 dark:bg-slate-800/50 rounded-lg p-3">
+            <div className="text-sm text-[var(--text-secondary)] bg-slate-50 dark:bg-slate-800/50 rounded-lg p-3">
               {details.summary}
             </div>
           )}
@@ -289,12 +289,12 @@ function StepDetailCard({ step, stepEvent, index, isActive }) {
           {/* Execution Output (stdout/stderr) */}
           {(details.stdout || details.stderr) && (
             <div>
-              <div className="flex items-center gap-1.5 text-xs font-medium text-slate-600 dark:text-slate-400 mb-1.5">
+              <div className="flex items-center gap-1.5 text-xs font-medium text-[var(--text-secondary)] mb-1.5">
                 <Terminal className="w-3.5 h-3.5" />
                 Output
               </div>
               {details.stdout && (
-                <pre className="text-xs font-mono bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded-lg p-3 max-h-40 overflow-auto">
+                <pre className="text-xs font-mono bg-[var(--surface-subtle)] text-[var(--text-secondary)] rounded-lg p-3 max-h-40 overflow-auto">
                   {details.stdout.slice(0, 2000)}
                 </pre>
               )}
@@ -336,7 +336,7 @@ function StepDetailCard({ step, stepEvent, index, isActive }) {
                 </span>
               </div>
               {details.suggestions?.length > 0 && (
-                <ul className="text-xs text-slate-600 dark:text-slate-400 mt-2 space-y-1 ml-6 list-disc">
+                <ul className="text-xs text-[var(--text-secondary)] mt-2 space-y-1 ml-6 list-disc">
                   {details.suggestions.map((s, i) => <li key={i}>{s}</li>)}
                 </ul>
               )}
@@ -376,16 +376,16 @@ function StepDetailCard({ step, stepEvent, index, isActive }) {
 
           {/* Self-Healing */}
           {hasHealing && (
-            <div className="rounded-lg p-3 bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800">
+            <div className="rounded-lg p-3 bg-[var(--accent-active)] border border-indigo-200 dark:border-indigo-800">
               <div className="flex items-center gap-1.5 text-xs font-medium text-indigo-700 dark:text-indigo-400 mb-1">
                 <Zap className="w-3.5 h-3.5" />
                 Self-Healing
               </div>
-              <p className="text-xs text-indigo-600 dark:text-indigo-300">
+              <p className="text-xs text-[var(--brand-600)] dark:text-indigo-300">
                 Strategy: {details.healing_strategy || step._healing_strategy?.healingStrategy || '—'}
               </p>
               {(details.healing_reasoning || step._healing_strategy?.reasoning) && (
-                <p className="text-xs text-indigo-500 dark:text-indigo-400 mt-1">
+                <p className="text-xs text-[var(--brand-500)] dark:text-indigo-400 mt-1">
                   {details.healing_reasoning || step._healing_strategy?.reasoning}
                 </p>
               )}
@@ -422,7 +422,7 @@ function SummaryBar({ steps, events }) {
   return (
     <div className="space-y-2">
       {/* Progress bar */}
-      <div className="h-2 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
+      <div className="h-2 bg-[var(--surface-subtle)] rounded-full overflow-hidden">
         <div
           className="h-full bg-gradient-to-r from-blue-500 to-emerald-500 transition-all duration-500 ease-out rounded-full"
           style={{ width: `${pct}%` }}
@@ -518,12 +518,12 @@ export default function AgentExecutionPanel({ loopState, stepEvents = [], taskTi
   const isComplete = steps.length > 0 && steps.every(s => s.status === 'succeeded' || s.status === 'skipped');
 
   return (
-    <div className="h-full flex flex-col bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-700">
+    <div className="h-full flex flex-col bg-[var(--surface-card)] border-l border-[var(--border-default)]">
       {/* Header */}
-      <div className="flex items-center gap-3 px-4 py-3 border-b border-slate-200 dark:border-slate-700 flex-shrink-0">
+      <div className="flex items-center gap-3 px-4 py-3 border-b border-[var(--border-default)] flex-shrink-0">
         <Activity className="w-5 h-5 text-blue-600" />
         <div className="flex-1 min-w-0">
-          <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-200 truncate">
+          <h3 className="text-sm font-semibold text-[var(--text-primary)] truncate">
             {taskTitle || 'Agent Execution'}
           </h3>
           <p className="text-[10px] text-slate-500 flex items-center gap-1">
@@ -538,7 +538,7 @@ export default function AgentExecutionPanel({ loopState, stepEvents = [], taskTi
         {onClose && (
           <button
             onClick={onClose}
-            className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+            className="p-1.5 rounded-lg hover:bg-[var(--accent-hover)] transition-colors"
           >
             <X className="w-4 h-4 text-slate-400" />
           </button>
@@ -547,7 +547,7 @@ export default function AgentExecutionPanel({ loopState, stepEvents = [], taskTi
 
       {/* Summary bar */}
       {steps.length > 0 && (
-        <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-800 flex-shrink-0">
+        <div className="px-4 py-3 border-b border-[var(--border-default)] flex-shrink-0">
           <SummaryBar steps={steps} events={stepEvents} />
         </div>
       )}
@@ -574,7 +574,7 @@ export default function AgentExecutionPanel({ loopState, stepEvents = [], taskTi
       </div>
 
       {/* Footer: completion or live indicator */}
-      <div className="px-4 py-2 border-t border-slate-100 dark:border-slate-800 flex-shrink-0">
+      <div className="px-4 py-2 border-t border-[var(--border-default)] flex-shrink-0">
         {isComplete ? (
           <div className="flex items-center gap-2 text-emerald-600">
             <CheckCircle2 className="w-4 h-4" />

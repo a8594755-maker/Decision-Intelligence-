@@ -82,10 +82,11 @@ function LineChartCard({ chartData }) {
 }
 
 function DonutChartCard({ chartData }) {
-  const total = (chartData.values || []).reduce((a, b) => a + b, 0);
+  const nums = (chartData.values || []).map(v => Number(v) || 0);
+  const total = nums.reduce((a, b) => a + b, 0);
   const data = (chartData.labels || []).map((label, i) => ({
-    name: label,
-    value: chartData.values[i] || 0,
+    name: String(label),
+    value: nums[i],
   }));
 
   return (

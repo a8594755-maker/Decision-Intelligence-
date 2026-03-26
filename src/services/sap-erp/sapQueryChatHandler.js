@@ -158,7 +158,7 @@ DuckDB SQL dialect notes:
 - CTEs (WITH ... AS) supported
 - Window functions supported
 - DATE_TRUNC, EXTRACT, INTERVAL supported
-- PERCENTILE_CONT, MEDIAN, MODE, QUANTILE_DISC supported
+- QUANTILE_CONT(col, pct) for percentiles (NOT PERCENTILE_CONT), MEDIAN, MODE supported
 - STRING_AGG, CONCAT supported
 - LATERAL JOIN does NOT support aggregate functions — use CTE + GROUP BY instead
 

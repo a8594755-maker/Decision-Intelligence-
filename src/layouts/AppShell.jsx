@@ -19,7 +19,7 @@ export default function AppShell() {
         style={{ backgroundColor: 'var(--surface-base)' }}
       >
         <div className="flex flex-col items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-indigo-600 animate-pulse" />
+          <div className="w-8 h-8 rounded-lg bg-[var(--brand-600)] animate-pulse" />
           <span className="text-sm" style={{ color: 'var(--text-muted)' }}>Loading...</span>
         </div>
       </div>
@@ -50,7 +50,7 @@ export default function AppShell() {
                 ? 'bg-red-600'
                 : n.type === 'success'
                   ? 'bg-emerald-600'
-                  : 'bg-indigo-600'
+                  : 'bg-[var(--brand-600)]'
             }`}
             style={{ boxShadow: 'var(--shadow-float)' }}
           >
@@ -68,7 +68,7 @@ export default function AppShell() {
           <Suspense
             fallback={
               <div className="h-full flex items-center justify-center">
-                <div className="w-8 h-8 rounded-lg bg-indigo-600 animate-pulse" />
+                <div className="w-8 h-8 rounded-lg bg-[var(--brand-600)] animate-pulse" />
               </div>
             }
           >

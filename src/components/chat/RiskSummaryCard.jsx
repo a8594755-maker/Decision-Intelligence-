@@ -8,13 +8,13 @@ function renderTableRows(rows = []) {
   if (!rows.length) {
     return (
       <tr>
-        <td className="px-2 py-1 text-slate-500" colSpan={5}>No rows</td>
+        <td className="px-2 py-1 text-[var(--text-muted)]" colSpan={5}>No rows</td>
       </tr>
     );
   }
 
   return rows.map((row) => (
-    <tr key={`${row.entity_type}-${row.entity_id}`} className="border-t border-slate-200 dark:border-slate-700">
+    <tr key={`${row.entity_type}-${row.entity_id}`} className="border-t border-[var(--border-default)]">
       <td className="px-2 py-1">
         {row.entity_type === 'supplier'
           ? (row.supplier || row.entity_id)
@@ -36,7 +36,7 @@ export default function RiskSummaryCard({ payload }) {
   const topMaterials = Array.isArray(payload.top_material_risks) ? payload.top_material_risks : [];
 
   return (
-    <Card className="w-full border border-rose-200 dark:border-rose-800 bg-rose-50/60 dark:bg-rose-900/10">
+    <Card category="risk" className="w-full border border-rose-200 dark:border-rose-800 bg-rose-50/60 dark:bg-rose-900/10">
       <div className="space-y-3">
         <div className="flex items-start justify-between gap-3">
           <div>
@@ -44,7 +44,7 @@ export default function RiskSummaryCard({ payload }) {
               <AlertTriangle className="w-4 h-4 text-rose-600" />
               Risk Summary
             </h4>
-            <p className="text-xs text-slate-600 dark:text-slate-300">
+            <p className="text-xs text-[var(--text-secondary)]">
               Run #{payload.run_id || 'N/A'} | {payload.workflow || 'workflow_B_risk_exceptions'}
             </p>
           </div>
@@ -57,9 +57,9 @@ export default function RiskSummaryCard({ payload }) {
 
         <div className="grid gap-3 md:grid-cols-2">
           <div className="overflow-x-auto">
-            <p className="text-xs font-medium text-slate-700 dark:text-slate-200 mb-1">Top Supplier Risks</p>
-            <table className="w-full text-xs border border-slate-200 dark:border-slate-700">
-              <thead className="bg-slate-100 dark:bg-slate-700">
+            <p className="text-xs font-medium text-[var(--text-secondary)] mb-1">Top Supplier Risks</p>
+            <table className="w-full text-xs border border-[var(--border-default)]">
+              <thead className="bg-[var(--surface-subtle)]">
                 <tr>
                   <th className="px-2 py-1 text-left">Supplier</th>
                   <th className="px-2 py-1 text-left">Score</th>
@@ -73,9 +73,9 @@ export default function RiskSummaryCard({ payload }) {
           </div>
 
           <div className="overflow-x-auto">
-            <p className="text-xs font-medium text-slate-700 dark:text-slate-200 mb-1">Top Material Risks</p>
-            <table className="w-full text-xs border border-slate-200 dark:border-slate-700">
-              <thead className="bg-slate-100 dark:bg-slate-700">
+            <p className="text-xs font-medium text-[var(--text-secondary)] mb-1">Top Material Risks</p>
+            <table className="w-full text-xs border border-[var(--border-default)]">
+              <thead className="bg-[var(--surface-subtle)]">
                 <tr>
                   <th className="px-2 py-1 text-left">Material</th>
                   <th className="px-2 py-1 text-left">Score</th>

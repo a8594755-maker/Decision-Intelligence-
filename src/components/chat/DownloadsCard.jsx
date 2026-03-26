@@ -39,7 +39,7 @@ export default function DownloadsCard({ payload }) {
   const files = Array.isArray(payload.files) ? payload.files : [];
 
   return (
-    <Card className="w-full border border-slate-200 dark:border-slate-700">
+    <Card category="system" className="w-full border border-[var(--border-default)]">
       <div className="space-y-3">
         <h4 className="text-sm font-semibold">Downloads Card</h4>
         <div className="flex flex-wrap gap-2">

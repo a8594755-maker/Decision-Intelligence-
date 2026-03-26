@@ -92,7 +92,7 @@ function ChatComposer({
         className={`flex min-w-0 items-center gap-3 rounded-2xl border px-3 py-2 ${
           isAIEmployeeVariant
             ? 'bg-white/96 shadow-sm dark:bg-slate-900/90'
-            : 'bg-slate-50 dark:bg-slate-900/60'
+            : 'bg-[var(--surface-base)]/60'
         }`}
         style={{ borderColor: 'rgba(148, 163, 184, 0.28)' }}
       >
@@ -100,16 +100,16 @@ function ChatComposer({
           <Icon className="h-4.5 w-4.5" />
         </div>
         <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">
+          <p className="truncate text-sm font-semibold text-[var(--text-primary)]">
             {attachment.file_name}
           </p>
-          <p className="truncate text-xs text-slate-500 dark:text-slate-400">
+          <p className="truncate text-xs text-[var(--text-muted)]">
             {secondary}
           </p>
         </div>
         <button
           type="button"
-          className="rounded-full p-1 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+          className="rounded-full p-1 text-slate-500 transition-colors hover:bg-[var(--accent-hover)] hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
           onClick={() => onRemoveAttachment?.(attachment.id)}
           aria-label={`Remove ${attachment.file_name}`}
         >
@@ -157,7 +157,7 @@ function ChatComposer({
           ? `px-4 pb-4 pt-2 sm:px-6 sm:pb-6 ${
               isDragOver ? 'bg-blue-50/70 dark:bg-blue-950/20' : 'bg-transparent'
             }`
-          : `border-t border-slate-200/70 bg-white/95 px-4 py-3 backdrop-blur dark:border-slate-700/60 dark:bg-slate-900/92 ${
+          : `border-t border-[var(--border-default)] bg-[var(--surface-card)] px-4 py-3 backdrop-blur dark:border-[var(--border-default)] dark:bg-[var(--surface-card)] ${
               isDragOver ? 'bg-blue-50 dark:bg-blue-950/40' : ''
             }`
       }`}
@@ -233,7 +233,7 @@ function ChatComposer({
                 onMouseDown={(e) => { e.preventDefault(); handleSlashSelect(s.cmd); setSelectedIdx(0); }}
               >
                 <span className="font-mono font-semibold">{s.cmd}</span>
-                <span className="text-xs text-slate-400 dark:text-slate-500">{s.desc}</span>
+                <span className="text-xs text-[var(--text-muted)]">{s.desc}</span>
               </button>
             ))}
           </div>
@@ -259,8 +259,8 @@ function ChatComposer({
               type="button"
               className={`p-2 text-slate-500 transition-colors disabled:opacity-50 ${
                 isAIEmployeeVariant
-                  ? 'rounded-full hover:bg-slate-100 dark:hover:bg-slate-800'
-                  : 'rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700'
+                  ? 'rounded-full hover:bg-[var(--accent-hover)]'
+                  : 'rounded-lg hover:bg-[var(--accent-hover)]'
               }`}
               onClick={onFilePicker}
               disabled={isUploading}
@@ -281,7 +281,7 @@ function ChatComposer({
             placeholder={isDragOver ? 'Drop files to attach...' : isAIEmployeeVariant ? 'Message your worker' : 'Message Decision-Intelligence'}
             className={`w-full resize-none overflow-hidden bg-transparent text-sm outline-none ${
               isAIEmployeeVariant
-                ? 'rounded-[26px] pl-[72px] pr-16 py-4 text-[15px] leading-6 text-slate-800 dark:text-slate-100 placeholder:text-slate-400'
+                ? 'rounded-[26px] pl-[72px] pr-16 py-4 text-[15px] leading-6 text-[var(--text-primary)] placeholder:text-slate-400'
                 : 'pl-12 rounded-2xl pr-12 py-3'
             }`}
             style={{ minHeight: '52px', maxHeight: '180px' }}

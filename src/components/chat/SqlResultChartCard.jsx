@@ -28,7 +28,7 @@ export default function SqlResultChartCard({ sql, result, summary, charts = [], 
     : [];
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-2 border-l-[3px] border-l-[var(--cat-data)]">
       {/* Chart — prominent, on top */}
       {chart && chart.data?.length > 0 && (
         <div className="rounded-xl border border-blue-200 dark:border-blue-800 bg-gradient-to-br from-blue-50/80 to-white dark:from-blue-950/30 dark:to-gray-900 shadow-sm p-3">
@@ -69,7 +69,7 @@ export default function SqlResultChartCard({ sql, result, summary, charts = [], 
             {showTable ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
           </button>
           {showTable && (
-            <div className="mt-2 text-sm text-slate-600 dark:text-slate-300 whitespace-pre-wrap overflow-x-auto">
+            <div className="mt-2 text-sm text-[var(--text-secondary)] whitespace-pre-wrap overflow-x-auto">
               <ReactMarkdown remarkPlugins={[remarkGfm]}>{summary}</ReactMarkdown>
             </div>
           )}

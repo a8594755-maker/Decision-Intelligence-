@@ -12,12 +12,12 @@ function ToggleRow({ expanded, onToggle, icon: Icon, title, meta }) {
     <button
       type="button"
       onClick={onToggle}
-      className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-slate-700 transition-colors hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800/70"
+      className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-slate-700 transition-colors hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-[var(--accent-hover)]"
     >
       {expanded ? <ChevronDown size={15} className="text-slate-400" /> : <ChevronRight size={15} className="text-slate-400" />}
-      {Icon ? <Icon size={15} className="text-slate-500 dark:text-slate-400" /> : null}
+      {Icon ? <Icon size={15} className="text-[var(--text-muted)]" /> : null}
       <span className="font-medium">{title}</span>
-      {meta ? <span className="ml-auto text-xs text-slate-500 dark:text-slate-400">{meta}</span> : null}
+      {meta ? <span className="ml-auto text-xs text-[var(--text-muted)]">{meta}</span> : null}
     </button>
   );
 }
@@ -35,7 +35,7 @@ function TraceAttemptCard({ attempt, variant = 'success' }) {
       : 'completed';
 
   return (
-    <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900/40">
+    <div className="rounded-xl border border-[var(--border-default)] bg-[var(--surface-card)]">
       <ToggleRow
         expanded={expanded}
         onToggle={() => setExpanded((value) => !value)}
@@ -44,7 +44,7 @@ function TraceAttemptCard({ attempt, variant = 'success' }) {
         meta={meta}
       />
       <div className="px-3 pb-3">
-        <p className={`text-sm ${isFailure ? 'text-rose-600 dark:text-rose-300' : 'text-slate-600 dark:text-slate-300'}`}>
+        <p className={`text-sm ${isFailure ? 'text-rose-600 dark:text-rose-300' : 'text-[var(--text-secondary)]'}`}>
           {isFailure ? attempt?.error || attempt?.summary : attempt?.summary}
         </p>
         {expanded ? (
@@ -89,8 +89,8 @@ export default function ExecutionTraceCard({ trace, agentLabel }) {
   if (sections.failed + sections.success + sections.narrative === 0) return null;
 
   return (
-    <Card className="w-full border-slate-200 dark:border-slate-700 bg-slate-50/80 dark:bg-slate-900/40 p-0">
-      <div className="border-b border-slate-200 dark:border-slate-800 px-4 py-3">
+    <Card category="system" className="w-full border-[var(--border-default)] bg-[var(--surface-base)] p-0">
+      <div className="border-b border-[var(--border-default)] px-4 py-3">
         <ToggleRow
           expanded={expanded}
           onToggle={() => setExpanded((value) => !value)}
@@ -104,7 +104,7 @@ export default function ExecutionTraceCard({ trace, agentLabel }) {
         <div className="space-y-4 px-4 py-4">
           {failedAttempts.length > 0 ? (
             <div className="space-y-2">
-              <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">
+              <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">
                 Failed Attempts
               </div>
               {failedAttempts.map((attempt) => (
@@ -115,7 +115,7 @@ export default function ExecutionTraceCard({ trace, agentLabel }) {
 
           {successfulQueries.length > 0 ? (
             <div className="space-y-2">
-              <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">
+              <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">
                 Successful Steps
               </div>
               {successfulQueries.map((attempt) => (
@@ -133,7 +133,7 @@ export default function ExecutionTraceCard({ trace, agentLabel }) {
                 title="Full Narrative"
               />
               {narrativeExpanded ? (
-                <div className="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-600 dark:text-slate-300">
+                <div className="mt-3 whitespace-pre-wrap text-sm leading-6 text-[var(--text-secondary)]">
                   {rawNarrative}
                 </div>
               ) : null}

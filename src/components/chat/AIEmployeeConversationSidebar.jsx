@@ -47,8 +47,8 @@ function SidebarSkeleton() {
           <div className="space-y-2">
             {Array.from({ length: 3 }).map((__, itemIdx) => (
               <div key={itemIdx} className="rounded-2xl bg-slate-100 px-3 py-3 dark:bg-slate-800">
-                <div className="h-3 w-2/3 rounded bg-slate-200 dark:bg-slate-700" />
-                <div className="mt-2 h-2.5 w-full rounded bg-slate-200 dark:bg-slate-700" />
+                <div className="h-3 w-2/3 rounded bg-[var(--surface-subtle)]" />
+                <div className="mt-2 h-2.5 w-full rounded bg-[var(--surface-subtle)]" />
               </div>
             ))}
           </div>
@@ -97,8 +97,8 @@ function AIEmployeeConversationSidebar({
                 <Bot className="h-5 w-5" />
               </span>
               <div>
-                <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">{title}</p>
-                <p className="text-xs text-slate-500 dark:text-slate-400">Digital Worker workspace</p>
+                <p className="text-sm font-semibold text-[var(--text-primary)]">{title}</p>
+                <p className="text-xs text-[var(--text-muted)]">Digital Worker workspace</p>
               </div>
             </div>
           </div>
@@ -107,7 +107,7 @@ function AIEmployeeConversationSidebar({
             <button
               type="button"
               aria-label="Close conversation history"
-              className="rounded-full p-2 text-slate-500 transition hover:bg-slate-100 dark:hover:bg-slate-800"
+              className="rounded-full p-2 text-slate-500 transition hover:bg-[var(--accent-hover)]"
               onClick={onClose}
             >
               <X className="h-4 w-4" />
@@ -147,7 +147,7 @@ function AIEmployeeConversationSidebar({
             <div className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-500 dark:bg-slate-800 dark:text-slate-400">
               No saved chats
             </div>
-            <p className="mt-3 text-sm text-slate-500 dark:text-slate-400">
+            <p className="mt-3 text-sm text-[var(--text-muted)]">
               Start a new chat and your worker will keep the thread here.
             </p>
           </div>

@@ -6,6 +6,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { generateCanvasLayout } from '../services/canvas/canvasAgentService';
 import { executeInsightQuery } from '../services/canvas/insightsHubExecutor';
@@ -19,9 +20,11 @@ import CanvasRenderer from '../components/insights/CanvasRenderer';
 import SuggestionBlock from '../components/insights/blocks/SuggestionBlock';
 import AgentThinkingBar from '../components/insights/AgentThinkingBar';
 import { getOlistDemoLayout } from '../services/canvas/insightsHubDemoData';
+import { buildDataCard, convertChartData, buildBlockLayout } from '../services/canvas/insightsHubAgent';
 
 export default function InsightsHub() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const userId = user?.id;
 
   const [dashResult, setDashResult] = useState(null); // { html, suggestions, title, thinking, ... }
@@ -65,6 +68,10 @@ export default function InsightsHub() {
         signal: abortController.signal,
       });
       if (abortController.signal.aborted) return;
+      // Auto-build blockLayout for cached results that only have dataCards
+      if (result?.dataCards?.length && !result?.blockLayout) {
+        result.blockLayout = buildBlockLayout(result.dataCards, result.layout || { narrative: '', sections: [] });
+      }
       setDashResult(result);
       setThinking(result?.thinking || '');
       setCanvasSource(source);
@@ -138,11 +145,50 @@ export default function InsightsHub() {
     }
   }, [userId, runningQuery, generateCanvas]);
 
+  // ── Regenerate a single card ──
+  const handleRegenerateCard = useCallback(async (cardId) => {
+    if (!dashResult?.dataCards || !userId) return;
+    const card = dashResult.dataCards.find(c => c.id === cardId);
+    if (!card) return;
+
+    setAgentProgress(`Regenerating: ${card.title}...`);
+    try {
+      const { getResolvedInsightsHubModel } = await import('../services/ai-infra/modelConfigService.js');
+      const { buildEnrichedSchemaPrompt } = await import('../services/sap-erp/sapDataQueryService.js');
+      const { provider, model } = getResolvedInsightsHubModel();
+      const schemaHint = buildEnrichedSchemaPrompt();
+
+      // Re-run data worker for this card
+      const spec = { id: card.id, title: card.title, type: card.type, queries: card.rawQueries ? Object.keys(card.rawQueries).map(k => k) : [], instructions: '' };
+      const newCard = await buildDataCard(spec, { provider, model, schemaHint });
+
+      if (newCard?.metrics?.length) {
+        // Replace card in dataCards
+        const updatedCards = dashResult.dataCards.map(c => c.id === cardId ? newCard : c);
+        // Rebuild block layout
+        const newBlockLayout = buildBlockLayout(updatedCards, dashResult.layout);
+        setDashResult(prev => ({ ...prev, dataCards: updatedCards, blockLayout: newBlockLayout }));
+      }
+    } catch (err) {
+      console.warn('[InsightsHub] Card regeneration failed:', err);
+    } finally {
+      setAgentProgress('');
+    }
+  }, [dashResult, userId]);
+
   const handleAction = useCallback((action) => {
     if (action?.type === 'run_suggestion' && action.query) {
       handleRunSuggestion(action.query);
+    } else if (action?.type === 'regenerate_card' && action.cardId) {
+      handleRegenerateCard(action.cardId);
+    } else if (action?.type === 'explore_insight' && action.context) {
+      const ctx = action.context;
+      const query = ctx.finding
+        ? `Analyze this finding in more detail: "${ctx.finding}". What are the root causes? What actions should we take?`
+        : `Tell me more about "${ctx.title}". What patterns do you see? What should we investigate further?`;
+      navigate('/workspace', { state: { insightQuery: query } });
     }
-  }, [handleRunSuggestion]);
+  }, [handleRunSuggestion, handleRegenerateCard, navigate]);
 
   // ── Batch run ──
   const handleBatchRun = useCallback(async () => {
@@ -169,27 +215,27 @@ export default function InsightsHub() {
 
   // ══════════════════════════════════════════════════════════════════════════
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-950">
+    <div className="min-h-screen bg-[var(--surface-base)]">
       {/* ── Header ── */}
-      <div className="border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
+      <div className="border-b border-[var(--border-default)] bg-[var(--surface-card)]">
         <div className="max-w-[1400px] mx-auto px-4 sm:px-6 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center shadow-sm">
+              <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-teal-500 to-teal-600 flex items-center justify-center shadow-sm">
                 <BarChart3 className="w-5 h-5 text-white" />
               </div>
               <div>
-                <h1 className="text-lg font-bold text-slate-900 dark:text-white">
+                <h1 className="text-lg font-bold text-[var(--text-primary)]">
                   {demoLayout?.title || activeDash?.title || 'Insights Hub'}
                 </h1>
                 {(demoLayout?.subtitle || activeDash?.subtitle) && (
-                  <p className="text-xs text-slate-500 dark:text-slate-400">{demoLayout?.subtitle || activeDash.subtitle}</p>
+                  <p className="text-xs text-[var(--text-muted)]">{demoLayout?.subtitle || activeDash.subtitle}</p>
                 )}
               </div>
             </div>
             <div className="flex items-center gap-2">
               {canvasSource && !canvasLoading && (
-                <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-400">
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-[var(--surface-subtle)] text-[var(--text-muted)]">
                   {canvasSource === 'agent' ? 'Agent' : canvasSource === 'cache' ? 'Cached' : 'Auto'}
                 </span>
               )}
@@ -213,7 +259,7 @@ export default function InsightsHub() {
                     if (idx < 0) backToCurrent();
                     else viewHistoryVersion(idx);
                   }}
-                  className="text-[11px] px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-400"
+                  className="text-[11px] px-2 py-1 rounded-lg border border-[var(--border-default)] bg-[var(--surface-card)] text-[var(--text-secondary)]"
                 >
                   <option value={-1}>Current</option>
                   {history.map((h, i) => (
@@ -230,8 +276,8 @@ export default function InsightsHub() {
                 }}
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
                   demoLayout
-                    ? 'bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300'
-                    : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
+                    ? 'bg-[var(--accent-active)] text-[var(--brand-600)]'
+                    : 'bg-[var(--surface-subtle)] text-[var(--text-secondary)] hover:bg-[var(--accent-hover)]'
                 }`}
               >
                 <Layers className="w-3.5 h-3.5" />
@@ -292,7 +338,7 @@ export default function InsightsHub() {
           <div className="flex items-center justify-center py-24">
             <div className="text-center">
               <div className="w-12 h-12 rounded-full border-4 border-blue-200 border-t-blue-600 animate-spin mx-auto mb-4" />
-              <p className="text-sm text-slate-500">{agentProgress || 'Agent is analyzing your data...'}</p>
+              <p className="text-sm text-[var(--text-muted)]">{agentProgress || 'Agent is analyzing your data...'}</p>
             </div>
           </div>
         )}
@@ -300,18 +346,21 @@ export default function InsightsHub() {
         {/* HTML Dashboard */}
         {/* Viewing history indicator */}
         {!demoLayout && historyIndex >= 0 && (
-          <div className="mb-3 flex items-center gap-2 px-3 py-2 rounded-lg bg-indigo-50 dark:bg-indigo-950/20 border border-indigo-200 dark:border-indigo-800">
-            <span className="text-xs text-indigo-600 dark:text-indigo-400">
+          <div className="mb-3 flex items-center gap-2 px-3 py-2 rounded-lg bg-[var(--accent-active)] border border-[var(--brand-500)]">
+            <span className="text-xs text-[var(--brand-600)]">
               Viewing version {historyIndex + 1} of {history.length} · {new Date(history[historyIndex]?.timestamp).toLocaleString()}
             </span>
-            <button onClick={backToCurrent} className="text-xs font-medium text-indigo-600 hover:text-indigo-800 ml-auto">
+            <button onClick={backToCurrent} className="text-xs font-medium text-[var(--brand-600)] hover:text-[var(--brand-600)] ml-auto">
               ← Back to current
             </button>
           </div>
         )}
 
-        {/* React-rendered dashboard with embedded charts */}
-        {!demoLayout && hasDataCards && (
+        {/* React-rendered dashboard — prefer CanvasRenderer (rich blocks), fallback to InsightsDashboard */}
+        {!demoLayout && activeDash?.blockLayout?.blocks?.length > 0 && (
+          <CanvasRenderer layout={activeDash.blockLayout} onAction={handleAction} runningQuery={runningQuery} />
+        )}
+        {!demoLayout && !activeDash?.blockLayout?.blocks?.length && hasDataCards && (
           <InsightsDashboard dataCards={activeDash.dataCards} layout={activeDash.layout} />
         )}
 
@@ -329,7 +378,7 @@ export default function InsightsHub() {
         {/* Suggestions (rendered natively, below iframe) */}
         {!demoLayout && hasSuggestions && (
           <div className="mt-6">
-            <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-300 mb-3">
+            <h3 className="text-sm font-semibold text-[var(--text-secondary)] mb-3">
               Recommended Analyses ({suggestions.length})
             </h3>
             <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
@@ -368,8 +417,8 @@ function ErrorState({ message, onRetry }) {
       <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-red-500/20 to-orange-500/20 flex items-center justify-center mb-6">
         <BarChart3 className="w-10 h-10 text-red-500/60" />
       </div>
-      <h2 className="text-lg font-semibold text-slate-800 dark:text-slate-200 mb-2">Agent encountered an issue</h2>
-      <p className="text-sm text-slate-500 dark:text-slate-400 max-w-md mb-8">{message}</p>
+      <h2 className="text-lg font-semibold text-[var(--text-primary)] mb-2">Agent encountered an issue</h2>
+      <p className="text-sm text-[var(--text-muted)] max-w-md mb-8">{message}</p>
       <button onClick={onRetry} className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-medium bg-blue-600 hover:bg-blue-700 text-white transition-colors shadow-sm">
         <RefreshCw className="w-4 h-4" /> Try Again
       </button>
@@ -380,11 +429,11 @@ function ErrorState({ message, onRetry }) {
 function EmptyState() {
   return (
     <div className="flex flex-col items-center justify-center py-24 text-center">
-      <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-blue-500/20 to-indigo-500/20 flex items-center justify-center mb-6">
+      <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-teal-500/20 to-teal-600/20 flex items-center justify-center mb-6">
         <BarChart3 className="w-10 h-10 text-blue-500/60" />
       </div>
-      <h2 className="text-lg font-semibold text-slate-800 dark:text-slate-200 mb-2">No data available</h2>
-      <p className="text-sm text-slate-500 dark:text-slate-400 max-w-md mb-8">Upload a dataset in the Workspace first. The AI analyst will automatically explore your data and build a dashboard.</p>
+      <h2 className="text-lg font-semibold text-[var(--text-primary)] mb-2">No data available</h2>
+      <p className="text-sm text-[var(--text-muted)] max-w-md mb-8">Upload a dataset in the Workspace first. The AI analyst will automatically explore your data and build a dashboard.</p>
       <a href="/workspace" className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-medium bg-blue-600 hover:bg-blue-700 text-white transition-colors shadow-sm">
         Go to Workspace <ArrowRight className="w-4 h-4" />
       </a>

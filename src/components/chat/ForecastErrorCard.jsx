@@ -7,7 +7,7 @@ export default function ForecastErrorCard({ payload }) {
   const blocking = Array.isArray(payload.blocking_questions) ? payload.blocking_questions : [];
 
   return (
-    <Card className="w-full border border-red-200 dark:border-red-800 bg-red-50/70 dark:bg-red-900/10">
+    <Card category="forecast" className="w-full border border-red-200 dark:border-red-800 bg-red-50/70 dark:bg-red-900/10">
       <div className="space-y-2">
         <div className="flex items-center justify-between gap-3">
           <h4 className="font-semibold text-sm flex items-center gap-2 text-red-700 dark:text-red-300">

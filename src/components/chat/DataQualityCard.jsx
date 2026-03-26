@@ -74,7 +74,7 @@ export default function DataQualityCard({ payload }) {
   const Icon = config.icon;
 
   return (
-    <Card className={`w-full border ${config.border} ${config.bg}`}>
+    <Card category="data" className={`w-full border ${config.border} ${config.bg}`}>
       <div className="space-y-3">
         {/* Header */}
         <div className="flex items-start justify-between gap-3">
@@ -83,7 +83,7 @@ export default function DataQualityCard({ payload }) {
               <Icon className={`w-4 h-4 ${config.color}`} />
               Data Quality Report
             </h4>
-            <p className="text-xs text-slate-600 dark:text-slate-300">
+            <p className="text-xs text-[var(--text-secondary)]">
               {available_datasets.length} dataset{available_datasets.length !== 1 ? 's' : ''} available
               {missing_datasets.length > 0 && `, ${missing_datasets.length} missing`}
             </p>
@@ -100,7 +100,7 @@ export default function DataQualityCard({ payload }) {
             </span>
           ))}
           {missing_datasets.map(ds => (
-            <span key={ds} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+            <span key={ds} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-[var(--surface-subtle)] text-[var(--text-muted)]">
               <Lock className="w-3 h-3" />
               {DATASET_LABELS[ds] || ds}
             </span>
@@ -110,7 +110,7 @@ export default function DataQualityCard({ payload }) {
         {/* Capability matrix */}
         {capabilities && Object.keys(capabilities).length > 0 && (
           <div className="space-y-1">
-            <p className="text-[11px] font-medium text-slate-700 dark:text-slate-200">Capabilities</p>
+            <p className="text-[11px] font-medium text-[var(--text-secondary)]">Capabilities</p>
             <div className="flex flex-wrap gap-1.5">
               {Object.entries(capabilities).map(([key, cap]) => {
                 // Support both old shape (string) and new shape ({ available, level })
@@ -118,7 +118,7 @@ export default function DataQualityCard({ payload }) {
                 const capColors = {
                   full: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300',
                   partial: 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300',
-                  unavailable: 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400',
+                  unavailable: 'bg-[var(--surface-subtle)] text-[var(--text-muted)]',
                 };
                 return (
                   <span key={key} className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${capColors[level] || capColors.unavailable}`}>
@@ -133,11 +133,11 @@ export default function DataQualityCard({ payload }) {
         {/* Fallback audit */}
         {fallbacks_used.length > 0 && (
           <div className="space-y-1">
-            <p className="text-[11px] font-medium text-slate-700 dark:text-slate-200 flex items-center gap-1">
+            <p className="text-[11px] font-medium text-[var(--text-secondary)] flex items-center gap-1">
               <AlertTriangle className="w-3 h-3 text-amber-500" />
               Estimated Fields
             </p>
-            <div className="text-[10px] text-slate-600 dark:text-slate-400 space-y-0.5">
+            <div className="text-[10px] text-[var(--text-secondary)] space-y-0.5">
               {fallbacks_used.map((fb, i) => (
                 <p key={i}>
                   <strong>{fb.field}</strong>: {fb.description} (value: {String(fb.value)}, {fb.count || 1} row{(fb.count || 1) !== 1 ? 's' : ''})
@@ -151,12 +151,12 @@ export default function DataQualityCard({ payload }) {
         {dataset_fallbacks.length > 0 && (
           <div className="space-y-1.5">
             {dataset_fallbacks.map((fb, i) => (
-              <div key={i} className="flex items-start gap-2 px-2.5 py-1.5 rounded bg-slate-100/80 dark:bg-slate-800/50 text-[11px]">
-                <Info className="w-3.5 h-3.5 text-slate-400 mt-0.5 flex-shrink-0" />
+              <div key={i} className="flex items-start gap-2 px-2.5 py-1.5 rounded bg-[var(--surface-subtle)] text-[11px]">
+                <Info className="w-3.5 h-3.5 text-[var(--text-muted)] mt-0.5 flex-shrink-0" />
                 <div>
                   <p className="text-slate-600 dark:text-slate-300">{fb.message}</p>
                   {fb.degradesCapability && (
-                    <p className="text-slate-400 mt-0.5 flex items-center gap-1">
+                    <p className="text-[var(--text-muted)] mt-0.5 flex items-center gap-1">
                       <Upload className="w-3 h-3" />
                       Upload {DATASET_LABELS[fb.dataset] || fb.dataset} data to unlock {fb.degradesCapability.replace(/_/g, ' ')}.
                     </p>
@@ -170,8 +170,8 @@ export default function DataQualityCard({ payload }) {
         {/* Import quality (per-dataset stats from import pipeline) */}
         {import_quality && typeof import_quality === 'object' && (
           <div className="space-y-1">
-            <p className="text-[11px] font-medium text-slate-700 dark:text-slate-200">Import Quality</p>
-            <div className="flex flex-wrap gap-2 text-[10px] text-slate-600 dark:text-slate-400">
+            <p className="text-[11px] font-medium text-[var(--text-secondary)]">Import Quality</p>
+            <div className="flex flex-wrap gap-2 text-[10px] text-[var(--text-secondary)]">
               {import_quality.totalWarnings > 0 && (
                 <span>{import_quality.totalWarnings} warnings</span>
               )}
@@ -188,18 +188,18 @@ export default function DataQualityCard({ payload }) {
         {/* Ranked capability unlock recommendations */}
         {unlockRanking.length > 0 && (
           <div className="space-y-1.5">
-            <p className="text-[11px] font-medium text-slate-700 dark:text-slate-200 flex items-center gap-1">
-              <Sparkles className="w-3.5 h-3.5 text-indigo-500" />
+            <p className="text-[11px] font-medium text-[var(--text-secondary)] flex items-center gap-1">
+              <Sparkles className="w-3.5 h-3.5 text-[var(--brand-500)]" />
               Recommended Uploads
             </p>
             {unlockRanking.slice(0, 3).map((rec, i) => (
-              <div key={rec.dataset} className="flex items-start gap-2 px-2.5 py-1.5 rounded bg-indigo-50/50 dark:bg-indigo-900/10 text-[11px]">
-                <span className="font-bold text-indigo-600 dark:text-indigo-400 mt-0.5 flex-shrink-0">
+              <div key={rec.dataset} className="flex items-start gap-2 px-2.5 py-1.5 rounded bg-[var(--accent-active)] text-[11px]">
+                <span className="font-bold text-[var(--brand-600)] mt-0.5 flex-shrink-0">
                   #{i + 1}
                 </span>
                 <div>
-                  <p className="font-medium text-slate-700 dark:text-slate-200">{rec.label}</p>
-                  <p className="text-slate-500 dark:text-slate-400">{rec.hint}</p>
+                  <p className="font-medium text-[var(--text-secondary)]">{rec.label}</p>
+                  <p className="text-[var(--text-muted)]">{rec.hint}</p>
                   {rec.unlocks.length > 0 && (
                     <div className="flex flex-wrap gap-1 mt-0.5">
                       {rec.unlocks.map(u => (
@@ -217,7 +217,7 @@ export default function DataQualityCard({ payload }) {
 
         {/* Row stats */}
         {row_stats && (
-          <div className="flex gap-3 text-[10px] text-slate-500 dark:text-slate-400 pt-1 border-t border-slate-200/50 dark:border-slate-700/50">
+          <div className="flex gap-3 text-[10px] text-[var(--text-muted)] pt-1 border-t border-[var(--border-default)]">
             <span>Total rows: {row_stats.total}</span>
             <span>Clean: {row_stats.clean}</span>
             {row_stats.with_fallback > 0 && <span>With fallback: {row_stats.with_fallback}</span>}

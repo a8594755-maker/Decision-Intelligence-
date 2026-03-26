@@ -84,7 +84,7 @@ export default function RetrainApprovalCard({ payload, onApprove, onReject }) {
   };
 
   return (
-    <Card className="w-full border border-orange-200 dark:border-orange-700 bg-orange-50/60 dark:bg-orange-900/10">
+    <Card category="system" className="w-full border border-orange-200 dark:border-orange-700 bg-orange-50/60 dark:bg-orange-900/10">
       <div className="space-y-3">
         {/* Header */}
         <div className="flex items-start justify-between gap-2">
@@ -93,7 +93,7 @@ export default function RetrainApprovalCard({ payload, onApprove, onReject }) {
               <RefreshCw className="w-4 h-4 text-orange-600" />
               Model Retrain Approval
             </h4>
-            <p className="text-xs text-slate-600 dark:text-slate-300">
+            <p className="text-xs text-[var(--text-secondary)]">
               {model_name || 'Unknown Model'} &middot; Series: {series_id || 'N/A'}
             </p>
           </div>
@@ -104,7 +104,7 @@ export default function RetrainApprovalCard({ payload, onApprove, onReject }) {
         </div>
 
         {/* Trigger Details */}
-        <div className="bg-white dark:bg-slate-800 rounded-lg p-3 border border-slate-200 dark:border-slate-700">
+        <div className="bg-[var(--surface-card)] rounded-lg p-3 border border-[var(--border-default)]">
           <div className="flex items-center gap-2 mb-2">
             <TrendingDown className={`w-4 h-4 ${triggerColor}`} />
             <span className={`text-xs font-semibold ${triggerColor}`}>{triggerLabel}</span>
@@ -113,7 +113,7 @@ export default function RetrainApprovalCard({ payload, onApprove, onReject }) {
             {trigger_details.metric && (
               <div>
                 <span className="text-slate-500">Metric:</span>{' '}
-                <span className="font-medium text-slate-700 dark:text-slate-200">{trigger_details.metric}</span>
+                <span className="font-medium text-[var(--text-secondary)]">{trigger_details.metric}</span>
               </div>
             )}
             {trigger_details.current_value !== undefined && (
@@ -129,7 +129,7 @@ export default function RetrainApprovalCard({ payload, onApprove, onReject }) {
             {trigger_details.threshold !== undefined && (
               <div>
                 <span className="text-slate-500">Threshold:</span>{' '}
-                <span className="font-medium text-slate-700 dark:text-slate-200">
+                <span className="font-medium text-[var(--text-secondary)]">
                   {typeof trigger_details.threshold === 'number'
                     ? trigger_details.threshold.toFixed(3)
                     : trigger_details.threshold}
@@ -139,7 +139,7 @@ export default function RetrainApprovalCard({ payload, onApprove, onReject }) {
             {trigger_details.baseline_value !== undefined && (
               <div>
                 <span className="text-slate-500">Baseline:</span>{' '}
-                <span className="font-medium text-slate-700 dark:text-slate-200">
+                <span className="font-medium text-[var(--text-secondary)]">
                   {typeof trigger_details.baseline_value === 'number'
                     ? trigger_details.baseline_value.toFixed(3)
                     : trigger_details.baseline_value}
@@ -160,7 +160,7 @@ export default function RetrainApprovalCard({ payload, onApprove, onReject }) {
         {/* Note input */}
         {!isResolved && (
           <textarea
-            className="w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-xs px-2.5 py-2 focus:outline-none focus:ring-2 focus:ring-orange-500"
+            className="w-full rounded-md border border-slate-300 dark:border-slate-600 bg-[var(--surface-card)] text-xs px-2.5 py-2 focus:outline-none focus:ring-2 focus:ring-orange-500"
             rows={2}
             placeholder="Approval note (optional)"
             value={note}

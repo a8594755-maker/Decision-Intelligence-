@@ -39,20 +39,20 @@ export default function FailureReportCard({ payload }) {
       </div>
 
       {/* Root cause */}
-      <p className="text-sm text-slate-700 dark:text-slate-200 mb-3 leading-relaxed">
+      <p className="text-sm text-[var(--text-secondary)] mb-3 leading-relaxed">
         {root_cause || 'Unknown failure reason.'}
       </p>
 
       {/* Suggestions */}
       {suggestions.length > 0 && (
         <div className="mb-3">
-          <div className="flex items-center gap-1.5 text-xs font-medium text-slate-500 dark:text-slate-400 mb-1.5">
+          <div className="flex items-center gap-1.5 text-xs font-medium text-[var(--text-muted)] mb-1.5">
             <Lightbulb className="w-3.5 h-3.5" />
             Suggested Actions
           </div>
           <ul className="space-y-1.5">
             {suggestions.map((s, i) => (
-              <li key={i} className="flex items-start gap-2 text-xs text-slate-600 dark:text-slate-300 bg-white/60 dark:bg-slate-800/40 rounded-lg px-3 py-2">
+              <li key={i} className="flex items-start gap-2 text-xs text-[var(--text-secondary)] bg-white/60 dark:bg-slate-800/40 rounded-lg px-3 py-2">
                 <span className="text-base leading-none mt-0.5">{ACTION_ICONS[s.action] || '💡'}</span>
                 <span>{s.detail}</span>
               </li>
@@ -88,11 +88,11 @@ export default function FailureReportCard({ payload }) {
 
       {/* Expanded details */}
       {expanded && (
-        <div className="mt-3 pt-3 border-t border-slate-200 dark:border-slate-700 space-y-2">
+        <div className="mt-3 pt-3 border-t border-[var(--border-default)] space-y-2">
           {category && (
             <div className="text-[10px]">
               <span className="text-slate-400">Category: </span>
-              <span className="text-slate-600 dark:text-slate-300 font-mono">{category}</span>
+              <span className="text-[var(--text-secondary)] font-mono">{category}</span>
             </div>
           )}
           {error_snippet && (

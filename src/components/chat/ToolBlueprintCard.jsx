@@ -77,7 +77,7 @@ export default function ToolBlueprintCard({ blueprint, onApprove, onReject, disa
             <Sparkles size={15} className="text-amber-600 dark:text-amber-400" />
           </div>
           <div className="flex-1 min-w-0">
-            <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100 truncate">
+            <h3 className="text-sm font-semibold text-[var(--text-primary)] truncate">
               Auto-Generated Tool Blueprint
             </h3>
             <span className="text-[11px] font-medium text-amber-600 dark:text-amber-400">
@@ -86,7 +86,7 @@ export default function ToolBlueprintCard({ blueprint, onApprove, onReject, disa
           </div>
         </div>
         {gapDescription && (
-          <p className="text-xs text-slate-600 dark:text-slate-400 mt-1.5 leading-relaxed">
+          <p className="text-xs text-[var(--text-secondary)] mt-1.5 leading-relaxed">
             {gapDescription}
           </p>
         )}
@@ -96,17 +96,17 @@ export default function ToolBlueprintCard({ blueprint, onApprove, onReject, disa
       <div className="px-4 py-3 space-y-2">
         {/* Name + Category */}
         <div className="flex items-center gap-2">
-          <Wrench size={13} className="text-slate-500 dark:text-slate-400 flex-shrink-0" />
+          <Wrench size={13} className="text-[var(--text-muted)] flex-shrink-0" />
           <code className="text-sm font-mono font-semibold text-indigo-700 dark:text-indigo-300">
             {name}
           </code>
-          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-slate-200/80 dark:bg-slate-700/60 text-slate-600 dark:text-slate-300 font-medium">
+          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-slate-200/80 dark:bg-slate-700/60 text-[var(--text-secondary)] font-medium">
             {category}
           </span>
         </div>
 
         {/* Description */}
-        <p className="text-xs text-slate-700 dark:text-slate-300 leading-relaxed">
+        <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
           {description}
         </p>
 
@@ -116,7 +116,7 @@ export default function ToolBlueprintCard({ blueprint, onApprove, onReject, disa
             {tags.map((tag, i) => (
               <span
                 key={i}
-                className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400"
+                className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--surface-subtle)] text-[var(--text-muted)]"
               >
                 {tag}
               </span>
@@ -127,11 +127,11 @@ export default function ToolBlueprintCard({ blueprint, onApprove, onReject, disa
         {/* I/O Schema (collapsible) */}
         {(inputSchema && Object.keys(inputSchema).length > 0 ||
           outputSchema && Object.keys(outputSchema).length > 0) && (
-          <div className="border border-slate-200/60 dark:border-slate-700/40 rounded-lg overflow-hidden">
+          <div className="border border-[var(--border-default)] rounded-lg overflow-hidden">
             <button
               type="button"
               onClick={() => setSchemaExpanded(v => !v)}
-              className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors"
+              className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium text-[var(--text-secondary)] hover:bg-[var(--accent-hover)] transition-colors"
             >
               {schemaExpanded
                 ? <ChevronDown size={13} className="text-slate-400" />
@@ -143,7 +143,7 @@ export default function ToolBlueprintCard({ blueprint, onApprove, onReject, disa
               <div className="px-3 pb-3 space-y-2">
                 {inputSchema && Object.keys(inputSchema).length > 0 && (
                   <div>
-                    <div className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1">
+                    <div className="text-[10px] font-semibold text-[var(--text-muted)] uppercase tracking-wider mb-1">
                       Input
                     </div>
                     <div className="space-y-0.5">
@@ -151,7 +151,7 @@ export default function ToolBlueprintCard({ blueprint, onApprove, onReject, disa
                         <div key={key} className="flex items-start gap-2 text-xs">
                           <code className="text-blue-600 dark:text-blue-400 font-mono shrink-0">{key}</code>
                           <ArrowRight size={10} className="text-slate-400 mt-0.5 shrink-0" />
-                          <span className="text-slate-600 dark:text-slate-400">{String(desc)}</span>
+                          <span className="text-[var(--text-secondary)]">{String(desc)}</span>
                         </div>
                       ))}
                     </div>
@@ -159,7 +159,7 @@ export default function ToolBlueprintCard({ blueprint, onApprove, onReject, disa
                 )}
                 {outputSchema && Object.keys(outputSchema).length > 0 && (
                   <div>
-                    <div className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1">
+                    <div className="text-[10px] font-semibold text-[var(--text-muted)] uppercase tracking-wider mb-1">
                       Output
                     </div>
                     <div className="space-y-0.5">
@@ -167,7 +167,7 @@ export default function ToolBlueprintCard({ blueprint, onApprove, onReject, disa
                         <div key={key} className="flex items-start gap-2 text-xs">
                           <code className="text-emerald-600 dark:text-emerald-400 font-mono shrink-0">{key}</code>
                           <ArrowRight size={10} className="text-slate-400 mt-0.5 shrink-0" />
-                          <span className="text-slate-600 dark:text-slate-400">{String(desc)}</span>
+                          <span className="text-[var(--text-secondary)]">{String(desc)}</span>
                         </div>
                       ))}
                     </div>
@@ -179,11 +179,11 @@ export default function ToolBlueprintCard({ blueprint, onApprove, onReject, disa
         )}
 
         {/* Code Preview (collapsible) */}
-        <div className="border border-slate-200/60 dark:border-slate-700/40 rounded-lg overflow-hidden">
+        <div className="border border-[var(--border-default)] rounded-lg overflow-hidden">
           <button
             type="button"
             onClick={() => setCodeExpanded(v => !v)}
-            className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors"
+            className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium text-[var(--text-secondary)] hover:bg-[var(--accent-hover)] transition-colors"
           >
             {codeExpanded
               ? <ChevronDown size={13} className="text-slate-400" />
@@ -196,13 +196,13 @@ export default function ToolBlueprintCard({ blueprint, onApprove, onReject, disa
           </button>
           {codeExpanded && (
             <div className="relative">
-              <pre className="px-3 pb-3 text-xs font-mono text-emerald-700 dark:text-emerald-300 bg-slate-50 dark:bg-slate-900/60 overflow-x-auto leading-relaxed whitespace-pre-wrap">
+              <pre className="px-3 pb-3 text-xs font-mono text-emerald-700 dark:text-emerald-300 bg-[var(--surface-base)]/60 overflow-x-auto leading-relaxed whitespace-pre-wrap">
                 {code}
               </pre>
               <button
                 type="button"
                 onClick={handleCopy}
-                className="absolute top-1 right-2 p-1 rounded hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
+                className="absolute top-1 right-2 p-1 rounded hover:bg-[var(--accent-hover)] transition-colors"
                 title="Copy code"
               >
                 {copied
@@ -240,7 +240,7 @@ export default function ToolBlueprintCard({ blueprint, onApprove, onReject, disa
           type="button"
           onClick={() => onReject?.(blueprint)}
           disabled={disabled || approving}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 dark:hover:bg-slate-600 text-[var(--text-secondary)] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
         >
           <X size={13} />
           Reject

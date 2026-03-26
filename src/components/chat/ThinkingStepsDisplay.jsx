@@ -109,7 +109,7 @@ export default function ThinkingStepsDisplay({
                       {group.label}
                     </span>
                     {(group.provider || group.model) ? (
-                      <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                      <span className="text-[11px] text-[var(--text-muted)]">
                         {[group.provider, group.model].filter(Boolean).join(' · ')}
                       </span>
                     ) : null}
@@ -126,7 +126,7 @@ export default function ThinkingStepsDisplay({
                         <div className={`mt-0.5 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0 ${styles.bubble}`}>
                           {i + 1}
                         </div>
-                        <p className="flex-1 min-w-0 text-slate-600 dark:text-slate-300 whitespace-pre-wrap leading-relaxed">
+                        <p className="flex-1 min-w-0 text-[var(--text-secondary)] whitespace-pre-wrap leading-relaxed">
                           {step.content}
                         </p>
                       </div>

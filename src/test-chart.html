@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Chart Worker Test</title>
+  <style>
+    body { font-family: system-ui; max-width: 1200px; margin: 0 auto; padding: 24px; background: #f8fafc; }
+    h1 { font-size: 20px; margin-bottom: 16px; }
+    .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
+    .card { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 16px; }
+    .card h3 { font-size: 14px; margin: 0 0 8px; color: #475569; }
+    .status { font-size: 12px; color: #94a3b8; margin-bottom: 8px; }
+    .svg-container { min-height: 200px; display: flex; align-items: center; justify-content: center; }
+    .svg-container svg { max-width: 100%; height: auto; }
+    .error { color: #ef4444; font-size: 12px; }
+    button { background: #6366f1; color: #fff; border: none; padding: 8px 20px; border-radius: 8px; cursor: pointer; font-size: 14px; }
+    button:disabled { opacity: 0.5; }
+    .log { font-size: 11px; color: #64748b; max-height: 100px; overflow-y: auto; margin-top: 8px; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <h1>Chart Worker Test — Direct SVG Generation</h1>
+  <button id="runBtn" onclick="runAllCharts()">Generate All Charts</button>
+  <span id="timer" style="margin-left:12px;font-size:13px;color:#64748b;"></span>
+  <div class="grid" id="grid" style="margin-top:16px;"></div>
+
+  <script type="module">
+    // Import from running Vite dev server
+    const { invokeAiProxy } = await import('/src/services/ai-infra/aiProxyService.js');
+    const { getAgentToolMode } = await import('/src/services/agent-core/chatAgentLoop.js');
+    const { getInsightsChartModelConfig } = await import('/src/services/ai-infra/modelConfigService.js');
+
+    // Test chart specs — diverse scenarios
+    const TEST_CHARTS = [
+      {
+        id: 'line_revenue',
+        title: 'Monthly Revenue Trend (Line)',
+        type: 'line',
+        labels: ['2017-01','2017-03','2017-05','2017-07','2017-09','2017-11','2018-01','2018-03','2018-05','2018-07'],
+        values: [131232, 236577, 401936, 541872, 628731, 987765, 924645, 953356, 977545, 838557],
+        series2Values: [798, 2050, 3498, 4599, 5226, 7289, 7069, 7003, 6749, 6336],
+      },
+      {
+        id: 'bar_category',
+        title: 'Top 10 Product Categories by Revenue (Bar)',
+        type: 'bar',
+        labels: ['Health & Beauty','Watches & Gifts','Bed & Bath','Sports & Leisure','Computers','Furniture','Cool Stuff','Housewares','Auto','Garden Tools'],
+        values: [1258681, 1205006, 1036989, 988049, 911954, 730213, 635489, 632400, 593320, 485329],
+      },
+      {
+        id: 'donut_payment',
+        title: 'Payment Method Distribution (Donut)',
+        type: 'donut',
+        labels: ['Credit Card', 'Boleto', 'Voucher', 'Debit Card', 'Not Defined'],
+        values: [12542084, 2869361, 379437, 217990, 3],
+      },
+      {
+        id: 'bar_states',
+        title: 'Top 5 States by Revenue (Bar)',
+        type: 'bar',
+        labels: ['SP', 'RJ', 'MG', 'RS', 'PR'],
+        values: [5202955, 1824093, 1585308, 750304, 683084],
+      },
+    ];
+
+    // analyzeChartData — same as insightsHubAgent.js
+    function analyzeChartData(cd) {
+      const hints = [];
+      const values = cd.values || [];
+      const labels = cd.labels || [];
+      const s2 = cd.series2Values || [];
+      if (!values.length) return 'No data.';
+      const max = Math.max(...values);
+      const min = Math.min(...values);
+      if (max >= 1e6) hints.push(`Y-axis scale: use M (millions). Max: ${(max/1e6).toFixed(1)}M, Min: ${(min/1e6).toFixed(1)}M`);
+      else if (max >= 1e3) hints.push(`Y-axis scale: use K (thousands). Max: ${(max/1e3).toFixed(1)}K, Min: ${(min/1e3).toFixed(1)}K`);
+      else hints.push(`Y-axis range: ${min} to ${max}`);
+      if (s2.length > 0) {
+        const max2 = Math.max(...s2);
+        const ratio = max / (max2 || 1);
+        if (ratio > 10 || ratio < 0.1) hints.push(`DUAL AXIS REQUIRED: S1 max=${max}, S2 max=${max2} (${Math.round(ratio)}x diff). LEFT=larger, RIGHT=smaller.`);
+        else hints.push(`Single axis OK (${ratio.toFixed(1)}x ratio).`);
+      }
+      if (labels.length > 12) hints.push(`${labels.length} labels — show every ${Math.ceil(labels.length/8)}th.`);
+      const maxLen = Math.max(...labels.map(l => String(l).length));
+      if (maxLen > 8) hints.push(`Long labels (${maxLen} chars) — rotate -45°, truncate to 10 chars.`);
+      if (cd.type === 'bar' && labels.length > 8) hints.push(`${labels.length} bars — narrower (max 25px).`);
+      if (cd.type === 'donut') {
+        const total = values.reduce((a,b)=>a+b,0);
+        hints.push(`Total: ${total>=1e6?(total/1e6).toFixed(1)+'M':total>=1e3?(total/1e3).toFixed(1)+'K':total}. Slices: ${values.map((v,i)=>`${labels[i]}: ${(v/total*100).toFixed(1)}%`).join(', ')}`);
+      }
+      if (cd.type === 'line' && values.length >= 3) {
+        const f = values.slice(0,3).reduce((a,b)=>a+b,0)/3;
+        const l = values.slice(-3).reduce((a,b)=>a+b,0)/3;
+        hints.push(l > f*1.5 ? 'Trend: strong upward.' : l < f*0.5 ? 'Trend: declining.' : 'Trend: stable.');
+      }
+      return hints.join('\n');
+    }
+
+    const PROMPT = document.querySelector('script[data-prompt]')?.textContent || `You generate ONE clean inline SVG chart. Follow the DATA HINTS exactly.
+
+## SVG Foundation
+- style="width:100%;max-width:450px;height:auto;" on <svg>
+- font-family="system-ui,-apple-system,sans-serif"
+- Colors: #6366f1 #8b5cf6 #06b6d4 #10b981 #f59e0b #ef4444 #64748b #a855f7 #ec4899 #14b8a6
+- All numeric attributes: plain numbers
+
+### Bar Chart
+- viewBox="0 0 450 300". Plot: x=60-430, y=20-230.
+- Bar width max 35px. X labels at y=250, rotated -45° if >6 chars. Truncate to 12 chars.
+- Value on top of each bar (font-size 9).
+
+### Line Chart
+- viewBox="0 0 450 300". Plot: x=60-420, y=30-230.
+- DUAL AXIS if series differ >10x. Dots r=3. Grid lines #e2e8f0 dashed.
+- Show every Nth x-label to avoid overlap. Legend at bottom.
+
+### Donut Chart
+- viewBox="0 0 220 220". Center (110,110), outer r=85, inner r=55.
+- Center text: main value (font-size 18 bold) + label (font-size 10).
+- % on arc if >=5%, else legend only. Legend 2 cols if >4 items.
+
+## Output: ONLY raw SVG. Start <svg, end </svg>. No JSON/fences/text.`;
+
+    async function generateOneChart(spec, container) {
+      const status = container.querySelector('.status');
+      const svgDiv = container.querySelector('.svg-container');
+      const logDiv = container.querySelector('.log');
+      status.textContent = 'Generating...';
+
+      const hints = analyzeChartData(spec);
+      logDiv.textContent = 'Hints:\n' + hints;
+
+      const chartConfig = getInsightsChartModelConfig();
+      const toolMode = getAgentToolMode(chartConfig.provider);
+
+      const t0 = performance.now();
+      try {
+        const result = await invokeAiProxy(toolMode, {
+          messages: [
+            { role: 'system', content: PROMPT },
+            { role: 'user', content: `Chart type: ${spec.type}\nTitle: ${spec.title}\n\n## DATA HINTS:\n${hints}\n\nLabels: ${JSON.stringify(spec.labels)}\nValues: ${JSON.stringify(spec.values)}${spec.series2Values ? `\nSeries 2: ${JSON.stringify(spec.series2Values)}` : ''}` },
+          ],
+          model: chartConfig.model,
+          temperature: 0.2,
+          maxOutputTokens: 3000,
+        });
+
+        const elapsed = Math.round(performance.now() - t0);
+        const content = result?.choices?.[0]?.message?.content || '';
+        const rc = result?.choices?.[0]?.message?.reasoning_content || '';
+        const all = content || rc;
+
+        logDiv.textContent += `\n\nResponse: ${elapsed}ms, content=${content.length}, reasoning=${rc.length}`;
+
+        // Extract SVG
+        let svg = all;
+        const fence = svg.match(/```(?:svg|xml|html)?\s*\n?([\s\S]*?)```/);
+        if (fence) svg = fence[1].trim();
+        const match = svg.match(/<svg[\s\S]*?<\/svg>/i);
+
+        if (match) {
+          const clean = match[0].replace(/\\"/g, '"').replace(/\\n/g, '\n');
+          svgDiv.innerHTML = clean;
+          status.textContent = `Done in ${elapsed}ms — ${clean.length} chars`;
+          status.style.color = '#10b981';
+        } else {
+          svgDiv.innerHTML = `<div class="error">No SVG found (${all.length} chars). First 200: ${all.slice(0,200)}</div>`;
+          status.textContent = `Failed (${elapsed}ms)`;
+          status.style.color = '#ef4444';
+        }
+      } catch (err) {
+        const elapsed = Math.round(performance.now() - t0);
+        svgDiv.innerHTML = `<div class="error">${err.message}</div>`;
+        status.textContent = `Error (${elapsed}ms)`;
+        status.style.color = '#ef4444';
+      }
+    }
+
+    window.runAllCharts = async function() {
+      const btn = document.getElementById('runBtn');
+      const timer = document.getElementById('timer');
+      const grid = document.getElementById('grid');
+      btn.disabled = true;
+      grid.innerHTML = '';
+
+      const t0 = performance.now();
+      const interval = setInterval(() => { timer.textContent = `${Math.round((performance.now()-t0)/1000)}s`; }, 1000);
+
+      // Create cards
+      const cards = TEST_CHARTS.map(spec => {
+        const card = document.createElement('div');
+        card.className = 'card';
+        card.innerHTML = `<h3>${spec.title}</h3><div class="status">Waiting...</div><div class="svg-container"></div><div class="log"></div>`;
+        grid.appendChild(card);
+        return { spec, card };
+      });
+
+      // Run 2 at a time
+      const executing = new Set();
+      for (const { spec, card } of cards) {
+        const p = generateOneChart(spec, card).then(() => executing.delete(p));
+        executing.add(p);
+        if (executing.size >= 2) await Promise.race(executing);
+      }
+      await Promise.all(executing);
+
+      clearInterval(interval);
+      timer.textContent = `Total: ${Math.round((performance.now()-t0)/1000)}s`;
+      btn.disabled = false;
+    };
+  </script>
+</body>
+</html>

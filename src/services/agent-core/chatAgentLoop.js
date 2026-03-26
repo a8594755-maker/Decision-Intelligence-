@@ -33,7 +33,7 @@ import { addDimensionHits, detectRequestedSpecialChart, getStructuredAnswerCover
 import { buildEnrichedSchemaPrompt } from '../sap-erp/sapDataQueryService.js';
 import { detectDomain, buildDomainEnrichmentPrompt, buildParameterSweepInstruction, isParameterOptimizationQuestion } from '../data-prep/analysisDomainEnrichment.js';
 import { validateQueryResultData, formatWarningsForAgent, detectBusinessContext, PROXY_DISCLOSURE_PROMPT } from '../data-prep/preAnalysisDataValidator.js';
-import { buildUserDatasetDigest, inferCrossSheetRelationships } from '../data-prep/datasetProfilingService.js';
+import { buildUserDatasetDigest, inferCrossSheetRelationships, buildTemporalCoverageBlock } from '../data-prep/datasetProfilingService.js';
 import { selectRelevantContext } from '../data-prep/datasetContextSelector.js';
 import {
   recallQueryPatterns,
@@ -94,6 +94,9 @@ function buildStepOutline(answerContract, userMessage) {
   if (needsComputation && !uncovered.length) {
     steps.push(`${steps.length + 1}. run_python_analysis — custom computation for ${outputs.join(', ')}`);
   }
+
+  // Tool selection guide (injected into planning context)
+  steps.push(`TOOL SELECTION: query_sap_data for retrieval/aggregation/JOINs/rankings. run_python_analysis for correlation (pearsonr/spearmanr), regression, hypothesis testing (t-test, chi2, ANOVA), clustering (KMeans), distribution fitting, time series decomposition, outlier detection. Common pattern: SQL first → Python for stats. NEVER use SQL for p-values, regression coefficients, clustering, or distribution tests.`);
 
   // Cross-verification step for multi-dimension requests
   if (steps.length >= 2 || dims.length >= 2 || outputs.length >= 2) {
@@ -158,7 +161,7 @@ const DUCKDB_DIALECT_CORE = [
   '- Date functions: DATE_TRUNC(part, col), EXTRACT(part FROM col), col + INTERVAL, DATEDIFF(part, start, end)',
   '- Date arithmetic: use (date1 - date2) for intervals, DATEDIFF(\'day\', start, end) for integer days. Do NOT use JULIANDAY(), TIMESTAMPDIFF(), or any SQLite/MySQL-only date functions.',
   '- Date casting: DATE(col) to cast to date, STRFTIME(col, format) for formatting, EPOCH(col) for unix timestamp',
-  '- Advanced aggregates: PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY col), MEDIAN(col), MODE(col), QUANTILE_DISC(0.9 ORDER BY col)',
+  '- Advanced aggregates: QUANTILE_CONT(col, 0.5) for percentiles (NOT PERCENTILE_CONT — it does not exist in DuckDB), MEDIAN(col), MODE(col). Example: QUANTILE_CONT(price, 0.8) returns the 80th percentile of price.',
   '- String: STRING_AGG(col, sep), REGEXP_MATCHES(), CONCAT()',
   '- Avoid reserved word aliases: "order", "group", "key", "value" → use descriptive names like "order_count"',
   '- Standard SQL: COUNT, SUM, AVG, MIN, MAX, ROUND, CASE WHEN, UNION ALL, HAVING, DISTINCT, LIKE, CROSS JOIN',
@@ -168,6 +171,21 @@ const DUCKDB_DIALECT_CORE = [
   '- When computing "monthly", "per month", "月均", or any periodic metric, ALWAYS use DATE_TRUNC(\'month\', timestamp_col) in GROUP BY or as a denominator.',
   '- A bare SUM() across a multi-month dataset will be Nx the actual monthly value. Never present an all-time SUM as a monthly figure.',
   '- For monthly averages, use: SUM(val) / COUNT(DISTINCT DATE_TRUNC(\'month\', date_col)).',
+  '',
+  'MULTI-ENTITY AGGREGATION RULE:',
+  '- When analyzing entities (sellers, customers, products) across categories or segments, ALWAYS aggregate at the (entity × category) level, never at entity level alone.',
+  '- Example: seller revenue by category → GROUP BY seller_id, category_name. If you GROUP BY seller_id first and then JOIN to a single category, a multi-category seller\'s TOTAL revenue will be attributed to ONE category — this is a critical data error.',
+  '',
+  'DENOMINATOR RULE:',
+  '- When computing "X as share of Y" (e.g., high-risk seller revenue as % of category revenue), the denominator Y must be the FULL population, not a filtered subset.',
+  '- Apply filters to the NUMERATOR only. The denominator should include all entities in the category, even those below the minimum order threshold.',
+  '- Wrong: filter sellers to 10+ orders, then use filtered total as denominator. Right: compute full category revenue from ALL sellers, use as denominator.',
+  '',
+  '1:N JOIN DUPLICATION RULE:',
+  '- When JOINing tables with 1:N relationships (1 order → N reviews, 1 order → N items), SUM/COUNT on the "1" side gets inflated.',
+  '- If you need metrics from BOTH sides, aggregate the N-side to the 1-side grain first (subquery or CTE), THEN join.',
+  '- Example: order revenue + avg review → first CTE: AVG(review_score) GROUP BY order_id, then JOIN to orders.',
+  '- Red flag: if row count after JOIN is unexpectedly large, you likely have 1:N duplication. Verify with COUNT(DISTINCT key_column).',
 ];
 
 const DUCKDB_OLIST_ADDENDUM = [
@@ -782,6 +800,10 @@ export async function runAgentLoop({
       : []),
     ...patternBlock,
     ...failureBlock,
+    ...(() => {
+      const tw = toolContext?.datasetProfileRow ? buildTemporalCoverageBlock(toolContext.datasetProfileRow) : '';
+      return tw ? [tw, ''] : [];
+    })(),
     ...(domainEnrichmentBlock ? [domainEnrichmentBlock, ''] : []),
     ...(paramSweepBlock ? [paramSweepBlock, ''] : []),
     ...(isAnalysisMode ? [PROXY_DISCLOSURE_PROMPT, ''] : []),
@@ -793,6 +815,26 @@ export async function runAgentLoop({
   // Build initial messages array (OpenAI format)
   const messages = [];
   messages.push({ role: 'system', content: agentSystemPrompt });
+
+  // ── Prior analysis context for follow-up questions ──
+  if (conversationHistory.length > 0) {
+    const lastBrief = [...conversationHistory]
+      .reverse()
+      .find(m => (m.role === 'ai' || m.role === 'assistant') && m.payload?.brief);
+    if (lastBrief?.payload?.brief) {
+      const b = lastBrief.payload.brief;
+      const pills = (b.metric_pills || []).slice(0, 6).map(p => `${p.label}: ${p.value}`).join(', ');
+      const findings = (b.key_findings || []).slice(0, 3).join('; ');
+      const parts = [
+        '── Prior Analysis Context (from last response) ──',
+        b.headline && `Previous conclusion: ${b.headline}`,
+        pills && `Key metrics: ${pills}`,
+        findings && `Key findings: ${findings}`,
+        'Reference this context for follow-up questions. Do not re-query data already analyzed unless user requests different scope.',
+      ].filter(Boolean);
+      messages.push({ role: 'system', content: parts.join('\n') });
+    }
+  }
 
   // Add conversation history (last 10 turns)
   const historyWindow = conversationHistory.slice(-10);

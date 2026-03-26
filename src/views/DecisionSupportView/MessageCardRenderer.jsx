@@ -292,10 +292,10 @@ export default function MessageCardRenderer({ message, handlers, state }) {
     const runId = toPositiveRunId(message?.payload?.run_id)
       || toPositiveRunId(message?.payload?.graph?.run_id);
     return (
-      <Card className="w-full border border-slate-200 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-900/30">
+      <Card className="w-full border border-[var(--border-default)] bg-slate-50/70 dark:bg-slate-900/30">
         <div className="flex items-center justify-between gap-3">
           <div>
-            <p className="text-sm font-semibold text-slate-800 dark:text-slate-100">Topology Graph Ready</p>
+            <p className="text-sm font-semibold text-[var(--text-primary)]">Topology Graph Ready</p>
             <p className="text-xs text-slate-500">
               {Number.isFinite(runId)
                 ? `Run #${runId} topology artifact is available in Canvas.`
@@ -548,7 +548,7 @@ export default function MessageCardRenderer({ message, handlers, state }) {
         : [];
 
       return (
-        <div className="space-y-3">
+        <div className="space-y-3 min-w-0 overflow-hidden">
           <div className="flex justify-end">
             <CopyAllButton getText={() => serializeAgentResponseToText(message)} />
           </div>
@@ -606,7 +606,7 @@ export default function MessageCardRenderer({ message, handlers, state }) {
           </div>
         )}
         {message.content && (
-          <div className={`prose prose-sm max-w-none dark:prose-invert text-sm text-slate-800 dark:text-slate-100
+          <div className={`prose prose-sm max-w-none dark:prose-invert text-sm text-[var(--text-primary)]
             prose-table:border-collapse prose-table:w-full prose-table:text-xs
             prose-th:bg-slate-100 prose-th:dark:bg-slate-700/60 prose-th:px-3 prose-th:py-2 prose-th:text-left prose-th:font-semibold prose-th:text-slate-600 prose-th:dark:text-slate-300 prose-th:border prose-th:border-slate-200 prose-th:dark:border-slate-600
             prose-td:px-3 prose-td:py-1.5 prose-td:border prose-td:border-slate-200 prose-td:dark:border-slate-700 prose-td:text-slate-700 prose-td:dark:text-slate-300

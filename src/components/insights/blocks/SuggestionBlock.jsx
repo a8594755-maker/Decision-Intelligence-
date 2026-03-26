@@ -41,7 +41,7 @@ export default function SuggestionBlock({ title, description, query, priority = 
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
           <Play className="w-3 h-3" />
-          {loading ? 'Running...' : 'Run Analysis'}
+          {loading ? 'Running...' : 'Deep Dive →'}
         </button>
       </div>
     </div>

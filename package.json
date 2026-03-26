@@ -56,7 +56,9 @@
     "test:ai-flows": "npx playwright test --project=ai-flows",
     "test:autofix": "node e2e/auto-fix-loop.mjs --source live",
     "test:autofix:dry": "node e2e/auto-fix-loop.mjs --source live --dry-run",
-    "test:autofix:crawler": "node e2e/auto-fix-loop.mjs --source crawler"
+    "test:autofix:crawler": "node e2e/auto-fix-loop.mjs --source crawler",
+    "worker:start": "npx vite-node worker/taskWorker.js",
+    "worker:dev": "VITE_DI_SERVER_EXECUTION=true npx vite-node worker/taskWorker.js"
   },
   "dependencies": {
     "@duckdb/duckdb-wasm": "^1.33.1-dev20.0",

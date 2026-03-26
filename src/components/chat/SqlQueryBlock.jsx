@@ -32,7 +32,7 @@ export default function SqlQueryBlock({
     : 'border-slate-200 bg-slate-50/80 text-slate-900 dark:border-slate-700 dark:bg-slate-900/50 dark:text-slate-100';
   const headerHoverClass = resolvedVariant === 'failure'
     ? 'hover:bg-rose-100/70 dark:hover:bg-rose-900/20'
-    : 'hover:bg-slate-100/70 dark:hover:bg-slate-800/60';
+    : 'hover:bg-[var(--accent-hover)]/70 dark:hover:bg-slate-800/60';
 
   const handleCopy = async (e) => {
     e.stopPropagation();
@@ -57,8 +57,8 @@ export default function SqlQueryBlock({
         }
         <Database size={13} className={resolvedVariant === 'failure' ? 'text-rose-500 flex-shrink-0' : 'text-blue-500 flex-shrink-0'} />
         <span className="font-mono">{toolName || 'SQL Query'}</span>
-        {summary ? <span className="truncate text-slate-500 dark:text-slate-400">{summary}</span> : null}
-        <span className="text-slate-500 dark:text-slate-400 ml-auto flex items-center gap-2">
+        {summary ? <span className="truncate text-[var(--text-muted)]">{summary}</span> : null}
+        <span className="text-[var(--text-muted)] ml-auto flex items-center gap-2">
           {success != null && (
             <span className={success ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}>
               {success ? `${rowCount} row${rowCount !== 1 ? 's' : ''}` : 'error'}
@@ -70,7 +70,7 @@ export default function SqlQueryBlock({
 
       {/* Body — collapsible */}
       {expanded && (
-        <div className="relative border-t border-slate-200/80 dark:border-slate-700/60">
+        <div className="relative border-t border-slate-200/80 dark:border-[var(--border-default)]">
           {/* Copy button */}
           <button
             type="button"

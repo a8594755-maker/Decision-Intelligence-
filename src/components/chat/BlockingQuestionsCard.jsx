@@ -17,7 +17,7 @@ function QuestionInput({ question, value, onChange, disabled }) {
             key={opt}
             className={`flex items-center gap-2 px-2 py-1 rounded cursor-pointer text-xs
               ${disabled ? 'opacity-50 cursor-not-allowed' : 'hover:bg-amber-100 dark:hover:bg-amber-800/30'}
-              ${value === opt ? 'font-semibold text-amber-800 dark:text-amber-300' : 'text-slate-700 dark:text-slate-300'}`}
+              ${value === opt ? 'font-semibold text-amber-800 dark:text-amber-300' : 'text-[var(--text-secondary)]'}`}
           >
             <input
               type="radio"
@@ -39,7 +39,7 @@ function QuestionInput({ question, value, onChange, disabled }) {
   return (
     <input
       type={answer_type === 'number' ? 'number' : 'text'}
-      className="mt-1 w-full text-xs px-2 py-1 rounded border border-slate-300 dark:border-slate-600 bg-transparent text-slate-800 dark:text-slate-100 disabled:opacity-50"
+      className="mt-1 w-full text-xs px-2 py-1 rounded border border-slate-300 dark:border-slate-600 bg-transparent text-[var(--text-primary)] disabled:opacity-50"
       value={value || ''}
       disabled={disabled}
       placeholder="Your answer…"
@@ -92,7 +92,7 @@ export default function BlockingQuestionsCard({ payload, onSubmit }) {
   };
 
   return (
-    <Card className="w-full border border-amber-200 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-900/10">
+    <Card category="system" className="w-full border border-amber-200 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-900/10">
       <div className="space-y-3 text-xs">
         <h4 className="font-semibold inline-flex items-center gap-2">
           <HelpCircle className="w-4 h-4 text-amber-700 dark:text-amber-300" />
@@ -101,7 +101,7 @@ export default function BlockingQuestionsCard({ payload, onSubmit }) {
 
         {/* Display-only questions (no bind_to — informational) */}
         {displayOnly.length > 0 && (
-          <ul className="list-disc list-inside space-y-1 text-slate-700 dark:text-slate-300">
+          <ul className="list-disc list-inside space-y-1 text-[var(--text-secondary)]">
             {displayOnly.map((q, idx) => (
               <li key={questionKey(q, idx)}>{q.question}</li>
             ))}
@@ -113,9 +113,9 @@ export default function BlockingQuestionsCard({ payload, onSubmit }) {
           const key = questionKey(q, questions.indexOf(q));
           return (
             <div key={key} className="rounded-lg border border-amber-200 dark:border-amber-700 p-2 space-y-1">
-              <p className="font-medium text-slate-800 dark:text-slate-100">{q.question}</p>
+              <p className="font-medium text-[var(--text-primary)]">{q.question}</p>
               {q.why_needed && (
-                <p className="text-[11px] text-slate-500 dark:text-slate-400 italic">{q.why_needed}</p>
+                <p className="text-[11px] text-[var(--text-muted)] italic">{q.why_needed}</p>
               )}
               <QuestionInput
                 question={q}

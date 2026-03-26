@@ -28,13 +28,13 @@ import {
 // Static Tailwind class map — dynamic `text-${color}-500` gets purged in production
 const TYPE_COLOR_CLASSES = {
   blue:   'text-blue-500',
-  indigo: 'text-indigo-500',
+  indigo: 'text-[var(--brand-500)]',
   green:  'text-green-500',
   amber:  'text-amber-500',
   red:    'text-red-500',
   purple: 'text-purple-500',
   teal:   'text-teal-500',
-  gray:   'text-gray-500',
+  gray:   'text-[var(--text-muted)]',
 };
 
 const TYPE_META = {
@@ -50,8 +50,8 @@ const TYPE_META = {
 const URGENCY_COLORS = {
   critical: 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300',
   high:     'bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-300',
-  normal:   'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300',
-  low:      'bg-gray-50 text-gray-500 dark:bg-gray-900 dark:text-gray-400',
+  normal:   'bg-[var(--surface-subtle)] text-[var(--text-secondary)]',
+  low:      'bg-[var(--surface-base)] text-[var(--text-muted)]',
 };
 
 export default function ApprovalQueuePage() {
@@ -188,7 +188,7 @@ export default function ApprovalQueuePage() {
         <button
           onClick={() => setFilterType(null)}
           className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
-            !filterType ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300' : 'bg-[var(--surface-subtle)] text-[var(--text-secondary)]'
+            !filterType ? 'bg-[var(--accent-active)] text-[var(--brand-600)]' : 'bg-[var(--surface-subtle)] text-[var(--text-secondary)]'
           }`}
         >
           All
@@ -201,7 +201,7 @@ export default function ApprovalQueuePage() {
               onClick={() => setFilterType(value)}
               className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
                 filterType === value
-                  ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300'
+                  ? 'bg-[var(--accent-active)] text-[var(--brand-600)]'
                   : 'bg-[var(--surface-subtle)] text-[var(--text-secondary)]'
               }`}
             >

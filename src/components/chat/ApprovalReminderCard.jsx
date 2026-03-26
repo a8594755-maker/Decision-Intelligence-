@@ -37,16 +37,16 @@ export default function ApprovalReminderCard({
     : 'text-amber-500';
 
   return (
-    <Card className={urgencyColor}>
+    <Card category="system" className={urgencyColor}>
       <div className="space-y-2">
         <div className="flex items-start justify-between gap-3">
           <div className="flex items-center gap-2">
             <Clock className={`w-4 h-4 ${iconColor}`} />
             <div>
-              <h4 className="font-semibold text-sm text-slate-800 dark:text-slate-200">
+              <h4 className="font-semibold text-sm text-[var(--text-primary)]">
                 Approval Reminder
               </h4>
-              <p className="text-xs text-slate-600 dark:text-slate-400">
+              <p className="text-xs text-[var(--text-secondary)]">
                 Run #{run_id} — {hours_remaining != null ? `${hours_remaining}h remaining` : 'deadline approaching'}
               </p>
             </div>
@@ -57,7 +57,7 @@ export default function ApprovalReminderCard({
         </div>
 
         {narrative_summary && (
-          <p className="text-xs text-slate-600 dark:text-slate-400 line-clamp-2">
+          <p className="text-xs text-[var(--text-secondary)] line-clamp-2">
             {narrative_summary}
           </p>
         )}

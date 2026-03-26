@@ -400,8 +400,8 @@ export default function TopologyTab({
 
   if (!topologyGraph) {
     return (
-      <div className="rounded-xl border border-slate-200 dark:border-slate-700 p-4 space-y-3">
-        <p className="text-sm text-slate-700 dark:text-slate-300">
+      <div className="rounded-xl border border-[var(--border-default)] p-4 space-y-3">
+        <p className="text-sm text-[var(--text-secondary)]">
           No `topology_graph.json` artifact available for the selected run.
         </p>
         <div className="flex items-center gap-2">
@@ -427,13 +427,13 @@ export default function TopologyTab({
   }
 
   return (
-    <div className={isFullscreen ? 'fixed inset-0 z-50 bg-white dark:bg-slate-900 overflow-y-auto p-4 space-y-3' : 'space-y-3'}>
-      <div className="rounded-xl border border-slate-200 dark:border-slate-700 p-3 space-y-2">
+    <div className={isFullscreen ? 'fixed inset-0 z-50 bg-[var(--surface-card)] overflow-y-auto p-4 space-y-3' : 'space-y-3'}>
+      <div className="rounded-xl border border-[var(--border-default)] p-3 space-y-2">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-          <label className="text-xs text-slate-600 dark:text-slate-300">
+          <label className="text-xs text-[var(--text-secondary)]">
             Plant
             <select
-              className="mt-1 w-full rounded border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 px-2 py-1 text-xs"
+              className="mt-1 w-full rounded border border-slate-300 dark:border-slate-600 bg-[var(--surface-card)] px-2 py-1 text-xs"
               value={selectedPlant}
               onChange={(event) => setSelectedPlant(event.target.value)}
             >
@@ -445,10 +445,10 @@ export default function TopologyTab({
               ))}
             </select>
           </label>
-          <label className="text-xs text-slate-600 dark:text-slate-300">
+          <label className="text-xs text-[var(--text-secondary)]">
             SKU Search
             <input
-              className="mt-1 w-full rounded border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 px-2 py-1 text-xs"
+              className="mt-1 w-full rounded border border-slate-300 dark:border-slate-600 bg-[var(--surface-card)] px-2 py-1 text-xs"
               value={skuQuery}
               onChange={(event) => setSkuQuery(event.target.value)}
               placeholder="FG-100 / COMP-01 ..."
@@ -456,7 +456,7 @@ export default function TopologyTab({
           </label>
         </div>
 
-        <div className="flex flex-wrap gap-3 text-[11px] text-slate-600 dark:text-slate-300">
+        <div className="flex flex-wrap gap-3 text-[11px] text-[var(--text-secondary)]">
           <label className="inline-flex items-center gap-1">
             <input type="checkbox" checked={toggles.showBom} onChange={(event) => setToggles((prev) => ({ ...prev, showBom: event.target.checked }))} />
             BOM edges
@@ -496,7 +496,7 @@ export default function TopologyTab({
           <button
             type="button"
             onClick={() => setIsFullscreen((prev) => !prev)}
-            className="p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500 flex-shrink-0"
+            className="p-1 rounded hover:bg-[var(--accent-hover)] text-slate-500 flex-shrink-0"
             title={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
           >
             {isFullscreen ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
@@ -524,7 +524,7 @@ export default function TopologyTab({
       </div>
 
       <div className={`grid grid-cols-1 xl:grid-cols-[1fr_320px] gap-3 ${isFullscreen ? 'min-h-[calc(100vh-220px)]' : 'min-h-[480px]'}`}>
-        <div className="rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden">
+        <div className="rounded-xl border border-[var(--border-default)] overflow-hidden">
           <div className={isFullscreen ? 'h-[calc(100vh-240px)]' : 'h-[540px]'}>
             <ReactFlow
               nodes={flowData.flowNodes}
@@ -543,7 +543,7 @@ export default function TopologyTab({
           </div>
         </div>
 
-        <div className={`rounded-xl border border-slate-200 dark:border-slate-700 p-3 overflow-y-auto ${isFullscreen ? 'max-h-[calc(100vh-240px)]' : 'max-h-[540px]'}`}>
+        <div className={`rounded-xl border border-[var(--border-default)] p-3 overflow-y-auto ${isFullscreen ? 'max-h-[calc(100vh-240px)]' : 'max-h-[540px]'}`}>
           {!selectedItem?.raw ? (
             <p className="text-xs text-slate-500">
               Click a node or edge to inspect metrics and artifact references.
@@ -573,7 +573,7 @@ export default function TopologyTab({
                       .map(([key, value]) => (
                         <div key={key} className="text-xs flex items-start justify-between gap-2">
                           <span className="text-slate-500 break-all">{key}</span>
-                          <span className="text-slate-800 dark:text-slate-200 break-all text-right">{formatMetricValue(value)}</span>
+                          <span className="text-[var(--text-primary)] break-all text-right">{formatMetricValue(value)}</span>
                         </div>
                       ))
                   )}
@@ -591,7 +591,7 @@ export default function TopologyTab({
                       .map(([key, value]) => (
                         <div key={key} className="text-xs flex items-start justify-between gap-2">
                           <span className="text-slate-500 break-all">{key}</span>
-                          <span className="text-slate-800 dark:text-slate-200 break-all text-right">{formatMetricValue(value)}</span>
+                          <span className="text-[var(--text-primary)] break-all text-right">{formatMetricValue(value)}</span>
                         </div>
                       ))
                   )}

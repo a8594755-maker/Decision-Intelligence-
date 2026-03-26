@@ -46,13 +46,13 @@ function EvidenceTable({ table }) {
   if (!table || !Array.isArray(table.columns) || table.columns.length === 0) return null;
 
   return (
-    <div className="rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden bg-white dark:bg-slate-900/40">
+    <div className="rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden bg-white dark:bg-slate-900/40 max-w-full">
       {table.title ? (
-        <div className="border-b border-slate-200 dark:border-slate-700 px-4 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-slate-500 dark:text-slate-400">
+        <div className="border-b border-slate-200 dark:border-slate-700 px-4 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-slate-500 dark:text-slate-400 truncate">
           {table.title}
         </div>
       ) : null}
-      <div className="overflow-x-auto">
+      <div className="overflow-x-auto max-w-full">
         <table className="min-w-full text-sm">
           <thead className="bg-slate-50 dark:bg-slate-800/70">
             <tr>

@@ -7,7 +7,7 @@
  *   2. Supabase tables (suppliers, materials, inventory, POs)
  *
  * Uses DuckDB-WASM (in-browser columnar analytics engine) to execute SQL.
- * Supports CTEs, window functions, PERCENTILE_CONT, MEDIAN, date functions, etc.
+ * Supports CTEs, window functions, QUANTILE_CONT (NOT PERCENTILE_CONT), MEDIAN, date functions, etc.
  * Only SELECT queries are allowed (read-only).
  */
 
@@ -40,6 +40,10 @@ export const SAP_TABLE_REGISTRY = {
     sapEquivalent: 'KNA1 (Customer Master)',
     description: 'Customer master data with location info',
     columns: ['customer_id', 'customer_unique_id', 'customer_zip_code_prefix', 'customer_city', 'customer_state'],
+    columnDescriptions: {
+      customer_id: 'Per-order customer key. NOT unique across orders — one real customer can have multiple customer_ids. Do NOT use COUNT(DISTINCT customer_id) for unique customers.',
+      customer_unique_id: 'Actual unique customer identifier. USE THIS for counting unique customers, repeat purchase analysis, and customer segmentation.',
+    },
   },
   orders: {
     source: 'csv',
@@ -49,6 +53,9 @@ export const SAP_TABLE_REGISTRY = {
     columns: ['order_id', 'customer_id', 'order_status', 'order_purchase_timestamp', 'order_approved_at', 'order_delivered_carrier_date', 'order_delivered_customer_date', 'order_estimated_delivery_date'],
     columnDescriptions: {
       order_status: 'Order lifecycle status: delivered, shipped, canceled, unavailable, processing, created, approved, invoiced.',
+      order_purchase_timestamp: 'ISO timestamp string (e.g. "2017-05-22 10:15:46"). NOT a unix epoch. Use ::TIMESTAMP to cast for date functions.',
+      order_delivered_customer_date: 'Actual delivery timestamp. Compare with order_estimated_delivery_date: if actual < estimated → EARLY delivery (good). If actual > estimated → LATE delivery (bad).',
+      order_estimated_delivery_date: 'Promised delivery timestamp. Delivery variance = estimated - actual. Positive = early (good), negative = late (bad). Early deliveries correlate with HIGHER review scores.',
     },
   },
   order_items: {
@@ -72,7 +79,7 @@ export const SAP_TABLE_REGISTRY = {
     columns: ['order_id', 'payment_sequential', 'payment_type', 'payment_installments', 'payment_value'],
     columnDescriptions: {
       payment_sequential: 'Sequential payment number within an order (1, 2, 3…). NOT a monetary value.',
-      payment_value: 'Total monetary value of this payment in BRL.',
+      payment_value: 'Total monetary value of this payment in BRL. For share/percentage calculations, use SUM(payment_value) as the denominator — NOT COUNT(*).',
     },
   },
   reviews: {
@@ -82,7 +89,7 @@ export const SAP_TABLE_REGISTRY = {
     description: 'Customer reviews with scores and comments',
     columns: ['review_id', 'order_id', 'review_score', 'review_comment_title', 'review_comment_message', 'review_creation_date', 'review_answer_timestamp'],
     columnDescriptions: {
-      review_score: 'Customer satisfaction score from 1 (worst) to 5 (best).',
+      review_score: 'Customer satisfaction score from 1 (worst) to 5 (best). Early/on-time deliveries typically get HIGHER scores; late deliveries get LOWER scores.',
     },
   },
   products: {

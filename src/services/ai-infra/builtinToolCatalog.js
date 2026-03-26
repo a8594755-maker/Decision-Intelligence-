@@ -708,7 +708,7 @@ export const BUILTIN_TOOLS = [
   {
     id: 'query_sap_data',
     name: 'Query SAP Master Data (SQL)',
-    description: 'Execute SQL queries on enterprise data via DuckDB (PostgreSQL-compatible). Dataset A (Olist E-Commerce) is built-in: customers, orders, order_items, payments, reviews, products, sellers, geolocation, category_translation. Dataset B (DI Operations) is current-user scoped and may be empty unless this user has imported or synced operational data: suppliers, materials, inventory_snapshots, po_open_lines, goods_receipts. Supports CTEs (WITH ... AS), window functions (ROW_NUMBER, RANK, LAG, LEAD, OVER/PARTITION BY), PERCENTILE_CONT, MEDIAN, DATE_TRUNC, EXTRACT, and all standard SQL.',
+    description: 'Execute SQL queries on enterprise data via DuckDB (PostgreSQL-compatible). Dataset A (Olist E-Commerce) is built-in: customers, orders, order_items, payments, reviews, products, sellers, geolocation, category_translation. Dataset B (DI Operations) is current-user scoped and may be empty unless this user has imported or synced operational data: suppliers, materials, inventory_snapshots, po_open_lines, goods_receipts. Supports CTEs (WITH ... AS), window functions (ROW_NUMBER, RANK, LAG, LEAD, OVER/PARTITION BY), QUANTILE_CONT (NOT PERCENTILE_CONT), MEDIAN, DATE_TRUNC, EXTRACT, and all standard SQL.',
     category: TOOL_CATEGORY.DATA_ACCESS,
     keywords_en: ['sql', 'sap', 'master data', 'query', 'select', 'customers', 'orders', 'products', 'sellers', 'payments', 'reviews', 'geolocation', 'suppliers', 'materials', 'inventory', 'purchase orders'],
     keywords_zh: ['SQL', 'SAP', '主檔', '查詢', '客戶', '訂單', '產品', '賣家', '付款', '評論', '供應商', '物料', '庫存', '採購單'],

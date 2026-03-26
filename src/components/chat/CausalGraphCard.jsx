@@ -50,7 +50,7 @@ function CausalNode({ node, allNodes, depth = 0, onActionClick }) {
   const isAction = node.layer === 'action';
 
   return (
-    <div className={`${depth > 0 ? 'ml-4 pl-3 border-l-2 border-slate-200 dark:border-slate-700' : ''}`}>
+    <div className={`${depth > 0 ? 'ml-4 pl-3 border-l-2 border-[var(--border-default)]' : ''}`}>
       <div
         className={`flex items-start gap-2 rounded-lg ${config.bg} ${config.border} border px-3 py-2 mb-1.5 ${isAction ? 'cursor-pointer hover:opacity-80' : ''}`}
         onClick={isAction && onActionClick ? () => onActionClick(node.title) : undefined}
@@ -64,21 +64,21 @@ function CausalNode({ node, allNodes, depth = 0, onActionClick }) {
               {node.layer_label || node.layer}
             </span>
             {node.metric_value != null && (
-              <span className="text-[10px] font-mono text-slate-500 dark:text-slate-400">
+              <span className="text-[10px] font-mono text-[var(--text-muted)]">
                 ({node.metric_value})
               </span>
             )}
           </div>
-          <div className="text-xs font-medium text-slate-700 dark:text-slate-200 mt-0.5">
+          <div className="text-xs font-medium text-[var(--text-secondary)] mt-0.5">
             {node.title}
           </div>
           {node.detail && (
-            <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 leading-relaxed">
+            <div className="text-[11px] text-[var(--text-muted)] mt-0.5 leading-relaxed">
               {node.detail}
             </div>
           )}
           {node.entity && (
-            <span className="inline-block mt-1 text-[10px] font-mono bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-slate-600 dark:text-slate-400">
+            <span className="inline-block mt-1 text-[10px] font-mono bg-[var(--surface-subtle)] px-1.5 py-0.5 rounded text-[var(--text-secondary)]">
               {node.entity.type}: {node.entity.id}
             </span>
           )}
@@ -87,7 +87,7 @@ function CausalNode({ node, allNodes, depth = 0, onActionClick }) {
           <button
             type="button"
             onClick={(e) => { e.stopPropagation(); setExpanded(v => !v); }}
-            className="shrink-0 p-0.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"
+            className="shrink-0 p-0.5 text-[var(--text-muted)] hover:text-[var(--text-secondary)]"
           >
             {expanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
           </button>
@@ -128,7 +128,7 @@ export default function CausalGraphCard({ payload, onActionClick }) {
   const actionCount = nodes.filter(n => n.layer === 'action').length;
 
   return (
-    <Card className="border border-purple-200 dark:border-purple-800 bg-gradient-to-br from-white to-purple-50/30 dark:from-slate-900 dark:to-purple-950/20">
+    <Card category="data" className="border border-purple-200 dark:border-purple-800 bg-gradient-to-br from-white to-purple-50/30 dark:from-slate-900 dark:to-purple-950/20">
       {/* Header */}
       <div className="flex items-center gap-2 mb-3">
         <div className="p-1.5 rounded-md bg-purple-100 dark:bg-purple-900/30">
@@ -138,7 +138,7 @@ export default function CausalGraphCard({ payload, onActionClick }) {
           <span className="text-xs font-semibold text-purple-700 dark:text-purple-300 uppercase tracking-wider">
             Root Cause Analysis
           </span>
-          <span className="ml-2 text-[10px] text-slate-500 dark:text-slate-400">
+          <span className="ml-2 text-[10px] text-[var(--text-muted)]">
             {criticalCount > 0 ? `${criticalCount} critical` : ''} {actionCount > 0 ? `· ${actionCount} action(s)` : ''}
           </span>
         </div>

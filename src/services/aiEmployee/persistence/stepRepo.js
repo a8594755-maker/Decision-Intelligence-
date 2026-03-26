@@ -18,7 +18,7 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3
 // Known DB columns for ai_employee_runs — prevents Supabase errors from unknown fields
 const KNOWN_COLUMNS = new Set([
   'status', 'di_run_id', 'artifact_refs', 'summary', 'error_message',
-  'started_at', 'ended_at', 'step_index', 'step_name',
+  'started_at', 'ended_at', 'step_index', 'step_name', 'tool_type',
   'retry_count', 'max_retries', '_revision_instructions',
 ]);
 
@@ -77,6 +77,7 @@ export async function createSteps(taskId, employeeId, steps) {
     employee_id: employeeId,
     step_index: index,
     step_name: step.name,
+    tool_type: step.tool_type || null,
     status: STEP_STATES.PENDING,
     retry_count: 0,
     max_retries: step.max_retries ?? 3,

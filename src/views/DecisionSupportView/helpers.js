@@ -218,19 +218,59 @@ export function trimMessagesForLocalStorage(conversations) {
   return conversations.map((conv) => {
     if (!Array.isArray(conv.messages)) return conv;
     const trimmed = conv.messages.map((msg) => {
-      if (!msg.type || !HEAVY_TYPES.has(msg.type) || !msg.payload) return msg;
-      // Keep a skeleton: title, summary, analysisType, metrics — drop charts/tables/rows/code/data
-      const p = msg.payload;
-      const skeleton = {
-        _trimmedForLocalStorage: true,
-        title: p.title,
-        summary: p.summary,
-        analysisType: p.analysisType,
-      };
-      if (p.metrics && typeof p.metrics === 'object') skeleton.metrics = p.metrics;
-      if (p.highlights) skeleton.highlights = p.highlights;
-      if (p.kpis) skeleton.kpis = p.kpis;
-      return { ...msg, payload: skeleton };
+      // Trim heavy card types
+      if (msg.type && HEAVY_TYPES.has(msg.type) && msg.payload) {
+        const p = msg.payload;
+        const skeleton = {
+          _trimmedForLocalStorage: true,
+          title: p.title,
+          summary: p.summary,
+          analysisType: p.analysisType,
+        };
+        if (p.metrics && typeof p.metrics === 'object') skeleton.metrics = p.metrics;
+        if (p.highlights) skeleton.highlights = p.highlights;
+        if (p.kpis) skeleton.kpis = p.kpis;
+        return { ...msg, payload: skeleton };
+      }
+
+      // Trim agent_response messages (brief + toolCalls + QA can be > 500KB)
+      if (msg.type === 'agent_response' && msg.payload && !msg.payload._trimmedForLocalStorage) {
+        const p = msg.payload;
+        const trimmedPayload = { _trimmedForLocalStorage: true };
+
+        // Keep brief skeleton (headline, summary, pills, first 3 findings)
+        if (p.brief) {
+          trimmedPayload.brief = {
+            headline: p.brief.headline,
+            summary: p.brief.summary,
+            executive_summary: p.brief.executive_summary,
+            metric_pills: p.brief.metric_pills,
+            key_findings: Array.isArray(p.brief.key_findings) ? p.brief.key_findings.slice(0, 3) : [],
+            implications: Array.isArray(p.brief.implications) ? p.brief.implications.slice(0, 2) : [],
+            caveats: Array.isArray(p.brief.caveats) ? p.brief.caveats.slice(0, 3) : [],
+            // Tables: keep columns + first 3 rows only
+            tables: Array.isArray(p.brief.tables)
+              ? p.brief.tables.map(t => ({ title: t?.title, columns: t?.columns, rows: Array.isArray(t?.rows) ? t.rows.slice(0, 3) : [] }))
+              : [],
+            // Charts: keep type + title only (drop data)
+            charts: Array.isArray(p.brief.charts)
+              ? p.brief.charts.map(c => ({ type: c?.type, title: c?.title }))
+              : [],
+          };
+        }
+
+        // Keep QA score only (drop detailed dimension scores, issues, tool traces)
+        if (p.qa) {
+          trimmedPayload.qa = { score: p.qa.score, status: p.qa.status };
+        }
+
+        // Drop: toolCalls, trace, candidates, judgeDecision, orchestration
+        if (p.orchestration?.mode) trimmedPayload._orchestrationMode = p.orchestration.mode;
+
+        return { ...msg, payload: trimmedPayload };
+      }
+
+      return msg;
     });
     return { ...conv, messages: trimmed };
   });

@@ -55,6 +55,8 @@ async function trySupabase(fn) {
     if (!supabase) return null;
     return await fn();
   } catch (err) {
+    // AbortError is expected during navigation/unmount — suppress silently
+    if (err?.name === 'AbortError') return null;
     console.warn('[scheduledTaskService] Supabase call failed:', err?.message || err);
     return null;
   }

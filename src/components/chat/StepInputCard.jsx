@@ -143,7 +143,7 @@ export default function StepInputCard({
             Step {stepIndex + 1} &ldquo;{stepName}&rdquo; needs data to continue.
           </div>
           {message && (
-            <div className="text-xs text-slate-600 dark:text-slate-400 mt-1">
+            <div className="text-xs text-[var(--text-secondary)] mt-1">
               {message}
             </div>
           )}
@@ -158,7 +158,7 @@ export default function StepInputCard({
           disabled={disabled || submitting}
           className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors ${
             mode === 'select'
-              ? 'bg-white dark:bg-slate-800 text-amber-800 dark:text-amber-200 shadow-sm'
+              ? 'bg-[var(--surface-card)] text-amber-800 dark:text-amber-200 shadow-sm'
               : 'text-amber-700/70 dark:text-amber-400/60 hover:text-amber-800 dark:hover:text-amber-300'
           }`}
         >
@@ -171,7 +171,7 @@ export default function StepInputCard({
           disabled={disabled || submitting}
           className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors ${
             mode === 'upload'
-              ? 'bg-white dark:bg-slate-800 text-amber-800 dark:text-amber-200 shadow-sm'
+              ? 'bg-[var(--surface-card)] text-amber-800 dark:text-amber-200 shadow-sm'
               : 'text-amber-700/70 dark:text-amber-400/60 hover:text-amber-800 dark:hover:text-amber-300'
           }`}
         >
@@ -184,7 +184,7 @@ export default function StepInputCard({
       {mode === 'select' ? (
         <div className="space-y-1.5">
           {datasets.length === 0 ? (
-            <div className="text-xs text-slate-500 dark:text-slate-400 italic py-2 text-center">
+            <div className="text-xs text-[var(--text-muted)] italic py-2 text-center">
               No datasets available. Upload a file instead.
             </div>
           ) : (
@@ -198,13 +198,13 @@ export default function StepInputCard({
                   className={`w-full text-left px-2.5 py-1.5 rounded text-xs transition-colors flex items-center gap-2 ${
                     selectedDatasetId === ds.id
                       ? 'bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 ring-1 ring-indigo-300 dark:ring-indigo-600'
-                      : 'hover:bg-slate-50 dark:hover:bg-slate-700/40 text-slate-700 dark:text-slate-300'
+                      : 'hover:bg-slate-50 dark:hover:bg-slate-700/40 text-[var(--text-secondary)]'
                   }`}
                 >
                   <DatabaseIcon className="shrink-0 text-slate-400" />
                   <span className="truncate font-medium">{ds.label || ds.file_name || ds.id}</span>
                   {selectedDatasetId === ds.id && (
-                    <CheckIcon className="ml-auto shrink-0 text-indigo-600 dark:text-indigo-400" />
+                    <CheckIcon className="ml-auto shrink-0 text-[var(--brand-600)]" />
                   )}
                 </button>
               ))}
@@ -239,7 +239,7 @@ export default function StepInputCard({
           type="button"
           onClick={handleSkip}
           disabled={disabled || submitting}
-          className="text-xs text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300 underline underline-offset-2 transition-colors"
+          className="text-xs text-[var(--text-muted)] hover:text-slate-700 dark:hover:text-slate-300 underline underline-offset-2 transition-colors"
         >
           Skip this step
         </button>
@@ -249,8 +249,8 @@ export default function StepInputCard({
           disabled={!canSubmit || disabled || submitting}
           className={`flex items-center gap-1.5 px-4 py-1.5 rounded-md text-xs font-medium transition-all ${
             canSubmit && !disabled && !submitting
-              ? 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-sm hover:shadow-md'
-              : 'bg-slate-200 dark:bg-slate-700 text-slate-400 dark:text-slate-500 cursor-not-allowed'
+              ? 'bg-[var(--brand-600)] text-white hover:bg-indigo-700 shadow-sm hover:shadow-md'
+              : 'bg-[var(--surface-subtle)] text-[var(--text-muted)] cursor-not-allowed'
           }`}
         >
           {submitting ? (

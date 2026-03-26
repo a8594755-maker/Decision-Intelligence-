@@ -113,7 +113,7 @@ export default function ForecastCard({ payload, onRunPlan, onRunRiskAwarePlan, i
   const timeRange = payload.time_range_guess || {};
 
   return (
-    <Card className="w-full border border-emerald-200 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-900/10">
+    <Card category="forecast" className="w-full border border-emerald-200 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-900/10">
       <div className="space-y-3">
         <div className="flex items-start justify-between gap-3">
           <div>
@@ -121,10 +121,10 @@ export default function ForecastCard({ payload, onRunPlan, onRunRiskAwarePlan, i
               <TrendingUp className="w-4 h-4 text-emerald-600" />
               Forecast Results
             </h4>
-            <p className="text-xs text-slate-600 dark:text-slate-300">
+            <p className="text-xs text-[var(--text-secondary)]">
               Run #{payload.run_id || 'N/A'} | {payload.workflow || 'workflow_unknown'}
             </p>
-            <p className="text-xs text-slate-500">
+            <p className="text-xs text-[var(--text-muted)]">
               Source time range: {timeRange?.start || 'unknown'} to {timeRange?.end || 'unknown'}
             </p>
           </div>
@@ -162,11 +162,11 @@ export default function ForecastCard({ payload, onRunPlan, onRunRiskAwarePlan, i
 
         {groups.length > 1 && (
           <div className="flex items-center gap-2">
-            <span className="text-xs text-slate-600 dark:text-slate-300">Series</span>
+            <span className="text-xs text-[var(--text-secondary)]">Series</span>
             <select
               value={selectedGroupKey}
               onChange={(e) => setGroupKey(e.target.value)}
-              className="text-xs px-2 py-1 rounded border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800"
+              className="text-xs px-2 py-1 rounded border border-[var(--border-default)] bg-[var(--surface-card)]"
             >
               {groups.map((group) => (
                 <option key={group.key} value={group.key}>
@@ -178,12 +178,12 @@ export default function ForecastCard({ payload, onRunPlan, onRunRiskAwarePlan, i
         )}
 
         {selectedGroup && (
-          <div className="text-xs text-slate-600 dark:text-slate-300">
+          <div className="text-xs text-[var(--text-secondary)]">
             Showing: <strong>{selectedGroup.material_code}</strong> @ <strong>{selectedGroup.plant_id}</strong>
           </div>
         )}
 
-        <div className="w-full bg-white dark:bg-slate-800 rounded border border-slate-200 dark:border-slate-700 p-2">
+        <div className="w-full bg-[var(--surface-card)] rounded border border-[var(--border-default)] p-2">
           <ResponsiveContainer width="100%" height={240} minWidth={1} minHeight={1}>
             <LineChart data={chartData}>
               <CartesianGrid strokeDasharray="3 3" />

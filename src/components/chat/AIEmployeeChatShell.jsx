@@ -75,7 +75,7 @@ export default function AIEmployeeChatShell({
 
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
-                    <h2 className="truncate text-base font-semibold text-slate-900 dark:text-slate-100">{title}</h2>
+                    <h2 className="truncate text-base font-semibold text-[var(--text-primary)]">{title}</h2>
                     {badge ? (
                       <span className="inline-flex rounded-full bg-slate-900 px-2.5 py-1 text-[11px] font-medium text-white dark:bg-slate-100 dark:text-slate-900">
                         {badge}
@@ -83,7 +83,7 @@ export default function AIEmployeeChatShell({
                     ) : null}
                   </div>
                   {subtitle ? (
-                    <p className="mt-1 truncate text-xs text-slate-500 dark:text-slate-400">{subtitle}</p>
+                    <p className="mt-1 truncate text-xs text-[var(--text-muted)]">{subtitle}</p>
                   ) : null}
                 </div>
               </div>
@@ -131,16 +131,16 @@ export default function AIEmployeeChatShell({
             >
               <div className="flex items-center justify-between border-b border-black/8 px-5 py-4 dark:border-white/10">
                 <div>
-                  <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">{secondaryPanel.title}</div>
+                  <div className="text-sm font-semibold text-[var(--text-primary)]">{secondaryPanel.title}</div>
                   {secondaryPanel.description ? (
-                    <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">{secondaryPanel.description}</div>
+                    <div className="mt-1 text-xs text-[var(--text-muted)]">{secondaryPanel.description}</div>
                   ) : null}
                 </div>
                 <button
                   type="button"
                   aria-label={`Close ${secondaryPanel.title}`}
                   onClick={secondaryPanel.onClose}
-                  className="rounded-full p-2 text-slate-500 transition hover:bg-slate-100 dark:hover:bg-slate-800"
+                  className="rounded-full p-2 text-slate-500 transition hover:bg-[var(--accent-hover)]"
                 >
                   <X className="h-4 w-4" />
                 </button>

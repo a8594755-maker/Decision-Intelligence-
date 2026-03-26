@@ -670,6 +670,72 @@ export const summarizeDatasetProfileForChat = (profileRow) => {
 };
 
 /**
+ * Pre-warn the agent about partial-year coverage before any query runs.
+ * Analyses the dataset profile's date columns to identify years with < 12 months,
+ * so the agent avoids wasting iterations on CAGR with partial-year base periods.
+ */
+export function buildTemporalCoverageBlock(profileRow) {
+  if (!profileRow?.profile_json) return '';
+  const profile = profileRow.profile_json;
+  const sheets = profile.sheets || [];
+
+  // Find date columns with date_range metadata
+  const dateColumns = [];
+  for (const sheet of sheets) {
+    for (const col of (sheet.columns || [])) {
+      if (col.date_range?.min && col.date_range?.max) {
+        dateColumns.push(col);
+      }
+    }
+  }
+  if (dateColumns.length === 0) return '';
+
+  // Use the widest date range found
+  const allMins = dateColumns.map(c => new Date(c.date_range.min));
+  const allMaxs = dateColumns.map(c => new Date(c.date_range.max));
+  const globalMin = new Date(Math.min(...allMins));
+  const globalMax = new Date(Math.max(...allMaxs));
+  if (Number.isNaN(globalMin.getTime()) || Number.isNaN(globalMax.getTime())) return '';
+
+  const startYear = globalMin.getUTCFullYear();
+  const endYear = globalMax.getUTCFullYear();
+  if (endYear - startYear > 20 || startYear < 1990) return ''; // sanity guard
+
+  const startMonth = globalMin.getUTCMonth() + 1;
+  const endMonth = globalMax.getUTCMonth() + 1;
+
+  const warnings = [];
+  for (let y = startYear; y <= endYear; y++) {
+    let covered;
+    if (startYear === endYear) {
+      covered = endMonth - startMonth + 1;
+    } else if (y === startYear) {
+      covered = 13 - startMonth;
+    } else if (y === endYear) {
+      covered = endMonth;
+    } else {
+      covered = 12;
+    }
+    covered = Math.min(Math.max(covered, 1), 12);
+
+    if (covered < 6) {
+      warnings.push(`  ${y}: ~${covered} months — do NOT use as CAGR/YoY endpoint`);
+    } else if (covered < 12) {
+      warnings.push(`  ${y}: ~${covered} months — partial year, normalize before comparing`);
+    }
+  }
+
+  if (warnings.length === 0) return '';
+
+  return [
+    '⚠️ TEMPORAL COVERAGE WARNING (from dataset profile):',
+    `Data spans ${globalMin.toISOString().slice(0, 7)} to ${globalMax.toISOString().slice(0, 7)}.`,
+    ...warnings,
+    'Before computing CAGR or YoY, verify monthly coverage. Use only full-coverage years as base periods.',
+  ].join('\n');
+}
+
+/**
  * Build + persist dataset profile row.
  * Does not throw on LLM parse errors; deterministic profile is always kept.
  */

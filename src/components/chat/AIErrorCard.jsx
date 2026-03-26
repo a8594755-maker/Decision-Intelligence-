@@ -6,7 +6,7 @@ export default function AIErrorCard({ payload, onConfigure }) {
   if (!payload) return null;
 
   return (
-    <Card className="w-full border border-red-200 dark:border-red-900/50 bg-red-50/70 dark:bg-red-900/10">
+    <Card category="system" className="w-full border border-red-200 dark:border-red-900/50 bg-red-50/70 dark:bg-red-900/10">
       <div className="flex items-start gap-3">
         <span className="inline-flex p-2 rounded-lg bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-300">
           <AlertTriangle className="w-4 h-4" />

@@ -57,15 +57,15 @@ export const Table = ({
   if (data.length === 0) {
     return (
       <div className={`w-full ${className}`}>
-        <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700">
+        <div className="overflow-x-auto rounded-lg border border-[var(--border-default)]">
           <table className="w-full">
             {/* Header */}
-            <thead className="bg-slate-100 dark:bg-slate-800">
+            <thead className="bg-[var(--surface-subtle)]">
               <tr>
                 {columns.map((column) => (
                   <th
                     key={column.key}
-                    className={`px-4 py-3 text-xs font-semibold uppercase text-slate-700 dark:text-slate-300 ${getAlignClass(column.align)}`}
+                    className={`px-4 py-3 text-xs font-semibold uppercase text-[var(--text-secondary)] ${getAlignClass(column.align)}`}
                     style={{ width: column.width }}
                   >
                     {column.label}
@@ -77,9 +77,9 @@ export const Table = ({
             <tbody>
               <tr>
                 <td colSpan={columns.length} className="px-4 py-12 text-center">
-                  <div className="flex flex-col items-center justify-center text-slate-500 dark:text-slate-400">
+                  <div className="flex flex-col items-center justify-center text-[var(--text-muted)]">
                     {emptyIcon && (
-                      <div className="mb-3 text-slate-300 dark:text-slate-600">
+                      <div className="mb-3 text-[var(--text-muted)]">
                         {emptyIcon}
                       </div>
                     )}
@@ -106,8 +106,8 @@ export const Table = ({
           transition-colors
           ${onRowClick ? 'cursor-pointer' : ''}
           ${isSelected
-            ? 'bg-indigo-50 dark:bg-indigo-900/20 border-l-4 border-indigo-500'
-            : 'hover:bg-stone-50 dark:hover:bg-stone-700/50'
+            ? 'bg-[var(--accent-active)] border-l-4 border-[var(--brand-500)]'
+            : 'hover:bg-[var(--accent-hover)]'
           }
         `}
       >
@@ -116,7 +116,7 @@ export const Table = ({
           return (
             <td
               key={`${rowId}-${column.key}`}
-              className={`px-4 py-3 text-slate-900 dark:text-slate-100 ${getAlignClass(column.align)}`}
+              className={`px-4 py-3 text-[var(--text-primary)] ${getAlignClass(column.align)}`}
             >
               {renderCell ? renderCell(column, row, value) : value}
             </td>
@@ -127,12 +127,12 @@ export const Table = ({
   };
 
   const header = (
-    <thead className={`bg-slate-100 dark:bg-slate-800 ${stickyHeader ? 'sticky top-0 z-10' : ''}`}>
+    <thead className={`bg-[var(--surface-subtle)] ${stickyHeader ? 'sticky top-0 z-10' : ''}`}>
       <tr>
         {columns.map((column) => (
           <th
             key={column.key}
-            className={`px-4 py-3 text-xs font-semibold uppercase text-slate-700 dark:text-slate-300 ${getAlignClass(column.align)}`}
+            className={`px-4 py-3 text-xs font-semibold uppercase text-[var(--text-secondary)] ${getAlignClass(column.align)}`}
             style={{ width: column.width }}
           >
             {column.label}
@@ -148,12 +148,12 @@ export const Table = ({
       <div className={`w-full ${className}`}>
         <div
           ref={parentRef}
-          className="overflow-auto rounded-lg border border-slate-200 dark:border-slate-700"
+          className="overflow-auto rounded-lg border border-[var(--border-default)]"
           style={{ maxHeight }}
         >
           <table className="w-full text-sm">
             {header}
-            <tbody className="divide-y divide-slate-200 dark:divide-slate-700 bg-white dark:bg-slate-800">
+            <tbody className="divide-y divide-[var(--border-default)] bg-[var(--surface-card)]">
               {virtualRows.length > 0 && (
                 <tr style={{ height: virtualRows[0].start }}>
                   <td colSpan={columns.length} style={{ padding: 0, border: 'none' }} />
@@ -174,10 +174,10 @@ export const Table = ({
 
   return (
     <div className={`w-full ${className}`}>
-      <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700">
+      <div className="overflow-x-auto rounded-lg border border-[var(--border-default)]">
         <table className="w-full text-sm">
           {header}
-          <tbody className="divide-y divide-slate-200 dark:divide-slate-700 bg-white dark:bg-slate-800">
+          <tbody className="divide-y divide-[var(--border-default)] bg-[var(--surface-card)]">
             {data.map((row, rowIndex) => renderRow(row, rowIndex))}
           </tbody>
         </table>
@@ -204,16 +204,16 @@ export const TableHeader = ({
     <th
       onClick={() => canSort && onSort(column.key)}
       className={`
-        px-4 py-3 text-xs font-semibold uppercase text-slate-700 dark:text-slate-300
+        px-4 py-3 text-xs font-semibold uppercase text-[var(--text-secondary)]
         ${column.align === 'right' ? 'text-right' : column.align === 'center' ? 'text-center' : 'text-left'}
-        ${canSort ? 'cursor-pointer hover:bg-slate-200 dark:hover:bg-slate-700' : ''}
+        ${canSort ? 'cursor-pointer hover:bg-[var(--accent-hover)]' : ''}
       `}
       style={{ width: column.width }}
     >
       <div className={`flex items-center gap-1 ${column.align === 'right' ? 'justify-end' : column.align === 'center' ? 'justify-center' : 'justify-start'}`}>
         {children || column.label}
         {canSort && (
-          <span className="text-slate-400">
+          <span className="text-[var(--text-muted)]">
             {isSorted ? (sortDirection === 'asc' ? '↑' : '↓') : '↕'}
           </span>
         )}

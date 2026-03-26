@@ -1,20 +1,30 @@
 import { acquireOrThrow } from '../../utils/rateLimiter';
 
+const _env = (key) => {
+  if (typeof import.meta !== 'undefined' && import.meta.env?.[key]) return import.meta.env[key];
+  if (typeof process !== 'undefined' && process.env?.[key]) return process.env[key];
+  return '';
+};
+
 const AI_PROXY_FUNCTION_NAME = 'ai-proxy';
-const SUPABASE_URL = String(import.meta.env.VITE_SUPABASE_URL || '').replace(/\/+$/, '');
-const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
+const SUPABASE_URL = String(_env('VITE_SUPABASE_URL') || '').replace(/\/+$/, '');
+const SUPABASE_ANON_KEY = _env('VITE_SUPABASE_ANON_KEY') || '';
+const SUPABASE_SERVICE_ROLE_KEY = _env('SUPABASE_SERVICE_ROLE_KEY') || '';
 
 const EDGE_FN_URL = SUPABASE_URL
   ? `${SUPABASE_URL}/functions/v1/${AI_PROXY_FUNCTION_NAME}`
   : '';
 
+// Server-side mode: running in Node.js worker (no localStorage)
+const _IS_SERVER = typeof localStorage === 'undefined'
+  && (typeof process !== 'undefined' && !!process.versions?.node);
+
 /**
  * Read the stored Supabase JWT from localStorage synchronously.
- * Supabase JS v2 stores it under `sb-<project-ref>-auth-token`.
- * This avoids calling supabase.auth.getSession() which can trigger
- * a slow token-refresh network round-trip that hangs in some browsers.
+ * In server mode, returns null (we use service role key + x-di-server header instead).
  */
 const getStoredAccessToken = () => {
+  if (_IS_SERVER) return null;
   try {
     if (typeof localStorage === 'undefined') return null;
     // Extract project ref from URL: https://<ref>.supabase.co
@@ -393,11 +403,16 @@ export const invokeAiProxy = async (mode, payload = {}, { signal, timeoutMs = AI
     'Content-Type': 'application/json',
     'apikey': SUPABASE_ANON_KEY,
   };
-  if (accessToken) {
+  if (_IS_SERVER && SUPABASE_SERVICE_ROLE_KEY) {
+    // Server-side: use service role key for server-to-server auth
+    headers['Authorization'] = `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`;
+    headers['x-di-server'] = 'true';
+  } else if (accessToken) {
     headers['Authorization'] = `Bearer ${accessToken}`;
   }
 
-  const t0 = performance.now();
+  const _now = typeof performance !== 'undefined' ? () => performance.now() : () => Date.now();
+  const t0 = _now();
   console.info(`[aiProxy] Calling Edge Function "${AI_PROXY_FUNCTION_NAME}" (mode=${mode}) via raw fetch...`);
 
   let res;
@@ -429,7 +444,7 @@ export const invokeAiProxy = async (mode, payload = {}, { signal, timeoutMs = AI
     clearTimeout(timeoutId);
   }
 
-  const elapsed = Math.round(performance.now() - t0);
+  const elapsed = Math.round(_now() - t0);
   console.info(`[aiProxy] Edge Function "${AI_PROXY_FUNCTION_NAME}" (mode=${mode}) responded in ${elapsed}ms — status ${res.status}`);
 
   const data = await res.json();

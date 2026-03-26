@@ -111,7 +111,7 @@ function RiskComparisonCard({ comparison }) {
       <div className="overflow-x-auto">
         <table className="w-full text-[11px]">
           <thead>
-            <tr className="text-slate-500 dark:text-slate-400 border-b border-slate-200 dark:border-slate-700">
+            <tr className="text-[var(--text-muted)] border-b border-[var(--border-default)]">
               <th className="text-left pb-1 font-medium">Metric</th>
               <th className="text-right pb-1 font-medium">Base</th>
               <th className="text-right pb-1 font-medium">Risk-Aware</th>
@@ -121,9 +121,9 @@ function RiskComparisonCard({ comparison }) {
           <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
             {metrics.map((m) => (
               <tr key={m.label}>
-                <td className="py-1.5 text-slate-700 dark:text-slate-300 font-medium">{m.label}</td>
-                <td className="py-1.5 text-right text-slate-600 dark:text-slate-400">{m.base}</td>
-                <td className="py-1.5 text-right text-slate-800 dark:text-slate-200 font-medium">{m.risk}</td>
+                <td className="py-1.5 text-[var(--text-secondary)] font-medium">{m.label}</td>
+                <td className="py-1.5 text-right text-[var(--text-secondary)]">{m.base}</td>
+                <td className="py-1.5 text-right text-[var(--text-primary)] font-medium">{m.risk}</td>
                 <td className="py-1.5 text-right">
                   {m.delta ? (
                     <span className={`font-medium ${m.delta.good ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
@@ -140,14 +140,14 @@ function RiskComparisonCard({ comparison }) {
       {/* Top SKU changes */}
       {keyChanges.length > 0 && (
         <div>
-          <p className="text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-2 uppercase tracking-wide">
+          <p className="text-[11px] font-semibold text-[var(--text-secondary)] mb-2 uppercase tracking-wide">
             Top Changed SKUs
           </p>
           <div className="space-y-1.5">
             {keyChanges.map((change, idx) => (
-              <div key={`${change.sku}-${idx}`} className="rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-3 py-2">
+              <div key={`${change.sku}-${idx}`} className="rounded-lg bg-[var(--surface-card)] border border-[var(--border-default)] px-3 py-2">
                 <div className="flex items-center justify-between">
-                  <span className="text-[11px] font-medium text-slate-800 dark:text-slate-200">
+                  <span className="text-[11px] font-medium text-[var(--text-primary)]">
                     {change.sku}{change.plant_id ? ` / ${change.plant_id}` : ''}
                   </span>
                   <span className={`text-[11px] font-semibold ${change.delta > 0 ? 'text-blue-600 dark:text-blue-400' : 'text-orange-600 dark:text-orange-400'}`}>
@@ -398,11 +398,11 @@ export default function CanvasPanel({
   const hasRenderableActualVsForecastSeries = showActual || showP50 || showP90 || showLower || showUpper;
 
   return (
-    <div className="w-full h-full flex flex-col bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-700/60 overflow-hidden">
+    <div className="w-full h-full flex flex-col bg-[var(--surface-card)] border-l border-[var(--border-default)]/60 overflow-hidden">
       {/* Header */}
-      <div className="border-b border-slate-200 dark:border-slate-700/60 px-4 py-3 bg-slate-50/80 dark:bg-slate-900/90 flex items-center justify-between flex-shrink-0">
+      <div className="border-b border-[var(--border-default)]/60 px-4 py-3 bg-slate-50/80 dark:bg-slate-900/90 flex items-center justify-between flex-shrink-0">
         <div className="min-w-0">
-          <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100">Canvas</h3>
+          <h3 className="text-sm font-semibold text-[var(--text-primary)]">Canvas</h3>
           <p className="text-xs text-slate-500 truncate">
             {run?.status === 'running' ? (
               <span className="inline-flex items-center gap-1.5">
@@ -434,7 +434,7 @@ export default function CanvasPanel({
             <button
               type="button"
               onClick={onPopout}
-              className="p-1.5 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-500 transition-colors"
+              className="p-1.5 rounded-lg hover:bg-[var(--accent-hover)] text-slate-500 transition-colors"
               title={isDetached ? 'Dock back' : 'Detach to floating window'}
             >
               {isDetached ? <PanelRightClose className="w-4 h-4" /> : <ExternalLink className="w-4 h-4" />}
@@ -443,7 +443,7 @@ export default function CanvasPanel({
           <button
             type="button"
             onClick={onToggleOpen}
-            className="p-1.5 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-500 transition-colors"
+            className="p-1.5 rounded-lg hover:bg-[var(--accent-hover)] text-slate-500 transition-colors"
             title={isDetached ? 'Close floating canvas' : 'Close Canvas'}
           >
             <X className="w-4 h-4" />
@@ -452,7 +452,7 @@ export default function CanvasPanel({
       </div>
 
       {/* Tabs */}
-      <div className="border-b border-slate-200 dark:border-slate-700/60 px-2 py-2 flex gap-1 overflow-x-auto flex-shrink-0 bg-white dark:bg-slate-900">
+      <div className="border-b border-[var(--border-default)]/60 px-2 py-2 flex gap-1 overflow-x-auto flex-shrink-0 bg-[var(--surface-card)]">
         {TAB_OPTIONS.map((tab) => {
           const isActive = activeTab === tab.id;
           const Icon = tab.icon;
@@ -464,7 +464,7 @@ export default function CanvasPanel({
               className={`px-3 py-1.5 text-xs font-medium rounded-lg flex items-center gap-1.5 whitespace-nowrap transition-all duration-150 ${
                 isActive
                   ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300'
-                  : 'hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-400'
+                  : 'hover:bg-[var(--accent-hover)] text-[var(--text-secondary)]'
               }`}
             >
               <Icon className={`w-3.5 h-3.5 ${isActive ? 'text-blue-600 dark:text-blue-400' : ''}`} />
@@ -479,8 +479,8 @@ export default function CanvasPanel({
         {activeTab === 'logs' && (
           <div className="space-y-4">
             {/* Step Status Panel */}
-            <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/30 p-3">
-              <h4 className="text-xs font-semibold text-slate-700 dark:text-slate-300 mb-3 uppercase tracking-wide">
+            <div className="rounded-xl border border-[var(--border-default)] bg-slate-50/50 dark:bg-slate-800/30 p-3">
+              <h4 className="text-xs font-semibold text-[var(--text-secondary)] mb-3 uppercase tracking-wide">
                 Execution Steps
               </h4>
               <div className="space-y-1.5">
@@ -512,7 +512,7 @@ export default function CanvasPanel({
                         <span className={`font-medium capitalize ${
                           isRunning 
                             ? 'text-blue-800 dark:text-blue-200' 
-                            : 'text-slate-700 dark:text-slate-300'
+                            : 'text-[var(--text-secondary)]'
                         }`}>
                           {step}
                         </span>
@@ -524,7 +524,7 @@ export default function CanvasPanel({
                           ? 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300'
                           : meta?.status === 'running'
                           ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300'
-                          : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400'
+                          : 'bg-[var(--surface-subtle)] text-[var(--text-secondary)]'
                       }`}>
                         <Icon className={`w-3 h-3 ${meta?.status === 'running' ? 'animate-spin' : ''}`} />
                         {chip.label}
@@ -536,8 +536,8 @@ export default function CanvasPanel({
             </div>
 
             {/* Execution Logs */}
-            <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-3">
-              <h4 className="text-xs font-semibold text-slate-700 dark:text-slate-300 mb-3 uppercase tracking-wide">
+            <div className="rounded-xl border border-[var(--border-default)] bg-[var(--surface-card)] p-3">
+              <h4 className="text-xs font-semibold text-[var(--text-secondary)] mb-3 uppercase tracking-wide">
                 Logs
               </h4>
               {logs.length === 0 ? (
@@ -550,7 +550,7 @@ export default function CanvasPanel({
                       className="text-xs font-mono leading-relaxed"
                     >
                       <span className="text-slate-400 mr-2">[{log.step}]</span>
-                      <span className="text-slate-700 dark:text-slate-300">{log.message}</span>
+                      <span className="text-[var(--text-secondary)]">{log.message}</span>
                     </div>
                   ))}
                 </div>
@@ -560,9 +560,9 @@ export default function CanvasPanel({
         )}
 
         {activeTab === 'code' && (
-          <div className="rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden">
-            <div className="bg-slate-100 dark:bg-slate-800 px-3 py-2 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between">
-              <span className="text-xs font-medium text-slate-600 dark:text-slate-400">Generated Code</span>
+          <div className="rounded-xl border border-[var(--border-default)] overflow-hidden">
+            <div className="bg-[var(--surface-subtle)] px-3 py-2 border-b border-[var(--border-default)] flex items-center justify-between">
+              <span className="text-xs font-medium text-[var(--text-secondary)]">Generated Code</span>
             </div>
             <pre className="text-xs bg-slate-900 text-slate-100 p-4 overflow-x-auto leading-relaxed">
               <code>{codeText || '# No executable code artifact yet.'}</code>
@@ -572,12 +572,12 @@ export default function CanvasPanel({
 
         {activeTab === 'charts' && (
           <div className="space-y-4">
-            <div className="rounded-xl border border-slate-200 dark:border-slate-700 p-4">
+            <div className="rounded-xl border border-[var(--border-default)] p-4">
               <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
-                <p className="text-xs font-semibold text-slate-700 dark:text-slate-300">Actual vs Forecast</p>
+                <p className="text-xs font-semibold text-[var(--text-secondary)]">Actual vs Forecast</p>
                 {seriesGroups.length > 0 && (
                   <div className="flex items-center gap-2">
-                    <label className="text-[11px] text-slate-500 dark:text-slate-400 whitespace-nowrap">
+                    <label className="text-[11px] text-[var(--text-muted)] whitespace-nowrap">
                       SKU{seriesGroups.length > 1 ? ` (${seriesGroups.length})` : ''}:
                     </label>
                     {seriesGroups.length > 1 ? (
@@ -587,7 +587,7 @@ export default function CanvasPanel({
                           setSelectedSeriesKey(e.target.value);
                           setHiddenSeries({});
                         }}
-                        className="text-[11px] border border-slate-200 dark:border-slate-600 rounded-md px-2 py-1 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 max-w-[200px]"
+                        className="text-[11px] border border-slate-200 dark:border-slate-600 rounded-md px-2 py-1 bg-[var(--surface-card)] text-[var(--text-secondary)] max-w-[200px]"
                       >
                         {seriesGroups.map((g) => (
                           <option key={g.key} value={g.key}>
@@ -596,7 +596,7 @@ export default function CanvasPanel({
                         ))}
                       </select>
                     ) : (
-                      <span className="text-[11px] font-medium text-slate-700 dark:text-slate-300 truncate max-w-[160px]">
+                      <span className="text-[11px] font-medium text-[var(--text-secondary)] truncate max-w-[160px]">
                         {seriesGroups[0]?.material_code || seriesGroups[0]?.key || '—'}
                         {seriesGroups[0]?.plant_id ? ` / ${seriesGroups[0].plant_id}` : ''}
                       </span>
@@ -702,8 +702,8 @@ export default function CanvasPanel({
               });
               const hasWithoutPlan = invRows.some((r) => r.without_plan !== null && r.without_plan !== undefined);
               return (
-                <div className="rounded-xl border border-slate-200 dark:border-slate-700 p-4">
-                  <p className="text-xs font-semibold text-slate-700 dark:text-slate-300 mb-3">Inventory Projection</p>
+                <div className="rounded-xl border border-[var(--border-default)] p-4">
+                  <p className="text-xs font-semibold text-[var(--text-secondary)] mb-3">Inventory Projection</p>
                   {invRows.length === 0 ? (
                     <div className="h-48 md:h-64 w-full flex items-center justify-center text-slate-400 text-sm">No data available</div>
                   ) : (
@@ -758,8 +758,8 @@ export default function CanvasPanel({
               }));
               const BAR_COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4'];
               return (
-                <div className="rounded-xl border border-slate-200 dark:border-slate-700 p-4">
-                  <p className="text-xs font-semibold text-slate-700 dark:text-slate-300 mb-3">Cost Breakdown</p>
+                <div className="rounded-xl border border-[var(--border-default)] p-4">
+                  <p className="text-xs font-semibold text-[var(--text-secondary)] mb-3">Cost Breakdown</p>
                   {costRows.length === 0 ? (
                     <div className="h-48 md:h-64 w-full flex items-center justify-center text-slate-400 text-sm">No data available</div>
                   ) : (
@@ -820,7 +820,7 @@ export default function CanvasPanel({
                 <p className="text-xs font-semibold text-blue-800 dark:text-blue-300">
                   AI-Enhanced Export (.xlsx)
                 </p>
-                <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                <p className="text-[11px] text-[var(--text-muted)]">
                   {isAIExporting
                     ? 'Generating AI insights & building workbook...'
                     : 'Professional report with AI insights, charts & formatting'}
@@ -842,12 +842,12 @@ export default function CanvasPanel({
             </div>
 
             {/* Quick Export (existing SheetJS fallback) */}
-            <div className="rounded-xl border border-slate-200 dark:border-slate-700 p-3 flex items-center justify-between gap-3">
+            <div className="rounded-xl border border-[var(--border-default)] p-3 flex items-center justify-between gap-3">
               <div className="min-w-0">
-                <p className="text-xs font-medium text-slate-700 dark:text-slate-300">
+                <p className="text-xs font-medium text-[var(--text-secondary)]">
                   Quick Export (.xlsx)
                 </p>
-                <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                <p className="text-[11px] text-[var(--text-muted)]">
                   Basic data-only workbook (no AI, no formatting)
                 </p>
               </div>
@@ -890,10 +890,10 @@ export default function CanvasPanel({
               [...downloads, ...(workbookArtifact ? [workbookArtifact] : [])].map((download) => (
                 <div
                   key={`${download.fileName}-${download.label}`}
-                  className="flex items-center justify-between rounded-xl border border-slate-200 dark:border-slate-700 p-3 hover:border-slate-300 dark:hover:border-slate-600 transition-colors"
+                  className="flex items-center justify-between rounded-xl border border-[var(--border-default)] p-3 hover:border-slate-300 dark:hover:border-slate-600 transition-colors"
                 >
                   <div className="min-w-0 mr-3">
-                    <p className="text-xs font-medium text-slate-800 dark:text-slate-200 truncate">
+                    <p className="text-xs font-medium text-[var(--text-primary)] truncate">
                       {download.label || download.fileName}
                     </p>
                     <p className="text-[11px] text-slate-500 truncate">{download.fileName}</p>

@@ -31,7 +31,7 @@ export default function RiskExceptionsCard({ payload }) {
   if (!payload) return null;
 
   return (
-    <Card className="w-full border border-amber-200 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-900/10">
+    <Card category="risk" className="w-full border border-amber-200 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-900/10">
       <div className="space-y-3">
         <div className="flex items-start justify-between gap-3">
           <div>
@@ -39,7 +39,7 @@ export default function RiskExceptionsCard({ payload }) {
               <AlertTriangle className="w-4 h-4 text-amber-600" />
               Exceptions
             </h4>
-            <p className="text-xs text-slate-600 dark:text-slate-300">
+            <p className="text-xs text-[var(--text-secondary)]">
               Run #{payload.run_id || 'N/A'} | {exceptions.length} exceptions
             </p>
           </div>
@@ -50,7 +50,7 @@ export default function RiskExceptionsCard({ payload }) {
             <select
               value={sortBy}
               onChange={(event) => setSortBy(event.target.value)}
-              className="text-xs px-2 py-1 rounded border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800"
+              className="text-xs px-2 py-1 rounded border border-[var(--border-default)] bg-[var(--surface-card)]"
             >
               <option value="severity">Sort: Severity</option>
               <option value="score">Sort: Score</option>
@@ -59,16 +59,16 @@ export default function RiskExceptionsCard({ payload }) {
         </div>
 
         {sortedExceptions.length === 0 ? (
-          <p className="text-xs text-slate-600 dark:text-slate-300">No exceptions detected.</p>
+          <p className="text-xs text-[var(--text-secondary)]">No exceptions detected.</p>
         ) : (
           <div className="space-y-2">
             {sortedExceptions.slice(0, 12).map((item, index) => (
               <div
                 key={`${item.entity?.entity_id || 'entity'}-${index}`}
-                className="border border-slate-200 dark:border-slate-700 rounded px-3 py-2 bg-white/80 dark:bg-slate-900/40"
+                className="border border-[var(--border-default)] rounded px-3 py-2 bg-[var(--surface-card)]"
               >
                 <div className="flex items-center justify-between gap-2">
-                  <p className="text-xs font-medium text-slate-700 dark:text-slate-200">
+                  <p className="text-xs font-medium text-[var(--text-secondary)]">
                     {item.entity?.label || item.entity?.entity_id || 'Unknown entity'}
                   </p>
                   <div className="flex items-center gap-2">
@@ -80,9 +80,9 @@ export default function RiskExceptionsCard({ payload }) {
                     </Badge>
                   </div>
                 </div>
-                <p className="text-xs text-slate-600 dark:text-slate-300 mt-1">{item.description}</p>
+                <p className="text-xs text-[var(--text-secondary)] mt-1">{item.description}</p>
                 {(item.recommended_actions || []).length > 0 && (
-                  <ul className="list-disc list-inside text-xs text-slate-600 dark:text-slate-300 mt-1 space-y-1">
+                  <ul className="list-disc list-inside text-xs text-[var(--text-secondary)] mt-1 space-y-1">
                     {(item.recommended_actions || []).slice(0, 3).map((action, actionIndex) => (
                       <li key={`${action}-${actionIndex}`}>{action}</li>
                     ))}
