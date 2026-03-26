@@ -1,0 +1,149 @@
+/**
+ * InsightsDashboard — Full React renderer for Insights Hub.
+ * Replaces iframe-based HtmlCanvasRenderer. Renders cards with embedded charts.
+ */
+import InsightsChartCard from './InsightsChartCard';
+
+function KpiMetric({ metric }) {
+  return (
+    <div style={{ flex: '1 1 140px', minWidth: 120 }}>
+      <div style={{ fontSize: 11, color: '#64748b', marginBottom: 2 }}>{metric.label}</div>
+      <div style={{ fontSize: 22, fontWeight: 700, color: '#1e293b' }}>{metric.value}</div>
+      {metric.detail && <div style={{ fontSize: 10, color: '#94a3b8' }}>{metric.detail}</div>}
+    </div>
+  );
+}
+
+function DataTable({ tableData }) {
+  if (!tableData?.columns?.length || !tableData?.rows?.length) return null;
+  return (
+    <div style={{ overflowX: 'auto', marginTop: 12 }}>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+        <thead>
+          <tr>
+            {tableData.columns.map((col, i) => (
+              <th key={i} style={{ textAlign: 'left', padding: '8px 10px', background: '#f1f5f9', fontWeight: 600, color: '#475569', borderBottom: '2px solid #e2e8f0' }}>
+                {col}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {tableData.rows.map((row, ri) => (
+            <tr key={ri}>
+              {row.map((cell, ci) => (
+                <td key={ci} style={{ padding: '6px 10px', borderBottom: '1px solid #f1f5f9', color: '#334155', background: ri % 2 === 0 ? '#fff' : '#f8fafc' }}>
+                  {cell}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function AnalysisCard({ card }) {
+  const hasChart = card.chartData?.type && card.chartData.type !== 'none';
+
+  return (
+    <div style={{
+      background: '#fff',
+      border: '1px solid #e2e8f0',
+      borderRadius: 12,
+      padding: 20,
+      height: '100%',
+      display: 'flex',
+      flexDirection: 'column',
+    }}>
+      <h3 style={{ font: '600 16px system-ui,-apple-system,sans-serif', color: '#1e293b', margin: '0 0 14px' }}>
+        {card.title}
+      </h3>
+
+      {/* KPI Metrics */}
+      {card.metrics?.length > 0 && (
+        <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: hasChart || card.tableData ? 16 : 0 }}>
+          {card.metrics.map((m, i) => <KpiMetric key={i} metric={m} />)}
+        </div>
+      )}
+
+      {/* Chart (embedded in card) */}
+      {hasChart && (
+        <div style={{ marginBottom: card.tableData || card.analysis ? 12 : 0 }}>
+          <InsightsChartCard card={card} embedded />
+        </div>
+      )}
+
+      {/* Table */}
+      <DataTable tableData={card.tableData} />
+
+      {/* Analysis text */}
+      {card.analysis && (
+        <p style={{
+          fontSize: 12, color: '#475569', marginTop: 'auto', paddingTop: 12,
+          padding: '10px 12px', background: '#f0fdf4', borderLeft: '3px solid #10b981', borderRadius: 4,
+        }}>
+          {card.analysis}
+        </p>
+      )}
+    </div>
+  );
+}
+
+export default function InsightsDashboard({ dataCards, layout }) {
+  if (!dataCards?.length) return null;
+
+  const narrative = layout?.narrative || '';
+  const sections = layout?.sections || dataCards.map((c, i) => ({ cardId: c.id, width: i === 0 ? 'full' : 'half' }));
+
+  // Build card lookup
+  const cardMap = Object.fromEntries(dataCards.map(c => [c.id, c]));
+
+  // Order cards by layout sections, append any missing
+  const orderedIds = sections.map(s => s.cardId).filter(id => cardMap[id]);
+  const missingIds = dataCards.filter(c => !orderedIds.includes(c.id)).map(c => c.id);
+  const allSections = [
+    ...sections.filter(s => cardMap[s.cardId]),
+    ...missingIds.map(id => ({ cardId: id, width: 'half' })),
+  ];
+
+  return (
+    <div style={{ maxWidth: 1400, margin: '0 auto' }}>
+      {/* Executive Narrative */}
+      {narrative && (
+        <div style={{
+          background: '#fff', border: '1px solid #e2e8f0', borderRadius: 12,
+          padding: '20px 24px', marginBottom: 16,
+          borderLeft: '4px solid #6366f1',
+        }}>
+          <h3 style={{ font: '600 15px system-ui', color: '#6366f1', margin: '0 0 8px' }}>Executive Narrative</h3>
+          <p style={{ fontSize: 14, color: '#334155', lineHeight: 1.6, margin: 0 }}>{narrative}</p>
+        </div>
+      )}
+
+      {/* Cards Grid */}
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(2, 1fr)',
+        gap: 16,
+      }}>
+        {allSections.map(section => {
+          const card = cardMap[section.cardId];
+          if (!card) return null;
+          const isFull = section.width === 'full';
+          return (
+            <div key={section.cardId} style={{ gridColumn: isFull ? 'span 2' : 'span 1' }}>
+              <AnalysisCard card={card} />
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Footer */}
+      <div style={{ textAlign: 'center', padding: '24px 0 8px', fontSize: 11, color: '#94a3b8' }}>
+        Generated by AI Data Analyst · {new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}
+      </div>
+    </div>
+  );
+}

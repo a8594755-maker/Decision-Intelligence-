@@ -537,3 +537,27 @@ export function getResolvedInsightsHubModel() {
 export function setInsightsHubModel(provider, model) {
   localStorage.setItem(INSIGHTS_CONFIG_KEY, JSON.stringify({ provider, model }));
 }
+
+// ── Insights Hub Chart Model ──────────────────────────────────────────────────
+
+const INSIGHTS_CHART_CONFIG_KEY = 'di_insights_chart_model_config';
+const INSIGHTS_CHART_DEFAULT = { provider: 'deepseek', model: 'deepseek-chat' };
+
+/**
+ * Get the Insights Hub chart generation model config.
+ * Charts need a fast model that outputs SVG directly (not a reasoning model).
+ */
+export function getInsightsChartModelConfig() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(INSIGHTS_CHART_CONFIG_KEY));
+    if (stored?.provider && stored?.model) return { provider: stored.provider, model: stored.model };
+  } catch { /* ignore */ }
+  return INSIGHTS_CHART_DEFAULT;
+}
+
+/**
+ * Set Insights Hub chart model.
+ */
+export function setInsightsChartModel(provider, model) {
+  localStorage.setItem(INSIGHTS_CHART_CONFIG_KEY, JSON.stringify({ provider, model }));
+}

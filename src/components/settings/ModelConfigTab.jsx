@@ -22,6 +22,8 @@ import {
   setArtisanCustomModel,
   getInsightsHubModelConfig,
   setInsightsHubModel,
+  getInsightsChartModelConfig,
+  setInsightsChartModel,
 } from '../../services/ai-infra/modelConfigService';
 
 const ROLE_META = [
@@ -324,6 +326,75 @@ function InsightsHubModelCard() {
   );
 }
 
+function InsightsChartModelCard() {
+  const [config, setConfig] = useState(() => getInsightsChartModelConfig());
+  const currentProvider = config.provider;
+  const currentModel = config.model;
+  const models = PROVIDER_MODELS[currentProvider] || [];
+
+  const handleProviderChange = (e) => {
+    const p = e.target.value;
+    const m = PROVIDER_MODELS[p]?.[0] || '';
+    setInsightsChartModel(p, m);
+    setConfig({ provider: p, model: m });
+  };
+
+  const handleModelChange = (e) => {
+    setInsightsChartModel(currentProvider, e.target.value);
+    setConfig({ provider: currentProvider, model: e.target.value });
+  };
+
+  const selectStyle = {
+    borderColor: 'var(--border-default)',
+    backgroundColor: 'var(--bg-primary)',
+    color: 'var(--text-primary)',
+  };
+
+  return (
+    <Card>
+      <h3 className="font-semibold mb-1">Insights Chart Generator</h3>
+      <p className="text-xs mb-4" style={{ color: 'var(--text-secondary)' }}>
+        Model for generating SVG charts in the Insights Hub. Use a fast, non-reasoning model (e.g. deepseek-chat) for best results.
+      </p>
+
+      <div className="grid gap-4 md:grid-cols-2">
+        <div>
+          <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
+            Provider
+          </label>
+          <select
+            value={currentProvider}
+            onChange={handleProviderChange}
+            className="w-full rounded-md border px-3 py-2 text-sm"
+            style={selectStyle}
+          >
+            {providers.map((providerKey) => (
+              <option key={providerKey} value={providerKey}>
+                {PROVIDER_LABELS[providerKey] || providerKey}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
+            Model
+          </label>
+          <select
+            value={currentModel}
+            onChange={handleModelChange}
+            className="w-full rounded-md border px-3 py-2 text-sm"
+            style={selectStyle}
+          >
+            {models.map((m) => (
+              <option key={m} value={m}>{m}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 export default function ModelConfigTab() {
   const [thinkingMode, setThinkingMode] = useState(() => getActiveThinkingMode());
   const [configs, setConfigs] = useState(() => loadSharedConfigs());
@@ -431,6 +502,7 @@ export default function ModelConfigTab() {
       />
 
       <InsightsHubModelCard />
+      <InsightsChartModelCard />
 
       <div className="flex items-center justify-between">
         <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>

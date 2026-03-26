@@ -34,11 +34,12 @@ export function getCachedSummary(keyOrFingerprint, currentFingerprint) {
     const cacheKey = currentFingerprint ? keyOrFingerprint : DEFAULT_CACHE_KEY;
     const fp = currentFingerprint || keyOrFingerprint;
     const raw = localStorage.getItem(cacheKey);
-    if (!raw) return null;
+    if (!raw) { console.info(`[cache] Miss: ${cacheKey} — not in localStorage`); return null; }
     const { summary, fingerprint, timestamp } = JSON.parse(raw);
-    if (Date.now() - timestamp > CACHE_TTL_MS) return null;
-    if (fingerprint !== fp) return null;
-    return summary; // return the data directly (canvas stores layout, legacy stores summary obj)
+    if (Date.now() - timestamp > CACHE_TTL_MS) { console.info(`[cache] Miss: ${cacheKey} — expired`); return null; }
+    if (fingerprint !== fp) { console.info(`[cache] Miss: ${cacheKey} — fingerprint mismatch (stored=${fingerprint}, current=${fp})`); return null; }
+    console.info(`[cache] Hit: ${cacheKey}, ${(raw.length / 1024).toFixed(0)}KB, age=${Math.round((Date.now() - timestamp) / 1000)}s`);
+    return summary;
   } catch {
     return null;
   }
@@ -64,13 +65,11 @@ export function setCachedSummary(keyOrSummary, fingerprintOrSummary, data) {
       summary = keyOrSummary;
       fingerprint = fingerprintOrSummary;
     }
-    localStorage.setItem(cacheKey, JSON.stringify({
-      summary,
-      fingerprint,
-      timestamp: Date.now(),
-    }));
-  } catch {
-    // localStorage full — silently skip
+    const payload = JSON.stringify({ summary, fingerprint, timestamp: Date.now() });
+    localStorage.setItem(cacheKey, payload);
+    console.info(`[cache] Saved ${cacheKey}: ${(payload.length / 1024).toFixed(0)}KB, fingerprint=${fingerprint}`);
+  } catch (e) {
+    console.error(`[cache] Save FAILED for ${cacheKey}: ${e.message}. Payload may exceed localStorage quota.`);
   }
 }
 
@@ -83,5 +82,51 @@ export function clearCachedSummary(key) {
     localStorage.removeItem(key || DEFAULT_CACHE_KEY);
   } catch {
     // noop
+  }
+}
+
+// ── Version History ─────────────────────────────────────────────────────────
+
+const HISTORY_KEY = 'di_dashboard_history';
+const MAX_VERSIONS = 10;
+
+/**
+ * Get all saved dashboard versions.
+ * @returns {{ version: number, title: string, timestamp: string, html: string, suggestions?: object[], review?: object }[]}
+ */
+export function getDashboardHistory() {
+  try {
+    return JSON.parse(localStorage.getItem(HISTORY_KEY)) || [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Save a dashboard version to history.
+ * Keeps last MAX_VERSIONS versions.
+ */
+export function saveDashboardVersion(dashResult) {
+  if (!dashResult?.html && !dashResult?.dataCards?.length) return;
+  try {
+    const history = getDashboardHistory();
+    const version = (history.length > 0 ? Math.max(...history.map(h => h.version || 0)) : 0) + 1;
+    history.push({
+      version,
+      title: dashResult.title || `Version ${version}`,
+      subtitle: dashResult.subtitle,
+      timestamp: new Date().toISOString(),
+      html: dashResult.html,
+      dataCards: dashResult.dataCards,
+      layout: dashResult.layout,
+      suggestions: dashResult.suggestions,
+      review: dashResult.review,
+      thinking: dashResult.thinking,
+    });
+    // Keep only last MAX_VERSIONS
+    while (history.length > MAX_VERSIONS) history.shift();
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
+  } catch {
+    // localStorage full — silently skip
   }
 }

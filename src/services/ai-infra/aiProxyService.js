@@ -444,6 +444,90 @@ export const invokeAiProxy = async (mode, payload = {}, { signal, timeoutMs = AI
 };
 
 /**
+ * Invoke AI proxy in async mode (for long-running LLM calls that exceed 150s).
+ * Dispatches the task to Edge Function background worker, then polls for result.
+ * Total allowed time: up to 400s (Edge Function background task limit).
+ *
+ * @param {string} mode - The underlying mode to run (e.g. 'deepseek_chat_tools')
+ * @param {object} payload - Request payload (same as invokeAiProxy)
+ * @param {object} [options]
+ * @param {AbortSignal} [options.signal]
+ * @param {number} [options.pollIntervalMs=3000] - How often to poll for result
+ * @param {number} [options.maxWaitMs=360000] - Max total wait time (6 min)
+ * @param {function} [options.onPoll] - Called each poll cycle with { elapsed, status }
+ * @returns {Promise<object>} - The LLM response (same format as invokeAiProxy)
+ */
+export const invokeAiProxyAsync = async (mode, payload = {}, { signal, pollIntervalMs = 3000, maxWaitMs = 360000, onPoll } = {}) => {
+  acquireOrThrow('ai_proxy');
+  if (!EDGE_FN_URL) throw new Error('Edge Function URL not configured.');
+
+  const accessToken = getStoredAccessToken();
+  const headers = {
+    'Content-Type': 'application/json',
+    'apikey': SUPABASE_ANON_KEY,
+  };
+  if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`;
+
+  const t0 = performance.now();
+  console.info(`[aiProxy] Dispatching async task (mode=${mode})...`);
+
+  // Step 1: Dispatch — get taskId
+  let dispatchRes;
+  try {
+    dispatchRes = await fetch(EDGE_FN_URL, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ mode: `${mode}_async`, payload }),
+      signal,
+    });
+  } catch (fetchErr) {
+    console.warn(`[aiProxy] Async dispatch failed (${fetchErr.message}), falling back to sync`);
+    return invokeAiProxy(mode, payload, { signal, timeoutMs: 300000 });
+  }
+
+  if (!dispatchRes.ok) {
+    // If async mode not supported (table missing, 4xx), fall back to regular sync call
+    console.warn(`[aiProxy] Async dispatch returned ${dispatchRes.status}, falling back to sync`);
+    return invokeAiProxy(mode, payload, { signal, timeoutMs: 300000 });
+  }
+
+  const { taskId } = await dispatchRes.json();
+  if (!taskId) throw createAiProxyError('No taskId returned from async dispatch', { mode });
+  console.info(`[aiProxy] Async task dispatched: ${taskId}`);
+
+  // Step 2: Poll until completed or failed
+  const deadline = t0 + maxWaitMs;
+  while (performance.now() < deadline) {
+    if (signal?.aborted) throw new Error('Aborted');
+    await new Promise(r => setTimeout(r, pollIntervalMs));
+
+    const elapsed = Math.round(performance.now() - t0);
+    onPoll?.({ elapsed, status: 'polling' });
+
+    const pollRes = await fetch(EDGE_FN_URL, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ mode: 'ai_proxy_poll', payload: { taskId } }),
+      signal,
+    });
+
+    if (!pollRes.ok) continue; // transient error, retry
+    const data = await pollRes.json();
+
+    if (data.status === 'completed') {
+      console.info(`[aiProxy] Async task ${taskId} completed in ${elapsed}ms`);
+      return data;
+    }
+    if (data.status === 'failed') {
+      throw createAiProxyError(data.error || 'Async task failed', { mode, taskId });
+    }
+    // status === 'pending' → keep polling
+  }
+
+  throw createAiProxyError(`Async task ${taskId} timed out after ${maxWaitMs}ms`, { mode, taskId });
+};
+
+/**
  * Invoke AI proxy in SSE streaming mode.
  * Reads the event stream and calls onDelta for each parsed chunk.
  *

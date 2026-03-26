@@ -9,6 +9,8 @@ type ProxyMode =
   | 'deepseek_chat'
   | 'deepseek_chat_tools'
   | 'deepseek_chat_tools_stream'
+  | 'deepseek_chat_tools_async'
+  | 'ai_proxy_poll'
   | 'ai_chat'
   | 'di_prompt'
   | 'anthropic_chat'
@@ -3694,6 +3696,56 @@ Deno.serve(async (req) => {
       console.info(`[ai-proxy] mode=${mode} total=${Math.round(performance.now() - t0)}ms`);
       return response;
     };
+
+    // ── Async mode: fire-and-forget with background task ──
+    if (mode === 'deepseek_chat_tools_async') {
+      const taskId = crypto.randomUUID();
+      const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+
+      // Insert pending task
+      await supabase.from('ai_proxy_tasks').insert({ id: taskId, status: 'pending' });
+
+      // Run LLM in background (up to 400s wall clock)
+      // deno-lint-ignore no-explicit-any
+      (EdgeRuntime as any).waitUntil(
+        (async () => {
+          try {
+            const response = await handleDeepSeekChatTools(payload);
+            const body = await response.json();
+            await supabase.from('ai_proxy_tasks').update({
+              status: 'completed', result: body, completed_at: new Date().toISOString(),
+            }).eq('id', taskId);
+          } catch (err) {
+            await supabase.from('ai_proxy_tasks').update({
+              status: 'failed', error: String(err), completed_at: new Date().toISOString(),
+            }).eq('id', taskId);
+          }
+        })(),
+      );
+
+      // Return immediately with taskId
+      console.info(`[ai-proxy] async task ${taskId} dispatched`);
+      return jsonResponse({ taskId, status: 'pending' }, 202, cors);
+    }
+
+    // ── Poll mode: check async task status ──
+    if (mode === 'ai_proxy_poll') {
+      const taskId = String(payload?.taskId || '');
+      if (!taskId) return jsonResponse({ error: 'Missing taskId' }, 400, cors);
+      const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+      const { data } = await supabase.from('ai_proxy_tasks').select('*').eq('id', taskId).single();
+      if (!data) return jsonResponse({ error: 'Task not found' }, 404, cors);
+      if (data.status === 'completed') {
+        // Clean up after retrieval
+        supabase.from('ai_proxy_tasks').delete().eq('id', taskId).then(() => {});
+        return jsonResponse({ status: 'completed', ...data.result }, 200, cors);
+      }
+      if (data.status === 'failed') {
+        supabase.from('ai_proxy_tasks').delete().eq('id', taskId).then(() => {});
+        return jsonResponse({ status: 'failed', error: data.error }, 200, cors);
+      }
+      return jsonResponse({ status: 'pending' }, 200, cors);
+    }
 
     if (mode === 'gemini_generate') return wrapCors(await handleGeminiGenerate(payload, authContext));
     if (mode === 'gemini_chat') return wrapCors(await handleGeminiChat(payload));

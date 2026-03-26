@@ -26,6 +26,7 @@ const ScheduleManagerPage = lazy(() => import('./pages/ScheduleManagerPage'));
 const ApprovalQueuePage  = lazy(() => import('./pages/ApprovalQueuePage'));
 // @product: insights-hub
 const InsightsHub        = lazy(() => import('./pages/InsightsHub'));
+const ChartTest          = lazy(() => import('./pages/ChartTest'));
 // @product: unified-workspace (Canvas Architecture)
 const WorkspacePage      = lazy(() => import('./pages/WorkspacePage'));
 
@@ -58,6 +59,7 @@ export const router = createBrowserRouter([
       { path: 'employees/approvals', element: <ApprovalQueuePage /> },
       // @product: insights-hub
       { path: 'insights', element: <InsightsHub /> },
+      { path: 'chart-test', element: <ChartTest /> },
       // @product: unified-workspace (Canvas Architecture — Trinity Layout)
       { path: 'workspace', element: <WorkspacePage /> },
       { path: 'ops', element: <OpsDashboard /> },
