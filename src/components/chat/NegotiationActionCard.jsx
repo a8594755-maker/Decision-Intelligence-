@@ -100,7 +100,7 @@ const ExploitabilityIndicator = ({ value }) => {
 const StrategyInsightSection = ({ cfrStrategy }) => {
   if (!cfrStrategy) {
     return (
-      <div className="text-xs text-slate-400 italic">
+      <div className="text-xs text-[var(--text-muted)] italic">
         CFR strategy not available — using rule-based recommendations only.
       </div>
     );
@@ -177,7 +177,7 @@ const DraftTab = ({ draft, isSelected, onClick }) => {
       className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
         isSelected
           ? 'bg-white dark:bg-slate-700 shadow-sm text-[var(--text-primary)]'
-          : 'text-[var(--text-muted)] hover:text-slate-700 dark:hover:text-slate-300'
+          : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]'
       }`}
     >
       <Icon className={`w-3 h-3 ${isSelected ? meta.color : ''}`} />
@@ -190,7 +190,7 @@ const DraftTab = ({ draft, isSelected, onClick }) => {
 const DraftSection = ({ drafts, selectedDraftIndex, onSelectDraft, editedDrafts, onEditDraft }) => {
   if (!drafts || drafts.length === 0) {
     return (
-      <div className="text-xs text-slate-400 italic">
+      <div className="text-xs text-[var(--text-muted)] italic">
         No email drafts available.
       </div>
     );
@@ -239,7 +239,7 @@ const DraftSection = ({ drafts, selectedDraftIndex, onSelectDraft, editedDrafts,
       />
 
       {/* Draft metadata */}
-      <div className="flex items-center gap-3 text-xs text-slate-400">
+      <div className="flex items-center gap-3 text-xs text-[var(--text-muted)]">
         {currentDraft?.generated_by === 'llm' ? (
           <span className="flex items-center gap-1">
             <CheckCircle2 className="w-3 h-3 text-emerald-500" />
@@ -314,7 +314,7 @@ const DecisionSection = ({ currentDraft, onCopy, onMarkSent, onSkip }) => {
 const RoundBadge = ({ roundName, isCurrent }) => {
   const color = isCurrent
     ? 'bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-300 ring-1 ring-purple-400/50'
-    : 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-400';
+    : 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-[var(--text-muted)]';
   return (
     <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${color}`}>
       {roundName}
@@ -354,7 +354,7 @@ const RoundHistorySection = ({ negotiationState }) => {
 
   if (action_history.length === 0 && status === 'active') {
     return (
-      <div className="flex items-center gap-2 text-xs text-slate-400 italic">
+      <div className="flex items-center gap-2 text-xs text-[var(--text-muted)] italic">
         <Clock className="w-3 h-3" />
         Round 1 ({current_round_name}) — awaiting first action
       </div>
@@ -381,7 +381,7 @@ const RoundHistorySection = ({ negotiationState }) => {
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-2">
-        <Clock className="w-4 h-4 text-slate-500" />
+        <Clock className="w-4 h-4 text-[var(--text-muted)]" />
         <span className="text-sm font-semibold text-[var(--text-primary)]">
           Negotiation Timeline
         </span>
@@ -399,7 +399,7 @@ const RoundHistorySection = ({ negotiationState }) => {
       <div className="space-y-2 pl-2 border-l-2 border-[var(--border-default)] ml-1">
         {rounds.map((round, i) => (
           <div key={i} className="pl-3 relative">
-            <div className="absolute -left-[7px] top-1 w-3 h-3 rounded-full bg-[var(--surface-card)] border-2 border-slate-300 dark:border-slate-600" />
+            <div className="absolute -left-[7px] top-1 w-3 h-3 rounded-full bg-[var(--surface-card)] border-2 border-[var(--border-default)]" />
             <RoundBadge
               roundName={round.round_name}
               isCurrent={round.round_name === current_round_name && !isResolved}
@@ -489,7 +489,7 @@ export default function NegotiationActionCard({ payload = {}, onAction }) {
     : 'KPI Shortfall Detected';
 
   return (
-    <div className="rounded-xl border border-purple-300 dark:border-purple-600/50 bg-gradient-to-br from-purple-50/40 via-white to-blue-50/30 dark:from-purple-900/10 dark:via-slate-900/30 dark:to-blue-900/10 p-4 space-y-4">
+    <div className="rounded-xl border border-purple-300 dark:border-purple-600/50 bg-gradient-to-br from-purple-50/40 via-white to-blue-50/30 dark:from-purple-900/10 dark:via-slate-900/30 dark:to-blue-900/10 border-l-[3px] border-l-[var(--cat-system)] p-4 space-y-4">
       {/* Card header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
@@ -511,9 +511,9 @@ export default function NegotiationActionCard({ payload = {}, onAction }) {
           className="p-1 rounded hover:bg-[var(--accent-hover)] transition-colors"
         >
           {expanded ? (
-            <ChevronDown className="w-4 h-4 text-slate-400" />
+            <ChevronDown className="w-4 h-4 text-[var(--text-muted)]" />
           ) : (
-            <ChevronRight className="w-4 h-4 text-slate-400" />
+            <ChevronRight className="w-4 h-4 text-[var(--text-muted)]" />
           )}
         </button>
       </div>

@@ -81,7 +81,7 @@ export default function PlanApprovalCard({
   };
 
   return (
-    <Card className="w-full border border-amber-200 dark:border-amber-700 bg-amber-50/60 dark:bg-amber-900/10">
+    <Card category="plan" className="w-full border border-amber-200 dark:border-amber-700 bg-amber-50/60 dark:bg-amber-900/10">
       <div className="space-y-3">
         <div className="flex items-start justify-between gap-2">
           <div>
@@ -89,7 +89,7 @@ export default function PlanApprovalCard({
               <ShieldCheck className="w-4 h-4 text-amber-600" />
               Plan Approval
             </h4>
-            <p className="text-xs text-slate-600 dark:text-slate-300">Run #{runId || 'N/A'}</p>
+            <p className="text-xs text-[var(--text-secondary)]">Run #{runId || 'N/A'}</p>
           </div>
 
           {!approval ? <Badge type="warning">Approval Required</Badge> : null}
@@ -98,17 +98,17 @@ export default function PlanApprovalCard({
           {status === 'REJECTED' ? <Badge type="danger">Rejected</Badge> : null}
         </div>
 
-        <p className="text-xs text-slate-700 dark:text-slate-200 leading-relaxed">{summary}</p>
+        <p className="text-xs text-[var(--text-primary)] leading-relaxed">{summary}</p>
 
         {approval?.approval_id ? (
-          <p className="text-[11px] text-slate-500 dark:text-slate-400 font-mono break-all">
+          <p className="text-[11px] text-[var(--text-muted)] font-mono break-all">
             approval_id: {approval.approval_id}
           </p>
         ) : null}
 
         {status !== 'APPROVED' ? (
           <textarea
-            className="w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-xs px-2.5 py-2 focus:outline-none focus:ring-2 focus:ring-amber-500"
+            className="w-full rounded-md border border-[var(--border-default)] bg-[var(--surface-card)] text-xs px-2.5 py-2 focus:outline-none focus:ring-2 focus:ring-amber-500"
             rows={3}
             placeholder="Approval note (optional)"
             value={note}
@@ -151,7 +151,7 @@ export default function PlanApprovalCard({
             >
               {isBusy ? 'Submitting...' : 'Reject'}
             </Button>
-            {isBusy ? <Hourglass className="w-4 h-4 text-slate-400" /> : null}
+            {isBusy ? <Hourglass className="w-4 h-4 text-[var(--text-muted)]" /> : null}
           </div>
         ) : null}
       </div>

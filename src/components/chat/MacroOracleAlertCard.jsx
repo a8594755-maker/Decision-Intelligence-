@@ -40,14 +40,14 @@ const SEVERITY_STYLES = {
   critical: 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300 border-red-200 dark:border-red-800',
   high: 'bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-300 border-orange-200 dark:border-orange-800',
   medium: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300 border-yellow-200 dark:border-yellow-800',
-  low: 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 border-slate-200 dark:border-slate-700',
+  low: 'bg-[var(--surface-subtle)] text-[var(--text-secondary)] border-[var(--border-default)]',
 };
 
 const ASSESSMENT_STYLES = {
   aggressive: { color: 'text-red-600 dark:text-red-400', label: 'Aggressive' },
   desperate: { color: 'text-emerald-600 dark:text-emerald-400', label: 'Desperate' },
   cooperative: { color: 'text-blue-600 dark:text-blue-400', label: 'Cooperative' },
-  mixed: { color: 'text-slate-600 dark:text-slate-400', label: 'Mixed' },
+  mixed: { color: 'text-[var(--text-secondary)]', label: 'Mixed' },
 };
 
 // ── Sub-components ──────────────────────────────────────────────────────────
@@ -56,20 +56,20 @@ function SignalRow({ signal }) {
   const sevStyle = SEVERITY_STYLES[signal.severity] || SEVERITY_STYLES.medium;
   return (
     <div className="flex items-start gap-2 text-xs">
-      <Globe className="w-3.5 h-3.5 text-slate-400 shrink-0 mt-0.5" />
+      <Globe className="w-3.5 h-3.5 text-[var(--text-muted)] shrink-0 mt-0.5" />
       <div className="flex-1">
-        <span className="text-slate-700 dark:text-slate-200">{signal.description}</span>
+        <span className="text-[var(--text-secondary)]">{signal.description}</span>
         <div className="flex items-center gap-1.5 mt-0.5">
           <span className={`inline-block text-[10px] font-medium px-1.5 py-0 rounded border ${sevStyle}`}>
             {signal.severity?.toUpperCase()}
           </span>
           {signal.commodity && (
-            <span className="text-[10px] text-slate-500 dark:text-slate-400">
+            <span className="text-[10px] text-[var(--text-muted)]">
               {signal.commodity}
             </span>
           )}
           {signal.region && (
-            <span className="text-[10px] text-slate-500 dark:text-slate-400">
+            <span className="text-[10px] text-[var(--text-muted)]">
               {signal.region}
             </span>
           )}
@@ -85,30 +85,30 @@ function CfrAssessmentRow({ assessment }) {
 
   return (
     <div className="rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/30 p-2.5">
-      <div className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1.5 flex items-center gap-1">
+      <div className="text-[10px] font-semibold text-[var(--text-muted)] uppercase tracking-wider mb-1.5 flex items-center gap-1">
         <Shield className="w-3 h-3" />
         CFR Game-Theory Assessment
       </div>
       <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
         <div>
-          <span className="text-slate-500 dark:text-slate-400">Supplier type: </span>
+          <span className="text-[var(--text-muted)]">Supplier type: </span>
           <span className={`font-medium ${style.color}`}>{style.label}</span>
         </div>
         <div>
-          <span className="text-slate-500 dark:text-slate-400">Confidence: </span>
-          <span className="font-mono text-slate-700 dark:text-slate-200">
+          <span className="text-[var(--text-muted)]">Confidence: </span>
+          <span className="font-mono text-[var(--text-secondary)]">
             {((assessment.confidence || 0) * 100).toFixed(0)}%
           </span>
         </div>
         <div>
-          <span className="text-slate-500 dark:text-slate-400">Safety stock: </span>
-          <span className={`font-mono font-medium ${assessment.safety_stock_alpha_multiplier > 1 ? 'text-red-600 dark:text-red-400' : assessment.safety_stock_alpha_multiplier < 1 ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-700 dark:text-slate-200'}`}>
+          <span className="text-[var(--text-muted)]">Safety stock: </span>
+          <span className={`font-mono font-medium ${assessment.safety_stock_alpha_multiplier > 1 ? 'text-red-600 dark:text-red-400' : assessment.safety_stock_alpha_multiplier < 1 ? 'text-emerald-600 dark:text-emerald-400' : 'text-[var(--text-secondary)]'}`}>
             ×{assessment.safety_stock_alpha_multiplier}
           </span>
         </div>
         <div>
-          <span className="text-slate-500 dark:text-slate-400">Dual-source: </span>
-          <span className={`font-medium ${assessment.dual_source_flag ? 'text-orange-600 dark:text-orange-400' : 'text-slate-500 dark:text-slate-400'}`}>
+          <span className="text-[var(--text-muted)]">Dual-source: </span>
+          <span className={`font-medium ${assessment.dual_source_flag ? 'text-orange-600 dark:text-orange-400' : 'text-[var(--text-muted)]'}`}>
             {assessment.dual_source_flag ? 'Required' : 'No'}
           </span>
         </div>
@@ -148,7 +148,7 @@ export default function MacroOracleAlertCard({ payload, onAction }) {
     : 'from-white to-amber-50/30 dark:from-slate-900 dark:to-amber-950/10';
 
   return (
-    <Card className={`border ${borderColor} bg-gradient-to-br ${bgGradient}`}>
+    <Card category="risk" className={`border ${borderColor} bg-gradient-to-br ${bgGradient}`}>
       {/* Header */}
       <div className="flex items-center gap-2 mb-3">
         <div className={`p-1.5 rounded-md ${isTrigger ? 'bg-red-100 dark:bg-red-900/30' : 'bg-amber-100 dark:bg-amber-900/30'}`}>
@@ -165,7 +165,7 @@ export default function MacroOracleAlertCard({ payload, onAction }) {
       </div>
 
       {/* Title */}
-      <p className="text-sm font-medium text-slate-800 dark:text-slate-100 mb-3">
+      <p className="text-sm font-medium text-[var(--text-primary)] mb-3">
         {title}
       </p>
 
@@ -180,11 +180,11 @@ export default function MacroOracleAlertCard({ payload, onAction }) {
       {risk_delta.total_delta != null && (
         <div className="flex items-center gap-2 mb-3 text-xs">
           <Activity className="w-3.5 h-3.5 text-slate-400" />
-          <span className="text-slate-500 dark:text-slate-400">Risk impact:</span>
+          <span className="text-[var(--text-muted)]">Risk impact:</span>
           <span className={`font-mono font-medium ${risk_delta.total_delta > 30 ? 'text-red-600 dark:text-red-400' : 'text-orange-600 dark:text-orange-400'}`}>
             +{risk_delta.total_delta.toFixed(1)}
           </span>
-          <span className="text-slate-500 dark:text-slate-400">
+          <span className="text-[var(--text-muted)]">
             ({risk_delta.base_score} → {risk_delta.new_score})
           </span>
         </div>
@@ -198,14 +198,14 @@ export default function MacroOracleAlertCard({ payload, onAction }) {
       {/* Recommendations */}
       {recommendations.length > 0 && (
         <div className="mb-3">
-          <div className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1.5">
+          <div className="text-[10px] font-semibold text-[var(--text-muted)] uppercase tracking-wider mb-1.5">
             Recommended Actions
           </div>
           <div className="space-y-1">
             {recommendations.map((rec, i) => (
               <div key={i} className="flex items-center gap-2 text-xs">
-                <ArrowRight className="w-3 h-3 text-slate-400 shrink-0" />
-                <span className="text-slate-700 dark:text-slate-200">{rec.text}</span>
+                <ArrowRight className="w-3 h-3 text-[var(--text-muted)] shrink-0" />
+                <span className="text-[var(--text-secondary)]">{rec.text}</span>
                 {rec.action_id && onAction && (
                   <Button
                     size="xs"
@@ -228,7 +228,7 @@ export default function MacroOracleAlertCard({ payload, onAction }) {
           <button
             type="button"
             onClick={() => setShowEvidence(v => !v)}
-            className="flex items-center gap-1 text-[10px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider hover:text-slate-700 dark:hover:text-slate-300"
+            className="flex items-center gap-1 text-[10px] font-semibold text-[var(--text-muted)] uppercase tracking-wider hover:text-slate-700 dark:hover:text-slate-300"
           >
             <AlertTriangle className="w-3 h-3" />
             Evidence Chain ({evidence_chain.length} steps)
@@ -241,10 +241,10 @@ export default function MacroOracleAlertCard({ payload, onAction }) {
                   <span className="w-4 h-4 rounded-full bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 flex items-center justify-center text-[9px] font-bold shrink-0">
                     {i + 1}
                   </span>
-                  <span className="font-mono text-[10px] text-slate-500 dark:text-slate-400 w-24 shrink-0">
+                  <span className="font-mono text-[10px] text-[var(--text-muted)] w-24 shrink-0">
                     {step.artifact_type}
                   </span>
-                  <span className="text-slate-700 dark:text-slate-200">{step.label}</span>
+                  <span className="text-[var(--text-secondary)]">{step.label}</span>
                 </div>
               ))}
             </div>

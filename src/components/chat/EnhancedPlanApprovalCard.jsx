@@ -46,7 +46,7 @@ function DeadlineCountdown({ deadline, isUrgent, isCritical, isExpired }) {
     ? 'text-red-500 dark:text-red-400'
     : isUrgent
     ? 'text-amber-500 dark:text-amber-400'
-    : 'text-slate-500 dark:text-slate-400';
+    : 'text-[var(--text-muted)]';
 
   return (
     <div className={`flex items-center gap-1 text-xs font-medium ${color}`}>
@@ -86,7 +86,7 @@ export default function EnhancedPlanApprovalCard({
   const isPending = approval?.status === 'PENDING';
 
   return (
-    <Card className={`
+    <Card category="plan" className={`
       ${is_critical || is_expired
         ? 'border-red-300 dark:border-red-800 bg-red-50/60 dark:bg-red-900/10'
         : is_urgent
@@ -104,7 +104,7 @@ export default function EnhancedPlanApprovalCard({
               }`} />
               Plan Approval Required
             </h4>
-            <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">
+            <p className="text-xs text-[var(--text-secondary)] mt-0.5">
               Run #{approval?.run_id ?? '?'}
             </p>
           </div>
@@ -129,7 +129,7 @@ export default function EnhancedPlanApprovalCard({
 
         {/* Summary */}
         {summary_text && (
-          <p className="text-sm text-slate-700 dark:text-slate-300">{summary_text}</p>
+          <p className="text-sm text-[var(--text-secondary)]">{summary_text}</p>
         )}
 
         {/* Deadline Countdown */}
@@ -144,9 +144,9 @@ export default function EnhancedPlanApprovalCard({
 
         {/* Batch Context */}
         {batch_context && isPending && (
-          <div className="bg-slate-100 dark:bg-slate-800 rounded-lg px-3 py-2 text-xs text-slate-600 dark:text-slate-400">
+          <div className="bg-[var(--surface-subtle)] rounded-lg px-3 py-2 text-xs text-[var(--text-secondary)]">
             {batch_context.total_pending} approvals pending
-            <span className="text-slate-400 dark:text-slate-500 mx-1">|</span>
+            <span className="text-[var(--text-muted)] mx-1">|</span>
             Runs: {batch_context.run_ids?.join(', ')}
           </div>
         )}
@@ -175,7 +175,7 @@ export default function EnhancedPlanApprovalCard({
             {/* Batch actions */}
             {batch_context && (
               <>
-                <div className="w-px h-6 bg-slate-300 dark:bg-slate-600 mx-1" />
+                <div className="w-px h-6 bg-[var(--border-default)] mx-1" />
                 <Button
                   variant="primary"
                   size="sm"
@@ -200,19 +200,19 @@ export default function EnhancedPlanApprovalCard({
           <div>
             <button
               onClick={() => setShowAuditTrail(!showAuditTrail)}
-              className="flex items-center gap-1 text-xs text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300"
+              className="flex items-center gap-1 text-xs text-[var(--text-muted)] hover:text-[var(--text-secondary)]"
             >
               {showAuditTrail ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
               Audit Trail ({audit_trail.length})
             </button>
             {showAuditTrail && (
-              <div className="mt-2 space-y-1.5 pl-3 border-l-2 border-slate-200 dark:border-slate-700">
+              <div className="mt-2 space-y-1.5 pl-3 border-l-2 border-[var(--border-default)]">
                 {audit_trail.map((event, i) => (
-                  <div key={i} className="text-xs text-slate-600 dark:text-slate-400">
+                  <div key={i} className="text-xs text-[var(--text-secondary)]">
                     <span className="font-medium">{event.action}</span>
-                    <span className="text-slate-400 dark:text-slate-500"> by </span>
+                    <span className="text-[var(--text-muted)]"> by </span>
                     <span>{event.actor || 'system'}</span>
-                    <span className="text-slate-400 dark:text-slate-500 ml-1">
+                    <span className="text-[var(--text-muted)] ml-1">
                       {event.created_at ? new Date(event.created_at).toLocaleString() : ''}
                     </span>
                   </div>

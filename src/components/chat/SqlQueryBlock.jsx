@@ -29,7 +29,7 @@ export default function SqlQueryBlock({
   const resolvedVariant = variant || (success === false ? 'failure' : 'success');
   const toneClasses = resolvedVariant === 'failure'
     ? 'border-rose-200/80 bg-rose-50/80 text-rose-900 dark:border-rose-900/60 dark:bg-rose-950/20 dark:text-rose-100'
-    : 'border-slate-200 bg-slate-50/80 text-slate-900 dark:border-slate-700 dark:bg-slate-900/50 dark:text-slate-100';
+    : 'border-slate-200 bg-[var(--surface-base)] text-slate-900 dark:border-slate-700 dark:bg-slate-900/50 dark:text-slate-100';
   const headerHoverClass = resolvedVariant === 'failure'
     ? 'hover:bg-rose-100/70 dark:hover:bg-rose-900/20'
     : 'hover:bg-[var(--accent-hover)]/70 dark:hover:bg-slate-800/60';
@@ -75,7 +75,7 @@ export default function SqlQueryBlock({
           <button
             type="button"
             onClick={handleCopy}
-            className="absolute top-2 right-2 p-1 rounded text-slate-500 hover:text-slate-700 hover:bg-slate-200/70 transition-colors dark:hover:text-slate-300 dark:hover:bg-slate-700/50"
+            className="absolute top-2 right-2 p-1 rounded text-[var(--text-muted)] hover:text-slate-700 hover:bg-slate-200/70 transition-colors dark:hover:text-slate-300 dark:hover:bg-slate-700/50"
             title="Copy SQL"
           >
             {copied ? <Check size={13} className="text-emerald-500 dark:text-emerald-400" /> : <Copy size={13} />}

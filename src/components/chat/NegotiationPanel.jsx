@@ -36,8 +36,8 @@ const FeasibilityBadge = ({ status, feasible }) => {
 const DeltaValue = ({ label, value, unit = '', positiveGood = true }) => {
   if (value === null || value === undefined || !Number.isFinite(Number(value))) {
     return (
-      <div className="text-xs text-slate-400">
-        <span className="font-medium text-slate-500">{label}:</span> —
+      <div className="text-xs text-[var(--text-muted)]">
+        <span className="font-medium text-[var(--text-muted)]">{label}:</span> —
       </div>
     );
   }
@@ -46,7 +46,7 @@ const DeltaValue = ({ label, value, unit = '', positiveGood = true }) => {
   const isNeutral = Math.abs(num) < 1e-6;
   const isGood = isNeutral ? false : (positiveGood ? isPositive : !isPositive);
   const colourClass = isNeutral
-    ? 'text-slate-500'
+    ? 'text-[var(--text-muted)]'
     : isGood
       ? 'text-emerald-600 dark:text-emerald-400'
       : 'text-red-600 dark:text-red-400';
@@ -58,7 +58,7 @@ const DeltaValue = ({ label, value, unit = '', positiveGood = true }) => {
 
   return (
     <div className="text-xs">
-      <span className="font-medium text-slate-500">{label}:</span>{' '}
+      <span className="font-medium text-[var(--text-muted)]">{label}:</span>{' '}
       <span className={`font-semibold ${colourClass}`}>{display}</span>
     </div>
   );
@@ -82,7 +82,7 @@ const OptionCard = ({ option, evalResult, isRecommended, onApply }) => {
       className={`rounded-lg border p-4 transition-colors ${
         isRecommended
           ? 'border-blue-400 bg-blue-50/50 dark:border-blue-500/50 dark:bg-blue-900/10'
-          : 'border-slate-200 bg-white dark:border-[var(--border-default)] dark:bg-slate-800/40'
+          : 'border-[var(--border-default)] bg-[var(--surface-card)] dark:border-[var(--border-default)] dark:bg-slate-800/40'
       }`}
     >
       {/* Header */}
@@ -140,7 +140,7 @@ const OptionCard = ({ option, evalResult, isRecommended, onApply }) => {
       {/* Expand / collapse why + evidence */}
       <button
         onClick={() => setExpanded((v) => !v)}
-        className="mt-3 flex items-center gap-1 text-xs text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 transition-colors"
+        className="mt-3 flex items-center gap-1 text-xs text-[var(--text-muted)] hover:text-[var(--text-secondary)] transition-colors"
       >
         {expanded ? (
           <ChevronDown className="w-3 h-3" />
@@ -171,7 +171,7 @@ const OptionCard = ({ option, evalResult, isRecommended, onApply }) => {
               </div>
               <ul className="space-y-0.5">
                 {evidenceRefs.map((ref, i) => (
-                  <li key={i} className="font-mono text-slate-400">{ref}</li>
+                  <li key={i} className="font-mono text-[var(--text-muted)]">{ref}</li>
                 ))}
               </ul>
             </div>
@@ -245,7 +245,7 @@ export default function NegotiationPanel({
     );
 
   return (
-    <div className="rounded-xl border border-amber-300 dark:border-amber-600/50 bg-amber-50/40 dark:bg-amber-900/10 p-4 space-y-4">
+    <div className="rounded-xl border border-amber-300 dark:border-amber-600/50 bg-amber-50/40 dark:bg-amber-900/10 border-l-[3px] border-l-[var(--cat-system)] p-4 space-y-4">
       {/* ---- Header ---- */}
       <div className="flex items-center gap-2">
         {triggerIcon}
@@ -283,13 +283,13 @@ export default function NegotiationPanel({
             <div className="text-xs font-semibold text-[var(--text-secondary)] uppercase tracking-wide">
               Candidate Options
               {rankedOptions.length > 0 && negotiationEval?.ranking_method && (
-                <span className="ml-2 normal-case font-normal text-slate-400">
+                <span className="ml-2 normal-case font-normal text-[var(--text-muted)]">
                   (ranked by: {negotiationEval.ranking_method.split(':')[0]?.trim()})
                 </span>
               )}
             </div>
             {isGenerating && (
-              <div className="flex items-center gap-1 text-xs text-slate-400">
+              <div className="flex items-center gap-1 text-xs text-[var(--text-muted)]">
                 <Loader2 className="w-3 h-3 animate-spin" />
                 Evaluating…
               </div>
@@ -320,7 +320,7 @@ export default function NegotiationPanel({
         <div className="border-t border-amber-200 dark:border-amber-700/40 pt-3">
           <button
             onClick={() => setShowExplain((v) => !v)}
-            className="flex items-center gap-2 text-xs text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 transition-colors"
+            className="flex items-center gap-2 text-xs text-[var(--text-muted)] hover:text-[var(--text-secondary)] transition-colors"
           >
             <BookOpen className="w-3.5 h-3.5" />
             {showExplain ? 'Hide' : 'Explain'} negotiation narrative

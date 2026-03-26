@@ -400,7 +400,7 @@ export default function CanvasPanel({
   return (
     <div className="w-full h-full flex flex-col bg-[var(--surface-card)] border-l border-[var(--border-default)]/60 overflow-hidden">
       {/* Header */}
-      <div className="border-b border-[var(--border-default)]/60 px-4 py-3 bg-slate-50/80 dark:bg-slate-900/90 flex items-center justify-between flex-shrink-0">
+      <div className="border-b border-[var(--border-default)]/60 px-4 py-3 bg-[var(--surface-base)] flex items-center justify-between flex-shrink-0">
         <div className="min-w-0">
           <h3 className="text-sm font-semibold text-[var(--text-primary)]">Canvas</h3>
           <p className="text-xs text-slate-500 truncate">
@@ -479,7 +479,7 @@ export default function CanvasPanel({
         {activeTab === 'logs' && (
           <div className="space-y-4">
             {/* Step Status Panel */}
-            <div className="rounded-xl border border-[var(--border-default)] bg-slate-50/50 dark:bg-slate-800/30 p-3">
+            <div className="rounded-xl border border-[var(--border-default)] bg-[var(--surface-base)] p-3">
               <h4 className="text-xs font-semibold text-[var(--text-secondary)] mb-3 uppercase tracking-wide">
                 Execution Steps
               </h4>
@@ -587,7 +587,7 @@ export default function CanvasPanel({
                           setSelectedSeriesKey(e.target.value);
                           setHiddenSeries({});
                         }}
-                        className="text-[11px] border border-slate-200 dark:border-slate-600 rounded-md px-2 py-1 bg-[var(--surface-card)] text-[var(--text-secondary)] max-w-[200px]"
+                        className="text-[11px] border border-[var(--border-default)] rounded-md px-2 py-1 bg-[var(--surface-card)] text-[var(--text-secondary)] max-w-[200px]"
                       >
                         {seriesGroups.map((g) => (
                           <option key={g.key} value={g.key}>
@@ -890,7 +890,7 @@ export default function CanvasPanel({
               [...downloads, ...(workbookArtifact ? [workbookArtifact] : [])].map((download) => (
                 <div
                   key={`${download.fileName}-${download.label}`}
-                  className="flex items-center justify-between rounded-xl border border-[var(--border-default)] p-3 hover:border-slate-300 dark:hover:border-slate-600 transition-colors"
+                  className="flex items-center justify-between rounded-xl border border-[var(--border-default)] p-3 hover:border-[var(--border-default)] transition-colors"
                 >
                   <div className="min-w-0 mr-3">
                     <p className="text-xs font-medium text-[var(--text-primary)] truncate">

@@ -30,7 +30,7 @@ function DataQualityBadge({ dataQuality }) {
         </span>
       )}
       {degradedFeatures > 0 && (
-        <span className="inline-flex items-center gap-0.5 text-[10px] text-slate-500 dark:text-slate-400">
+        <span className="inline-flex items-center gap-0.5 text-[10px] text-[var(--text-muted)]">
           <Info className="w-3 h-3" />
           {degradedFeatures} feature{degradedFeatures !== 1 ? 's' : ''} unavailable
         </span>
@@ -52,12 +52,12 @@ function DatasetFallbackHints({ datasetFallbacks = [], capabilities }) {
   return (
     <div className="mt-2 space-y-1">
       {unavailable.map(([key]) => (
-        <p key={key} className="text-[10px] text-slate-500 dark:text-slate-400 leading-tight">
+        <p key={key} className="text-[10px] text-[var(--text-muted)] leading-tight">
           <span className="font-medium">{key.replace(/_/g, ' ')}</span> is unavailable due to missing data.
         </p>
       ))}
       {datasetFallbacks.map((fb, i) => (
-        <p key={i} className="text-[10px] text-slate-500 dark:text-slate-400 leading-tight">
+        <p key={i} className="text-[10px] text-[var(--text-muted)] leading-tight">
           {fb.message}
         </p>
       ))}
@@ -76,7 +76,7 @@ export default function PlanSummaryCard({ payload }) {
   const dataQuality = payload.data_quality || null;
 
   return (
-    <Card className="w-full border border-emerald-200 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-900/10">
+    <Card category="plan" className="w-full border border-emerald-200 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-900/10">
       <div className="space-y-3">
         <div className="flex items-start justify-between gap-3">
           <div>
@@ -84,10 +84,10 @@ export default function PlanSummaryCard({ payload }) {
               <BarChart3 className="w-4 h-4 text-emerald-600" />
               Plan Summary
             </h4>
-            <p className="text-xs text-slate-600 dark:text-slate-300">
+            <p className="text-xs text-[var(--text-secondary)]">
               Run #{payload.run_id || 'N/A'} | {payload.workflow || 'workflow_unknown'}
             </p>
-            <p className="text-xs text-slate-500">{payload.summary || 'Deterministic plan + verification completed.'}</p>
+            <p className="text-xs text-[var(--text-muted)]">{payload.summary || 'Deterministic plan + verification completed.'}</p>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             <Badge type="success">{payload.solver_status || 'unknown'}</Badge>

@@ -49,12 +49,12 @@ export default function ContractConfirmationCard({ payload, onConfirm }) {
             <div key={question.sheet_name} className="rounded-lg border border-[var(--border-default)] p-2">
               <div className="flex items-center justify-between">
                 <p className="text-xs font-medium">{question.sheet_name}</p>
-                <span className="text-xs text-slate-500">
+                <span className="text-xs text-[var(--text-muted)]">
                   confidence {formatConfidence(question.confidence)}
                 </span>
               </div>
               <select
-                className="mt-2 w-full text-xs px-2 py-1 rounded border border-slate-300 dark:border-slate-600 bg-transparent"
+                className="mt-2 w-full text-xs px-2 py-1 rounded border border-[var(--border-default)] bg-transparent"
                 value={selections[question.sheet_name] || question.current_type || 'unknown'}
                 onChange={(event) => {
                   setSelections((prev) => ({
@@ -80,7 +80,7 @@ export default function ContractConfirmationCard({ payload, onConfirm }) {
                     <div key={`${question.sheet_name}_${field}`} className="grid grid-cols-1 md:grid-cols-2 gap-1 items-center">
                       <span className="text-[11px] text-[var(--text-secondary)]">{field}</span>
                       <select
-                        className="text-xs px-2 py-1 rounded border border-slate-300 dark:border-slate-600 bg-transparent"
+                        className="text-xs px-2 py-1 rounded border border-[var(--border-default)] bg-transparent"
                         value={mappingSelections?.[question.sheet_name]?.[field] || ''}
                         onChange={(event) => {
                           const value = event.target.value;

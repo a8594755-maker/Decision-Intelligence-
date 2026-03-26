@@ -85,7 +85,7 @@ export default function ChatActionBar({ actions = [], onActionClick, maxVisible 
                 </div>
               )}
             </div>
-            <ArrowRight className="w-3 h-3 text-slate-300 dark:text-slate-600 shrink-0" />
+            <ArrowRight className="w-3 h-3 text-[var(--text-muted)] shrink-0" />
           </button>
         );
       })}

@@ -82,7 +82,7 @@ export default function ApprovalReminderCard({
           {onDismiss && (
             <button
               onClick={() => onDismiss?.(approval_id)}
-              className="text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 ml-auto"
+              className="text-xs text-[var(--text-muted)] hover:text-[var(--text-secondary)] ml-auto"
             >
               Dismiss
             </button>

@@ -109,7 +109,7 @@ function ChatComposer({
         </div>
         <button
           type="button"
-          className="rounded-full p-1 text-slate-500 transition-colors hover:bg-[var(--accent-hover)] hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+          className="rounded-full p-1 text-[var(--text-muted)] transition-colors hover:bg-[var(--accent-hover)] hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
           onClick={() => onRemoveAttachment?.(attachment.id)}
           aria-label={`Remove ${attachment.file_name}`}
         >
@@ -206,7 +206,7 @@ function ChatComposer({
                 className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] font-medium transition-colors disabled:opacity-50 ${
                   deepVerifyEnabled
                     ? 'border-blue-300 bg-blue-50 text-blue-700 dark:border-blue-700 dark:bg-blue-950/40 dark:text-blue-300'
-                    : 'border-slate-200 bg-white text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300'
+                    : 'border-[var(--border-default)] bg-[var(--surface-card)] text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300'
                 }`}
                 title={deepVerifyEnabled ? 'Deep Verify — always runs optimizer agent for quality assurance' : 'Auto — optimizer runs only when QA detects issues'}
               >
@@ -219,7 +219,7 @@ function ChatComposer({
 
         {/* Slash command autocomplete menu */}
         {showSlashMenu && (
-          <div className="mb-2 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg dark:border-slate-700 dark:bg-slate-800">
+          <div className="mb-2 overflow-hidden rounded-xl border border-[var(--border-default)] bg-[var(--surface-card)] shadow-lg dark:border-slate-700 dark:bg-slate-800">
             {slashMatches.map((s, i) => (
               <button
                 key={s.cmd}
@@ -243,7 +243,7 @@ function ChatComposer({
           className={`relative transition-shadow ${
             isAIEmployeeVariant
               ? 'rounded-[28px] border border-black/8 bg-white/94 px-1 py-1 shadow-[0_24px_60px_rgba(15,23,42,0.08)] backdrop-blur dark:border-white/10 dark:bg-[#171717]/92'
-              : 'rounded-2xl border border-slate-200 bg-white shadow-sm focus-within:ring-2 focus-within:ring-blue-500/40 dark:border-slate-700 dark:bg-slate-800'
+              : 'rounded-2xl border border-[var(--border-default)] bg-[var(--surface-card)] shadow-sm focus-within:ring-2 focus-within:ring-blue-500/40 dark:border-slate-700 dark:bg-slate-800'
           }`}
         >
           {pendingAttachments.length > 0 ? (
@@ -257,7 +257,7 @@ function ChatComposer({
           }`}>
             <button
               type="button"
-              className={`p-2 text-slate-500 transition-colors disabled:opacity-50 ${
+              className={`p-2 text-[var(--text-muted)] transition-colors disabled:opacity-50 ${
                 isAIEmployeeVariant
                   ? 'rounded-full hover:bg-[var(--accent-hover)]'
                   : 'rounded-lg hover:bg-[var(--accent-hover)]'
@@ -281,7 +281,7 @@ function ChatComposer({
             placeholder={isDragOver ? 'Drop files to attach...' : isAIEmployeeVariant ? 'Message your worker' : 'Message Decision-Intelligence'}
             className={`w-full resize-none overflow-hidden bg-transparent text-sm outline-none ${
               isAIEmployeeVariant
-                ? 'rounded-[26px] pl-[72px] pr-16 py-4 text-[15px] leading-6 text-[var(--text-primary)] placeholder:text-slate-400'
+                ? 'rounded-[26px] pl-[72px] pr-16 py-4 text-[15px] leading-6 text-[var(--text-primary)] placeholder:text-[var(--text-muted)]'
                 : 'pl-12 rounded-2xl pr-12 py-3'
             }`}
             style={{ minHeight: '52px', maxHeight: '180px' }}
@@ -318,7 +318,7 @@ function ChatComposer({
       </form>
 
       {isAIEmployeeVariant ? null : (
-        <div className="mx-auto mt-2 flex max-w-4xl items-center gap-2 text-[11px] text-slate-500">
+        <div className="mx-auto mt-2 flex max-w-4xl items-center gap-2 text-[11px] text-[var(--text-muted)]">
           {isUploading ? (
             <span className="inline-flex items-center gap-1 text-blue-600 dark:text-blue-300">
               <Loader2 className="w-3 h-3 animate-spin" />

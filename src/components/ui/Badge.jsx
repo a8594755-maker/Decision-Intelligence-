@@ -1,17 +1,32 @@
 import React from 'react';
 
-export const Badge = ({ children, type = "info" }) => {
-  const styles = {
-    info:    "bg-[var(--brand-50)] text-[var(--brand-700)] dark:text-[var(--brand-500)]",
-    brand:   "bg-[var(--brand-50)] text-[var(--brand-700)] dark:text-[var(--brand-500)]",
-    neutral: "bg-[var(--surface-subtle)] text-[var(--text-secondary)]",
-    success: "bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300",
-    warning: "bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300",
-    danger:  "bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-300",
-  };
+const TYPE_STYLES = {
+  info:    "bg-[var(--status-info-bg)] text-[var(--status-info-text)]",
+  brand:   "bg-[var(--brand-50)] text-[var(--brand-700)]",
+  neutral: "bg-[var(--surface-subtle)] text-[var(--text-secondary)]",
+  success: "bg-[var(--status-success-bg)] text-[var(--status-success-text)]",
+  warning: "bg-[var(--status-warning-bg)] text-[var(--status-warning-text)]",
+  danger:  "bg-[var(--status-danger-bg)] text-[var(--status-danger-text)]",
+};
 
+const DOT_COLORS = {
+  info:    "bg-[var(--status-info)]",
+  brand:   "bg-[var(--brand-600)]",
+  neutral: "bg-[var(--text-muted)]",
+  success: "bg-[var(--status-success)]",
+  warning: "bg-[var(--status-warning)]",
+  danger:  "bg-[var(--status-danger)]",
+};
+
+const SIZE_STYLES = {
+  sm: "px-2 py-0.5 text-[10px]",
+  md: "px-2.5 py-0.5 text-xs",
+};
+
+export const Badge = ({ children, type = "info", size = "md", dot = false, className = "" }) => {
   return (
-    <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium ${styles[type] || styles.info}`}>
+    <span className={`inline-flex items-center gap-1.5 rounded-full font-medium ${SIZE_STYLES[size] || SIZE_STYLES.md} ${TYPE_STYLES[type] || TYPE_STYLES.info} ${className}`}>
+      {dot && <span className={`w-1.5 h-1.5 rounded-full ${DOT_COLORS[type] || DOT_COLORS.info}`} />}
       {children}
     </span>
   );

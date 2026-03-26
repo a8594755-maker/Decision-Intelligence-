@@ -12,7 +12,7 @@ function ToggleRow({ expanded, onToggle, icon: Icon, title, meta }) {
     <button
       type="button"
       onClick={onToggle}
-      className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-slate-700 transition-colors hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-[var(--accent-hover)]"
+      className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-hover)] dark:hover:bg-[var(--accent-hover)]"
     >
       {expanded ? <ChevronDown size={15} className="text-slate-400" /> : <ChevronRight size={15} className="text-slate-400" />}
       {Icon ? <Icon size={15} className="text-[var(--text-muted)]" /> : null}
@@ -60,7 +60,7 @@ function TraceAttemptCard({ attempt, variant = 'success' }) {
               />
             ) : null}
             {!attempt?.sql && attempt?.args ? (
-              <pre className="overflow-x-auto rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700 dark:border-slate-700 dark:bg-slate-950/40 dark:text-slate-300">
+              <pre className="overflow-x-auto rounded-lg border border-[var(--border-default)] bg-[var(--surface-base)] px-3 py-2 text-xs text-[var(--text-secondary)]">
                 {attempt.args}
               </pre>
             ) : null}
@@ -125,7 +125,7 @@ export default function ExecutionTraceCard({ trace, agentLabel }) {
           ) : null}
 
           {rawNarrative ? (
-            <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 dark:border-slate-700 dark:bg-slate-900/40">
+            <div className="rounded-xl border border-[var(--border-default)] bg-[var(--surface-card)] px-4 py-3 dark:border-slate-700 dark:bg-slate-900/40">
               <ToggleRow
                 expanded={narrativeExpanded}
                 onToggle={() => setNarrativeExpanded((value) => !value)}

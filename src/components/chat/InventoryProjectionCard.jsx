@@ -51,7 +51,7 @@ export default function InventoryProjectionCard({ payload }) {
             <select
               value={selectedKey}
               onChange={(event) => setGroupKey(event.target.value)}
-              className="text-xs px-2 py-1 rounded border border-[var(--border-default)] bg-white dark:bg-slate-800"
+              className="text-xs px-2 py-1 rounded border border-[var(--border-default)] bg-[var(--surface-card)]"
             >
               {groups.map((group) => (
                 <option key={group.key} value={group.key}>
@@ -62,7 +62,7 @@ export default function InventoryProjectionCard({ payload }) {
           </div>
         )}
 
-        <div className="w-full bg-white dark:bg-slate-800 rounded border border-slate-200 dark:border-slate-700 p-2">
+        <div className="w-full bg-[var(--surface-card)] rounded border border-[var(--border-default)] p-2">
           <ResponsiveContainer width="100%" height={240} minWidth={1} minHeight={1}>
             <LineChart data={chartData}>
               <CartesianGrid strokeDasharray="3 3" />

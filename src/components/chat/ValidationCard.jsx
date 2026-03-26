@@ -31,7 +31,7 @@ export default function ValidationCard({ payload }) {
               </div>
             ))
           ) : (
-            <div className="text-slate-500">No validation reasons provided.</div>
+            <div className="text-[var(--text-muted)]">No validation reasons provided.</div>
           )}
         </div>
       </div>

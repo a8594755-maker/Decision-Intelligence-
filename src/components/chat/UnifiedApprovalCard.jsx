@@ -22,7 +22,7 @@ const TYPE_CONFIG = {
   risk_replan:     { label: 'Risk-Driven Replan',   icon: Shield,      color: 'text-amber-600 dark:text-amber-400',  bg: 'bg-amber-100 dark:bg-amber-900/40' },
   plan_commit:     { label: 'Plan Commit',          icon: ShieldCheck, color: 'text-emerald-600 dark:text-emerald-400', bg: 'bg-emerald-100 dark:bg-emerald-900/40' },
   negotiation:     { label: 'Negotiation',          icon: Shield,      color: 'text-purple-600 dark:text-purple-400', bg: 'bg-purple-100 dark:bg-purple-900/40' },
-  model_promotion: { label: 'Model Promotion',      icon: ShieldCheck, color: 'text-[var(--brand-600)]', bg: 'bg-indigo-100 dark:bg-indigo-900/40' },
+  model_promotion: { label: 'Model Promotion',      icon: ShieldCheck, color: 'text-[var(--brand-600)]', bg: 'bg-[var(--accent-active)]' },
 };
 
 function normalizeStatus(value) {
@@ -59,7 +59,7 @@ function DeadlineCountdown({ deadline }) {
 
   return (
     <div className={`flex items-center gap-1.5 text-xs font-medium ${
-      isExpired ? 'text-slate-400' : isCritical ? 'text-red-600 animate-pulse' : isUrgent ? 'text-amber-600' : 'text-slate-500'
+      isExpired ? 'text-[var(--text-muted)]' : isCritical ? 'text-red-600 animate-pulse' : isUrgent ? 'text-amber-600' : 'text-[var(--text-muted)]'
     }`}>
       <Clock className="w-3 h-3" />
       <span>{countdown.label}</span>
@@ -119,7 +119,7 @@ export default function UnifiedApprovalCard({ payload, onDecision }) {
               <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
                 normalizedStatus === 'APPROVED' || normalizedStatus === 'AUTO_APPROVED' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'
                 : normalizedStatus === 'REJECTED' ? 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300'
-                : normalizedStatus === 'EXPIRED' ? 'bg-slate-100 text-slate-500'
+                : normalizedStatus === 'EXPIRED' ? 'bg-slate-100 text-[var(--text-muted)]'
                 : 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'
               }`}>
                 {decided ? chosenAction?.toUpperCase() : normalizedStatus}
@@ -205,7 +205,7 @@ export default function UnifiedApprovalCard({ payload, onDecision }) {
           {normalizedStatus === 'APPROVED' || normalizedStatus === 'AUTO_APPROVED' || chosenAction === 'approve' || chosenAction === 'approve_conservative'
             ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
             : normalizedStatus === 'EXPIRED'
-              ? <AlertTriangle className="w-3.5 h-3.5 text-slate-400" />
+              ? <AlertTriangle className="w-3.5 h-3.5 text-[var(--text-muted)]" />
               : <XCircle className="w-3.5 h-3.5 text-red-500" />
           }
           <span>

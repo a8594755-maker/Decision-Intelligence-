@@ -74,7 +74,7 @@ function ConversationSidebar({
           <button
             type="button"
             title="Search conversations"
-            className="h-9 w-9 inline-flex items-center justify-center rounded-lg text-slate-500 hover:bg-[var(--accent-hover)] transition-colors"
+            className="h-9 w-9 inline-flex items-center justify-center rounded-lg text-[var(--text-muted)] hover:bg-[var(--accent-hover)] transition-colors"
             onClick={onExpandFromCollapsed}
           >
             <Search className="w-4 h-4" />
@@ -86,7 +86,7 @@ function ConversationSidebar({
           {isLoading ? (
             <SidebarSkeleton collapsed />
           ) : filteredConversations.length === 0 ? (
-            <div className="h-full flex flex-col items-center justify-center text-slate-400">
+            <div className="h-full flex flex-col items-center justify-center text-[var(--text-muted)]">
               <MessageSquare className="w-5 h-5" />
             </div>
           ) : (
@@ -143,13 +143,13 @@ function ConversationSidebar({
 
         {/* Search */}
         <div className="mt-3 relative">
-          <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+          <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--text-muted)]" />
           <input
             type="text"
             value={searchQuery}
             onChange={(event) => onSearchQueryChange?.(event.target.value)}
             placeholder="Search conversations..."
-            className="w-full pl-8 pr-3 py-2 rounded-lg border border-[var(--border-default)] bg-slate-50/80 dark:bg-slate-800/70 text-sm outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-400 transition-all placeholder:text-slate-400"
+            className="w-full pl-8 pr-3 py-2 rounded-lg border border-[var(--border-default)] bg-[var(--surface-base)] dark:bg-slate-800/70 text-sm outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-400 transition-all placeholder:text-[var(--text-muted)]"
           />
         </div>
       </div>
@@ -159,7 +159,7 @@ function ConversationSidebar({
         {isLoading ? (
           <SidebarSkeleton />
         ) : filteredConversations.length === 0 ? (
-          <div className="h-full px-4 py-10 text-center flex flex-col items-center justify-center text-slate-400">
+          <div className="h-full px-4 py-10 text-center flex flex-col items-center justify-center text-[var(--text-muted)]">
             <Bot className="w-10 h-10 mb-3 opacity-50" />
             <p className="text-sm">No conversations yet</p>
             <p className="text-xs mt-1 opacity-70">Start a new chat to begin</p>

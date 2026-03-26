@@ -39,7 +39,7 @@ function QuestionInput({ question, value, onChange, disabled }) {
   return (
     <input
       type={answer_type === 'number' ? 'number' : 'text'}
-      className="mt-1 w-full text-xs px-2 py-1 rounded border border-slate-300 dark:border-slate-600 bg-transparent text-[var(--text-primary)] disabled:opacity-50"
+      className="mt-1 w-full text-xs px-2 py-1 rounded border border-[var(--border-default)] bg-transparent text-[var(--text-primary)] disabled:opacity-50"
       value={value || ''}
       disabled={disabled}
       placeholder="Your answer…"

@@ -47,7 +47,7 @@ function ConversationListItem({
           <p className={`font-medium text-[var(--text-primary)] line-clamp-1 ${compact ? 'text-[13px]' : 'text-sm'}`}>
             {conversation.title || 'New Conversation'}
           </p>
-          <span className={`whitespace-nowrap text-slate-400 ${compact ? 'text-[10px]' : 'text-[11px]'}`}>
+          <span className={`whitespace-nowrap text-[var(--text-muted)] ${compact ? 'text-[10px]' : 'text-[11px]'}`}>
             {formatTime(conversation.updated_at)}
           </span>
         </div>

@@ -292,11 +292,11 @@ export default function MessageCardRenderer({ message, handlers, state }) {
     const runId = toPositiveRunId(message?.payload?.run_id)
       || toPositiveRunId(message?.payload?.graph?.run_id);
     return (
-      <Card className="w-full border border-[var(--border-default)] bg-slate-50/70 dark:bg-slate-900/30">
+      <Card className="w-full border border-[var(--border-default)] bg-[var(--surface-base)]">
         <div className="flex items-center justify-between gap-3">
           <div>
             <p className="text-sm font-semibold text-[var(--text-primary)]">Topology Graph Ready</p>
-            <p className="text-xs text-slate-500">
+            <p className="text-xs text-[var(--text-muted)]">
               {Number.isFinite(runId)
                 ? `Run #${runId} topology artifact is available in Canvas.`
                 : 'Topology artifact is available in Canvas.'}
@@ -612,7 +612,7 @@ export default function MessageCardRenderer({ message, handlers, state }) {
             prose-td:px-3 prose-td:py-1.5 prose-td:border prose-td:border-slate-200 prose-td:dark:border-slate-700 prose-td:text-slate-700 prose-td:dark:text-slate-300
             prose-tr:even:bg-slate-50 prose-tr:even:dark:bg-slate-800/30
             ${analysisPayloads.length > 0
-              ? 'bg-slate-50 dark:bg-slate-800/40 rounded-xl px-4 py-3 border border-slate-100 dark:border-slate-700/50'
+              ? 'bg-[var(--surface-base)] rounded-xl px-4 py-3 border border-[var(--border-default)]'
               : ''
             }`}>
             <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>

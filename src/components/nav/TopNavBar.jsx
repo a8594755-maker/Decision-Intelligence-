@@ -1,102 +1,34 @@
 import { useState } from 'react';
-import { NavLink as RouterNavLink, useNavigate, useLocation } from 'react-router-dom';
+import { NavLink as RouterNavLink, useLocation } from 'react-router-dom';
 import {
-  Activity, MessageSquare, ClipboardList, CheckSquare, LayoutDashboard,
-  Settings, Moon, Sun, LogOut,
-  ChevronsLeft, ChevronsRight, BarChart3, Database, Bot, Wrench, FileText, Users,
-  ChevronDown, Calculator, TrendingUp, ShieldAlert, Cpu, GitCompare, Handshake,
-  ArrowLeftRight, Shield, Webhook, Clock, Layers, Inbox, PanelTop,
+  Activity, LayoutDashboard, Settings, Moon, Sun, LogOut,
+  ChevronsLeft, ChevronsRight, BarChart3, Database, Bot, PanelTop,
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useApp } from '../../contexts/AppContext';
 import { APP_NAME } from '../../config/branding';
 
 // ────────────────────────────────────────────────────────────
-// DI Workspace nav
+// Unified navigation — single set of items
 // ────────────────────────────────────────────────────────────
-const DI_NAV_ITEMS = [
-  { to: '/workspace',     label: 'Workspace',       icon: PanelTop },
-  { to: '/',              label: 'Command Center',  icon: LayoutDashboard, end: true },
-  { to: '/forecast',      label: 'Forecast Studio', icon: TrendingUp },
-  { to: '/risk',           label: 'Risk Center',     icon: ShieldAlert },
-  { to: '/digital-twin',  label: 'Digital Twin',    icon: Cpu },
-  { to: '/scenarios',     label: 'Scenarios',       icon: GitCompare },
-  { to: '/negotiation',   label: 'Negotiation',     icon: Handshake },
-  { to: '/insights',      label: 'Insights Hub',    icon: BarChart3 },
+const NAV_ITEMS = [
+  { to: '/workspace',  label: 'Workspace',    icon: PanelTop },
+  { to: '/employees',  label: 'Workers',      icon: Bot },
+  { to: '/insights',   label: 'Insights Hub', icon: BarChart3 },
+  { to: '/',           label: 'Dashboard',    icon: LayoutDashboard, end: true },
 ];
 
-const DI_ADVANCED_ITEMS = [
-  { to: '/employees',           label: 'Digital Worker',    icon: Bot },
-  { to: '/employees/tasks',     label: 'Tasks',             icon: ClipboardList },
-  { to: '/employees/review',    label: 'Review',            icon: CheckSquare },
-  { to: '/employees/tools',     label: 'Tool Library',      icon: Wrench },
-  { to: '/employees/profiles',  label: 'Output Profiles',   icon: FileText },
-  { to: '/employees/templates', label: 'Templates',         icon: Layers },
-  { to: '/employees/policies',  label: 'Governance',        icon: Shield },
-  { to: '/employees/approvals', label: 'Approvals',         icon: Inbox },
-  { to: '/employees/webhooks',  label: 'Webhooks',          icon: Webhook },
-  { to: '/employees/schedules', label: 'Schedules',         icon: Clock },
-];
-
-// ────────────────────────────────────────────────────────────
-// Digital Worker Workspace nav
-// ────────────────────────────────────────────────────────────
-const AI_NAV_ITEMS = [
-  { to: '/workspace',           label: 'Workspace',      icon: PanelTop },
-  { to: '/employees/tasks',     label: 'Task Board',     icon: ClipboardList },
-  { to: '/employees/review',    label: 'Review',         icon: CheckSquare },
-  { to: '/employees/approvals', label: 'Approvals',      icon: Inbox },
-  { to: '/',                    label: 'Dashboard',      icon: Bot, end: true },
-  { to: '/employees',           label: 'Workers',        icon: Users },
-  { to: '/employees/profiles',  label: 'Profiles',       icon: FileText },
-  { to: '/insights',             label: 'Insights Hub',   icon: LayoutDashboard },
-];
-
-const AI_ADVANCED_ITEMS = [
-  { to: '/employees/templates', label: 'Templates',      icon: Layers },
-  { to: '/employees/policies',  label: 'Governance',     icon: Shield },
-  { to: '/employees/webhooks',  label: 'Webhooks',       icon: Webhook },
-  { to: '/employees/schedules', label: 'Schedules',      icon: Clock },
-  { to: '/employees/tools',     label: 'Tool Library',   icon: Wrench },
-  { to: '/forecast',      label: 'Forecast Studio', icon: TrendingUp },
-  { to: '/risk',           label: 'Risk Center',     icon: ShieldAlert },
-  { to: '/digital-twin',  label: 'Digital Twin',     icon: Cpu },
-  { to: '/scenarios',     label: 'Scenarios',         icon: GitCompare },
-  { to: '/negotiation',   label: 'Negotiation',       icon: Handshake },
-];
-
-// ────────────────────────────────────────────────────────────
 const BOTTOM_ITEMS = [
-  { to: '/sandbox', label: 'ERP Sandbox', icon: Database },
-  { to: '/ops', label: 'Ops Dashboard', icon: BarChart3 },
-  { to: '/settings', label: 'Settings', icon: Settings },
+  { to: '/sandbox',  label: 'ERP Sandbox', icon: Database },
+  { to: '/settings', label: 'Settings',    icon: Settings },
 ];
-
-const WS_META = {
-  di:          { label: 'Decision Intelligence', short: 'DI', icon: LayoutDashboard, color: 'text-blue-600' },
-  ai_employee: { label: 'Digital Worker',        short: 'DW', icon: Bot,              color: 'text-[var(--brand-600)]' },
-};
 
 export default function Sidebar() {
   const { user, handleLogout } = useAuth();
-  const { darkMode, setDarkMode, activeWorkspace, setActiveWorkspace } = useApp();
-  const navigate = useNavigate();
+  const { darkMode, setDarkMode } = useApp();
   const [expanded, setExpanded] = useState(false);
-  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   const width = expanded ? 'w-52' : 'w-14';
-  const isAI = activeWorkspace === 'ai_employee';
-  const navItems = isAI ? AI_NAV_ITEMS : DI_NAV_ITEMS;
-  const advancedItems = isAI ? AI_ADVANCED_ITEMS : DI_ADVANCED_ITEMS;
-  const _currentWs = WS_META[activeWorkspace] || WS_META.ai_employee;
-  const otherWs = isAI ? WS_META.di : WS_META.ai_employee;
-
-  function switchWorkspace() {
-    const next = isAI ? 'di' : 'ai_employee';
-    setActiveWorkspace(next);
-    navigate('/');
-    setAdvancedOpen(false);
-  }
 
   return (
     <aside
@@ -106,7 +38,7 @@ export default function Sidebar() {
         borderColor: 'var(--border-default)',
       }}
       onMouseEnter={() => setExpanded(true)}
-      onMouseLeave={() => { setExpanded(false); setAdvancedOpen(false); }}
+      onMouseLeave={() => setExpanded(false)}
     >
       {/* ── Brand ── */}
       <div className="h-14 flex items-center px-3.5 gap-2.5 flex-shrink-0">
@@ -125,55 +57,14 @@ export default function Sidebar() {
 
       {/* ── Primary nav ── */}
       <nav className="flex-1 flex flex-col gap-0.5 px-2 pt-2 overflow-y-auto overflow-x-hidden">
-        {navItems.map(({ to, label, icon: Icon, end }) => (
+        {NAV_ITEMS.map(({ to, label, icon: Icon, end }) => (
           <SidebarLink key={to} to={to} label={label} icon={Icon} end={end} expanded={expanded} />
         ))}
-
-        {/* ── Advanced tools (collapsible) ── */}
-        {expanded && (
-          <div className="mt-3 pt-3 border-t" style={{ borderColor: 'var(--border-default)' }}>
-            <button
-              onClick={() => setAdvancedOpen(!advancedOpen)}
-              className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors hover:bg-[var(--surface-subtle)]"
-              style={{ color: 'var(--text-muted)' }}
-            >
-              <ChevronDown className={`w-3.5 h-3.5 transition-transform ${advancedOpen ? '' : '-rotate-90'}`} />
-              {isAI ? 'Advanced Tools' : 'Digital Worker'}
-            </button>
-            {advancedOpen && (
-              <div className="flex flex-col gap-0.5 mt-0.5">
-                {advancedItems.map(({ to, label, icon: Icon }) => (
-                  <SidebarLink key={to} to={to} label={label} icon={Icon} expanded={expanded} />
-                ))}
-              </div>
-            )}
-          </div>
-        )}
       </nav>
 
       {/* ── Bottom section ── */}
       <div className="flex flex-col gap-0.5 px-2 pb-2 border-t" style={{ borderColor: 'var(--border-default)' }}>
-
-        {/* Workspace switcher */}
-        <button
-          onClick={switchWorkspace}
-          className="flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-sm transition-colors hover:bg-[var(--surface-subtle)]"
-          style={{ color: 'var(--text-secondary)' }}
-          title={`Switch to ${otherWs.label}`}
-        >
-          <span className="w-5 h-5 flex items-center justify-center flex-shrink-0">
-            <ArrowLeftRight className="w-[18px] h-[18px]" />
-          </span>
-          <span
-            className={`whitespace-nowrap overflow-hidden transition-all duration-200 ${
-              expanded ? 'opacity-100 w-auto' : 'opacity-0 w-0'
-            }`}
-          >
-            {otherWs.short} Mode
-          </span>
-        </button>
-
-        {/* Settings & other bottom items */}
+        {/* Bottom nav items */}
         {BOTTOM_ITEMS.map(({ to, label, icon: Icon }) => (
           <SidebarLink key={to} to={to} label={label} icon={Icon} expanded={expanded} />
         ))}
@@ -181,7 +72,7 @@ export default function Sidebar() {
         {/* Theme toggle */}
         <button
           onClick={() => setDarkMode(!darkMode)}
-          className="flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-sm transition-colors hover:bg-[var(--surface-subtle)]"
+          className="flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-sm transition-colors hover:bg-[var(--surface-subtle)] cursor-pointer"
           style={{ color: 'var(--text-secondary)' }}
           title={darkMode ? 'Light mode' : 'Dark mode'}
         >
@@ -215,7 +106,7 @@ export default function Sidebar() {
           {expanded && (
             <button
               onClick={handleLogout}
-              className="p-1 rounded-md hover:bg-red-50 dark:hover:bg-red-900/20 text-red-500 transition-colors"
+              className="p-1 rounded-md hover:bg-red-50 dark:hover:bg-red-900/20 text-red-500 transition-colors cursor-pointer"
               title="Log out"
             >
               <LogOut className="w-3.5 h-3.5" />
@@ -226,7 +117,7 @@ export default function Sidebar() {
         {/* Collapse toggle */}
         <button
           onClick={() => setExpanded(!expanded)}
-          className="flex items-center justify-center p-1.5 rounded-lg transition-colors hover:bg-[var(--surface-subtle)]"
+          className="flex items-center justify-center p-1.5 rounded-lg transition-colors hover:bg-[var(--surface-subtle)] cursor-pointer"
           style={{ color: 'var(--text-muted)' }}
           title={expanded ? 'Collapse' : 'Expand'}
         >
@@ -254,12 +145,16 @@ function SidebarLink({ to, label, icon: Icon, end, expanded }) {
       && [...linkParams.entries()].every(([k, v]) => currentParams.get(k) === v);
   }
 
+  // Workers link should highlight for any /employees* path
+  const isEmployeesLink = to === '/employees';
+  const isEmployeesActive = isEmployeesLink && location.pathname.startsWith('/employees');
+
   return (
     <RouterNavLink
       to={to}
-      end={end}
+      end={end || isEmployeesLink}
       className={({ isActive: routerActive }) => {
-        const active = hasQuery ? isActiveCustom : routerActive;
+        const active = hasQuery ? isActiveCustom : (isEmployeesLink ? isEmployeesActive : routerActive);
         return [
           'group relative flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-sm font-medium transition-colors',
           active
@@ -269,14 +164,14 @@ function SidebarLink({ to, label, icon: Icon, end, expanded }) {
       }}
     >
       {({ isActive: routerActive }) => {
-        const active = hasQuery ? isActiveCustom : routerActive;
+        const active = hasQuery ? isActiveCustom : (isEmployeesLink ? isEmployeesActive : routerActive);
         return (
           <>
             {active && (
               <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-5 rounded-r-full bg-[var(--brand-600)]" />
             )}
             <span className="w-5 h-5 flex items-center justify-center flex-shrink-0">
-              <Icon className="w-[18px] h-[18px]" />
+              <Icon className="w-5 h-5" />
             </span>
             <span
               className={`whitespace-nowrap overflow-hidden transition-all duration-200 ${

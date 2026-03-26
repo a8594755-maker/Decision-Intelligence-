@@ -151,7 +151,7 @@ export default function RetrainApprovalCard({ payload, onApprove, onReject }) {
             <p className="text-[11px] text-slate-400 mt-2">Champion: v{champion_version}</p>
           )}
           {triggered_at && (
-            <p className="text-[11px] text-slate-400">
+            <p className="text-[11px] text-[var(--text-muted)]">
               Triggered: {new Date(triggered_at).toLocaleString()}
             </p>
           )}
@@ -160,7 +160,7 @@ export default function RetrainApprovalCard({ payload, onApprove, onReject }) {
         {/* Note input */}
         {!isResolved && (
           <textarea
-            className="w-full rounded-md border border-slate-300 dark:border-slate-600 bg-[var(--surface-card)] text-xs px-2.5 py-2 focus:outline-none focus:ring-2 focus:ring-orange-500"
+            className="w-full rounded-md border border-[var(--border-default)] bg-[var(--surface-card)] text-xs px-2.5 py-2 focus:outline-none focus:ring-2 focus:ring-orange-500"
             rows={2}
             placeholder="Approval note (optional)"
             value={note}
@@ -192,7 +192,7 @@ export default function RetrainApprovalCard({ payload, onApprove, onReject }) {
             >
               {isBusy ? 'Submitting...' : 'Reject'}
             </Button>
-            {isBusy && <Hourglass className="w-4 h-4 text-slate-400" />}
+            {isBusy && <Hourglass className="w-4 h-4 text-[var(--text-muted)]" />}
           </div>
         )}
 

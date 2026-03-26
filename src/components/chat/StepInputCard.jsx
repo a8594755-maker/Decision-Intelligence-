@@ -131,7 +131,7 @@ export default function StepInputCard({
   }
 
   return (
-    <div className="w-full rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-900/10 p-4 space-y-3">
+    <div className="w-full rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-900/10 border-l-[3px] border-l-[var(--cat-system)] p-4 space-y-3">
       {/* Header */}
       <div className="flex items-start gap-2">
         <AlertTriangleIcon className="text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
@@ -197,11 +197,11 @@ export default function StepInputCard({
                   disabled={disabled || submitting}
                   className={`w-full text-left px-2.5 py-1.5 rounded text-xs transition-colors flex items-center gap-2 ${
                     selectedDatasetId === ds.id
-                      ? 'bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 ring-1 ring-indigo-300 dark:ring-indigo-600'
+                      ? 'bg-indigo-50 dark:bg-indigo-900/30 text-[var(--brand-600)] ring-1 ring-indigo-300 dark:ring-indigo-600'
                       : 'hover:bg-slate-50 dark:hover:bg-slate-700/40 text-[var(--text-secondary)]'
                   }`}
                 >
-                  <DatabaseIcon className="shrink-0 text-slate-400" />
+                  <DatabaseIcon className="shrink-0 text-[var(--text-muted)]" />
                   <span className="truncate font-medium">{ds.label || ds.file_name || ds.id}</span>
                   {selectedDatasetId === ds.id && (
                     <CheckIcon className="ml-auto shrink-0 text-[var(--brand-600)]" />
@@ -239,7 +239,7 @@ export default function StepInputCard({
           type="button"
           onClick={handleSkip}
           disabled={disabled || submitting}
-          className="text-xs text-[var(--text-muted)] hover:text-slate-700 dark:hover:text-slate-300 underline underline-offset-2 transition-colors"
+          className="text-xs text-[var(--text-muted)] hover:text-[var(--text-secondary)] underline underline-offset-2 transition-colors"
         >
           Skip this step
         </button>

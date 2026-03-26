@@ -13,22 +13,13 @@ const ScenarioStudio = lazy(() => import('./pages/ScenarioStudio'));
 const OpsDashboard = lazy(() => import('./pages/OpsDashboard'));
 const SyntheticERPSandbox = lazy(() => import('./pages/SyntheticERPSandbox'));
 const NegotiationWorkbench = lazy(() => import('./pages/NegotiationWorkbench'));
-// @product: ai-employee
-const EmployeesPage       = lazy(() => import('./pages/EmployeesPage'));
-const EmployeeTasksPage   = lazy(() => import('./pages/EmployeeTasksPage'));
-const EmployeeReviewPage  = lazy(() => import('./pages/EmployeeReviewPage'));
-const ToolRegistryPage    = lazy(() => import('./pages/ToolRegistryPage'));
-const OutputProfilesPage  = lazy(() => import('./pages/OutputProfilesPage'));
-const WorkerTemplatesPage = lazy(() => import('./pages/WorkerTemplatesPage'));
-const PolicyRulesPage     = lazy(() => import('./pages/PolicyRulesPage'));
-const WebhookConfigPage   = lazy(() => import('./pages/WebhookConfigPage'));
-const ScheduleManagerPage = lazy(() => import('./pages/ScheduleManagerPage'));
-const ApprovalQueuePage  = lazy(() => import('./pages/ApprovalQueuePage'));
+// @product: ai-employee — consolidated into WorkersHub
+const WorkersHub = lazy(() => import('./pages/WorkersHub'));
 // @product: insights-hub
-const InsightsHub        = lazy(() => import('./pages/InsightsHub'));
-const ChartTest          = lazy(() => import('./pages/ChartTest'));
+const InsightsHub = lazy(() => import('./pages/InsightsHub'));
+const ChartTest = lazy(() => import('./pages/ChartTest'));
 // @product: unified-workspace (Canvas Architecture)
-const WorkspacePage      = lazy(() => import('./pages/WorkspacePage'));
+const WorkspacePage = lazy(() => import('./pages/WorkspacePage'));
 
 export const router = createBrowserRouter([
   {
@@ -40,26 +31,30 @@ export const router = createBrowserRouter([
     element: <AppShell />,
     children: [
       { index: true, element: <HomePage /> },
-      // /plan redirects to /workspace (golden path convergence — see below)
       { path: 'forecast', element: <ForecastStudio /> },
       { path: 'risk', element: <RiskCenter /> },
       { path: 'digital-twin', element: <DigitalTwin /> },
       { path: 'scenarios', element: <ScenarioStudio /> },
       { path: 'negotiation', element: <NegotiationWorkbench /> },
-      // @product: ai-employee
-      { path: 'employees',        element: <EmployeesPage /> },
-      { path: 'employees/tasks',  element: <EmployeeTasksPage /> },
-      { path: 'employees/review', element: <EmployeeReviewPage /> },
-      { path: 'employees/tools',  element: <ToolRegistryPage /> },
-      { path: 'employees/profiles', element: <OutputProfilesPage /> },
-      { path: 'employees/templates', element: <WorkerTemplatesPage /> },
-      { path: 'employees/policies',  element: <PolicyRulesPage /> },
-      { path: 'employees/webhooks',  element: <WebhookConfigPage /> },
-      { path: 'employees/schedules', element: <ScheduleManagerPage /> },
-      { path: 'employees/approvals', element: <ApprovalQueuePage /> },
+
+      // @product: ai-employee — Workers Hub (consolidated)
+      { path: 'employees', element: <WorkersHub /> },
+
+      // Legacy employee/* redirects → Workers Hub with query params
+      { path: 'employees/tasks',     element: <Navigate to="/employees?tab=tasks" replace /> },
+      { path: 'employees/review',    element: <Navigate to="/employees?tab=review" replace /> },
+      { path: 'employees/approvals', element: <Navigate to="/employees?tab=review" replace /> },
+      { path: 'employees/tools',     element: <Navigate to="/employees?tab=config&section=tools" replace /> },
+      { path: 'employees/profiles',  element: <Navigate to="/employees?tab=config&section=profiles" replace /> },
+      { path: 'employees/templates', element: <Navigate to="/employees?tab=config&section=templates" replace /> },
+      { path: 'employees/policies',  element: <Navigate to="/employees?tab=config&section=policies" replace /> },
+      { path: 'employees/webhooks',  element: <Navigate to="/employees?tab=config&section=webhooks" replace /> },
+      { path: 'employees/schedules', element: <Navigate to="/employees?tab=config&section=schedules" replace /> },
+
       // @product: insights-hub
       { path: 'insights', element: <InsightsHub /> },
       { path: 'chart-test', element: <ChartTest /> },
+
       // @product: unified-workspace (Canvas Architecture — Trinity Layout)
       { path: 'workspace', element: <WorkspacePage /> },
       { path: 'ops', element: <OpsDashboard /> },
@@ -70,7 +65,7 @@ export const router = createBrowserRouter([
       { path: 'plan', element: <Navigate to="/workspace" replace /> },
       { path: 'chat', element: <Navigate to="/workspace" replace /> },
 
-      // Legacy redirects (previously handled by src/utils/router.js)
+      // Legacy redirects
       { path: 'ai/decision', element: <Navigate to="/workspace" replace /> },
       { path: 'planning/forecasts', element: <Navigate to="/workspace?widget=forecast" replace /> },
       { path: 'planning/risk-dashboard', element: <Navigate to="/workspace?widget=risk" replace /> },

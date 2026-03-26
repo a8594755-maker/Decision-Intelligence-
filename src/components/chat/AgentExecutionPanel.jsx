@@ -21,13 +21,13 @@ import useEventBus from '../../hooks/useEventBus';
 // ── Status styles & icons ──────────────────────────────────────────────────
 
 const STATUS_STYLES = {
-  pending:     { bg: 'bg-[var(--surface-subtle)]', text: 'text-slate-500', dot: 'bg-slate-400', label: 'Pending' },
+  pending:     { bg: 'bg-[var(--surface-subtle)]', text: 'text-[var(--text-muted)]', dot: 'bg-slate-400', label: 'Pending' },
   running:     { bg: 'bg-blue-50 dark:bg-blue-900/20', text: 'text-blue-600', dot: 'bg-blue-500', label: 'Running' },
   succeeded:   { bg: 'bg-emerald-50 dark:bg-emerald-900/20', text: 'text-emerald-600', dot: 'bg-emerald-500', label: 'Done' },
   failed:      { bg: 'bg-red-50 dark:bg-red-900/20', text: 'text-red-600', dot: 'bg-red-500', label: 'Failed' },
   blocked:     { bg: 'bg-red-50 dark:bg-red-900/20', text: 'text-red-600', dot: 'bg-red-500', label: 'Blocked' },
   review_hold: { bg: 'bg-amber-50 dark:bg-amber-900/20', text: 'text-amber-600', dot: 'bg-amber-500', label: 'Review' },
-  skipped:     { bg: 'bg-slate-50 dark:bg-slate-800', text: 'text-slate-400', dot: 'bg-slate-300', label: 'Skipped' },
+  skipped:     { bg: 'bg-[var(--surface-subtle)]', text: 'text-[var(--text-muted)]', dot: 'bg-slate-300', label: 'Skipped' },
   revision_needed: { bg: 'bg-orange-50 dark:bg-orange-900/20', text: 'text-orange-600', dot: 'bg-orange-500', label: 'Revision' },
 };
 
@@ -77,7 +77,7 @@ function CopyButton({ text }) {
       className="p-1 rounded hover:bg-[var(--accent-hover)] transition-colors"
       title="Copy"
     >
-      {copied ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5 text-slate-400" />}
+      {copied ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5 text-[var(--text-muted)]" />}
     </button>
   );
 }
@@ -219,7 +219,7 @@ function StepDetailCard({ step, stepEvent, index, isActive }) {
           {hasArtifacts && <Database className="w-3.5 h-3.5 text-emerald-500" title="Artifacts" />}
           {hasReview && <Brain className="w-3.5 h-3.5 text-amber-500" title="AI Review" />}
           {hasError && <AlertTriangle className="w-3.5 h-3.5 text-red-500" title="Error" />}
-          {isOpen ? <ChevronDown className="w-4 h-4 text-slate-400" /> : <ChevronRight className="w-4 h-4 text-slate-400" />}
+          {isOpen ? <ChevronDown className="w-4 h-4 text-[var(--text-muted)]" /> : <ChevronRight className="w-4 h-4 text-[var(--text-muted)]" />}
         </div>
       </button>
 
@@ -239,7 +239,7 @@ function StepDetailCard({ step, stepEvent, index, isActive }) {
 
           {/* Summary */}
           {details.summary && (
-            <div className="text-sm text-[var(--text-secondary)] bg-slate-50 dark:bg-slate-800/50 rounded-lg p-3">
+            <div className="text-sm text-[var(--text-secondary)] bg-[var(--surface-subtle)]/50 rounded-lg p-3">
               {details.summary}
             </div>
           )}
@@ -376,8 +376,8 @@ function StepDetailCard({ step, stepEvent, index, isActive }) {
 
           {/* Self-Healing */}
           {hasHealing && (
-            <div className="rounded-lg p-3 bg-[var(--accent-active)] border border-indigo-200 dark:border-indigo-800">
-              <div className="flex items-center gap-1.5 text-xs font-medium text-indigo-700 dark:text-indigo-400 mb-1">
+            <div className="rounded-lg p-3 bg-[var(--accent-active)] border border-[var(--brand-500)]">
+              <div className="flex items-center gap-1.5 text-xs font-medium text-[var(--brand-600)] mb-1">
                 <Zap className="w-3.5 h-3.5" />
                 Self-Healing
               </div>
@@ -393,7 +393,7 @@ function StepDetailCard({ step, stepEvent, index, isActive }) {
           )}
 
           {/* Timestamps */}
-          <div className="flex gap-4 text-[10px] text-slate-400">
+          <div className="flex gap-4 text-[10px] text-[var(--text-muted)]">
             {step.started_at && <span>Start: {formatTimestamp(step.started_at)}</span>}
             {step.finished_at && <span>End: {formatTimestamp(step.finished_at)}</span>}
             {durationMs > 0 && <span>Duration: {formatDuration(durationMs)}</span>}
@@ -526,7 +526,7 @@ export default function AgentExecutionPanel({ loopState, stepEvents = [], taskTi
           <h3 className="text-sm font-semibold text-[var(--text-primary)] truncate">
             {taskTitle || 'Agent Execution'}
           </h3>
-          <p className="text-[10px] text-slate-500 flex items-center gap-1">
+          <p className="text-[10px] text-[var(--text-muted)] flex items-center gap-1">
             {steps.length} steps {isComplete ? '— Complete' : ''}
             {sseConnected && (
               <span className="inline-flex items-center gap-0.5 text-emerald-500" title="SSE connected">
@@ -540,7 +540,7 @@ export default function AgentExecutionPanel({ loopState, stepEvents = [], taskTi
             onClick={onClose}
             className="p-1.5 rounded-lg hover:bg-[var(--accent-hover)] transition-colors"
           >
-            <X className="w-4 h-4 text-slate-400" />
+            <X className="w-4 h-4 text-[var(--text-muted)]" />
           </button>
         )}
       </div>
@@ -555,7 +555,7 @@ export default function AgentExecutionPanel({ loopState, stepEvents = [], taskTi
       {/* Steps timeline */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-3 space-y-2">
         {steps.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full text-slate-400 gap-2">
+          <div className="flex flex-col items-center justify-center h-full text-[var(--text-muted)] gap-2">
             <Activity className="w-8 h-8" />
             <p className="text-sm">Waiting for execution...</p>
           </div>
@@ -591,7 +591,7 @@ export default function AgentExecutionPanel({ loopState, stepEvents = [], taskTi
             <span className="text-xs font-medium">Execution halted — check errors above</span>
           </div>
         ) : (
-          <div className="flex items-center gap-2 text-slate-400">
+          <div className="flex items-center gap-2 text-[var(--text-muted)]">
             <Clock className="w-4 h-4" />
             <span className="text-xs">Ready</span>
           </div>

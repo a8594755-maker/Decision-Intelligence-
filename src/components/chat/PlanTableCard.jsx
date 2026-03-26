@@ -40,7 +40,7 @@ function LineageSummaryBanner({ summary }) {
         </span>
       )}
       {datasets_missing?.length > 0 && (
-        <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-400">
+        <span className="px-1.5 py-0.5 rounded bg-[var(--surface-subtle)] text-[var(--text-secondary)]">
           Missing: {datasets_missing.join(', ')}
         </span>
       )}
@@ -63,20 +63,20 @@ export default function PlanTableCard({ payload }) {
   if (!payload) return null;
 
   return (
-    <Card className="w-full border border-slate-200 dark:border-slate-700">
+    <Card category="plan" className="w-full border border-[var(--border-default)]">
       <div className="space-y-3">
         <div>
           <h4 className="font-semibold text-sm flex items-center gap-2">
-            <Table2 className="w-4 h-4 text-slate-700 dark:text-slate-200" />
+            <Table2 className="w-4 h-4 text-[var(--text-secondary)]" />
             Plan Table
           </h4>
-          <p className="text-xs text-slate-500">Showing {rows.length} of {payload.total_rows || rows.length} lines.</p>
+          <p className="text-xs text-[var(--text-muted)]">Showing {rows.length} of {payload.total_rows || rows.length} lines.</p>
           <LineageSummaryBanner summary={payload.lineage_summary} />
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full text-xs border border-slate-200 dark:border-slate-700">
-            <thead className="bg-slate-100 dark:bg-slate-700">
+          <table className="w-full text-xs border border-[var(--border-default)]">
+            <thead className="bg-[var(--surface-subtle)]">
               <tr>
                 <th className="px-2 py-1 text-left">SKU</th>
                 <th className="px-2 py-1 text-left">Plant</th>
@@ -93,7 +93,7 @@ export default function PlanTableCard({ payload }) {
                 return (
                   <tr
                     key={`${row.sku}-${row.plant_id || 'na'}-${row.order_date}-${rowIdx}`}
-                    className={`border-t border-slate-200 dark:border-slate-700 cursor-pointer transition-colors ${isSelected ? 'bg-indigo-50 dark:bg-indigo-900/20' : 'hover:bg-slate-50 dark:hover:bg-slate-800/50'}`}
+                    className={`border-t border-[var(--border-default)] cursor-pointer transition-colors ${isSelected ? 'bg-[var(--accent-active)]' : 'hover:bg-[var(--accent-hover)]'}`}
                     onClick={() => setSelectedRow(isSelected ? null : rowIdx)}
                   >
                     <td className="px-2 py-1 font-medium">{row.sku}</td>
@@ -115,21 +115,21 @@ export default function PlanTableCard({ payload }) {
 
         {/* Row detail drawer (inline) */}
         {selectedRow != null && rows[selectedRow]?._meta && (
-          <div className="border border-indigo-200 dark:border-indigo-800 rounded-lg p-3 bg-indigo-50/50 dark:bg-indigo-900/10 space-y-2">
+          <div className="border border-[var(--brand-500)] rounded-lg p-3 bg-[var(--accent-active)] space-y-2">
             <div className="flex items-center justify-between">
-              <h5 className="text-xs font-semibold text-indigo-700 dark:text-indigo-400">
+              <h5 className="text-xs font-semibold text-[var(--brand-600)]">
                 Row Detail: {rows[selectedRow].sku} / {rows[selectedRow].plant_id || 'N/A'}
               </h5>
               <button
                 onClick={() => setSelectedRow(null)}
-                className="text-xs text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
+                className="text-xs text-[var(--text-muted)] hover:text-[var(--text-secondary)]"
               >
                 Close
               </button>
             </div>
             <div className="grid grid-cols-2 gap-2 text-[11px]">
               <div>
-                <span className="font-medium text-slate-600 dark:text-slate-400">Datasets Used</span>
+                <span className="font-medium text-[var(--text-secondary)]">Datasets Used</span>
                 <div className="flex flex-wrap gap-1 mt-0.5">
                   {rows[selectedRow]._meta.datasets_used?.map(d => (
                     <span key={d} className="px-1 py-0.5 rounded bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400">{d}</span>
@@ -137,7 +137,7 @@ export default function PlanTableCard({ payload }) {
                 </div>
               </div>
               <div>
-                <span className="font-medium text-slate-600 dark:text-slate-400">Confidence</span>
+                <span className="font-medium text-[var(--text-secondary)]">Confidence</span>
                 <div className="mt-0.5">
                   {((rows[selectedRow]._meta.confidence || 0) * 100).toFixed(0)}%
                 </div>
@@ -150,7 +150,7 @@ export default function PlanTableCard({ payload }) {
                   {rows[selectedRow]._meta.fallback_fields.map((fb, i) => (
                     <div key={i} className="flex items-center gap-2">
                       <span className="text-amber-600 dark:text-amber-400">{fb.field}</span>
-                      <span className="text-slate-500">= {fb.value} (source: {fb.source})</span>
+                      <span className="text-[var(--text-muted)]">= {fb.value} (source: {fb.source})</span>
                     </div>
                   ))}
                 </div>
@@ -160,20 +160,20 @@ export default function PlanTableCard({ payload }) {
         )}
 
         {rows.length > PAGE_SIZE && (
-          <div className="flex items-center justify-between text-xs text-slate-500">
+          <div className="flex items-center justify-between text-xs text-[var(--text-muted)]">
             <span>Page {page + 1} of {totalPages} ({rows.length} rows)</span>
             <div className="flex items-center gap-1">
               <button
                 onClick={() => setPage(p => Math.max(0, p - 1))}
                 disabled={page === 0}
-                className="p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-700 disabled:opacity-30 disabled:cursor-not-allowed"
+                className="p-1 rounded hover:bg-[var(--accent-hover)] disabled:opacity-30 disabled:cursor-not-allowed"
               >
                 <ChevronLeft className="w-4 h-4" />
               </button>
               <button
                 onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
                 disabled={page >= totalPages - 1}
-                className="p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-700 disabled:opacity-30 disabled:cursor-not-allowed"
+                className="p-1 rounded hover:bg-[var(--accent-hover)] disabled:opacity-30 disabled:cursor-not-allowed"
               >
                 <ChevronRight className="w-4 h-4" />
               </button>

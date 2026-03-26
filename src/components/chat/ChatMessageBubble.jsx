@@ -7,14 +7,14 @@ import { formatAttachmentSize } from '../../services/chat/chatAttachmentService'
 const markdownComponents = {
   table: ({ children }) => (
     <div className="overflow-x-auto my-2">
-      <table className="min-w-full text-xs border-collapse border border-slate-300 dark:border-slate-600">
+      <table className="min-w-full text-xs border-collapse border border-[var(--border-default)]">
         {children}
       </table>
     </div>
   ),
   thead: ({ children }) => <thead className="bg-[var(--surface-subtle)]">{children}</thead>,
-  th: ({ children }) => <th className="border border-slate-300 dark:border-slate-600 px-2 py-1 text-left font-semibold">{children}</th>,
-  td: ({ children }) => <td className="border border-slate-300 dark:border-slate-600 px-2 py-1">{children}</td>,
+  th: ({ children }) => <th className="border border-[var(--border-default)] px-2 py-1 text-left font-semibold">{children}</th>,
+  td: ({ children }) => <td className="border border-[var(--border-default)] px-2 py-1">{children}</td>,
   p: ({ children, node }) => {
     const hasBlock = node?.children?.some(c => c.type === 'element' && /^(pre|div|table|ul|ol|blockquote)$/.test(c.tagName));
     return hasBlock ? <div className="mb-3">{children}</div> : <p>{children}</p>;
@@ -77,7 +77,7 @@ function ChatMessageBubble({ message, renderSpecialMessage, timestampText = '', 
               className={`min-w-[12rem] max-w-full rounded-2xl border px-3 py-2 ${
                 isUser
                   ? 'border-white/20 bg-white/10 text-white'
-                  : 'border-slate-200 bg-slate-50 text-slate-900 dark:border-slate-700 dark:bg-slate-800/80 dark:text-slate-100'
+                  : 'border-[var(--border-default)] bg-[var(--surface-base)] text-[var(--text-primary)]'
               }`}
             >
               <div className="flex items-center gap-2">
@@ -143,7 +143,7 @@ function ChatMessageBubble({ message, renderSpecialMessage, timestampText = '', 
               ) : null
             )}
             {(timestampText || (!isUser && message?.meta?.model) || (!isUser && message?.content)) ? (
-              <div className={`mt-1 flex items-center gap-2 text-[11px] ${isAIEmployeeVariant ? (isUser ? 'text-slate-300 dark:text-slate-500' : 'text-slate-400') : isUser ? 'text-blue-100' : 'text-slate-400'}`}>
+              <div className={`mt-1 flex items-center gap-2 text-[11px] ${isAIEmployeeVariant ? (isUser ? 'text-slate-300 dark:text-[var(--text-muted)]' : 'text-[var(--text-muted)]') : isUser ? 'text-blue-100' : 'text-[var(--text-muted)]'}`}>
                 <span>{[timestampText, !isUser && message?.meta?.model ? `· ${message.meta.model}` : null].filter(Boolean).join(' ')}</span>
                 {!isUser && message?.content ? <CopyInlineButton text={message.content} /> : null}
               </div>

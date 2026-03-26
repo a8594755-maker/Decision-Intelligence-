@@ -24,7 +24,7 @@ const TIER_META = {
   critical: { label: 'Critical', badgeType: 'danger',  bg: 'bg-red-50 dark:bg-red-900/20',       border: 'border-red-200 dark:border-red-700' },
   high:     { label: 'High',     badgeType: 'warning', bg: 'bg-orange-50 dark:bg-orange-900/20',   border: 'border-orange-200 dark:border-orange-700' },
   medium:   { label: 'Medium',   badgeType: 'info',    bg: 'bg-yellow-50 dark:bg-yellow-900/20',   border: 'border-yellow-200 dark:border-yellow-700' },
-  low:      { label: 'Low',      badgeType: 'success', bg: 'bg-slate-50 dark:bg-slate-800/50',    border: 'border-slate-200 dark:border-slate-600' },
+  low:      { label: 'Low',      badgeType: 'success', bg: 'bg-[var(--surface-subtle)]',    border: 'border-[var(--border-default)]' },
 };
 
 // ── PORow component ───────────────────────────────────────────────────────────
@@ -85,14 +85,14 @@ function PORow({ po }) {
           <p className="text-xs font-medium text-[var(--text-secondary)]">
             {(po.open_qty || 0).toLocaleString()}
           </p>
-          <p className="text-[10px] text-slate-400">open qty</p>
+          <p className="text-[10px] text-[var(--text-muted)]">open qty</p>
         </div>
 
         {/* Evidence toggle */}
         {Array.isArray(po.evidence_refs) && po.evidence_refs.length > 0 && (
           <button
             onClick={() => setShowEvidence((v) => !v)}
-            className="shrink-0 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors"
+            className="shrink-0 text-[var(--text-muted)] hover:text-[var(--text-secondary)] transition-colors"
             aria-label="Toggle evidence"
           >
             {showEvidence ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
@@ -102,7 +102,7 @@ function PORow({ po }) {
 
       {/* Expanded evidence */}
       {showEvidence && (
-        <div className="px-3 pb-2.5 pt-1 border-t border-slate-100 dark:border-slate-700/50">
+        <div className="px-3 pb-2.5 pt-1 border-t border-[var(--border-default)]">
           <p className="text-[10px] font-medium text-[var(--text-muted)] mb-1">
             Model: <span className="font-mono">{po.model_used}</span>
           </p>
@@ -110,7 +110,7 @@ function PORow({ po }) {
             {po.evidence_refs.map((ref, idx) => (
               <span
                 key={idx}
-                className="text-[10px] font-mono bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded px-1.5 py-0.5 text-[var(--text-secondary)]"
+                className="text-[10px] font-mono bg-[var(--surface-card)] border border-[var(--border-default)] rounded px-1.5 py-0.5 text-[var(--text-secondary)]"
               >
                 {ref}
               </span>
@@ -198,7 +198,7 @@ export default function PODelayAlertCard({ payload, onAction }) {
         {hasMore && (
           <button
             onClick={() => setShowAll((v) => !v)}
-            className="w-full text-xs text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 py-1 flex items-center justify-center gap-1 transition-colors"
+            className="w-full text-xs text-[var(--text-muted)] hover:text-[var(--text-secondary)] py-1 flex items-center justify-center gap-1 transition-colors"
           >
             {showAll ? (
               <>Show less <ChevronUp className="w-3 h-3" /></>

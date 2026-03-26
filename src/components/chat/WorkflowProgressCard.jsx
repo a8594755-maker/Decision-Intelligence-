@@ -96,7 +96,7 @@ export default function WorkflowProgressCard({
 
         {supportsCacheReuse && (
           <div className="flex flex-wrap items-center gap-3 text-xs">
-            <label className="inline-flex items-center gap-1 text-slate-600 dark:text-slate-300">
+            <label className="inline-flex items-center gap-1 text-[var(--text-secondary)]">
               <input
                 type="checkbox"
                 checked={reuseCachedForecast}
@@ -104,7 +104,7 @@ export default function WorkflowProgressCard({
               />
               reuse cached forecast
             </label>
-            <label className="inline-flex items-center gap-1 text-slate-600 dark:text-slate-300">
+            <label className="inline-flex items-center gap-1 text-[var(--text-secondary)]">
               <input
                 type="checkbox"
                 checked={reuseCachedPlan}

@@ -17,7 +17,7 @@ export default function EmptyChatState({ quickPrompts = [], onSelectPrompt, vari
 
         {quickPrompts.length > 0 && (
           <>
-            <div className="mt-8 flex items-center gap-1.5 text-xs font-medium uppercase tracking-[0.18em] text-slate-400">
+            <div className="mt-8 flex items-center gap-1.5 text-xs font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">
               <Sparkles className="h-3.5 w-3.5" />
               Suggestions
             </div>
@@ -55,7 +55,7 @@ export default function EmptyChatState({ quickPrompts = [], onSelectPrompt, vari
 
       {quickPrompts.length > 0 && (
         <>
-          <div className="mt-5 flex items-center gap-1 text-xs text-slate-400">
+          <div className="mt-5 flex items-center gap-1 text-xs text-[var(--text-muted)]">
             <Sparkles className="w-3.5 h-3.5" />
             Suggestions
           </div>

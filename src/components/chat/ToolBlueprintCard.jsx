@@ -69,7 +69,7 @@ export default function ToolBlueprintCard({ blueprint, onApprove, onReject, disa
   }[gapType] || gapType;
 
   return (
-    <div className="rounded-xl border border-amber-500/30 bg-gradient-to-br from-amber-50/80 to-orange-50/60 dark:from-amber-950/30 dark:to-orange-950/20 overflow-hidden shadow-sm">
+    <div className="rounded-xl border border-amber-500/30 bg-gradient-to-br from-amber-50/80 to-orange-50/60 dark:from-amber-950/30 dark:to-orange-950/20 border-l-[3px] border-l-[var(--cat-system)] overflow-hidden shadow-sm">
       {/* Header */}
       <div className="px-4 py-3 border-b border-amber-200/50 dark:border-amber-800/30">
         <div className="flex items-center gap-2 mb-1">
@@ -97,10 +97,10 @@ export default function ToolBlueprintCard({ blueprint, onApprove, onReject, disa
         {/* Name + Category */}
         <div className="flex items-center gap-2">
           <Wrench size={13} className="text-[var(--text-muted)] flex-shrink-0" />
-          <code className="text-sm font-mono font-semibold text-indigo-700 dark:text-indigo-300">
+          <code className="text-sm font-mono font-semibold text-[var(--brand-600)]">
             {name}
           </code>
-          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-slate-200/80 dark:bg-slate-700/60 text-[var(--text-secondary)] font-medium">
+          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-[var(--surface-subtle)] text-[var(--text-secondary)] font-medium">
             {category}
           </span>
         </div>
@@ -190,7 +190,7 @@ export default function ToolBlueprintCard({ blueprint, onApprove, onReject, disa
               : <ChevronRight size={13} className="text-slate-400" />
             }
             <span>Generated Code</span>
-            <span className="ml-auto text-[10px] text-slate-400">
+            <span className="ml-auto text-[10px] text-[var(--text-muted)]">
               {code?.split('\n').length || 0} lines
             </span>
           </button>
@@ -240,7 +240,7 @@ export default function ToolBlueprintCard({ blueprint, onApprove, onReject, disa
           type="button"
           onClick={() => onReject?.(blueprint)}
           disabled={disabled || approving}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 dark:hover:bg-slate-600 text-[var(--text-secondary)] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-[var(--surface-subtle)] hover:bg-[var(--accent-hover)] text-[var(--text-secondary)] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
         >
           <X size={13} />
           Reject

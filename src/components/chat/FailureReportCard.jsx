@@ -26,7 +26,7 @@ export default function FailureReportCard({ payload }) {
   const style = SEVERITY_STYLES[severity] || SEVERITY_STYLES.needs_user_action;
 
   return (
-    <div className={`rounded-xl ${style.bg} ${style.border} border p-4 my-2 max-w-lg`}>
+    <div className={`rounded-xl ${style.bg} ${style.border} border border-l-[3px] border-l-[var(--cat-system)] p-4 my-2 max-w-lg`}>
       {/* Header */}
       <div className="flex items-center gap-2 mb-2">
         <AlertTriangle className={`w-5 h-5 ${style.text}`} />
@@ -63,7 +63,7 @@ export default function FailureReportCard({ payload }) {
 
       {/* Retry info + expand toggle */}
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3 text-[10px] text-slate-400">
+        <div className="flex items-center gap-3 text-[10px] text-[var(--text-muted)]">
           {retry_count > 0 && (
             <span className="flex items-center gap-1">
               <RefreshCw className="w-3 h-3" /> {retry_count} retries
@@ -80,7 +80,7 @@ export default function FailureReportCard({ payload }) {
         </div>
         <button
           onClick={() => setExpanded(!expanded)}
-          className="text-[10px] text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 flex items-center gap-0.5"
+          className="text-[10px] text-slate-400 hover:text-[var(--text-secondary)] flex items-center gap-0.5"
         >
           Details {expanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
         </button>
@@ -102,7 +102,7 @@ export default function FailureReportCard({ payload }) {
             </div>
           )}
           {diagnosis_ms != null && (
-            <div className="text-[10px] text-slate-400">
+            <div className="text-[10px] text-[var(--text-muted)]">
               Diagnosed in {diagnosis_ms}ms
             </div>
           )}

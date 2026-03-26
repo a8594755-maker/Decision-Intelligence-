@@ -10,7 +10,7 @@ function ChatSkeleton() {
     <div className="p-6 space-y-4 animate-pulse">
       {Array.from({ length: 4 }).map((_, idx) => (
         <div key={idx} className={`flex ${idx % 2 ? 'justify-end' : 'justify-start'}`}>
-          <div className={`h-16 rounded-2xl ${idx % 2 ? 'w-64 bg-blue-100/70' : 'w-80 bg-slate-200 dark:bg-slate-800'}`} />
+          <div className={`h-16 rounded-2xl ${idx % 2 ? 'w-64 bg-blue-100/70' : 'w-80 bg-[var(--surface-subtle)]'}`} />
         </div>
       ))}
     </div>
@@ -104,7 +104,7 @@ function ChatThread({
                     variant={variant}
                   />
                 ) : (
-                  <div className={`${isAIEmployeeVariant ? 'px-1 py-1 text-[var(--text-primary)]' : 'rounded-2xl rounded-bl-md border border-[var(--border-default)] bg-white px-4 py-2.5 shadow-sm dark:border-slate-700/70 dark:bg-slate-800'}`}>
+                  <div className={`${isAIEmployeeVariant ? 'px-1 py-1 text-[var(--text-primary)]' : 'rounded-2xl rounded-bl-md border border-[var(--border-default)] bg-white px-4 py-2.5 shadow-sm dark:border-[var(--border-default)] dark:bg-[var(--surface-card)]'}`}>
                     <TypingIndicator />
                   </div>
                 )}
