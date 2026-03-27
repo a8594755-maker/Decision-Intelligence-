@@ -41,16 +41,16 @@ export default function AppShell() {
       </Suspense>
 
       {/* Notification toasts */}
-      <div className="fixed top-4 right-4 z-50 space-y-2">
+      <div className="fixed top-4 right-4 z-50 space-y-2" role="alert" aria-live="polite">
         {notifications.map(n => (
           <div
             key={n.id}
-            className={`flex items-center px-4 py-3 rounded-xl text-white text-sm font-medium animate-slide-up ${
+            className={`flex items-center px-4 py-3 rounded-xl text-sm font-medium animate-slide-up ${
               n.type === 'error'
-                ? 'bg-red-600'
+                ? 'bg-[var(--status-danger)] text-white'
                 : n.type === 'success'
-                  ? 'bg-emerald-600'
-                  : 'bg-[var(--brand-600)]'
+                  ? 'bg-[var(--status-success)] text-white'
+                  : 'bg-[var(--brand-600)] text-white'
             }`}
             style={{ boxShadow: 'var(--shadow-float)' }}
           >

@@ -13,6 +13,7 @@ export const Select = ({
   disabled = false,
   className = '',
   size = 'md',
+  error = false,
   ...props
 }) => {
   const normalizedOptions = options.map(opt => {
@@ -35,12 +36,16 @@ export const Select = ({
         onChange={(e) => onChange && onChange(e.target.value)}
         disabled={disabled}
         className={`
-          w-full appearance-none rounded-lg border border-[var(--border-strong)]
+          w-full appearance-none rounded-lg border
+          ${error
+            ? 'border-[var(--status-danger)] ring-1 ring-[var(--status-danger)]'
+            : 'border-[var(--border-strong)]'
+          }
           bg-[var(--surface-card)]
           text-[var(--text-primary)]
           ${sizeClasses[size]}
-          pr-10
-          focus:outline-none focus:ring-2 focus:ring-[var(--brand-500)] focus:border-[var(--brand-500)]
+          pr-10 cursor-pointer
+          focus:outline-none focus:ring-2 focus:ring-[var(--focus-ring)] focus:border-[var(--focus-ring)]
           disabled:bg-[var(--surface-subtle)] disabled:text-[var(--text-muted)] disabled:cursor-not-allowed
           transition-colors
         `}
@@ -83,12 +88,12 @@ export const SelectGroup = ({
       {label && (
         <label className="block text-sm font-medium text-[var(--text-secondary)]">
           {label}
-          {required && <span className="text-red-500 ml-1">*</span>}
+          {required && <span className="text-[var(--status-danger)] ml-1">*</span>}
         </label>
       )}
       {children}
       {error && (
-        <p className="text-xs text-red-600 dark:text-red-400">{error}</p>
+        <p className="text-xs text-[var(--status-danger-text)]">{error}</p>
       )}
       {helperText && !error && (
         <p className="text-xs text-[var(--text-muted)]">{helperText}</p>

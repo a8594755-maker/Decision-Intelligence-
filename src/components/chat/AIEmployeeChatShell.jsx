@@ -8,10 +8,10 @@ function HeaderActionButton({ label, icon, onClick, active = false, disabled = f
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className={`inline-flex items-center gap-2 rounded-full px-3 py-2 text-sm transition ${
+      className={`inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition cursor-pointer ${
         active
-          ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900'
-          : 'bg-white/90 text-slate-600 hover:bg-white dark:bg-[#1c1c1c] dark:text-slate-300 dark:hover:bg-[#232323]'
+          ? 'bg-[var(--brand-50)] text-[var(--brand-700)] border border-[var(--brand-500)]/30'
+          : 'text-[var(--text-secondary)] hover:bg-[var(--surface-subtle)] hover:text-[var(--text-primary)]'
       } disabled:cursor-not-allowed disabled:opacity-50`}
     >
       <Icon className="h-4 w-4" />
@@ -32,69 +32,61 @@ export default function AIEmployeeChatShell({
   thread,
   composer,
   secondaryPanel = null,
+  sidePanel = null,
   actions = [],
 }) {
   return (
-    <div className="relative h-full overflow-hidden rounded-[34px] border border-black/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(248,250,252,0.96))] shadow-[0_36px_120px_rgba(15,23,42,0.14)] dark:border-white/10 dark:bg-[linear-gradient(180deg,rgba(20,20,20,0.98),rgba(12,12,12,0.98))]">
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(15,23,42,0.05),transparent_42%)] dark:bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.05),transparent_36%)]" />
-
-      {/* Flex row: sidebar + main content side by side */}
-      <div className="relative flex h-full min-h-0">
-        {/* ── Sidebar: inline flex column (not absolute overlay) ── */}
+    <div className="relative h-full overflow-hidden bg-[var(--surface-base)]">
+      {/* Flex row: sidebar + main content */}
+      <div className="flex h-full min-h-0">
+        {/* ── Sidebar ── */}
         {sidebarOpen && (
           <aside
             data-testid="ai-employee-sidebar"
-            className="relative z-10 w-[280px] flex-shrink-0 border-r border-black/8 dark:border-white/10"
+            className="w-[280px] flex-shrink-0 border-r border-[var(--border-default)] bg-[var(--surface-card)]"
           >
             {sidebar}
           </aside>
         )}
 
         {/* ── Main content area ── */}
-        <div className="relative z-10 flex min-w-0 flex-1 flex-col">
-          <header className="border-b border-black/6 px-4 py-4 dark:border-white/8 sm:px-6">
+        <div className="flex min-w-0 flex-1 flex-col">
+          {/* Header */}
+          <header className="border-b border-[var(--border-default)] bg-[var(--surface-card)] px-4 py-3 sm:px-6">
             <div className="flex w-full items-center justify-between gap-3">
-              <div className="flex min-w-0 items-center gap-2">
+              <div className="flex min-w-0 items-center gap-3">
                 <button
                   type="button"
                   aria-label="Toggle conversation history"
                   onClick={onSidebarToggle}
-                  className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-white/90 text-slate-700 shadow-sm transition hover:bg-white dark:bg-[#1c1c1c] dark:text-slate-300 dark:hover:bg-[#232323]"
+                  className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-[var(--text-secondary)] transition hover:bg-[var(--surface-subtle)] cursor-pointer"
                 >
-                  <Menu className="h-4 w-4" />
-                </button>
-
-                <button
-                  type="button"
-                  onClick={onNewConversation}
-                  className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-white/90 text-slate-700 shadow-sm transition hover:bg-white dark:bg-[#1c1c1c] dark:text-slate-300 dark:hover:bg-[#232323] lg:hidden"
-                  aria-label="New chat"
-                >
-                  <Plus className="h-4 w-4" />
+                  <Menu className="h-5 w-5" />
                 </button>
 
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
                     <h2 className="truncate text-base font-semibold text-[var(--text-primary)]">{title}</h2>
                     {badge ? (
-                      <span className="inline-flex rounded-full bg-slate-900 px-2.5 py-1 text-[11px] font-medium text-white dark:bg-slate-100 dark:text-slate-900">
+                      <span className="inline-flex rounded-md bg-[var(--brand-50)] text-[var(--brand-700)] px-2 py-0.5 text-[11px] font-medium border border-[var(--brand-200)]">
                         {badge}
                       </span>
                     ) : null}
                   </div>
                   {subtitle ? (
-                    <p className="mt-1 truncate text-xs text-[var(--text-muted)]">{subtitle}</p>
+                    <p className="truncate text-xs text-[var(--text-muted)]">{subtitle}</p>
                   ) : null}
                 </div>
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5">
                 <button
                   type="button"
                   onClick={onNewConversation}
-                  className="hidden rounded-full bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-slate-200 lg:inline-flex"
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--brand-600)] px-3.5 py-2 text-sm font-medium text-white transition hover:bg-[var(--brand-700)] cursor-pointer"
                 >
-                  New chat
+                  <Plus className="h-4 w-4" />
+                  <span className="hidden sm:inline">New chat</span>
                 </button>
                 {actions.map((action) => (
                   <HeaderActionButton
@@ -110,11 +102,19 @@ export default function AIEmployeeChatShell({
             </div>
           </header>
 
+          {/* Chat thread + composer */}
           <div className="flex min-h-0 flex-1 flex-col">
             {thread}
             {composer}
           </div>
         </div>
+
+        {/* ── Side panel (inline, non-blocking — for thinking) ── */}
+        {sidePanel ? (
+          <aside className="w-[380px] flex-shrink-0 border-l border-[var(--border-default)] bg-[var(--surface-card)]">
+            {sidePanel.content}
+          </aside>
+        ) : null}
 
         {/* ── Secondary panel (Profile/Steps/Artifacts drawer) ── */}
         {secondaryPanel ? (
@@ -122,29 +122,31 @@ export default function AIEmployeeChatShell({
             <button
               type="button"
               aria-label="Dismiss overlay"
-              className="absolute inset-0 z-20 bg-black/16 backdrop-blur-[2px]"
+              className="absolute inset-0 z-20 bg-black/20"
               onClick={onDismissOverlays}
             />
             <section
               data-testid="ai-employee-secondary-panel"
-              className="absolute inset-y-3 right-3 z-30 flex w-[420px] max-w-[calc(100%-1.5rem)] flex-col overflow-hidden rounded-[28px] border border-black/8 bg-[rgba(255,255,255,0.97)] shadow-[0_30px_80px_rgba(15,23,42,0.16)] backdrop-blur dark:border-white/10 dark:bg-[#141414]/96"
+              className="absolute inset-y-0 right-0 z-30 flex w-[420px] max-w-full flex-col overflow-hidden border-l border-[var(--border-default)] bg-[var(--surface-card)] shadow-[var(--shadow-float)]"
             >
-              <div className="flex items-center justify-between border-b border-black/8 px-5 py-4 dark:border-white/10">
-                <div>
-                  <div className="text-sm font-semibold text-[var(--text-primary)]">{secondaryPanel.title}</div>
-                  {secondaryPanel.description ? (
-                    <div className="mt-1 text-xs text-[var(--text-muted)]">{secondaryPanel.description}</div>
-                  ) : null}
+              {secondaryPanel.title ? (
+                <div className="flex items-center justify-between border-b border-[var(--border-default)] px-5 py-3">
+                  <div>
+                    <div className="text-sm font-semibold text-[var(--text-primary)]">{secondaryPanel.title}</div>
+                    {secondaryPanel.description ? (
+                      <div className="mt-0.5 text-xs text-[var(--text-muted)]">{secondaryPanel.description}</div>
+                    ) : null}
+                  </div>
+                  <button
+                    type="button"
+                    aria-label={`Close ${secondaryPanel.title}`}
+                    onClick={secondaryPanel.onClose}
+                    className="rounded-lg p-2 text-[var(--text-muted)] transition hover:bg-[var(--accent-hover)] cursor-pointer"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  aria-label={`Close ${secondaryPanel.title}`}
-                  onClick={secondaryPanel.onClose}
-                  className="rounded-full p-2 text-slate-500 transition hover:bg-[var(--accent-hover)]"
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              </div>
+              ) : null}
               <div className="min-h-0 flex-1 overflow-hidden">{secondaryPanel.content}</div>
             </section>
           </>

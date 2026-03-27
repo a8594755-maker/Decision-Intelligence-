@@ -20,8 +20,8 @@ const TYPE_CONFIG = {
   numeric:      { icon: Hash,     color: 'text-blue-600',   bg: 'bg-blue-50',   label: 'Numeric' },
   categorical:  { icon: Type,     color: 'text-purple-600', bg: 'bg-purple-50', label: 'Categorical' },
   datetime:     { icon: Calendar, color: 'text-green-600',  bg: 'bg-green-50',  label: 'Date/Time' },
-  text:         { icon: Type,     color: 'text-[var(--text-secondary)]',   bg: 'bg-gray-50',   label: 'Text' },
-  empty:        { icon: Type,     color: 'text-[var(--text-muted)]',   bg: 'bg-gray-50',   label: 'Empty' },
+  text:         { icon: Type,     color: 'text-[var(--text-secondary)]',   bg: 'bg-[var(--surface-subtle)]',   label: 'Text' },
+  empty:        { icon: Type,     color: 'text-[var(--text-muted)]',   bg: 'bg-[var(--surface-subtle)]',   label: 'Empty' },
 };
 
 function QualityBadge({ score }) {

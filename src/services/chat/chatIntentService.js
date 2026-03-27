@@ -18,13 +18,13 @@ const VALID_INTENTS = new Set([
   'RUN_PLAN', 'RUN_FORECAST', 'RUN_WORKFLOW_A', 'RUN_WORKFLOW_B',
   'QUERY_DATA', 'COMPARE_PLANS', 'CHANGE_PARAM', 'WHAT_IF',
   'APPROVE', 'REJECT', 'GENERAL_CHAT', 'RUN_DIGITAL_TWIN',
-  'ACCEPT_NEGOTIATION_OPTION', 'ASSIGN_TASK',
+  'ACCEPT_NEGOTIATION_OPTION',
 ]);
 
 const EXECUTION_INTENTS = new Set([
   'RUN_PLAN', 'RUN_FORECAST', 'RUN_WORKFLOW_A', 'RUN_WORKFLOW_B',
   'CHANGE_PARAM', 'WHAT_IF', 'RUN_DIGITAL_TWIN',
-  'ACCEPT_NEGOTIATION_OPTION', 'ASSIGN_TASK',
+  'ACCEPT_NEGOTIATION_OPTION',
 ]);
 
 // ── Local Fast-Path Intent Detection ─────────────────────────────────────────
@@ -82,6 +82,47 @@ export async function parseIntent({ userMessage, sessionContext, domainContext }
     // Ensure entities object exists
     if (!parsed.entities || typeof parsed.entities !== 'object') {
       parsed.entities = {};
+    }
+
+    // ── Re-classify on low confidence ──
+    // If confidence is below threshold and we have session context with recent
+    // intents, re-prompt with explicit disambiguation instruction.
+    if (
+      parsed.confidence < CONFIDENCE_THRESHOLD
+      && parsed.intent !== 'GENERAL_CHAT'
+      && sessionContext?.recent_intents?.length > 0
+      && !parsed._reclassified
+    ) {
+      console.info(`[chatIntentService] Low confidence (${parsed.confidence}) for "${parsed.intent}" — re-classifying with history`);
+      try {
+        const recentHistory = sessionContext.recent_intents.slice(-3).map(ri => ri.intent).join(', ');
+        const reclassifyResult = await runDiPrompt({
+          promptId: DI_PROMPT_IDS.INTENT_PARSER,
+          input: {
+            userMessage: `[DISAMBIGUATION] The user said: "${userMessage}". Recent conversation intents: ${recentHistory}. Given this context, what is the most likely intent? Be more decisive — pick the single best match.`,
+            sessionContext,
+            domainContext,
+          },
+          temperature: 0.05,
+          maxOutputTokens: 1024,
+        });
+        const reclassified = reclassifyResult?.parsed;
+        if (
+          reclassified
+          && VALID_INTENTS.has(reclassified.intent)
+          && (reclassified.confidence || 0) > parsed.confidence
+        ) {
+          reclassified.confidence = Math.max(0, Math.min(1, Number(reclassified.confidence) || 0));
+          reclassified._reclassified = true;
+          if (!reclassified.entities || typeof reclassified.entities !== 'object') {
+            reclassified.entities = {};
+          }
+          console.info(`[chatIntentService] Re-classified: "${reclassified.intent}" (confidence: ${reclassified.confidence})`);
+          return reclassified;
+        }
+      } catch (reclassifyError) {
+        console.warn('[chatIntentService] Re-classify failed, using original result:', reclassifyError?.message);
+      }
     }
 
     return parsed;
@@ -259,17 +300,6 @@ export async function routeIntent(parsedIntent, sessionContext, handlers, option
         });
       }
       return { handled: true, intent };
-
-    case 'ASSIGN_TASK': {
-      const assignQuery = entities.freeform_query || '';
-      if (handlers.assignTask) {
-        await handlers.assignTask({
-          userMessage: assignQuery,
-          employeeId: entities.employee_id || null,
-        });
-      }
-      return { handled: true, intent };
-    }
 
     case 'APPROVE':
     case 'REJECT':

@@ -18,7 +18,7 @@ import { useApp } from '../../contexts/AppContext';
 function CanvasEmpty() {
   return (
     <div className="h-full flex flex-col items-center justify-center gap-3" style={{ color: 'var(--text-muted)' }}>
-      <div className="w-12 h-12 rounded-xl bg-indigo-100 flex items-center justify-center">
+      <div className="w-12 h-12 rounded-xl bg-[var(--accent-active)] flex items-center justify-center">
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#6366f1" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <rect x="3" y="3" width="7" height="7" />
           <rect x="14" y="3" width="7" height="7" />
@@ -37,7 +37,7 @@ function CanvasEmpty() {
 function WidgetLoadingFallback() {
   return (
     <div className="h-full flex items-center justify-center">
-      <div className="w-6 h-6 rounded-md bg-indigo-600 animate-pulse" />
+      <div className="w-6 h-6 rounded-md bg-[var(--brand-600)] animate-pulse" />
     </div>
   );
 }
@@ -63,7 +63,7 @@ export default function DynamicCanvas() {
               key={tab.id}
               onClick={() => switchToTab(tab.id)}
               className={`flex items-center gap-1 px-2 py-1 rounded text-xs whitespace-nowrap transition-colors ${
-                activeWidget?.artifactType === tab.artifactType ? 'bg-indigo-100 text-indigo-700' : 'hover:bg-gray-100'
+                activeWidget?.artifactType === tab.artifactType ? 'bg-[var(--accent-active)] text-[var(--brand-700)]' : 'hover:bg-gray-100'
               }`}
             >
               <span>{tab.title}</span>

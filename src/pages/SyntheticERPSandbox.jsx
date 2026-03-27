@@ -51,12 +51,12 @@ const TOOLTIP_STYLE = {
 //  Shared sub-components
 // ══════════════════════════════════════════════
 
-function MetricTile({ icon, label, value, sub, accent = 'text-indigo-600' }) {
+function MetricTile({ icon, label, value, sub, accent = 'text-[var(--brand-600)]' }) {
   const Icon = icon;
   return (
     <Card className="!p-4">
       <div className="flex items-start gap-3">
-        <div className="p-2 rounded-lg bg-slate-100 dark:bg-slate-800">
+        <div className="p-2 rounded-lg bg-[var(--surface-subtle)]">
           {Icon ? <Icon className={`w-5 h-5 ${accent}`} /> : null}
         </div>
         <div className="min-w-0">
@@ -74,7 +74,7 @@ function SectionHeader({ icon, title, count, children }) {
   return (
     <div className="flex items-center justify-between mb-3">
       <div className="flex items-center gap-2">
-        {Icon ? <Icon className="w-4 h-4 text-indigo-600" /> : null}
+        {Icon ? <Icon className="w-4 h-4 text-[var(--brand-600)]" /> : null}
         <h3 className="text-sm font-semibold uppercase tracking-wide" style={{ color: 'var(--text-secondary)' }}>
           {title}
         </h3>
@@ -152,7 +152,7 @@ function CollapsibleSection({ icon, title, count, defaultOpen = false, children 
     <Card>
       <button onClick={() => setOpen(!open)} className="w-full flex items-center gap-2 text-left">
         {open ? <ChevronDown className="w-4 h-4 text-slate-400" /> : <ChevronRight className="w-4 h-4 text-slate-400" />}
-        {Icon ? <Icon className="w-4 h-4 text-indigo-600" /> : null}
+        {Icon ? <Icon className="w-4 h-4 text-[var(--brand-600)]" /> : null}
         <span className="text-sm font-semibold flex-1" style={{ color: 'var(--text-primary)' }}>{title}</span>
         {count != null && <Badge type="info">{count}</Badge>}
       </button>
@@ -170,14 +170,14 @@ function TabBar({ tabs, active, onChange }) {
           <React.Fragment key={t.key}>
             {showDivider && (
               <div className="self-stretch flex items-center px-1">
-                <div className="w-px h-4 bg-slate-200 dark:bg-slate-700" />
+                <div className="w-px h-4 bg-[var(--border-default)]" />
               </div>
             )}
             <button
               onClick={() => onChange(t.key)}
               className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium whitespace-nowrap transition-colors border-b-2 ${
                 active === t.key
-                  ? 'text-indigo-600 border-indigo-600'
+                  ? 'text-[var(--brand-600)] border-[var(--brand-600)]'
                   : 'border-transparent text-slate-500 hover:text-slate-700'
               }`}
             >
@@ -191,7 +191,7 @@ function TabBar({ tabs, active, onChange }) {
 }
 
 const selectCls = "px-2 py-1 rounded-lg border text-xs bg-[var(--surface-base)] border-[var(--border-default)] text-[var(--text-primary)]";
-const inputCls = "w-full px-3 py-1.5 rounded-lg border text-sm bg-[var(--surface-base)] border-[var(--border-default)] text-[var(--text-primary)] focus:outline-none focus:ring-2 focus:ring-indigo-500/40";
+const inputCls = "w-full px-3 py-1.5 rounded-lg border text-sm bg-[var(--surface-base)] border-[var(--border-default)] text-[var(--text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--brand-500)]/40";
 
 // ══════════════════════════════════════════════
 //  Scenario Explainer + Disruption Timeline
@@ -202,7 +202,7 @@ function DisruptionTimeline({ disruptions, totalDays }) {
   return (
     <div className="mt-3">
       <p className="text-[10px] text-slate-400 mb-1">Timeline (day 0 &rarr; {totalDays})</p>
-      <div className="relative h-5 bg-slate-100 dark:bg-slate-800 rounded overflow-hidden">
+      <div className="relative h-5 bg-[var(--surface-subtle)] rounded overflow-hidden">
         {disruptions.map((d, i) => {
           const left = `${(d.start_day / totalDays) * 100}%`;
           const width = `${Math.max((d.duration_days / totalDays) * 100, 1)}%`;
@@ -230,7 +230,7 @@ function ScenarioExplainer({ disruptions, totalDays }) {
   return (
     <div className="mt-3 pt-3 border-t" style={{ borderColor: 'var(--border-default)' }}>
       <div className="flex items-center gap-2 mb-2">
-        <ShieldAlert className="w-3.5 h-3.5 text-indigo-600" />
+        <ShieldAlert className="w-3.5 h-3.5 text-[var(--brand-600)]" />
         <span className="text-xs font-semibold" style={{ color: 'var(--text-secondary)' }}>Scenario Disruptions</span>
         <Badge type="info">{disruptions.length}</Badge>
       </div>
@@ -302,12 +302,12 @@ function QuickStartPanel({ onGenerate, loading }) {
       {QUICK_START_PRESETS.map(p => (
         <Card
           key={p.label}
-          className="!p-4 cursor-pointer hover:ring-2 hover:ring-indigo-500/30 transition-all hover:shadow-md"
+          className="!p-4 cursor-pointer hover:ring-2 hover:ring-[var(--brand-500)]/30 transition-all hover:shadow-md"
           onClick={() => !loading && onGenerate(p.config)}
         >
           <div className="flex items-center gap-2 mb-2">
-            <div className="p-1.5 rounded-lg bg-indigo-50 dark:bg-indigo-900/20">
-              <p.icon className="w-4 h-4 text-indigo-600" />
+            <div className="p-1.5 rounded-lg bg-[var(--accent-active)]">
+              <p.icon className="w-4 h-4 text-[var(--brand-600)]" />
             </div>
             <span className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{p.label}</span>
           </div>
@@ -333,14 +333,14 @@ function CustomDisruptionEditor({ disruptions, onChange, totalDays }) {
     <div className="mt-3 pt-3 border-t space-y-2" style={{ borderColor: 'var(--border-default)' }}>
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <ShieldAlert className="w-3.5 h-3.5 text-indigo-600" />
+          <ShieldAlert className="w-3.5 h-3.5 text-[var(--brand-600)]" />
           <span className="text-xs font-semibold" style={{ color: 'var(--text-secondary)' }}>Custom Disruptions</span>
           <Badge type="info">{disruptions.length}</Badge>
         </div>
         <Button variant="secondary" onClick={addDisruption} className="!text-xs !px-2 !py-1">+ Add</Button>
       </div>
       {disruptions.map((d, i) => (
-        <div key={i} className="grid grid-cols-2 md:grid-cols-7 gap-2 items-end p-2 rounded-lg bg-slate-50 dark:bg-slate-800/50">
+        <div key={i} className="grid grid-cols-2 md:grid-cols-7 gap-2 items-end p-2 rounded-lg bg-[var(--surface-subtle)]">
           <label className="space-y-0.5">
             <span className="text-[10px] text-slate-400">Type</span>
             <select value={d.name} onChange={e => updateDisruption(i, 'name', e.target.value)} className={selectCls}>
@@ -468,7 +468,7 @@ function GeneratorForm({ onGenerate, loading }) {
         <button
           type="button"
           onClick={() => setShowAdvanced(!showAdvanced)}
-          className="flex items-center gap-1 text-xs text-slate-400 hover:text-indigo-600 transition-colors"
+          className="flex items-center gap-1 text-xs text-slate-400 hover:text-[var(--brand-600)] transition-colors"
         >
           {showAdvanced ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
           Advanced Settings
@@ -643,13 +643,13 @@ function ForecastLab({ datasetId, skus, salesLoader: _salesLoader }) {
       {result && (
         <>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <MetricTile icon={Zap} label="Model" value={modelUsed} accent="text-indigo-600" />
-            <MetricTile icon={BarChart3} label="History Points" value={result.history_points} accent="text-indigo-600" />
+            <MetricTile icon={Zap} label="Model" value={modelUsed} accent="text-[var(--brand-600)]" />
+            <MetricTile icon={BarChart3} label="History Points" value={result.history_points} accent="text-[var(--brand-600)]" />
             {metrics.mape != null && (
               <MetricTile icon={TrendingUp} label="MAPE" value={`${(metrics.mape * 100).toFixed(1)}%`} accent={metrics.mape < 0.15 ? 'text-emerald-600' : 'text-amber-600'} />
             )}
             {metrics.mae != null && (
-              <MetricTile icon={AlertTriangle} label="MAE" value={metrics.mae.toFixed(1)} accent="text-indigo-600" />
+              <MetricTile icon={AlertTriangle} label="MAE" value={metrics.mae.toFixed(1)} accent="text-[var(--brand-600)]" />
             )}
           </div>
 
@@ -772,7 +772,7 @@ function CompareMetricTile({ icon, label, leftVal, rightVal, format = v => v, lo
   return (
     <Card className="!p-4">
       <div className="flex items-center gap-2 mb-2">
-        {Icon ? <Icon className="w-4 h-4 text-indigo-600" /> : null}
+        {Icon ? <Icon className="w-4 h-4 text-[var(--brand-600)]" /> : null}
         <span className="text-xs text-slate-500">{label}</span>
       </div>
       <div className="flex items-baseline gap-3">
@@ -948,7 +948,7 @@ function CompareView({ leftDataset, rightDataset, templateInfo }) {
         <p className="text-xs font-medium mb-3" style={{ color: 'var(--text-secondary)' }}>Summary Statistics</p>
         <div className="grid grid-cols-2 gap-4 text-xs">
           <div>
-            <p className="font-semibold mb-2 text-indigo-600">{lId.slice(-12)} (Baseline)</p>
+            <p className="font-semibold mb-2 text-[var(--brand-600)]">{lId.slice(-12)} (Baseline)</p>
             <div className="space-y-1">
               <p>Total Demand: <strong style={{ color: 'var(--text-primary)' }}>{(lk.total_demand || 0).toLocaleString()}</strong></p>
               <p>Total Fulfilled: <strong style={{ color: 'var(--text-primary)' }}>{(lk.total_fulfilled || 0).toLocaleString()}</strong></p>
@@ -1041,9 +1041,9 @@ function HandoffPanel({ datasetId, descriptor: _descriptor, navigate: _navigate,
   return (
     <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
       {cards.map(c => (
-        <Card key={c.label} className="!p-3 cursor-pointer hover:ring-2 hover:ring-indigo-500/30 transition-shadow" onClick={c.action}>
+        <Card key={c.label} className="!p-3 cursor-pointer hover:ring-2 hover:ring-[var(--brand-500)]/30 transition-shadow" onClick={c.action}>
           <div className="flex items-center gap-2 mb-1.5">
-            <c.icon className="w-4 h-4 text-indigo-600" />
+            <c.icon className="w-4 h-4 text-[var(--brand-600)]" />
             <span className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>{c.label}</span>
           </div>
           <p className="text-[10px] text-slate-400">{c.desc}</p>
@@ -1230,8 +1230,8 @@ function DatasetExplorer({ dataset, onDelete, onRefresh: _onRefresh, onHandoff, 
       <Card>
         <div className="flex items-center justify-between flex-wrap gap-3">
           <div className="flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-indigo-50 dark:bg-indigo-900/20">
-              <Database className="w-5 h-5 text-indigo-600" />
+            <div className="p-2 rounded-lg bg-[var(--accent-active)]">
+              <Database className="w-5 h-5 text-[var(--brand-600)]" />
             </div>
             <div>
               <p className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>{id}</p>
@@ -1263,8 +1263,8 @@ function DatasetExplorer({ dataset, onDelete, onRefresh: _onRefresh, onHandoff, 
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               <MetricTile icon={TrendingUp} label="Fill Rate" value={`${(agg.fill_rate * 100).toFixed(1)}%`} sub={agg.fill_rate >= 0.95 ? 'Target met' : 'Below 95% target'} accent={agg.fill_rate >= 0.95 ? 'text-emerald-600' : 'text-amber-600'} />
               <MetricTile icon={AlertTriangle} label="Stockout Days" value={agg.stockout_days} sub="across all SKU-plant pairs" accent={agg.stockout_days === 0 ? 'text-emerald-600' : 'text-red-600'} />
-              <MetricTile icon={Package} label="Avg Inventory" value={agg.avg_inventory?.toLocaleString()} sub={`turns: ${agg.inventory_turns}`} accent="text-indigo-600" />
-              <MetricTile icon={BarChart3} label="Total Cost" value={`$${(agg.total_cost || 0).toLocaleString()}`} sub={`holding: $${(agg.holding_cost || 0).toLocaleString()}`} accent="text-indigo-600" />
+              <MetricTile icon={Package} label="Avg Inventory" value={agg.avg_inventory?.toLocaleString()} sub={`turns: ${agg.inventory_turns}`} accent="text-[var(--brand-600)]" />
+              <MetricTile icon={BarChart3} label="Total Cost" value={`$${(agg.total_cost || 0).toLocaleString()}`} sub={`holding: $${(agg.holding_cost || 0).toLocaleString()}`} accent="text-[var(--brand-600)]" />
             </div>
           )}
           {kpis?.time_series && <KpiChart data={kpis.time_series} title="Inventory / Demand / Fill Rate Over Time" />}
@@ -1931,7 +1931,7 @@ export default function SyntheticERPSandbox() {
       {!compareMode && datasets.length === 0 && !loading && (
         <div className="space-y-4">
           <div className="text-center py-4">
-            <Database className="w-10 h-10 mx-auto text-indigo-300 dark:text-indigo-600 mb-3" />
+            <Database className="w-10 h-10 mx-auto text-[var(--brand-500)] mb-3" />
             <h2 className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>Create Your First Dataset</h2>
             <p className="text-sm mt-1" style={{ color: 'var(--text-secondary)' }}>
               Pick a scenario below to generate synthetic ERP data instantly, or configure your own above.

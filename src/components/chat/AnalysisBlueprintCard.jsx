@@ -96,7 +96,7 @@ export default function AnalysisBlueprintCard({ blueprint, onRunModule, onRunAll
   const progress = modules.length > 0 ? Math.round((doneCount / modules.length) * 100) : 0;
 
   return (
-    <div className="w-full max-w-3xl rounded-2xl bg-gray-950 border border-gray-800 shadow-xl overflow-hidden">
+    <div className="w-full max-w-3xl rounded-2xl bg-gray-950 border border-gray-800 border-l-[3px] border-l-[var(--cat-analysis)] shadow-xl overflow-hidden">
 
       {/* ── Header ── */}
       <div className="px-6 pt-6 pb-4 text-center">
@@ -116,7 +116,7 @@ export default function AnalysisBlueprintCard({ blueprint, onRunModule, onRunAll
           className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
             progress === 100
               ? 'bg-emerald-900/40 text-emerald-400 border border-emerald-800 cursor-default'
-              : 'bg-indigo-600 text-white hover:bg-indigo-500 shadow-lg hover:shadow-indigo-500/25'
+              : 'bg-[var(--brand-600)] text-white hover:bg-indigo-500 shadow-lg hover:shadow-indigo-500/25'
           } disabled:opacity-50 disabled:cursor-not-allowed`}
         >
           {isRunningAll ? (

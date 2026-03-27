@@ -26,7 +26,7 @@ const VALUE_TYPE_CONFIG = {
   time_saved_hours:           { label: 'Time Saved',             icon: Clock,      color: 'text-blue-600',   bg: 'bg-blue-100 dark:bg-blue-900/30' },
   revenue_protected:          { label: 'Revenue Protected',      icon: ShieldCheck, color: 'text-purple-600', bg: 'bg-purple-100 dark:bg-purple-900/30' },
   expedite_avoided:           { label: 'Expedite Avoided',       icon: TrendingUp, color: 'text-amber-600',  bg: 'bg-amber-100 dark:bg-amber-900/30' },
-  service_level_improvement:  { label: 'Service Level Gain',     icon: Gauge,      color: 'text-indigo-600', bg: 'bg-indigo-100 dark:bg-indigo-900/30' },
+  service_level_improvement:  { label: 'Service Level Gain',     icon: Gauge,      color: 'text-[var(--brand-600)]', bg: 'bg-[var(--accent-active)]' },
   manual_task_automated:      { label: 'Automation Value',       icon: Clock,      color: 'text-cyan-600',   bg: 'bg-cyan-100 dark:bg-cyan-900/30' },
 };
 

@@ -33,7 +33,7 @@ const SOURCE_COLORS = {
   [WEBHOOK_SOURCES.SAP_MM]:       'text-blue-600 bg-blue-50 dark:bg-blue-900/20',
   [WEBHOOK_SOURCES.SAP_PP]:       'text-blue-600 bg-blue-50 dark:bg-blue-900/20',
   [WEBHOOK_SOURCES.ORACLE_SCM]:   'text-red-600 bg-red-50 dark:bg-red-900/20',
-  [WEBHOOK_SOURCES.GENERIC_REST]: 'text-slate-600 bg-slate-100 dark:bg-slate-800',
+  [WEBHOOK_SOURCES.GENERIC_REST]: 'text-[var(--text-secondary)] bg-[var(--surface-subtle)]',
 };
 
 // ── Webhook Card ─────────────────────────────────────────────────────────────
@@ -41,7 +41,7 @@ const SOURCE_COLORS = {
 function WebhookCard({ webhook, onToggle, onDelete, onCopyKey, onTest }) {
   const [showKey, setShowKey] = useState(false);
   const label = SOURCE_LABELS[webhook.source_type] || webhook.source_type;
-  const color = SOURCE_COLORS[webhook.source_type] || 'text-slate-600 bg-slate-100';
+  const color = SOURCE_COLORS[webhook.source_type] || 'text-[var(--text-secondary)] bg-[var(--surface-subtle)]';
 
   return (
     <Card variant="elevated" className={`p-4 flex flex-col gap-3 ${!webhook.is_active ? 'opacity-50' : ''}`}>
@@ -188,7 +188,7 @@ function CreateWebhookModal({ onClose, onCreated, workers }) {
           <button
             onClick={handleCreate}
             disabled={creating || !form.employeeId}
-            className="flex-1 px-4 py-2 rounded-lg text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+            className="flex-1 px-4 py-2 rounded-lg text-sm font-medium bg-[var(--brand-600)] text-white hover:bg-[var(--brand-700)] disabled:opacity-50 transition-colors"
           >
             {creating ? 'Creating...' : 'Register Webhook'}
           </button>
@@ -275,10 +275,10 @@ export default function WebhookConfigPage() {
         style={{ backgroundColor: 'var(--surface-card)', borderColor: 'var(--border-default)' }}
       >
         <div className="flex items-center gap-2.5">
-          <Webhook className="w-5 h-5 text-indigo-600" />
+          <Webhook className="w-5 h-5 text-[var(--brand-600)]" />
           <span className="font-semibold text-sm" style={{ color: 'var(--text-primary)' }}>Webhook Endpoints</span>
           {webhooks.length > 0 && (
-            <span className="text-xs px-1.5 py-0.5 rounded-full bg-indigo-50 text-indigo-600 dark:bg-indigo-900/20">
+            <span className="text-xs px-1.5 py-0.5 rounded-full bg-[var(--accent-active)] text-[var(--brand-600)]">
               {webhooks.length}
             </span>
           )}
@@ -286,7 +286,7 @@ export default function WebhookConfigPage() {
         <button
           onClick={() => setShowCreate(true)}
           disabled={workers.length === 0}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-[var(--brand-600)] text-white hover:bg-[var(--brand-700)] disabled:opacity-50 transition-colors"
         >
           <Plus className="w-3.5 h-3.5" />
           Register Webhook
@@ -297,7 +297,7 @@ export default function WebhookConfigPage() {
       <div className="flex-1 overflow-y-auto p-6">
         {loading ? (
           <div className="flex items-center justify-center h-32">
-            <div className="w-6 h-6 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
+            <div className="w-6 h-6 border-2 border-[var(--brand-600)] border-t-transparent rounded-full animate-spin" />
           </div>
         ) : (
           <div className="max-w-3xl space-y-4">
@@ -320,7 +320,7 @@ export default function WebhookConfigPage() {
             {/* Usage guide */}
             <Card variant="elevated" className="p-4">
               <p className="text-xs font-semibold mb-2" style={{ color: 'var(--text-muted)' }}>WEBHOOK ENDPOINT</p>
-              <code className="block text-xs font-mono px-3 py-2 rounded bg-slate-100 dark:bg-slate-800"
+              <code className="block text-xs font-mono px-3 py-2 rounded bg-[var(--surface-subtle)]"
                 style={{ color: 'var(--text-secondary)' }}>
                 POST /api/webhooks/intake
               </code>
@@ -343,7 +343,7 @@ export default function WebhookConfigPage() {
 
             {webhooks.length === 0 && (
               <div className="flex flex-col items-center justify-center h-36 gap-3">
-                <Webhook className="w-10 h-10 text-indigo-300" />
+                <Webhook className="w-10 h-10 text-[var(--brand-500)]" />
                 <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
                   No webhooks registered. Create one to receive alerts from SAP, Oracle, or other systems.
                 </p>

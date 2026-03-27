@@ -65,7 +65,7 @@ export default function EmployeeProfilePanel({ userId, employeeId = null }) {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
-        <Loader2 className="w-5 h-5 animate-spin text-indigo-400" />
+        <Loader2 className="w-5 h-5 animate-spin text-[var(--brand-500)]" />
       </div>
     );
   }
@@ -86,8 +86,8 @@ export default function EmployeeProfilePanel({ userId, employeeId = null }) {
     <div className="flex flex-col gap-4 p-4">
       {/* ── Avatar + Status ── */}
       <div className="flex items-center gap-3">
-        <div className="w-12 h-12 rounded-full bg-indigo-100 dark:bg-indigo-900/30 flex items-center justify-center">
-          <Bot className="w-6 h-6 text-indigo-600 dark:text-indigo-400" />
+        <div className="w-12 h-12 rounded-full bg-[var(--accent-active)] flex items-center justify-center">
+          <Bot className="w-6 h-6 text-[var(--brand-600)]" />
         </div>
         <div className="flex-1 min-w-0">
           <p className="font-semibold text-sm" style={{ color: 'var(--text-primary)' }}>

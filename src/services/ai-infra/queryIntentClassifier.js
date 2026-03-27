@@ -117,4 +117,25 @@ function hasAnalyticalContent(text) {
   return /\b(revenue|orders?|delivery|trend|chart|data|sql|forecast|plan|analy[sz]|segment|distribution|query|calculate|分析|數據|資料|圖表|營收|訂單|趨勢|預測|計畫|查詢|計算)\b/i.test(text);
 }
 
-export default { classifyQueryIntent };
+// ── Analytical request patterns: follow-ups & exploratory questions ──────────
+
+const ANALYTICAL_REQUEST_PATTERNS = [
+  /\b(tell me more|more about|dig deeper|investigate|elaborate|explain further|walk me through|unpack|explore)\b/i,
+  /\b(what patterns|what trends|what drives|what caused|why is|why are|why did|what should we)\b/i,
+  /\b(further|deeper|more detail|in.depth|additional insight|break.?down)\b/i,
+  /(詳細說明|深入分析|進一步|為什麼|什麼原因|什麼趨勢|更多細節|繼續分析|展開說明|有什麼規律|有什麼模式)/,
+];
+
+/**
+ * Returns true when a message is an analytical/exploratory request that
+ * deserves the full agent loop (with Python tools) rather than bare SQL.
+ */
+export function isAnalyticalRequest(message) {
+  const text = String(message || '').trim();
+  if (!text) return false;
+  const { tier } = classifyQueryIntent(text);
+  if (tier === 'complex') return true;
+  return ANALYTICAL_REQUEST_PATTERNS.some((p) => p.test(text));
+}
+
+export default { classifyQueryIntent, isAnalyticalRequest };

@@ -181,6 +181,10 @@ const DUCKDB_DIALECT_CORE = [
   '- Apply filters to the NUMERATOR only. The denominator should include all entities in the category, even those below the minimum order threshold.',
   '- Wrong: filter sellers to 10+ orders, then use filtered total as denominator. Right: compute full category revenue from ALL sellers, use as denominator.',
   '',
+  'PERIOD COUNT RULE:',
+  '- When reporting "N months" or "N periods" in the narrative, count only periods with actual data rows — do not count calendar gaps with zero data.',
+  '- If the query result or data_warnings includes distinct_periods, use that number as ground truth.',
+  '',
   '1:N JOIN DUPLICATION RULE:',
   '- When JOINing tables with 1:N relationships (1 order → N reviews, 1 order → N items), SUM/COUNT on the "1" side gets inflated.',
   '- If you need metrics from BOTH sides, aggregate the N-side to the 1-side grain first (subquery or CTE), THEN join.',
@@ -776,41 +780,55 @@ export async function runAgentLoop({
     }
   } catch { /* non-critical */ }
 
-  const agentSystemPrompt = [
-    systemPrompt,
-    '',
-    '── Agent Capabilities ──',
-    toolSummary,
-    '',
-    ...(toolContext.datasetProfileLoadError
-      ? [`⚠️ Dataset profile failed to load: ${toolContext.datasetProfileLoadError}. Some data-related questions may not work correctly.`, '']
-      : []),
-    ...(userDatasetDigestBlock
-      ? [
-        '── User-Uploaded Dataset Schema ──',
-        userDatasetDigestBlock,
+  // ── Tiered system prompt: skip heavy context for meta/greeting queries ──
+  const isMetaQuery = queryTier.tier === 'meta';
+  const agentSystemPrompt = isMetaQuery
+    ? [
+        systemPrompt,
         '',
-        '⚠️ USER DATA ROUTING RULES:',
-        '1. When the user asks about THIS uploaded dataset, ALWAYS use run_python_analysis. NEVER use query_sap_data.',
-        '2. The uploaded data is NOT in the SQL database. query_sap_data cannot access it.',
-        '3. If run_python_analysis returns an error about missing data, tell the user to re-upload the file.',
-        '4. IGNORE all Olist table references when answering questions about user data.',
+        '── Agent Capabilities ──',
+        toolSummary,
         '',
-      ]
-      : []),
-    ...patternBlock,
-    ...failureBlock,
-    ...(() => {
-      const tw = toolContext?.datasetProfileRow ? buildTemporalCoverageBlock(toolContext.datasetProfileRow) : '';
-      return tw ? [tw, ''] : [];
-    })(),
-    ...(domainEnrichmentBlock ? [domainEnrichmentBlock, ''] : []),
-    ...(paramSweepBlock ? [paramSweepBlock, ''] : []),
-    ...(isAnalysisMode ? [PROXY_DISCLOSURE_PROMPT, ''] : []),
-    ...evidencePromptBlock,
-    'IMPORTANT INSTRUCTIONS:',
-    ...importantInstructions,
-  ].join('\n');
+        'IMPORTANT INSTRUCTIONS:',
+        '- Answer the user\'s question directly and helpfully.',
+        '- Always respond in the same language the user used.',
+        '- If the user asks what you can do, list the available tools and capabilities.',
+      ].join('\n')
+    : [
+        systemPrompt,
+        '',
+        '── Agent Capabilities ──',
+        toolSummary,
+        '',
+        ...(toolContext.datasetProfileLoadError
+          ? [`⚠️ Dataset profile failed to load: ${toolContext.datasetProfileLoadError}. Some data-related questions may not work correctly.`, '']
+          : []),
+        ...(userDatasetDigestBlock
+          ? [
+            '── User-Uploaded Dataset Schema ──',
+            userDatasetDigestBlock,
+            '',
+            '⚠️ USER DATA ROUTING RULES:',
+            '1. When the user asks about THIS uploaded dataset, ALWAYS use run_python_analysis. NEVER use query_sap_data.',
+            '2. The uploaded data is NOT in the SQL database. query_sap_data cannot access it.',
+            '3. If run_python_analysis returns an error about missing data, tell the user to re-upload the file.',
+            '4. IGNORE all Olist table references when answering questions about user data.',
+            '',
+          ]
+          : []),
+        ...patternBlock,
+        ...failureBlock,
+        ...(() => {
+          const tw = toolContext?.datasetProfileRow ? buildTemporalCoverageBlock(toolContext.datasetProfileRow) : '';
+          return tw ? [tw, ''] : [];
+        })(),
+        ...(domainEnrichmentBlock ? [domainEnrichmentBlock, ''] : []),
+        ...(paramSweepBlock ? [paramSweepBlock, ''] : []),
+        ...(isAnalysisMode ? [PROXY_DISCLOSURE_PROMPT, ''] : []),
+        ...evidencePromptBlock,
+        'IMPORTANT INSTRUCTIONS:',
+        ...importantInstructions,
+      ].join('\n');
 
   // Build initial messages array (OpenAI format)
   const messages = [];
@@ -1145,6 +1163,37 @@ export async function runAgentLoop({
             },
           );
         }
+        // ── Pre-output coverage gate ──
+        // If the answer contract specifies required dimensions/outputs, check if
+        // the agent's tool calls have covered them before accepting the final answer.
+        // If gaps remain and we have iteration budget, nudge the agent to fill them.
+        if (
+          isAnalysisMode
+          && answerContract
+          && toolCalls.length > 0
+          && !coverageStopInstructionInjected
+          && i < maxIterations - 1
+        ) {
+          const requiredDims = Array.isArray(answerContract.required_dimensions)
+            ? answerContract.required_dimensions.map(d => String(d || '').toLowerCase())
+            : [];
+          if (requiredDims.length > 0) {
+            const coverage = getStructuredAnswerCoverage({ toolCalls, userMessage: message });
+            const coveredSet = new Set((coverage?.coveredDimensions || []).map(d => d.toLowerCase()));
+            const uncovered = requiredDims.filter(d => !coveredSet.has(d));
+            if (uncovered.length > 0) {
+              coverageStopInstructionInjected = true;
+              console.info(`[agentLoop] Coverage gate: ${uncovered.length} uncovered dimensions — requesting fill: ${uncovered.join(', ')}`);
+              messages.push({ role: 'assistant', content: text });
+              messages.push({
+                role: 'user',
+                content: `Your analysis is missing coverage for these dimensions: ${uncovered.join(', ')}. Please call one more tool to gather evidence for the missing dimensions, then provide your final answer.`,
+              });
+              continue;
+            }
+          }
+        }
+
         finalText = text;
         onTextChunk?.(text);
 
@@ -1278,7 +1327,7 @@ export async function runAgentLoop({
           }
           // Business context detection (first successful query only)
           if (!businessContextDetected) {
-            const contextClues = detectBusinessContext(toolResult.result.rows);
+            const contextClues = detectBusinessContext(toolResult.result.rows, toolArgs.sql);
             if (contextClues.length > 0) {
               businessContextDetected = true;
               toolCalls[toolCalls.length - 1]._businessContextClues = contextClues;
@@ -1631,6 +1680,10 @@ async function callLLMWithToolsStream(messages, tools, { signal, onPreambleChunk
 
   console.info(`[agentLoop] Calling LLM stream (${toolsMode}, model=${model}) with ${tools.length} tools`);
 
+  // Gemini: disable thinkingConfig when toolChoice is 'required' because the
+  // OpenAI-compat layer silently breaks tool_choice:"required" when thinkingConfig
+  // is present (returns prose instead of tool calls, 0 reasoning chars).
+  const useGeminiThinking = provider === 'gemini' && effectiveToolChoice !== 'required';
   await invokeAiProxyStream(toolsMode, {
     messages,
     tools,
@@ -1638,7 +1691,7 @@ async function callLLMWithToolsStream(messages, tools, { signal, onPreambleChunk
     toolChoice: effectiveToolChoice,
     temperature: 0.3,
     maxOutputTokens: 4096,
-    ...(provider === 'gemini' ? { googleOptions: buildGeminiThinkingGoogleOptions() } : {}),
+    ...(useGeminiThinking ? { googleOptions: buildGeminiThinkingGoogleOptions() } : {}),
   }, {
     signal,
     onDelta: (chunk) => {
@@ -1728,6 +1781,9 @@ async function callLLMWithTools(messages, tools, { signal, provider: rawProvider
   if (USE_EDGE_AI_PROXY) {
     const toolsMode = getAgentToolMode(provider);
     console.info(`[agentLoop] Calling LLM (${toolsMode}, model=${model}) with ${tools.length} tools:`, tools.map(t => t.function?.name));
+    // Gemini: disable thinkingConfig when toolChoice is 'required' to prevent
+    // silent tool_choice breakage (returns prose instead of tool calls).
+    const useThinking = provider === 'gemini' && effectiveToolChoice !== 'required';
     const result = await invokeAiProxy(toolsMode, {
       messages,
       tools,
@@ -1735,7 +1791,7 @@ async function callLLMWithTools(messages, tools, { signal, provider: rawProvider
       toolChoice: effectiveToolChoice,
       temperature: 0.3, // Lower temperature for tool calls — more deterministic
       maxOutputTokens: 4096,
-      ...(provider === 'gemini' ? { googleOptions: buildGeminiThinkingGoogleOptions() } : {}),
+      ...(useThinking ? { googleOptions: buildGeminiThinkingGoogleOptions() } : {}),
     }, { signal });
 
     console.info('[agentLoop] LLM raw response keys:', Object.keys(result || {}));
@@ -2026,4 +2082,141 @@ function formatAnswerContractForPrompt(answerContract) {
     `- Audience language: ${answerContract.audience_language || 'same as user'}`,
     '- Explicitly cover every required dimension that the evidence supports.',
   ].join('\n');
+}
+
+// ── V2 Pipeline Entry Point ─────────────────────────────────────────────────
+// Wraps the existing runAgentLoop with TurnPlanV1-based tool narrowing
+// and streamlined system prompt. Returns EvidenceBundleV1 instead of raw text.
+
+import { resolveToolGroups } from './toolGroupRegistry.js';
+import { buildEvidenceBundle } from './evidenceBundleV1.js';
+
+/**
+ * Run the agent loop with a TurnPlanV1 (Phase 2 of the 4-phase pipeline).
+ *
+ * Key differences from runAgentLoop:
+ * 1. Tool set is narrowed by TurnPlanV1.allowed_tool_sets (max 12 tools vs 63)
+ * 2. System prompt is streamlined (no CAGR/caveat/formatting rules)
+ * 3. Returns EvidenceBundleV1 instead of raw text
+ *
+ * @param {Object} params
+ * @param {string} params.message - User message
+ * @param {Object} params.turnPlan - TurnPlanV1 from the planner
+ * @param {Array} params.conversationHistory
+ * @param {Object} params.toolContext
+ * @param {Object} params.callbacks
+ * @param {AbortSignal} params.signal
+ * @param {string} params.agentProvider
+ * @param {string} params.agentModel
+ * @returns {Promise<{evidenceBundle: Object, finalText: string, toolCalls: Array, iterations: number}>}
+ */
+export async function runAgentLoopV2({
+  message,
+  turnPlan,
+  conversationHistory = [],
+  toolContext = {},
+  callbacks = {},
+  signal,
+  agentProvider = getModelConfig('primary').provider,
+  agentModel = getModelConfig('primary').model,
+}) {
+  // ── Derive tool config from TurnPlanV1 ──
+  const allowedGroups = turnPlan?.allowed_tool_sets || ['analysis_core'];
+  const isAnalysisTask = allowedGroups.includes('analysis_core');
+  const toolIds = resolveToolGroups(allowedGroups);
+
+  // Determine mode: 'analysis' if using analysis_core tools, 'default' otherwise
+  const mode = isAnalysisTask ? 'analysis' : 'default';
+
+  // Build a lightweight answer contract from the turn plan
+  const answerContract = {
+    task_type: turnPlan?.task_type || 'mixed',
+    required_dimensions: turnPlan?.required_dimensions || [],
+    required_outputs: turnPlan?.required_outputs || [],
+    audience_language: turnPlan?.answer_language || 'en',
+    brevity: 'analysis',
+  };
+
+  // ── Build streamlined system prompt ──
+  const basePrompt = buildV2SystemPrompt(turnPlan, toolContext);
+
+  // ── Run the existing agent loop with narrowed tools ──
+  const result = await runAgentLoop({
+    message,
+    conversationHistory,
+    systemPrompt: basePrompt,
+    toolContext: {
+      ...toolContext,
+      // Override tool config to use plan-specified groups
+      _v2ToolConfig: {
+        toolIds,
+        excludePython: !isAnalysisTask,
+        includeRegistered: allowedGroups.includes('registered'),
+      },
+    },
+    answerContract,
+    callbacks,
+    signal,
+    mode,
+    agentProvider,
+    agentModel,
+  });
+
+  // ── Build EvidenceBundleV1 from tool calls ──
+  const evidenceBundle = buildEvidenceBundle(
+    result.toolCalls || [],
+    result.text || '',
+  );
+
+  return {
+    evidenceBundle: evidenceBundle.toBundle(),
+    finalText: result.text || '',
+    toolCalls: result.toolCalls || [],
+    iterations: result.iterations || 0,
+    turnPlan,
+  };
+}
+
+/**
+ * Build the V2 streamlined system prompt.
+ * Only includes: base identity + tool descriptions + dataset schema + task instructions.
+ * No CAGR rules, no caveats, no formatting — those move to the renderer.
+ */
+function buildV2SystemPrompt(turnPlan, toolContext) {
+  const parts = [
+    'You are an evidence-gathering agent for a Decision-Intelligence system.',
+    'Your job is to call the right tools and collect data. You do NOT write the final answer.',
+    '',
+    'Rules:',
+    '- Call tools to gather evidence. Do not answer from memory.',
+    '- After each tool call, check if more evidence is needed for the task.',
+    '- When all evidence is gathered, write a SHORT analyst summary (2-4 sentences) of what the data shows.',
+    '- Do NOT format a full JSON brief. The renderer will do that.',
+    `- Respond in ${turnPlan?.answer_language === 'zh' ? 'Chinese (Traditional)' : 'English'}.`,
+    '',
+  ];
+
+  // Task-specific instructions from the plan
+  if (turnPlan?.success_criteria?.length) {
+    parts.push('Task: Gather evidence to answer:');
+    for (const criterion of turnPlan.success_criteria) {
+      parts.push(`  - ${criterion}`);
+    }
+    parts.push('');
+  }
+
+  if (turnPlan?.required_dimensions?.length) {
+    parts.push(`Required dimensions to cover: ${turnPlan.required_dimensions.join(', ')}`);
+    parts.push('');
+  }
+
+  // Dataset context (only if analysis tools are active)
+  if (turnPlan?.allowed_tool_sets?.includes('analysis_core') && toolContext.datasetProfileRow?.profile_json) {
+    const profile = toolContext.datasetProfileRow.profile_json;
+    const fingerprint = profile?.global?.fingerprint || 'unknown';
+    parts.push(`Dataset loaded (fingerprint: ${fingerprint}). Use run_python_analysis for uploaded data, query_sap_data for demo data.`);
+    parts.push('');
+  }
+
+  return parts.join('\n');
 }

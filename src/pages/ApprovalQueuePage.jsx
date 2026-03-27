@@ -25,15 +25,15 @@ import {
 
 // ── Type Display Config ──────────────────────────────────────────────────────
 
-// Static Tailwind class map — dynamic `text-${color}-500` gets purged in production
+// Static Tailwind class map — using design tokens for consistency
 const TYPE_COLOR_CLASSES = {
-  blue:   'text-blue-500',
+  blue:   'text-[var(--cat-plan)]',
   indigo: 'text-[var(--brand-500)]',
-  green:  'text-green-500',
-  amber:  'text-amber-500',
-  red:    'text-red-500',
-  purple: 'text-purple-500',
-  teal:   'text-teal-500',
+  green:  'text-[var(--status-success)]',
+  amber:  'text-[var(--status-warning)]',
+  red:    'text-[var(--status-danger)]',
+  purple: 'text-[var(--cat-analysis)]',
+  teal:   'text-[var(--brand-600)]',
   gray:   'text-[var(--text-muted)]',
 };
 
@@ -48,8 +48,8 @@ const TYPE_META = {
 };
 
 const URGENCY_COLORS = {
-  critical: 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300',
-  high:     'bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-300',
+  critical: 'bg-[var(--status-danger-bg)] text-[var(--status-danger-text)]',
+  high:     'bg-[var(--status-warning-bg)] text-[var(--status-warning-text)]',
   normal:   'bg-[var(--surface-subtle)] text-[var(--text-secondary)]',
   low:      'bg-[var(--surface-base)] text-[var(--text-muted)]',
 };
@@ -164,10 +164,10 @@ export default function ApprovalQueuePage() {
       {stats && (
         <div className="grid grid-cols-5 gap-3 mb-6">
           {[
-            { label: 'Pending', value: stats.pending, color: 'text-amber-600' },
-            { label: 'Approved', value: stats.approved, color: 'text-green-600' },
-            { label: 'Rejected', value: stats.rejected, color: 'text-red-600' },
-            { label: 'Escalated', value: stats.escalated, color: 'text-orange-600' },
+            { label: 'Pending', value: stats.pending, color: 'text-[var(--status-warning)]' },
+            { label: 'Approved', value: stats.approved, color: 'text-[var(--status-success)]' },
+            { label: 'Rejected', value: stats.rejected, color: 'text-[var(--status-danger)]' },
+            { label: 'Escalated', value: stats.escalated, color: 'text-[var(--cat-risk)]' },
             { label: 'Total', value: stats.total, color: 'text-[var(--text-primary)]' },
           ].map(({ label, value, color }) => (
             <div
@@ -219,7 +219,7 @@ export default function ApprovalQueuePage() {
           className="text-center py-12 rounded-xl"
           style={{ backgroundColor: 'var(--surface-card)', border: '1px solid var(--border-default)' }}
         >
-          <CheckCircle className="w-10 h-10 mx-auto mb-3 text-green-500" />
+          <CheckCircle className="w-10 h-10 mx-auto mb-3 text-[var(--status-success)]" />
           <p className="font-medium" style={{ color: 'var(--text-primary)' }}>All clear!</p>
           <p className="text-sm mt-1" style={{ color: 'var(--text-muted)' }}>No pending items to review.</p>
         </div>
@@ -260,7 +260,7 @@ export default function ApprovalQueuePage() {
                       <span>{meta.label}</span>
                       {item.review_score != null && <span>Score: {item.review_score}</span>}
                       {hoursLeft != null && (
-                        <span className={hoursLeft <= 1 ? 'text-red-500' : ''}>
+                        <span className={hoursLeft <= 1 ? 'text-[var(--status-danger)]' : ''}>
                           <Clock className="w-3 h-3 inline mr-0.5" />
                           {hoursLeft}h until escalation
                         </span>
@@ -314,7 +314,7 @@ export default function ApprovalQueuePage() {
                       <button
                         onClick={() => handleApprove(item.id)}
                         disabled={isLoading}
-                        className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-sm font-medium bg-green-600 text-white hover:bg-green-700 transition-colors disabled:opacity-50"
+                        className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-sm font-medium bg-[var(--status-success)] text-white hover:brightness-90 transition-colors disabled:opacity-50 cursor-pointer"
                       >
                         <CheckCircle className="w-4 h-4" />
                         Approve
@@ -322,7 +322,7 @@ export default function ApprovalQueuePage() {
                       <button
                         onClick={() => handleReject(item.id)}
                         disabled={isLoading}
-                        className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-sm font-medium bg-red-600 text-white hover:bg-red-700 transition-colors disabled:opacity-50"
+                        className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-sm font-medium bg-[var(--status-danger)] text-white hover:brightness-90 transition-colors disabled:opacity-50 cursor-pointer"
                       >
                         <XCircle className="w-4 h-4" />
                         Reject

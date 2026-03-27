@@ -36,17 +36,17 @@ function ParamChangePill({ label, before, after, highlight = false }) {
     <span className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md
       ${highlight
         ? 'bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-700'
-        : 'bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700'}`}>
-      <span className="font-mono font-medium text-slate-600 dark:text-slate-300">
+        : 'bg-[var(--surface-subtle)] border border-[var(--border-default)]'}`}>
+      <span className="font-mono font-medium text-[var(--text-secondary)]">
         {label}
       </span>
       {before != null && (
         <>
-          <span className="text-slate-400 line-through text-[10px]">{String(before)}</span>
-          <span className="text-slate-400">&rarr;</span>
+          <span className="text-[var(--text-muted)] line-through text-[10px]">{String(before)}</span>
+          <span className="text-[var(--text-muted)]">&rarr;</span>
         </>
       )}
-      <span className={`font-semibold ${highlight ? 'text-orange-700 dark:text-orange-300' : 'text-slate-700 dark:text-slate-200'}`}>
+      <span className={`font-semibold ${highlight ? 'text-orange-700 dark:text-orange-300' : 'text-[var(--text-secondary)]'}`}>
         {String(after)}
       </span>
     </span>
@@ -137,16 +137,16 @@ export default function RiskTriggerNotificationCard({
       : { label: 'Dry Run',       badgeType: 'info',    border: 'border-blue-200 dark:border-blue-700' };
 
   return (
-    <Card className={`w-full border ${statusConfig.border}`}>
+    <Card category="risk" className={`w-full border ${statusConfig.border}`}>
       <div className="space-y-3">
 
         {/* Header */}
         <div className="flex items-start justify-between gap-2">
           <div>
-            <h4 className="font-semibold text-sm text-slate-800 dark:text-slate-100">
+            <h4 className="font-semibold text-sm text-[var(--text-primary)]">
               Risk Trigger Detected
             </h4>
-            <p className="text-[11px] text-slate-500 dark:text-slate-400">
+            <p className="text-[11px] text-[var(--text-muted)]">
               {triggerReasons.length} trigger condition{triggerReasons.length !== 1 ? 's' : ''} fired
               {isRerun && planning_run_id && ` · Replanned (run #${planning_run_id})`}
             </p>
@@ -158,11 +158,11 @@ export default function RiskTriggerNotificationCard({
         <div className="space-y-1">
           {triggerReasons.slice(0, 4).map((reason, i) => (
             <div key={i} className="flex items-start gap-2 text-xs">
-              <span className="font-medium text-slate-700 dark:text-slate-200">
+              <span className="font-medium text-[var(--text-secondary)]">
                 {TRIGGER_LABELS[reason.trigger_type] || reason.trigger_type}
               </span>
               {reason.detail && (
-                <span className="text-slate-500 dark:text-slate-400">— {reason.detail}</span>
+                <span className="text-[var(--text-muted)]">— {reason.detail}</span>
               )}
               {reason.severity && (
                 <Badge
@@ -179,7 +179,7 @@ export default function RiskTriggerNotificationCard({
         {/* Param changes */}
         {paramChanges.length > 0 && (
           <div>
-            <p className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1.5">
+            <p className="text-[11px] font-semibold text-[var(--text-muted)] uppercase tracking-wide mb-1.5">
               Parameter Adjustments
             </p>
             <div className="flex flex-wrap gap-1.5">
@@ -195,14 +195,14 @@ export default function RiskTriggerNotificationCard({
           <div>
             <button
               onClick={() => setShowDetails((v) => !v)}
-              className="text-[11px] text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 transition-colors"
+              className="text-[11px] text-[var(--text-muted)] hover:text-[var(--text-secondary)] transition-colors"
             >
               {showDetails ? 'Hide' : 'Show'} policy rules ({explanation.length})
             </button>
             {showDetails && (
               <div className="mt-2 space-y-1">
                 {explanation.map((exp, i) => (
-                  <p key={i} className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
+                  <p key={i} className="text-[11px] text-[var(--text-muted)] leading-relaxed">
                     &bull; {exp}
                   </p>
                 ))}
@@ -213,7 +213,7 @@ export default function RiskTriggerNotificationCard({
 
         {/* Action buttons */}
         {isDryRun && !isRerun && (
-          <div className="flex items-center gap-2 pt-1 border-t border-slate-100 dark:border-slate-700">
+          <div className="flex items-center gap-2 pt-1 border-t border-[var(--border-default)]">
             {onApproveReplan && (
               <button
                 onClick={handleApprove}
@@ -225,7 +225,7 @@ export default function RiskTriggerNotificationCard({
             )}
             <button
               onClick={handleDismiss}
-              className="text-xs text-slate-500 hover:text-slate-700 transition-colors"
+              className="text-xs text-[var(--text-muted)] hover:text-[var(--text-secondary)] transition-colors"
             >
               Keep Current Plan
             </button>
@@ -233,7 +233,7 @@ export default function RiskTriggerNotificationCard({
         )}
 
         {isRerun && (
-          <div className="text-xs text-emerald-600 dark:text-emerald-400 pt-1 border-t border-slate-100 dark:border-slate-700">
+          <div className="text-xs text-emerald-600 dark:text-emerald-400 pt-1 border-t border-[var(--border-default)]">
             Plan automatically updated with risk-adjusted parameters.
           </div>
         )}

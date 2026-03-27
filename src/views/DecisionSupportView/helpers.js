@@ -276,18 +276,21 @@ export function trimMessagesForLocalStorage(conversations) {
   });
 }
 
+/** Max conversations to keep in the localStorage cache. */
+const LOCAL_CACHE_MAX_CONVERSATIONS = 20;
+
 export function saveLocalConversations(userId, conversations) {
+  // localStorage is just a cache — always trim and cap before writing
+  // to avoid repeated quota-exceeded throw/catch cycles.
+  const capped = [...conversations]
+    .sort((a, b) => new Date(b.updated_at || 0) - new Date(a.updated_at || 0))
+    .slice(0, LOCAL_CACHE_MAX_CONVERSATIONS);
+  const trimmed = trimMessagesForLocalStorage(capped);
+
   try {
-    localStorage.setItem(`${STORAGE_KEY}_${userId}`, JSON.stringify(conversations));
+    localStorage.setItem(`${STORAGE_KEY}_${userId}`, JSON.stringify(trimmed));
   } catch (err) {
-    // localStorage quota exceeded — retry with trimmed payloads
-    console.warn('[DI] localStorage quota exceeded, trimming heavy payloads and retrying…', err?.message);
-    try {
-      const trimmed = trimMessagesForLocalStorage(conversations);
-      localStorage.setItem(`${STORAGE_KEY}_${userId}`, JSON.stringify(trimmed));
-    } catch (retryErr) {
-      console.error('[DI] localStorage save failed even after trimming. Conversations will reload from Supabase on next visit.', retryErr?.message);
-    }
+    console.warn('[DI] localStorage save failed even after trimming. Conversations will reload from Supabase on next visit.', err?.message);
   }
 }
 

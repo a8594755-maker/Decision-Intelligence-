@@ -419,7 +419,7 @@ export function checkPartialYearCoverage(rows, columns, sql) {
 
 // ── Business Context Detection ──────────────────────────────────────────────
 
-export function detectBusinessContext(sampleRows) {
+export function detectBusinessContext(sampleRows, sql) {
   if (!Array.isArray(sampleRows) || sampleRows.length === 0) return [];
 
   const allColumns = new Set();
@@ -460,8 +460,12 @@ export function detectBusinessContext(sampleRows) {
   }
 
   // 3. Pre-aggregated data detection
+  // Skip if the SQL has GROUP BY — that means the query intentionally aggregated,
+  // and result columns like max_revenue, min_revenue are computed outputs, not
+  // evidence that the source table is pre-aggregated.
   const aggCols = colList.filter((c) => AGG_PREFIX_PATTERN.test(c));
-  if (aggCols.length >= 2) {
+  const sqlHasGroupBy = GROUP_BY_PATTERN.test(sql || '');
+  if (aggCols.length >= 2 && !sqlHasGroupBy) {
     clues.push({
       id: 'pre_aggregated',
       message: `Data appears pre-aggregated (columns: ${aggCols.slice(0, 3).join(', ')}${aggCols.length > 3 ? '...' : ''}). Computing standard deviation or percentiles from aggregated data will be misleading.`,
@@ -503,6 +507,119 @@ export function detectBusinessContext(sampleRows) {
   return clues;
 }
 
+// ── Business Logic Checks ───────────────────────────────────────────────────
+
+const STATUS_COL_PATTERN = /^(status|order_status|state|狀態)$/i;
+const CANCEL_VAL_PATTERN = /cancel|unavailable|void|取消|不可用/i;
+const MONETARY_COL_PATTERN = /revenue|price|value|amount|cost|payment|freight|金額|營收|價格|sales/i;
+const PAYMENT_COL_PATTERN = /payment_value|payment_amount|total_payment/i;
+
+/**
+ * Detect if result rows include a status column with cancelled/unavailable values.
+ * Warns the agent to consider filtering if computing revenue or demand metrics.
+ */
+export function checkStatusColumnPresence(rows, columns) {
+  const warnings = [];
+  const statusCol = columns.find(c => STATUS_COL_PATTERN.test(c));
+  if (!statusCol) return warnings;
+
+  const statusCounts = {};
+  for (const row of rows) {
+    const val = String(row[statusCol] || 'null');
+    statusCounts[val] = (statusCounts[val] || 0) + 1;
+  }
+
+  const cancelledStatuses = Object.keys(statusCounts).filter(s => CANCEL_VAL_PATTERN.test(s));
+  if (cancelledStatuses.length === 0) return warnings;
+
+  const cancelledCount = cancelledStatuses.reduce((sum, s) => sum + statusCounts[s], 0);
+  const total = rows.length;
+  const pct = ((cancelledCount / total) * 100).toFixed(1);
+
+  warnings.push({
+    id: 'unfiltered_status',
+    severity: 'high',
+    category: 'business_logic',
+    column: statusCol,
+    message: `Result includes ${cancelledCount} rows (${pct}%) with status in [${cancelledStatuses.join(', ')}]. If computing revenue or demand metrics, consider filtering these out.`,
+    instruction: `Add WHERE ${statusCol} NOT IN (${cancelledStatuses.map(s => `'${s}'`).join(', ')}) or explicitly disclose their inclusion in caveats.`,
+  });
+
+  return warnings;
+}
+
+/**
+ * Detect when a query uses an item-level monetary column (e.g., price) while the
+ * dataset also has an order-level payment column. This is a schema-agnostic check:
+ * it looks for SUM(price) in SQL and checks if payment-related columns exist.
+ */
+export function checkMonetaryProxyRisk(rows, columns, sql) {
+  const warnings = [];
+  const sqlStr = String(sql || '');
+
+  // Check if SQL aggregates a price/amount column
+  const priceAggMatch = sqlStr.match(/SUM\s*\(\s*(?:\w+\.)?(\w+)\s*\)/gi);
+  if (!priceAggMatch) return warnings;
+
+  const aggCols = priceAggMatch.map(m => {
+    const colMatch = m.match(/SUM\s*\(\s*(?:\w+\.)?(\w+)\s*\)/i);
+    return colMatch ? colMatch[1].toLowerCase() : null;
+  }).filter(Boolean);
+
+  const usesItemPrice = aggCols.some(c => /^price$/i.test(c));
+  if (!usesItemPrice) return warnings;
+
+  // Check if payment columns exist in the result or known tables
+  const hasPaymentCol = columns.some(c => PAYMENT_COL_PATTERN.test(c));
+  // Even if not in this result, the payments table may exist — the annotation in
+  // sapDataQueryService.js handles that. Here we only flag if we can see both.
+  if (!hasPaymentCol) {
+    // Still warn about item-level price as proxy
+    warnings.push({
+      id: 'monetary_proxy',
+      severity: 'medium',
+      category: 'methodology',
+      column: 'price',
+      message: 'Query uses SUM(price) as a revenue metric. Item-level price excludes freight and may differ from actual customer payment amount.',
+      instruction: 'Disclose in caveats: "Using order_items.price as revenue proxy — excludes freight. Actual payment totals may be ~15-20% higher."',
+    });
+  }
+
+  return warnings;
+}
+
+/**
+ * Verify that the number of result rows in time-grouped queries matches
+ * the expected distinct period count. Detects miscounts early.
+ */
+export function checkPeriodCountConsistency(rows, columns) {
+  const warnings = [];
+  const dateCol = findDateColumn(columns);
+  if (!dateCol) return warnings;
+
+  const distinctPeriods = new Set();
+  for (const row of rows) {
+    const val = row[dateCol];
+    if (val != null && val !== '' && val !== 0) distinctPeriods.add(String(val));
+  }
+
+  if (distinctPeriods.size < 3) return warnings;
+
+  // Detect if rows count ≠ distinct periods (suggests non-unique grouping or duplicates)
+  if (rows.length !== distinctPeriods.size && rows.length > distinctPeriods.size * 1.2) {
+    warnings.push({
+      id: 'period_row_mismatch',
+      severity: 'medium',
+      category: 'completeness',
+      column: dateCol,
+      message: `Query has ${rows.length} rows but only ${distinctPeriods.size} distinct periods in column "${dateCol}". Multiple rows per period may cause double-counting in aggregations.`,
+      instruction: 'Verify the GROUP BY clause produces one row per period, or acknowledge the finer granularity in caveats.',
+    });
+  }
+
+  return warnings;
+}
+
 // ── Main Entry Point ────────────────────────────────────────────────────────
 
 export function validateQueryResultData(rows, columns, sql) {
@@ -518,6 +635,9 @@ export function validateQueryResultData(rows, columns, sql) {
     ...checkHighCardinality(rows, columns),
     ...checkDataGaps(rows, columns),
     ...checkPartialYearCoverage(rows, columns, sql),
+    ...checkStatusColumnPresence(rows, columns),
+    ...checkMonetaryProxyRisk(rows, columns, sql),
+    ...checkPeriodCountConsistency(rows, columns),
   ];
 
   return { warnings };
@@ -561,6 +681,9 @@ export const WARNING_ACKNOWLEDGMENT_PATTERNS = {
   insufficient_groups: [/few.*per.*group|small.*group|分組.*少/i],
   data_gaps: [/gap|missing.*period|incomplete.*time|缺漏|遺漏/i],
   partial_year_coverage: [/partial.?year|incomplete.?year|部分年度|年度.*不完整|coverage.*differ|資料覆蓋|僅.*個月|only.*months/i],
+  unfiltered_status: [/cancel|filter.*status|exclude.*cancel|status.*filter|排除.*取消|過濾.*狀態/i],
+  monetary_proxy: [/proxy|surrogate|approximate|price.*exclud|freight|payment_value|替代指標|代理指標|運費/i],
+  period_row_mismatch: [/duplicate.*period|multiple.*row.*per.*period|granularity|重複.*期間/i],
 };
 
 export default {
@@ -575,6 +698,9 @@ export default {
   checkHighCardinality,
   checkDataGaps,
   checkPartialYearCoverage,
+  checkStatusColumnPresence,
+  checkMonetaryProxyRisk,
+  checkPeriodCountConsistency,
   PROXY_DISCLOSURE_PROMPT,
   WARNING_ACKNOWLEDGMENT_PATTERNS,
 };

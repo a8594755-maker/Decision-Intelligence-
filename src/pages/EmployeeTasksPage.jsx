@@ -61,7 +61,7 @@ const WORKFLOW_OPTIONS = TEMPLATE_OPTIONS;
 const STATUS_STYLE = {
   [TASK_STATES.DRAFT_PLAN]:       'text-slate-500  bg-slate-100  dark:bg-slate-800',
   [TASK_STATES.WAITING_APPROVAL]: 'text-violet-600 bg-violet-50 dark:bg-violet-900/20',
-  [TASK_STATES.QUEUED]:           'text-indigo-600 bg-indigo-50 dark:bg-indigo-900/20',
+  [TASK_STATES.QUEUED]:           'text-[var(--brand-600)] bg-[var(--accent-active)]',
   [TASK_STATES.IN_PROGRESS]:      'text-blue-600   bg-blue-50    dark:bg-blue-900/20',
   [TASK_STATES.REVIEW_HOLD]:      'text-amber-600  bg-amber-50   dark:bg-amber-900/20',
   [TASK_STATES.BLOCKED]:          'text-red-600    bg-red-50     dark:bg-red-900/20',
@@ -93,7 +93,7 @@ const EXECUTION_MODE_OPTIONS = [
 ];
 
 const EXECUTION_MODE_STYLE = {
-  [EXECUTION_MODES.MANUAL_APPROVE]: 'text-slate-600 bg-slate-100 dark:bg-slate-800',
+  [EXECUTION_MODES.MANUAL_APPROVE]: 'text-slate-600 bg-[var(--surface-subtle)]',
   [EXECUTION_MODES.AUTO_RUN]: 'text-emerald-600 bg-emerald-50 dark:bg-emerald-900/20',
 };
 
@@ -279,7 +279,7 @@ function NewTaskModal({ onClose, onCreated, employeeId, userId }) {
     }
   }
 
-  const inputCls = 'w-full px-3 py-2 rounded-lg border text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500';
+  const inputCls = 'w-full px-3 py-2 rounded-lg border text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-500)]';
   const inputStyle = { borderColor: 'var(--border-default)', backgroundColor: 'var(--surface-bg)', color: 'var(--text-primary)' };
 
   return (
@@ -410,7 +410,7 @@ function NewTaskModal({ onClose, onCreated, employeeId, userId }) {
           <button
             type="submit"
             disabled={saving}
-            className="px-4 py-2 rounded-lg text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+            className="px-4 py-2 rounded-lg text-sm font-medium bg-[var(--brand-600)] text-white hover:bg-[var(--brand-700)] disabled:opacity-50 transition-colors"
           >
             {saving ? 'Creating…' : 'Create Task'}
           </button>
@@ -496,7 +496,7 @@ function NewScheduleModal({ onClose, onCreated, employeeId, userId }) {
     }
   }
 
-  const inputCls = 'w-full px-3 py-2 rounded-lg border text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500';
+  const inputCls = 'w-full px-3 py-2 rounded-lg border text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-500)]';
   const inputStyle = { borderColor: 'var(--border-default)', backgroundColor: 'var(--surface-bg)', color: 'var(--text-primary)' };
 
   return (
@@ -669,7 +669,7 @@ function NewScheduleModal({ onClose, onCreated, employeeId, userId }) {
           <button
             type="submit"
             disabled={saving}
-            className="px-4 py-2 rounded-lg text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+            className="px-4 py-2 rounded-lg text-sm font-medium bg-[var(--brand-600)] text-white hover:bg-[var(--brand-700)] disabled:opacity-50 transition-colors"
           >
             {saving ? 'Creating…' : 'Create Schedule'}
           </button>
@@ -718,7 +718,7 @@ function TaskListItem({ task, isSelected, onClick }) {
       onClick={onClick}
       className={`w-full text-left px-3 py-2.5 rounded-lg transition-colors flex items-start gap-2 ${
         isSelected
-          ? 'bg-indigo-50 dark:bg-indigo-900/20'
+          ? 'bg-[var(--accent-active)]'
           : 'hover:bg-[var(--surface-subtle)]'
       }`}
     >
@@ -757,7 +757,7 @@ function TaskListItem({ task, isSelected, onClick }) {
           )}
         </div>
       </div>
-      {isSelected && <ChevronRight className="w-4 h-4 text-indigo-400 flex-shrink-0 mt-0.5" />}
+      {isSelected && <ChevronRight className="w-4 h-4 text-[var(--brand-500)] flex-shrink-0 mt-0.5" />}
     </button>
   );
 }
@@ -786,7 +786,7 @@ function GroupedTaskList({ tasks, selectedTaskId, onSelect, statusFilter }) {
           <span className={`text-[10px] font-semibold uppercase tracking-wider ${group.color}`}>
             {group.label}
           </span>
-          <span className="text-[10px] px-1 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800" style={{ color: 'var(--text-muted)' }}>
+          <span className="text-[10px] px-1 py-0.5 rounded-full bg-[var(--surface-subtle)]" style={{ color: 'var(--text-muted)' }}>
             {groupTasks.length}
           </span>
         </div>
@@ -910,7 +910,7 @@ function TaskDetail({ task, logs, onRun, running, workers = [], onReassign, onPr
             />
           )}
           {(ctx.template_id || ctx.workflow_type) && (
-            <Badge label={ctx.template_id || ctx.workflow_type} className="text-indigo-600 bg-indigo-50 dark:bg-indigo-900/20" />
+            <Badge label={ctx.template_id || ctx.workflow_type} className="text-[var(--brand-600)] bg-[var(--accent-active)]" />
           )}
           {elapsed && (
             <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
@@ -921,7 +921,7 @@ function TaskDetail({ task, logs, onRun, running, workers = [], onReassign, onPr
         {/* Step progress summary */}
         {progress && (
           <div className="flex items-center gap-2 mt-3">
-            <div className="flex-1 h-1.5 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
+            <div className="flex-1 h-1.5 rounded-full bg-[var(--surface-subtle)] overflow-hidden">
               <div
                 className="h-full rounded-full bg-emerald-500 transition-all"
                 style={{ width: `${(progress.done / progress.total) * 100}%` }}
@@ -969,7 +969,7 @@ function TaskDetail({ task, logs, onRun, running, workers = [], onReassign, onPr
           <button
             onClick={() => onRun(task)}
             disabled={running}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+            className="flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium bg-[var(--brand-600)] text-white hover:bg-[var(--brand-700)] disabled:opacity-50 transition-colors"
           >
             {running
               ? <><Loader2 className="w-4 h-4 animate-spin" /> Running…</>
@@ -1082,7 +1082,7 @@ function KanbanBoard({ tasks, selectedTaskId, onSelect, onRun, runningId }) {
                     type="button"
                     onClick={() => onSelect(task.id)}
                     className={`w-full text-left rounded-lg border p-3 transition hover:shadow-sm ${
-                      task.id === selectedTaskId ? 'ring-2 ring-indigo-500' : ''
+                      task.id === selectedTaskId ? 'ring-2 ring-[var(--brand-500)]' : ''
                     }`}
                     style={{ borderColor: 'var(--border-default)', backgroundColor: 'var(--surface-card)' }}
                   >
@@ -1104,7 +1104,7 @@ function KanbanBoard({ tasks, selectedTaskId, onSelect, onRun, runningId }) {
                         type="button"
                         onClick={(e) => { e.stopPropagation(); onRun(task); }}
                         disabled={runningId === task.id}
-                        className="mt-2 flex items-center gap-1 text-[11px] font-medium text-indigo-600 hover:text-indigo-800 disabled:opacity-50"
+                        className="mt-2 flex items-center gap-1 text-[11px] font-medium text-[var(--brand-600)] hover:text-[var(--brand-700)] disabled:opacity-50"
                       >
                         {runningId === task.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
                         Run
@@ -1135,6 +1135,7 @@ export default function EmployeeTasksPage() {
   const [logs, setLogs] = useState([]);
   const [statusFilter, setStatusFilter] = useState('');
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
   const [runningId, setRunningId] = useState(null);
   const [showNewTask, setShowNewTask] = useState(false);
   const [runError, setRunError] = useState(null);
@@ -1181,6 +1182,7 @@ export default function EmployeeTasksPage() {
   const loadTasks = useCallback(async () => {
     if (!user?.id) return;
     setLoading(true);
+    setLoadError(null);
     try {
       let emps = await listEmployeesByManager(user.id);
 
@@ -1213,6 +1215,9 @@ export default function EmployeeTasksPage() {
       } else {
         setSchedules([]);
       }
+    } catch (err) {
+      console.error('[EmployeeTasksPage] loadTasks failed:', err);
+      setLoadError(err?.message?.includes('timeout') ? '查詢逾時，請稍後重試' : '載入失敗，請重試');
     } finally {
       setLoading(false);
     }
@@ -1371,7 +1376,7 @@ export default function EmployeeTasksPage() {
         <div className="flex items-center gap-3 min-w-0">
           <span className="font-semibold text-sm whitespace-nowrap" style={{ color: 'var(--text-primary)' }}>Task Board</span>
           <select
-            className="min-w-[180px] max-w-[280px] px-2.5 py-1.5 rounded-lg border text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            className="min-w-[180px] max-w-[280px] px-2.5 py-1.5 rounded-lg border text-xs focus:outline-none focus:ring-2 focus:ring-[var(--brand-500)]"
             style={{ borderColor: 'var(--border-default)', backgroundColor: 'var(--surface-bg)', color: 'var(--text-secondary)' }}
             value={workerFilterValue}
             onChange={(event) => handleWorkerFilterChange(event.target.value)}
@@ -1389,7 +1394,7 @@ export default function EmployeeTasksPage() {
           <button
             onClick={() => setShowSchedules((v) => !v)}
             disabled={!employee?.id}
-            className={`p-1.5 rounded-lg transition-colors hover:bg-[var(--surface-subtle)] disabled:opacity-50 disabled:cursor-not-allowed ${showSchedules ? 'bg-indigo-50 dark:bg-indigo-900/20' : ''}`}
+            className={`p-1.5 rounded-lg transition-colors hover:bg-[var(--surface-subtle)] disabled:opacity-50 disabled:cursor-not-allowed ${showSchedules ? 'bg-[var(--accent-active)]' : ''}`}
             title="Scheduled Tasks"
           >
             <Calendar className="w-4 h-4" style={{ color: showSchedules ? 'var(--accent-primary, #6366f1)' : 'var(--text-muted)' }} />
@@ -1425,14 +1430,14 @@ export default function EmployeeTasksPage() {
           <div className="flex items-center rounded-lg border" style={{ borderColor: 'var(--border-default)' }}>
             <button
               onClick={() => setViewMode(VIEW_MODES.KANBAN)}
-              className={`p-1.5 rounded-l-lg transition-colors ${viewMode === VIEW_MODES.KANBAN ? 'bg-indigo-50 dark:bg-indigo-900/20' : 'hover:bg-[var(--surface-subtle)]'}`}
+              className={`p-1.5 rounded-l-lg transition-colors ${viewMode === VIEW_MODES.KANBAN ? 'bg-[var(--accent-active)]' : 'hover:bg-[var(--surface-subtle)]'}`}
               title="Board view"
             >
               <Columns className="w-4 h-4" style={{ color: viewMode === VIEW_MODES.KANBAN ? 'var(--accent-primary, #6366f1)' : 'var(--text-muted)' }} />
             </button>
             <button
               onClick={() => setViewMode(VIEW_MODES.LIST)}
-              className={`p-1.5 rounded-r-lg transition-colors ${viewMode === VIEW_MODES.LIST ? 'bg-indigo-50 dark:bg-indigo-900/20' : 'hover:bg-[var(--surface-subtle)]'}`}
+              className={`p-1.5 rounded-r-lg transition-colors ${viewMode === VIEW_MODES.LIST ? 'bg-[var(--accent-active)]' : 'hover:bg-[var(--surface-subtle)]'}`}
               title="List view"
             >
               <LayoutList className="w-4 h-4" style={{ color: viewMode === VIEW_MODES.LIST ? 'var(--accent-primary, #6366f1)' : 'var(--text-muted)' }} />
@@ -1462,14 +1467,14 @@ export default function EmployeeTasksPage() {
           placeholder={employee?.id
             ? 'Describe a task in plain language, e.g. "Analyze last month\'s data and generate a summary report"'
             : 'Select a worker to create and run a task'}
-          className="flex-1 px-3 py-1.5 rounded-lg border text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          className="flex-1 px-3 py-1.5 rounded-lg border text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-500)]"
           style={{ borderColor: 'var(--border-default)', backgroundColor: 'var(--surface-bg)', color: 'var(--text-primary)' }}
           disabled={quickTaskLoading || !employee?.id}
         />
         <button
           type="submit"
           disabled={quickTaskLoading || !quickTaskInput.trim() || !employee?.id}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-[var(--brand-600)] text-white hover:bg-[var(--brand-700)] disabled:opacity-50 transition-colors"
         >
           {quickTaskLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
           {quickTaskLoading ? 'Planning...' : 'Quick Task'}
@@ -1488,7 +1493,19 @@ export default function EmployeeTasksPage() {
           )}
           {loading ? (
             <div className="flex items-center justify-center flex-1">
-              <Loader2 className="w-5 h-5 animate-spin text-indigo-400" />
+              <Loader2 className="w-5 h-5 animate-spin text-[var(--brand-500)]" />
+            </div>
+          ) : loadError ? (
+            <div className="flex flex-col items-center justify-center flex-1 gap-3">
+              <AlertTriangle className="w-8 h-8 text-amber-500" />
+              <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>{loadError}</p>
+              <button
+                onClick={loadTasks}
+                className="px-3 py-1.5 rounded-lg text-xs font-medium text-white"
+                style={{ backgroundColor: 'var(--brand-500)' }}
+              >
+                重試
+              </button>
             </div>
           ) : tasks.length === 0 ? (
             <div className="flex flex-col items-center justify-center flex-1">
@@ -1513,7 +1530,7 @@ export default function EmployeeTasksPage() {
           >
             <div className="p-2 border-b" style={{ borderColor: 'var(--border-default)' }}>
               <select
-                className="w-full px-2.5 py-1.5 rounded-lg border text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                className="w-full px-2.5 py-1.5 rounded-lg border text-xs focus:outline-none focus:ring-2 focus:ring-[var(--brand-500)]"
                 style={{ borderColor: 'var(--border-default)', backgroundColor: 'var(--surface-bg)', color: 'var(--text-secondary)' }}
                 value={statusFilter}
                 onChange={(e) => setStatusFilter(e.target.value)}
@@ -1526,7 +1543,19 @@ export default function EmployeeTasksPage() {
             <div className="flex-1 overflow-y-auto p-1.5 space-y-0.5">
               {loading ? (
                 <div className="flex items-center justify-center py-8">
-                  <Loader2 className="w-5 h-5 animate-spin text-indigo-400" />
+                  <Loader2 className="w-5 h-5 animate-spin text-[var(--brand-500)]" />
+                </div>
+              ) : loadError ? (
+                <div className="flex flex-col items-center gap-2 px-3 py-8 text-center">
+                  <AlertTriangle className="w-5 h-5 text-amber-500" />
+                  <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>{loadError}</p>
+                  <button
+                    onClick={loadTasks}
+                    className="px-2.5 py-1 rounded-lg text-xs font-medium text-white"
+                    style={{ backgroundColor: 'var(--brand-500)' }}
+                  >
+                    重試
+                  </button>
                 </div>
               ) : tasks.length === 0 ? (
                 <div className="px-3 py-8 text-center">
@@ -1599,7 +1628,7 @@ export default function EmployeeTasksPage() {
                     setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
                   } catch { /* */ }
                 }}
-                className="text-xs text-indigo-600 hover:underline"
+                className="text-xs text-[var(--brand-600)] hover:underline"
               >
                 Mark all read
               </button>
@@ -1611,7 +1640,7 @@ export default function EmployeeTasksPage() {
             notifications.map((n) => (
               <div
                 key={n.id}
-                className={`px-3 py-2.5 border-b text-xs ${!n.read ? 'bg-indigo-50/50 dark:bg-indigo-900/10' : ''}`}
+                className={`px-3 py-2.5 border-b text-xs ${!n.read ? 'bg-[var(--accent-active)]' : ''}`}
                 style={{ borderColor: 'var(--border-default)' }}
               >
                 <p className="font-medium" style={{ color: 'var(--text-primary)' }}>{n.title}</p>
@@ -1632,7 +1661,7 @@ export default function EmployeeTasksPage() {
             <span className="text-xs font-medium" style={{ color: 'var(--text-primary)' }}>Scheduled Tasks</span>
             <button
               onClick={() => setShowNewSchedule(true)}
-              className="text-xs text-indigo-600 hover:underline"
+              className="text-xs text-[var(--brand-600)] hover:underline"
             >
               New Schedule
             </button>

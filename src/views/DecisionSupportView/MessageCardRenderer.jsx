@@ -74,7 +74,77 @@ import ThinkingStepsDisplay from '../../components/chat/ThinkingStepsDisplay';
 import CopyAllButton from '../../components/chat/CopyAllButton';
 import { serializeAgentResponseToText } from '../../utils/serializeMessageToText';
 import { extractAnalysisPayloadsFromToolCall, isRenderableAnalysisToolCall } from '../../services/data-prep/analysisToolResultService.js';
+import { normalizeAnalysisResultToBrief, normalizeAnalysisInsightToBrief, extractBalancedJsonObjectCandidates, tryParseJsonCandidate } from '../../services/agent-core/agentResponsePresentationService.js';
+import ToolExecutionSummary from '../../components/chat/ToolExecutionSummary.jsx';
 import { toPositiveRunId } from './helpers.js';
+
+/**
+ * Last-resort: try to parse a JSON brief from raw message content.
+ * Handles direct JSON, markdown-fenced JSON, and embedded JSON objects.
+ */
+function tryRecoverBriefFromContent(content) {
+  if (!content || typeof content !== 'string') return null;
+
+  // Attempt 1: direct JSON parse
+  try {
+    const parsed = JSON.parse(content);
+    if (parsed?.headline && parsed?.summary) return parsed;
+    if (parsed?.narrative?.headline && parsed?.narrative?.body) return parsed;
+  } catch { /* not pure JSON */ }
+
+  // Attempt 2: markdown fence
+  const fenceMatch = content.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/);
+  if (fenceMatch) {
+    try {
+      const parsed = JSON.parse(fenceMatch[1]);
+      if (parsed?.headline || parsed?.narrative?.headline) return parsed;
+    } catch { /* bad fence */ }
+  }
+
+  // Attempt 3: balanced JSON extraction
+  const candidates = extractBalancedJsonObjectCandidates(content, { maxCandidates: 5 });
+  for (const candidate of candidates) {
+    const parsed = tryParseJsonCandidate(candidate);
+    if (parsed && (parsed.headline || parsed.narrative?.headline) && (parsed.summary || parsed.narrative?.body || parsed.metric_pills)) {
+      return parsed;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Strip tool progress markers and large JSON blocks from content for display.
+ */
+function stripToolProgressAndJson(content) {
+  if (!content || typeof content !== 'string') return '';
+  let cleaned = content
+    // Remove tool progress lines
+    .replace(/\n?🔧\s*Running\s+\*\*[^*]+\*\*.*\n?/g, '')
+    .replace(/\n?[✅❌]\s*\*\*[^*]+\*\*\s*(done|failed[^\n]*)?\n?/g, '')
+    // Remove JSON blocks that look like briefs
+    .replace(/```(?:json)?\s*\n?\{[\s\S]*?"headline"[\s\S]*?\}\s*\n?```/g, '')
+    .trim();
+
+  // Also remove bare JSON objects with "headline"
+  const jsonStart = cleaned.indexOf('{ "headline"');
+  const jsonStartAlt = cleaned.indexOf('{"headline"');
+  const idx = jsonStart >= 0 ? jsonStart : jsonStartAlt;
+  if (idx >= 0) {
+    // Find matching closing brace
+    let depth = 0;
+    for (let i = idx; i < cleaned.length; i++) {
+      if (cleaned[i] === '{') depth++;
+      if (cleaned[i] === '}') depth--;
+      if (depth === 0) {
+        cleaned = cleaned.slice(0, idx) + cleaned.slice(i + 1);
+        break;
+      }
+    }
+  }
+
+  return cleaned.trim();
+}
 
 /**
  * Renders a single special (typed) chat message card.
@@ -494,12 +564,18 @@ export default function MessageCardRenderer({ message, handlers, state }) {
         steps={message.payload?.steps || []}
         defaultCollapsed={message.payload?.defaultCollapsed !== false}
         completed={message.payload?.completed !== false}
+        elapsedSeconds={message.payload?.elapsedSeconds}
       />
     );
   }
   if (message.type === 'agent_response') {
     const toolCalls = message.payload?.toolCalls || [];
-    const brief = message.payload?.brief || null;
+    let brief = message.payload?.brief || null;
+
+    // Fix 1: Last-resort brief recovery from message.content
+    if (!brief && message.content) {
+      brief = tryRecoverBriefFromContent(message.content);
+    }
     const qa = message.payload?.qa || null;
     const judgeDecision = message.payload?.judgeDecision || null;
     const candidates = Array.isArray(message.payload?.candidates) ? message.payload.candidates : [];
@@ -571,6 +647,9 @@ export default function MessageCardRenderer({ message, handlers, state }) {
       );
     }
 
+    // Fallback path: no brief and no trace — show tool summary + cleaned content
+    const displayContent = stripToolProgressAndJson(message.content || '');
+
     return (
       <div className="space-y-3">
         <div className="flex justify-end">
@@ -587,35 +666,20 @@ export default function MessageCardRenderer({ message, handlers, state }) {
             toolName={tc.name === 'list_sap_tables' ? 'List SAP Tables' : 'SQL Query'}
           />
         ))}
-        {otherCalls.length > 0 && (
-          <div className="bg-slate-800/50 rounded-lg p-3 border border-slate-700/50">
-            <div className="text-xs font-medium text-slate-400 mb-2">Agent executed {otherCalls.length} tool{otherCalls.length > 1 ? 's' : ''}:</div>
-            <div className="space-y-1.5">
-              {otherCalls.map((tc, i) => (
-                <div key={tc.id || i} className="flex items-center gap-2 text-xs">
-                  <span className={tc.result?.success ? 'text-green-400' : 'text-red-400'}>
-                    {tc.result?.success ? '✅' : '❌'}
-                  </span>
-                  <span className="font-mono text-slate-300">{tc.name}</span>
-                  {tc.result?.artifactTypes?.length > 0 && (
-                    <span className="text-slate-500">→ {tc.result.artifactTypes.join(', ')}</span>
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-        {message.content && (
+        {/* Fix 3: Collapsible tool execution summary */}
+        <ToolExecutionSummary toolCalls={toolCalls} defaultCollapsed />
+        {/* Fix 2: Only show cleaned content (no tool progress, no raw JSON) */}
+        {displayContent && (
           <div className={`prose prose-sm max-w-none dark:prose-invert text-sm text-[var(--text-primary)]
             prose-table:border-collapse prose-table:w-full prose-table:text-xs
-            prose-th:bg-slate-100 prose-th:dark:bg-slate-700/60 prose-th:px-3 prose-th:py-2 prose-th:text-left prose-th:font-semibold prose-th:text-slate-600 prose-th:dark:text-slate-300 prose-th:border prose-th:border-slate-200 prose-th:dark:border-slate-600
-            prose-td:px-3 prose-td:py-1.5 prose-td:border prose-td:border-slate-200 prose-td:dark:border-slate-700 prose-td:text-slate-700 prose-td:dark:text-slate-300
-            prose-tr:even:bg-slate-50 prose-tr:even:dark:bg-slate-800/30
+            prose-th:bg-[var(--surface-subtle)] prose-th:px-3 prose-th:py-2 prose-th:text-left prose-th:font-semibold prose-th:text-[var(--text-secondary)] prose-th:border prose-th:border-[var(--border-default)]
+            prose-td:px-3 prose-td:py-1.5 prose-td:border prose-td:border-[var(--border-default)] prose-td:text-[var(--text-primary)]
+            prose-tr:even:bg-[var(--surface-subtle)]
             ${analysisPayloads.length > 0
               ? 'bg-[var(--surface-base)] rounded-xl px-4 py-3 border border-[var(--border-default)]'
               : ''
             }`}>
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{displayContent}</ReactMarkdown>
           </div>
         )}
       </div>
@@ -741,26 +805,36 @@ export default function MessageCardRenderer({ message, handlers, state }) {
   }
   if (message.type === 'analysis_result_card') {
     const p = message.payload || {};
-    const hasInsights = p.key_findings?.length || p.recommendations?.length || p.deep_dive_suggestions?.length;
-    if (hasInsights) {
-      // Composite: AnalysisResultCard (metrics/charts) + AnalysisInsightCard (findings/deep-dive)
-      // Map Python analysis output shape → AnalysisInsightCard expected shape
-      const insightPayload = {
-        sections: {
-          key_findings: p.key_findings?.map(f => `**${f.finding}** — ${f.implication || ''} _(${f.severity || 'info'})_`).join('\n\n'),
-          recommendations: p.recommendations?.map(r => `**[${r.priority || 'P2'}]** ${r.action}`).join('\n\n'),
-          risk_alerts: p.anomalies?.map(a => `**${a.dimension}/${a.value}**: ${a.metric} = ${a.actual} ${a.context ? `(${a.context})` : ''}`).join('\n\n'),
-        },
-        deepDives: p.deep_dive_suggestions || [],
-      };
-      return (
-        <div className="space-y-3">
-          <AnalysisResultCard payload={p} />
-          <AnalysisInsightCard payload={insightPayload} onDeepDive={handlers?.onDeepDive} />
-        </div>
-      );
+    const brief = normalizeAnalysisResultToBrief(p);
+    if (!brief) return <AnalysisResultCard payload={p} />;
+
+    // Merge structured insights (key_findings, recommendations, anomalies) into the brief
+    if (p.key_findings?.length) {
+      brief.key_findings = [
+        ...brief.key_findings,
+        ...p.key_findings.map(f => `**${f.finding}** — ${f.implication || ''} _(${f.severity || 'info'})_`),
+      ];
     }
-    return <AnalysisResultCard payload={p} />;
+    if (p.recommendations?.length) {
+      brief.next_steps = [
+        ...brief.next_steps,
+        ...p.recommendations.map(r => `**[${r.priority || 'P2'}]** ${r.action}`),
+      ];
+    }
+    if (p.anomalies?.length) {
+      brief.caveats = [
+        ...brief.caveats,
+        ...p.anomalies.map(a => `**${a.dimension}/${a.value}**: ${a.metric} = ${a.actual} ${a.context ? `(${a.context})` : ''}`),
+      ];
+    }
+
+    return (
+      <AgentBriefCard
+        brief={brief}
+        dataSource={brief._dataSource}
+        attribution={brief._executionMeta ? { model: brief._executionMeta.llm_model } : undefined}
+      />
+    );
   }
   if (message.type === 'analysis_blueprint_card') {
     return (
@@ -772,7 +846,16 @@ export default function MessageCardRenderer({ message, handlers, state }) {
     );
   }
   if (message.type === 'analysis_insight') {
-    return <AnalysisInsightCard payload={message.payload} onDeepDive={handlers?.onDeepDive} />;
+    const insightBrief = normalizeAnalysisInsightToBrief(message.payload);
+    if (!insightBrief) {
+      return <AnalysisInsightCard payload={message.payload} onDeepDive={handlers?.onDeepDive} />;
+    }
+    return (
+      <AgentBriefCard
+        brief={insightBrief}
+        dataSource={insightBrief._dataSource}
+      />
+    );
   }
   if (message.type === 'unified_approval_card') {
     return (

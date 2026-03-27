@@ -6,6 +6,7 @@ vi.mock('../planning/diModelRouterService.js', () => ({
   DI_PROMPT_IDS: {
     AGENT_ANSWER_CONTRACT: 'prompt_7_agent_answer_contract',
     AGENT_BRIEF_SYNTHESIS: 'prompt_8_agent_brief_synthesis',
+    AGENT_BRIEF_SYNTHESIS_V2: 'prompt_14_agent_brief_synthesis_v2',
     AGENT_BRIEF_REVIEW: 'prompt_9_agent_brief_review',
     AGENT_QA_SELF_REVIEW: 'prompt_10_agent_qa_self_review',
     AGENT_QA_CROSS_REVIEW: 'prompt_11_agent_qa_cross_review',
@@ -20,6 +21,15 @@ const {
   buildDeterministicAgentBrief,
   computeDeterministicQa,
   reviewAgentBriefDeterministically,
+  enforceMetricPillQuality,
+  enforceMetricPillLimits,
+  enforceChartYKeyRule,
+  enforceFieldDeduplication,
+  enforceSummaryDensity,
+  normalizeV2ToFlat,
+  normalizeFlatToV2,
+  normalizeAnalysisResultToBrief,
+  normalizeAnalysisInsightToBrief,
 } = await import('./agentResponsePresentationService.js');
 
 function buildComparisonToolCall() {
@@ -2078,6 +2088,318 @@ describe('agentResponsePresentationService', () => {
       });
 
       expect(qa.flags.missing_low_base_caveat).toBeFalsy();
+    });
+  });
+
+  // ── Phase 1 Deterministic Enforcers ──────────────────────────────────────
+
+  describe('enforceMetricPillQuality', () => {
+    it('removes non-numeric pills (time periods, trend directions)', () => {
+      const brief = {
+        metric_pills: [
+          { label: 'Revenue Growth', value: '+2,349%' },
+          { label: 'Time Period', value: 'Sep 2016 - Oct 2018' },
+          { label: 'Trend Direction', value: 'Upward' },
+          { label: 'Peak Month Orders', value: '7,289' },
+          { label: 'Coverage', value: '12 months' },
+        ],
+      };
+      const result = enforceMetricPillQuality(brief);
+      expect(result.metric_pills).toHaveLength(2);
+      expect(result.metric_pills[0].label).toBe('Revenue Growth');
+      expect(result.metric_pills[1].label).toBe('Peak Month Orders');
+    });
+
+    it('keeps pills with numeric values', () => {
+      const brief = {
+        metric_pills: [
+          { label: 'AOV', value: 'R$119.98' },
+          { label: 'Gini', value: '0.73' },
+        ],
+      };
+      enforceMetricPillQuality(brief);
+      expect(brief.metric_pills).toHaveLength(2);
+    });
+
+    it('handles missing metric_pills gracefully', () => {
+      const brief = { headline: 'test' };
+      expect(enforceMetricPillQuality(brief)).toBe(brief);
+    });
+  });
+
+  describe('enforceMetricPillLimits', () => {
+    it('caps to 4 for brevity=short', () => {
+      const brief = {
+        metric_pills: Array.from({ length: 8 }, (_, i) => ({ label: `M${i}`, value: `${i * 100}` })),
+      };
+      enforceMetricPillLimits(brief, 'short');
+      expect(brief.metric_pills).toHaveLength(4);
+    });
+
+    it('caps to 6 for brevity=analysis', () => {
+      const brief = {
+        metric_pills: Array.from({ length: 8 }, (_, i) => ({ label: `M${i}`, value: `${i * 100}` })),
+      };
+      enforceMetricPillLimits(brief, 'analysis');
+      expect(brief.metric_pills).toHaveLength(6);
+    });
+
+    it('does not truncate if under limit', () => {
+      const brief = {
+        metric_pills: [{ label: 'A', value: '100' }, { label: 'B', value: '200' }],
+      };
+      enforceMetricPillLimits(brief, 'short');
+      expect(brief.metric_pills).toHaveLength(2);
+    });
+  });
+
+  describe('enforceChartYKeyRule', () => {
+    it('splits comma-separated yKey into series array', () => {
+      const brief = {
+        charts: [
+          { type: 'grouped_bar', title: 'Test', xKey: 'month', yKey: 'orders,revenue', data: [{}] },
+        ],
+      };
+      enforceChartYKeyRule(brief);
+      expect(brief.charts[0].yKey).toBe('orders');
+      expect(brief.charts[0].series).toEqual(['orders', 'revenue']);
+    });
+
+    it('leaves single yKey untouched', () => {
+      const brief = {
+        charts: [
+          { type: 'bar', title: 'Test', xKey: 'month', yKey: 'revenue', data: [{}] },
+        ],
+      };
+      enforceChartYKeyRule(brief);
+      expect(brief.charts[0].yKey).toBe('revenue');
+      expect(brief.charts[0].series).toBeUndefined();
+    });
+
+    it('handles empty charts array', () => {
+      const brief = { charts: [] };
+      enforceChartYKeyRule(brief);
+      expect(brief.charts).toEqual([]);
+    });
+  });
+
+  describe('enforceFieldDeduplication', () => {
+    it('removes key_findings that only restate pill values', () => {
+      const brief = {
+        metric_pills: [
+          { label: 'Revenue', value: 'R$5.2M' },
+          { label: 'Growth', value: '+23%' },
+        ],
+        key_findings: [
+          'R$5.2M',  // short, only restating pill value
+          'Revenue grew by +23% driven by expansion into new product categories and seasonal demand patterns in Q4',  // long, has unique insight
+          'Market share increased across all segments despite competitive pressure from new entrants',  // no pill overlap
+        ],
+      };
+      enforceFieldDeduplication(brief);
+      expect(brief.key_findings).toHaveLength(2);
+      expect(brief.key_findings[0]).toContain('Revenue grew');
+      expect(brief.key_findings[1]).toContain('Market share');
+    });
+
+    it('keeps all findings when no pill overlap', () => {
+      const brief = {
+        metric_pills: [{ label: 'Revenue', value: 'R$5.2M' }],
+        key_findings: [
+          'Strong seasonal pattern detected with Q4 peaks',
+          'Customer retention improved across all cohorts',
+        ],
+      };
+      enforceFieldDeduplication(brief);
+      expect(brief.key_findings).toHaveLength(2);
+    });
+  });
+
+  describe('enforceSummaryDensity', () => {
+    it('adds density warning when summary has too many numbers', () => {
+      const brief = {
+        summary: 'Revenue was $5,202,955 with AOV of $119.98 and growth of 2,349%. ' +
+          'Top category had $1,234,567 in sales. Bottom had $456,789. ' +
+          'Average order count was 7,289 per month. Return rate was 4,600 basis points. ' +
+          'Shipping cost averaged $12,500 per order. Median was $8,750.',
+      };
+      enforceSummaryDensity(brief);
+      expect(brief._densityWarning).toBeDefined();
+      expect(brief._densityWarning).toContain('numeric values');
+    });
+
+    it('does not add warning for concise summaries', () => {
+      const brief = {
+        summary: 'Revenue grew by 23% year-over-year, driven by expansion into new markets.',
+      };
+      enforceSummaryDensity(brief);
+      expect(brief._densityWarning).toBeUndefined();
+    });
+
+    it('handles non-string summary gracefully', () => {
+      const brief = { summary: null };
+      expect(enforceSummaryDensity(brief)).toBe(brief);
+    });
+  });
+
+  // ── V2 Schema Normalization ──────────────────────────────────────────────
+
+  describe('normalizeV2ToFlat', () => {
+    it('converts V2 narrative shape to flat V1 fields', () => {
+      const v2Brief = {
+        narrative: { headline: 'Revenue grew 23%', body: 'Driven by Q4 expansion...' },
+        metric_pills: [{ label: 'Growth', value: '+23%' }],
+        key_findings: ['Strong Q4'],
+        caveats: ['Limited data'],
+        next_steps: ['Expand to new markets'],
+        implications: ['Market leader position strengthened'],
+      };
+      const flat = normalizeV2ToFlat(v2Brief);
+      expect(flat.headline).toBe('Revenue grew 23%');
+      expect(flat.summary).toBe('Driven by Q4 expansion...');
+      expect(flat.executive_summary).toBeNull();
+      expect(flat.next_steps).toContain('Expand to new markets');
+      expect(flat.next_steps).toContain('Market leader position strengthened');
+      expect(flat.implications).toEqual([]);
+    });
+
+    it('passes through non-V2 briefs unchanged', () => {
+      const v1Brief = { headline: 'Test', summary: 'Body' };
+      expect(normalizeV2ToFlat(v1Brief)).toBe(v1Brief);
+    });
+  });
+
+  describe('normalizeFlatToV2', () => {
+    it('wraps flat V1 fields into narrative structure', () => {
+      const flat = { headline: 'Revenue grew', summary: 'Details here', metric_pills: [] };
+      const v2 = normalizeFlatToV2(flat);
+      expect(v2.narrative.headline).toBe('Revenue grew');
+      expect(v2.narrative.body).toBe('Details here');
+      expect(v2.headline).toBe('Revenue grew'); // still has flat fields
+    });
+
+    it('does not double-wrap already-V2 briefs', () => {
+      const v2Brief = {
+        narrative: { headline: 'Test', body: 'Body' },
+        headline: 'Test',
+      };
+      const result = normalizeFlatToV2(v2Brief);
+      expect(result).toBe(v2Brief); // same reference, not re-wrapped
+    });
+  });
+
+  // ── Card Shape Unification (Phase 3) ─────────────────────────────────────
+
+  describe('normalizeAnalysisResultToBrief', () => {
+    it('converts AnalysisResultCard payload to brief shape', () => {
+      const payload = {
+        analysisType: 'Revenue Analysis',
+        title: 'Revenue Breakdown by Category',
+        summary: 'Top categories account for 80% of revenue.',
+        metrics: { total_revenue: 5200000, avg_order: 119.98, category_count: 12 },
+        charts: [{ type: 'bar', title: 'Revenue by Cat', data: [{ cat: 'A', rev: 1000 }], xKey: 'cat', yKey: 'rev' }],
+        tables: [{ title: 'Top 5', columns: ['Category', 'Revenue'], rows: [['Electronics', '2M']] }],
+        highlights: ['Electronics leads with 38% share', 'Fashion growing fastest at 45% YoY'],
+        details: ['Consider expanding electronics inventory'],
+        _dataSource: 'sales_2024.csv',
+        _executionMeta: { llm_model: 'claude-sonnet-4-6' },
+      };
+      const brief = normalizeAnalysisResultToBrief(payload);
+      expect(brief.headline).toBe('Revenue Breakdown by Category');
+      expect(brief.summary).toBe('Top categories account for 80% of revenue.');
+      expect(brief.metric_pills).toHaveLength(3);
+      expect(brief.metric_pills[0]).toEqual({ label: 'total_revenue', value: '5200000' });
+      expect(brief.charts).toHaveLength(1);
+      expect(brief.tables).toHaveLength(1);
+      expect(brief.key_findings).toEqual(['Electronics leads with 38% share', 'Fashion growing fastest at 45% YoY']);
+      expect(brief.next_steps).toEqual(['Consider expanding electronics inventory']);
+      expect(brief._analysisType).toBe('Revenue Analysis');
+      expect(brief._dataSource).toBe('sales_2024.csv');
+    });
+
+    it('returns null for non-object input', () => {
+      expect(normalizeAnalysisResultToBrief(null)).toBeNull();
+      expect(normalizeAnalysisResultToBrief('string')).toBeNull();
+    });
+  });
+
+  describe('normalizeAnalysisInsightToBrief', () => {
+    it('converts AnalysisInsightCard payload to brief shape', () => {
+      const payload = {
+        sections: {
+          executive_summary: 'Revenue grew strongly. Driven by Q4 expansion.',
+          key_findings: ['Strong seasonal pattern', 'Customer retention improved'],
+          risk_alerts: ['Supply chain delays in Asia'],
+          recommendations: ['Expand warehouse capacity', 'Diversify suppliers'],
+          data_sources: ['sales_2024.csv', 'inventory_q4.xlsx'],
+        },
+        deepDives: [
+          { id: 'dd1', label: 'Deep dive into Q4', query: 'Analyze Q4 trends' },
+        ],
+      };
+      const brief = normalizeAnalysisInsightToBrief(payload);
+      expect(brief.headline).toBe('Revenue grew strongly.');
+      expect(brief.summary).toBe('Revenue grew strongly. Driven by Q4 expansion.');
+      expect(brief.key_findings).toEqual(['Strong seasonal pattern', 'Customer retention improved']);
+      expect(brief.caveats).toEqual(['Supply chain delays in Asia']);
+      expect(brief.next_steps).toEqual(['Expand warehouse capacity', 'Diversify suppliers']);
+      expect(brief._deepDives).toHaveLength(1);
+      expect(brief._deepDives[0].label).toBe('Deep dive into Q4');
+    });
+
+    it('handles markdown string sections by splitting on double newlines', () => {
+      const payload = {
+        sections: {
+          key_findings: 'Finding one\n\nFinding two\n\nFinding three',
+        },
+      };
+      const brief = normalizeAnalysisInsightToBrief(payload);
+      expect(brief.key_findings).toEqual(['Finding one', 'Finding two', 'Finding three']);
+    });
+
+    it('returns null for non-object input', () => {
+      expect(normalizeAnalysisInsightToBrief(null)).toBeNull();
+    });
+  });
+
+  describe('detectPeriodCountMismatch — currency pill false positive', () => {
+    it('does not flag currency pill values as period count claims', () => {
+      const qa = computeDeterministicQa({
+        userMessage: 'Show 2017 monthly revenue trend.',
+        answerContract: {
+          task_type: 'trend',
+          required_dimensions: ['revenue'],
+          required_outputs: ['chart', 'table'],
+          brevity: 'analysis',
+        },
+        brief: {
+          headline: '2017 revenue peaked at R$1,003,862 in November.',
+          summary: 'Revenue grew throughout 2017 with a spike in November.',
+          metric_pills: [
+            { label: '最高單月營收', value: 'R$1,003,862.14', source: 'Dataset A' },
+            { label: '最大月增', value: 'R$343,682.52', source: 'Dataset A' },
+            { label: '有資料月份', value: '12', source: 'Dataset A' },
+          ],
+          key_findings: ['November had the highest revenue.'],
+          caveats: ['Using order_items.price as proxy.'],
+          tables: [],
+          charts: [],
+        },
+        toolCalls: [
+          {
+            name: 'query_sap_data',
+            result: {
+              success: true,
+              rows: Array.from({ length: 12 }, (_, i) => ({
+                month: `2017-${String(i + 1).padStart(2, '0')}`,
+                revenue: 100000 + i * 50000,
+              })),
+            },
+          },
+        ],
+      });
+      const periodIssues = (qa.issues || []).filter((i) => /claims.*periods/i.test(i));
+      expect(periodIssues).toHaveLength(0);
     });
   });
 });

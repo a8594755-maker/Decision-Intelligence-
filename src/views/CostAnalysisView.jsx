@@ -1143,7 +1143,7 @@ Please provide in Chinese (Traditional):
             <Card>
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-lg font-semibold flex items-center gap-2">
-                  <Target className="w-5 h-5 text-indigo-600" />
+                  <Target className="w-5 h-5 text-[var(--brand-600)]" />
                   Supplier Spend Concentration
                 </h3>
                 <Badge type={
@@ -1225,7 +1225,7 @@ Please provide in Chinese (Traditional):
                           <div className="font-medium">{supp.supplier_name}</div>
                           <div className="text-xs text-slate-500">{supp.supplier_code}</div>
                         </td>
-                        <td className="px-4 py-2 text-right font-semibold text-indigo-600">
+                        <td className="px-4 py-2 text-right font-semibold text-[var(--brand-600)]">
                           ${supp.totalSpend.toLocaleString('en-US', { maximumFractionDigits: 0 })}
                         </td>
                         <td className="px-4 py-2 text-right">{supp.spendShare.toFixed(1)}%</td>

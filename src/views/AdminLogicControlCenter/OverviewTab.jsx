@@ -106,7 +106,7 @@ export default function OverviewTab({
             {canEdit && (
               <button
                 onClick={onCreateDraft}
-                className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700"
+                className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-[var(--brand-600)] hover:bg-[var(--brand-700)]"
               >
                 Create First Version
               </button>
@@ -134,7 +134,7 @@ export default function OverviewTab({
               </p>
 
               {Object.entries(changesBySection).map(([section, changes]) => (
-                <div key={section} className="border-l-4 border-indigo-400 pl-4">
+                <div key={section} className="border-l-4 border-[var(--brand-500)] pl-4">
                   <h4 className="text-sm font-medium text-gray-900 capitalize mb-2">
                     {section}
                   </h4>
@@ -185,7 +185,7 @@ export default function OverviewTab({
               </div>
               <button
                 onClick={onCreateDraft}
-                className="text-sm text-indigo-600 hover:text-indigo-500 font-medium"
+                className="text-sm text-[var(--brand-600)] hover:text-[var(--brand-600)] font-medium"
               >
                 Go to Sandbox →
               </button>

@@ -99,7 +99,7 @@ function TemplateForm({ initial, onSave, onCancel, saving }) {
               onClick={() => toggleCapability(cap)}
               className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
                 form.allowed_capabilities.includes(cap)
-                  ? 'bg-indigo-600 text-white'
+                  ? 'bg-[var(--brand-600)] text-white'
                   : 'border hover:bg-[var(--surface-subtle)]'
               }`}
               style={!form.allowed_capabilities.includes(cap) ? { borderColor: 'var(--border-default)', color: 'var(--text-secondary)' } : {}}
@@ -141,7 +141,7 @@ function TemplateForm({ initial, onSave, onCancel, saving }) {
         <button
           onClick={() => onSave(form)}
           disabled={saving || !form.name || (isNew && !form.id)}
-          className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+          className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium bg-[var(--brand-600)] text-white hover:bg-[var(--brand-700)] disabled:opacity-50 transition-colors"
         >
           <Save className="w-3.5 h-3.5" />
           {saving ? 'Saving...' : 'Save'}
@@ -169,8 +169,8 @@ function TemplateCard({ template, onEdit, onDelete }) {
     <Card variant="elevated" className="p-5 flex flex-col gap-3">
       <div className="flex items-start justify-between">
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-full bg-indigo-100 dark:bg-indigo-900/30 flex items-center justify-center">
-            <Bot className="w-4.5 h-4.5 text-indigo-600 dark:text-indigo-400" />
+          <div className="w-9 h-9 rounded-full bg-[var(--accent-active)] flex items-center justify-center">
+            <Bot className="w-4.5 h-4.5 text-[var(--brand-600)]" />
           </div>
           <div>
             <div className="flex items-center gap-2">
@@ -179,7 +179,7 @@ function TemplateCard({ template, onEdit, onDelete }) {
                 <span className="px-1.5 py-0.5 text-[9px] rounded bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20 font-medium">DB</span>
               )}
               {!isDB && (
-                <span className="px-1.5 py-0.5 text-[9px] rounded bg-slate-100 text-slate-500 dark:bg-slate-800 font-medium">Built-in</span>
+                <span className="px-1.5 py-0.5 text-[9px] rounded bg-[var(--surface-subtle)] font-medium" style={{ color: 'var(--text-muted)' }}>Built-in</span>
               )}
             </div>
             <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{template.id}</p>
@@ -204,7 +204,7 @@ function TemplateCard({ template, onEdit, onDelete }) {
       {/* Capabilities */}
       <div className="flex flex-wrap gap-1.5">
         {caps.map(cap => (
-          <span key={cap} className="px-2 py-0.5 text-[10px] rounded-full bg-indigo-50 text-indigo-600 dark:bg-indigo-900/20 font-medium">
+          <span key={cap} className="px-2 py-0.5 text-[10px] rounded-full bg-[var(--accent-active)] text-[var(--brand-600)] font-medium">
             {cap}
           </span>
         ))}
@@ -296,17 +296,17 @@ export default function WorkerTemplatesPage() {
         style={{ backgroundColor: 'var(--surface-card)', borderColor: 'var(--border-default)' }}
       >
         <div className="flex items-center gap-2.5">
-          <Bot className="w-5 h-5 text-indigo-600" />
+          <Bot className="w-5 h-5 text-[var(--brand-600)]" />
           <span className="font-semibold text-sm" style={{ color: 'var(--text-primary)' }}>Worker Templates</span>
           {templates.length > 0 && (
-            <span className="text-xs px-1.5 py-0.5 rounded-full bg-indigo-50 text-indigo-600 dark:bg-indigo-900/20">
+            <span className="text-xs px-1.5 py-0.5 rounded-full bg-[var(--accent-active)] text-[var(--brand-600)]">
               {templates.length}
             </span>
           )}
         </div>
         <button
           onClick={() => setEditing('new')}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-indigo-600 text-white hover:bg-indigo-700 transition-colors"
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-[var(--brand-600)] text-white hover:bg-[var(--brand-700)] transition-colors"
         >
           <Plus className="w-3.5 h-3.5" />
           New Template
@@ -317,7 +317,7 @@ export default function WorkerTemplatesPage() {
       <div className="flex-1 overflow-y-auto p-6">
         {loading ? (
           <div className="flex items-center justify-center h-32">
-            <div className="w-6 h-6 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
+            <div className="w-6 h-6 border-2 border-[var(--brand-600)] border-t-transparent rounded-full animate-spin" />
           </div>
         ) : (
           <div className="max-w-3xl space-y-4">
@@ -346,7 +346,7 @@ export default function WorkerTemplatesPage() {
 
             {templates.length === 0 && !editing && (
               <div className="flex flex-col items-center justify-center h-48 gap-3">
-                <Bot className="w-10 h-10 text-indigo-300" />
+                <Bot className="w-10 h-10 text-[var(--brand-500)]" />
                 <p className="text-sm" style={{ color: 'var(--text-muted)' }}>No templates found.</p>
               </div>
             )}

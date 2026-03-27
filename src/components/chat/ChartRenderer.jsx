@@ -28,11 +28,18 @@ import { ChevronDown } from 'lucide-react';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
+// Chart palettes — read from CSS variables at render time for dark mode support
+function getCssVar(name) {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || name;
+}
+function getChartPalette() {
+  return Array.from({ length: 8 }, (_, i) => getCssVar(`--chart-${i + 1}`));
+}
 const CHART_PALETTES = {
-  default: ['#0d9488', '#6366f1', '#2563eb', '#d97706', '#dc2626', '#7c3aed', '#db2777', '#0891b2', '#059669', '#ca8a04'],
+  get default() { return getChartPalette(); },
   diverging: ['#059669', '#dc2626'],
   sequential: ['#ccfbf1', '#99f6e4', '#5eead4', '#2dd4bf', '#14b8a6', '#0d9488'],
-  categorical: ['#0d9488', '#dc2626', '#059669', '#d97706', '#7c3aed', '#db2777', '#6366f1', '#ca8a04'],
+  get categorical() { return getChartPalette(); },
 };
 
 // Default palette — backward-compatible export

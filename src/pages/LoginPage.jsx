@@ -27,7 +27,7 @@ export default function LoginPage() {
   };
 
   const inputCls =
-    'w-full px-4 py-2.5 rounded-lg bg-[var(--surface-subtle)] border border-[var(--border-default)] focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 outline-none transition-all text-[var(--text-primary)]';
+    'w-full px-4 py-2.5 rounded-lg bg-[var(--surface-subtle)] border border-[var(--border-default)] focus:border-[var(--brand-500)] focus:ring-2 focus:ring-[var(--brand-500)]/20 outline-none transition-all text-[var(--text-primary)]';
 
   return (
     <div className="min-h-screen flex">
@@ -49,13 +49,13 @@ export default function LoginPage() {
           <h2 className="text-4xl font-bold text-white leading-tight mb-4">
             Make smarter calls,<br />faster.
           </h2>
-          <p className="text-indigo-200 text-lg leading-relaxed">
+          <p className="text-teal-200 text-lg leading-relaxed">
             Supply-chain risk doesn't wait.<br />
             Decision Intelligence keeps you one step ahead.
           </p>
         </div>
 
-        <p className="text-indigo-300/50 text-sm">&copy; 2026 Decision-Intelligence</p>
+        <p className="text-teal-300/50 text-sm">&copy; 2026 Decision-Intelligence</p>
       </div>
 
       {/* ── Right: form ── */}
@@ -66,7 +66,7 @@ export default function LoginPage() {
         <div className="w-full max-w-sm">
           {/* Mobile logo (hidden >= lg) */}
           <div className="flex items-center gap-2.5 mb-10 lg:hidden">
-            <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center">
+            <div className="w-8 h-8 bg-[var(--brand-600)] rounded-lg flex items-center justify-center">
               <Activity className="w-4.5 h-4.5 text-white" />
             </div>
             <span className="font-bold text-lg tracking-tight" style={{ color: 'var(--text-primary)' }}>
@@ -130,7 +130,7 @@ export default function LoginPage() {
             <button
               type="submit"
               disabled={submitting}
-              className="w-full bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white py-2.5 rounded-lg font-medium transition-all shadow-[0_2px_8px_rgba(79,70,229,0.4)] disabled:opacity-50"
+              className="w-full bg-[var(--brand-600)] hover:bg-[var(--brand-700)] active:bg-[var(--brand-700)] text-white py-2.5 rounded-lg font-medium transition-all shadow-[0_2px_8px_rgba(var(--brand-shadow,79,70,229),0.4)] disabled:opacity-50"
             >
               {submitting ? 'Processing...' : 'Log In'}
             </button>

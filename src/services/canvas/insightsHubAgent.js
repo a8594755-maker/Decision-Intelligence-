@@ -185,14 +185,46 @@ const PLANNER_PROMPT = `You are a DATA ANALYSIS PLANNER. Plan as many analysis c
 - 2-3 queries per card max
 - Each card must analyze a DIFFERENT dimension — no duplicates`;
 
-async function planCards({ provider, model, onProgress, signal }) {
+function buildHealthCheckPrompt(healthCheck) {
+  const diagnostics = healthCheck?.diagnostics;
+  if (!diagnostics?.length) return '';
+
+  const lines = diagnostics.map((d, i) => {
+    const a = d.analysis || {};
+    const sevTag = `[${(a.severity || 'low').toUpperCase()}]`;
+    let detail = '';
+    if (a.z_score != null) detail = `Z-score: ${a.z_score}, mean: ${a.mean}, latest: ${a.latest}`;
+    else if (a.top3_share != null) detail = `Top-3 share: ${a.top3_share}%`;
+    else if (a.value != null) detail = `Value: ${a.value}`;
+    else detail = Object.entries(a).filter(([k]) => k !== 'severity').map(([k, v]) => `${k}: ${v}`).join(', ');
+    return `${i + 1}. ${sevTag} ${d.title}\n   ${detail}\n   Source: ${d.sql} (${d.row_count} rows)`;
+  });
+
+  return `\n## Health Check Results (verified, deterministic)
+
+The system has run diagnostic queries and computed the following:
+
+${lines.join('\n\n')}
+
+RULES:
+- Your dashboard MUST include cards that address the HIGH and CRITICAL findings above
+- When referencing a finding, you MUST cite the exact computed value
+- Do NOT recompute these metrics — use the values above as ground truth
+- Investigate ROOT CAUSES, not just restate the numbers
+- For each finding, suggest a concrete action the user can take
+- You MAY also include general overview cards`;
+}
+
+async function planCards({ provider, model, onProgress, signal, healthCheck }) {
   if (signal?.aborted) return [];
   onProgress?.('Planning analysis...');
 
   const enriched = buildEnrichedSchemaPrompt();
+  const healthBlock = buildHealthCheckPrompt(healthCheck);
+  const hasFindings = healthCheck?.diagnostics?.some(d => d.analysis?.severity !== 'low');
   const messages = [
     { role: 'system', content: PLANNER_PROMPT },
-    { role: 'user', content: `Schema:\n${enriched}\n\nPlan a comprehensive dashboard. Include as many cards as the data supports (up to ${MAX_CARDS}).` },
+    { role: 'user', content: `Schema:\n${enriched}${healthBlock}\n\nPlan a comprehensive dashboard. Include as many cards as the data supports (up to ${MAX_CARDS}).${hasFindings ? ' Prioritize cards that investigate the health check findings above.' : ''}` },
   ];
 
   console.info('[planner] Requesting card plan...');
@@ -421,13 +453,105 @@ async function assembleLayout(dataCards, { provider, model, signal }) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// PHASE 5: REVIEWER (Kimi K2.5) — kept for future use
+// PHASE 5: REVIEWER — cross-check dashboard claims vs ground truth
 // ═══════════════════════════════════════════════════════════════════════════════
 
-export async function runReviewerAgent(html, { provider = 'kimi', model = 'kimi-k2.5', onProgress, signal } = {}) {
-  if (!html || html.length < 200) return null;
-  // ... reviewer implementation unchanged, will wire in later
-  return null;
+/**
+ * Extract flat metric list from data cards for audit comparison.
+ */
+export function extractDashboardMetrics(dataCards) {
+  const metrics = [];
+  for (const card of (dataCards || [])) {
+    for (const m of (card.metrics || [])) {
+      if (m?.label && m?.value != null) {
+        metrics.push({ name: m.label, value: String(m.value), unit: m.unit || '', cardId: card.id, cardTitle: card.title });
+      }
+    }
+  }
+  return metrics;
+}
+
+/**
+ * Compare two metric values with tolerance for rounding/unit differences.
+ * Returns 'match' | 'mismatch' | 'cannot_compare'.
+ */
+export function compareMetricValues(dashVal, truthVal, tolerance = 0.05) {
+  const parseNum = (v) => {
+    if (typeof v === 'number') return v;
+    const s = String(v).replace(/[R$,%\s]/g, '').replace(/,/g, '');
+    // Handle M/K suffixes
+    if (/[\d.]+M$/i.test(s)) return parseFloat(s) * 1e6;
+    if (/[\d.]+K$/i.test(s)) return parseFloat(s) * 1e3;
+    const n = parseFloat(s);
+    return Number.isFinite(n) ? n : NaN;
+  };
+  const a = parseNum(dashVal);
+  const b = parseNum(truthVal);
+  if (isNaN(a) || isNaN(b)) return 'cannot_compare';
+  if (b === 0) return a === 0 ? 'match' : 'mismatch';
+  return Math.abs(a - b) / Math.abs(b) <= tolerance ? 'match' : 'mismatch';
+}
+
+const REVIEWER_PROMPT = `You are a DATA AUDITOR. Your job is to cross-check a dashboard's claims against pre-computed ground truth values.
+
+## Rules
+- For each metric in the dashboard, check if a corresponding ground truth value exists.
+- A dashboard value matches ground truth if the relative difference is < 5% (rounding, unit formatting differences are acceptable).
+- Flag actual discrepancies (wrong number, wrong unit, wrong direction).
+- Flag claims that have no ground truth backing ("unverified").
+- Do NOT invent corrections — if you cannot verify a claim, mark it as "unverified", not "incorrect".
+
+## Output format (strict JSON, no markdown)
+{
+  "corrections": [{ "metric": "...", "dashboard_value": "...", "ground_truth_value": "...", "fix": "..." }],
+  "warnings": [{ "metric": "...", "issue": "..." }],
+  "passed": ["metric_name_1", "metric_name_2"]
+}
+
+If everything looks correct, return: { "corrections": [], "warnings": [], "passed": ["all_metrics"] }`;
+
+export async function runReviewerAgent(content, { provider = 'kimi', model = 'kimi-k2.5', onProgress, signal } = {}) {
+  if (!content || content.length < 100) return null;
+
+  try {
+    onProgress?.('Auditing dashboard accuracy...');
+    const msg = await callLLM([
+      { role: 'system', content: REVIEWER_PROMPT },
+      { role: 'user', content },
+    ], { provider, model, maxTokens: 2048, temperature: 0.1 });
+
+    if (!msg?.content) return null;
+
+    // Parse reviewer JSON (reuse robust parsing logic)
+    const text = msg.content;
+    let parsed = null;
+    // Direct parse
+    try { parsed = JSON.parse(text); } catch { /* */ }
+    // Code fence
+    if (!parsed) {
+      const fence = text.match(/```(?:json)?\s*\n?([\s\S]*?)```/);
+      if (fence) try { parsed = JSON.parse(fence[1].trim()); } catch { /* */ }
+    }
+    // Regex extract
+    if (!parsed) {
+      const m = text.match(/\{[\s\S]*?"corrections"\s*:\s*\[[\s\S]*?\][\s\S]*?\}/);
+      if (m) try { parsed = JSON.parse(m[0]); } catch { /* */ }
+    }
+
+    if (!parsed || !Array.isArray(parsed.corrections)) {
+      console.warn('[reviewer] Could not parse reviewer response');
+      return null;
+    }
+
+    return {
+      corrections: parsed.corrections || [],
+      warnings: parsed.warnings || [],
+      passed: parsed.passed || [],
+    };
+  } catch (err) {
+    console.warn('[reviewer] Audit failed:', err?.message);
+    return null;
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -613,12 +737,12 @@ function buildBlockLayout(dataCards, layout) {
 // MAIN ORCHESTRATOR
 // ═══════════════════════════════════════════════════════════════════════════════
 
-export async function runInsightsAgent({ provider, model, onProgress, userId, signal } = {}) {
+export async function runInsightsAgent({ provider, model, onProgress, userId, signal, healthCheck } = {}) {
   const t0 = Date.now();
 
-  // ── Phase 1: Plan 4 cards ──
+  // ── Phase 1: Plan cards (with health check results if available) ──
   onProgress?.('Phase 1: Planning analysis...');
-  const specs = await planCards({ provider, model, onProgress, signal });
+  const specs = await planCards({ provider, model, onProgress, signal, healthCheck });
   if (!specs.length) { console.warn('[insights] No cards planned'); return null; }
   console.info(`[insights] Phase 1 done: ${specs.length} cards planned (${((Date.now() - t0) / 1000).toFixed(0)}s)`);
 

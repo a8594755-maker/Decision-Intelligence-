@@ -402,6 +402,25 @@ describe('detectBusinessContext', () => {
     expect(detectBusinessContext(null)).toHaveLength(0);
     expect(detectBusinessContext(undefined)).toHaveLength(0);
   });
+
+  it('does not flag pre-aggregated when SQL has GROUP BY', () => {
+    const rows = [
+      { month: '2017-01', max_monthly_revenue: 120098, min_monthly_revenue: 50000, count_orders: 787 },
+      { month: '2017-02', max_monthly_revenue: 244959, min_monthly_revenue: 80000, count_orders: 1718 },
+    ];
+    const sql = 'SELECT month, MAX(revenue) as max_monthly_revenue, MIN(revenue) as min_monthly_revenue, COUNT(*) as count_orders FROM orders GROUP BY month';
+    const clues = detectBusinessContext(rows, sql);
+    expect(clues.some((c) => c.id === 'pre_aggregated')).toBe(false);
+  });
+
+  it('still flags pre-aggregated when SQL has no GROUP BY', () => {
+    const rows = [
+      { category: 'A', avg_demand: 100, sum_revenue: 50000, count_orders: 200 },
+    ];
+    const sql = 'SELECT * FROM pre_aggregated_table';
+    const clues = detectBusinessContext(rows, sql);
+    expect(clues.some((c) => c.id === 'pre_aggregated')).toBe(true);
+  });
 });
 
 // ── validateQueryResultData (end-to-end) ────────────────────────────────────

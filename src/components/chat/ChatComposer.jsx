@@ -4,10 +4,10 @@ import { CHAT_ATTACHMENT_ACCEPT, formatAttachmentSize } from '../../services/cha
 import DataSourcePicker from './DataSourcePicker';
 
 const STATUS_TONE_CLASSES = {
-  neutral: 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300',
-  info: 'bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300',
-  success: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300',
-  warning: 'bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-300',
+  neutral: 'bg-[var(--surface-subtle)] text-[var(--text-secondary)]',
+  info: 'bg-[var(--status-info-bg)] text-[var(--status-info-text)]',
+  success: 'bg-[var(--status-success-bg)] text-[var(--status-success-text)]',
+  warning: 'bg-[var(--status-warning-bg)] text-[var(--status-warning-text)]',
 };
 
 const SLASH_COMMANDS = [
@@ -63,9 +63,8 @@ function ChatComposer({
   const slashMatches = useMemo(() => {
     const trimmed = (input || '').trim();
     if (!trimmed.startsWith('/')) return [];
-    // Only match if input is just the command (no args yet, or still typing command portion)
     const cmdPart = trimmed.split(/\s/)[0].toLowerCase();
-    if (cmdPart === '/') return SLASH_COMMANDS; // show all when just "/"
+    if (cmdPart === '/') return SLASH_COMMANDS;
     return SLASH_COMMANDS.filter(s => s.cmd.toLowerCase().startsWith(cmdPart) && s.cmd.toLowerCase() !== cmdPart);
   }, [input]);
 
@@ -91,12 +90,11 @@ function ChatComposer({
         key={attachment.id}
         className={`flex min-w-0 items-center gap-3 rounded-2xl border px-3 py-2 ${
           isAIEmployeeVariant
-            ? 'bg-white/96 shadow-sm dark:bg-slate-900/90'
-            : 'bg-[var(--surface-base)]/60'
+            ? 'bg-[var(--surface-card)] shadow-sm border-[var(--border-default)]'
+            : 'bg-[var(--surface-base)] border-[var(--border-default)]'
         }`}
-        style={{ borderColor: 'rgba(148, 163, 184, 0.28)' }}
       >
-        <div className={`flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-2xl ${isSpreadsheet ? 'bg-emerald-500 text-white' : 'bg-blue-500 text-white'}`}>
+        <div className={`flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-2xl ${isSpreadsheet ? 'bg-[var(--status-success)] text-white' : 'bg-[var(--cat-plan)] text-white'}`}>
           <Icon className="h-4.5 w-4.5" />
         </div>
         <div className="min-w-0 flex-1">
@@ -109,7 +107,7 @@ function ChatComposer({
         </div>
         <button
           type="button"
-          className="rounded-full p-1 text-[var(--text-muted)] transition-colors hover:bg-[var(--accent-hover)] hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+          className="rounded-full p-1 text-[var(--text-muted)] transition-colors hover:bg-[var(--accent-hover)] hover:text-[var(--text-primary)] cursor-pointer"
           onClick={() => onRemoveAttachment?.(attachment.id)}
           aria-label={`Remove ${attachment.file_name}`}
         >
@@ -155,10 +153,10 @@ function ChatComposer({
       className={`sticky bottom-0 z-10 transition-colors ${
         isAIEmployeeVariant
           ? `px-4 pb-4 pt-2 sm:px-6 sm:pb-6 ${
-              isDragOver ? 'bg-blue-50/70 dark:bg-blue-950/20' : 'bg-transparent'
+              isDragOver ? 'bg-[var(--brand-50)]' : 'bg-transparent'
             }`
-          : `border-t border-[var(--border-default)] bg-[var(--surface-card)] px-4 py-3 backdrop-blur dark:border-[var(--border-default)] dark:bg-[var(--surface-card)] ${
-              isDragOver ? 'bg-blue-50 dark:bg-blue-950/40' : ''
+          : `border-t border-[var(--border-default)] bg-[var(--surface-card)] px-4 py-3 backdrop-blur ${
+              isDragOver ? 'bg-[var(--brand-50)]' : ''
             }`
       }`}
       onDragEnter={onDragEnter}
@@ -203,10 +201,10 @@ function ChatComposer({
                 type="button"
                 onClick={onToggleDeepVerify}
                 disabled={isTyping || isUploading}
-                className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] font-medium transition-colors disabled:opacity-50 ${
+                className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] font-medium transition-colors disabled:opacity-50 cursor-pointer ${
                   deepVerifyEnabled
-                    ? 'border-blue-300 bg-blue-50 text-blue-700 dark:border-blue-700 dark:bg-blue-950/40 dark:text-blue-300'
-                    : 'border-[var(--border-default)] bg-[var(--surface-card)] text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300'
+                    ? 'border-[var(--brand-500)] bg-[var(--brand-50)] text-[var(--brand-700)]'
+                    : 'border-[var(--border-default)] bg-[var(--surface-card)] text-[var(--text-secondary)]'
                 }`}
                 title={deepVerifyEnabled ? 'Deep Verify — always runs optimizer agent for quality assurance' : 'Auto — optimizer runs only when QA detects issues'}
               >
@@ -219,15 +217,15 @@ function ChatComposer({
 
         {/* Slash command autocomplete menu */}
         {showSlashMenu && (
-          <div className="mb-2 overflow-hidden rounded-xl border border-[var(--border-default)] bg-[var(--surface-card)] shadow-lg dark:border-slate-700 dark:bg-slate-800">
+          <div className="mb-2 overflow-hidden rounded-xl border border-[var(--border-default)] bg-[var(--surface-card)] shadow-[var(--shadow-elevated)]">
             {slashMatches.map((s, i) => (
               <button
                 key={s.cmd}
                 type="button"
-                className={`flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm transition-colors ${
+                className={`flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm transition-colors cursor-pointer ${
                   i === selectedMatchIdx
-                    ? 'bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300'
-                    : 'text-slate-700 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-700/50'
+                    ? 'bg-[var(--brand-50)] text-[var(--brand-700)]'
+                    : 'text-[var(--text-primary)] hover:bg-[var(--surface-subtle)]'
                 }`}
                 onMouseEnter={() => setSelectedIdx(i)}
                 onMouseDown={(e) => { e.preventDefault(); handleSlashSelect(s.cmd); setSelectedIdx(0); }}
@@ -242,8 +240,8 @@ function ChatComposer({
         <div
           className={`relative transition-shadow ${
             isAIEmployeeVariant
-              ? 'rounded-[28px] border border-black/8 bg-white/94 px-1 py-1 shadow-[0_24px_60px_rgba(15,23,42,0.08)] backdrop-blur dark:border-white/10 dark:bg-[#171717]/92'
-              : 'rounded-2xl border border-[var(--border-default)] bg-[var(--surface-card)] shadow-sm focus-within:ring-2 focus-within:ring-blue-500/40 dark:border-slate-700 dark:bg-slate-800'
+              ? 'rounded-[28px] border border-[var(--border-default)] bg-[var(--surface-card)] px-1 py-1 shadow-[var(--shadow-elevated)] backdrop-blur'
+              : 'rounded-2xl border border-[var(--border-default)] bg-[var(--surface-card)] shadow-sm focus-within:ring-2 focus-within:ring-[var(--focus-ring)]/40'
           }`}
         >
           {pendingAttachments.length > 0 ? (
@@ -257,7 +255,7 @@ function ChatComposer({
           }`}>
             <button
               type="button"
-              className={`p-2 text-[var(--text-muted)] transition-colors disabled:opacity-50 ${
+              className={`p-2 text-[var(--text-muted)] transition-colors disabled:opacity-50 cursor-pointer ${
                 isAIEmployeeVariant
                   ? 'rounded-full hover:bg-[var(--accent-hover)]'
                   : 'rounded-lg hover:bg-[var(--accent-hover)]'
@@ -266,6 +264,7 @@ function ChatComposer({
               disabled={isUploading}
               data-testid="attach-button"
               title="Attach files"
+              aria-label="Attach files"
             >
               {isUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Paperclip className="w-4 h-4" />}
             </button>
@@ -279,9 +278,9 @@ function ChatComposer({
             onKeyDown={handleKeyDownWrapper}
             disabled={isTyping || isUploading}
             placeholder={isDragOver ? 'Drop files to attach...' : isAIEmployeeVariant ? 'Message your worker' : 'Message Decision-Intelligence'}
-            className={`w-full resize-none overflow-hidden bg-transparent text-sm outline-none ${
+            className={`w-full resize-none overflow-hidden bg-transparent text-sm outline-none text-[var(--text-primary)] placeholder:text-[var(--text-muted)] ${
               isAIEmployeeVariant
-                ? 'rounded-[26px] pl-[72px] pr-16 py-4 text-[15px] leading-6 text-[var(--text-primary)] placeholder:text-[var(--text-muted)]'
+                ? 'rounded-[26px] pl-[72px] pr-16 py-4 text-[15px] leading-6'
                 : 'pl-12 rounded-2xl pr-12 py-3'
             }`}
             style={{ minHeight: '52px', maxHeight: '180px' }}
@@ -291,12 +290,13 @@ function ChatComposer({
             <button
               type="button"
               onClick={onStopGeneration}
-              className={`absolute right-2.5 p-2 text-white transition-colors ${
+              className={`absolute right-2.5 p-2 text-white transition-colors cursor-pointer ${
                 isAIEmployeeVariant
-                  ? 'bottom-2.5 rounded-full bg-red-600 hover:bg-red-700 dark:bg-red-600 dark:hover:bg-red-700'
-                  : 'top-2.5 rounded-lg bg-red-600 hover:bg-red-700'
+                  ? 'bottom-2.5 rounded-full bg-[var(--status-danger)] hover:brightness-90'
+                  : 'top-2.5 rounded-lg bg-[var(--status-danger)] hover:brightness-90'
               }`}
               title="Stop generation (Esc)"
+              aria-label="Stop generation"
             >
               <Square className="w-4 h-4 fill-current" />
             </button>
@@ -304,12 +304,13 @@ function ChatComposer({
             <button
               type="submit"
               disabled={isTyping || isUploading || !canSubmit}
-              className={`absolute right-2.5 p-2 text-white transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+              className={`absolute right-2.5 p-2 text-white transition-colors disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer ${
                 isAIEmployeeVariant
-                  ? 'bottom-2.5 rounded-full bg-slate-900 hover:bg-slate-700 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-200'
-                  : 'top-2.5 rounded-lg bg-blue-600 hover:bg-blue-700'
+                  ? 'bottom-2.5 rounded-full bg-[var(--brand-600)] hover:bg-[var(--brand-700)]'
+                  : 'top-2.5 rounded-lg bg-[var(--brand-600)] hover:bg-[var(--brand-700)]'
               }`}
               title="Send"
+              aria-label="Send message"
             >
               <Send className="w-4 h-4" />
             </button>
@@ -320,16 +321,16 @@ function ChatComposer({
       {isAIEmployeeVariant ? null : (
         <div className="mx-auto mt-2 flex max-w-4xl items-center gap-2 text-[11px] text-[var(--text-muted)]">
           {isUploading ? (
-            <span className="inline-flex items-center gap-1 text-blue-600 dark:text-blue-300">
+            <span className="inline-flex items-center gap-1 text-[var(--status-info)]">
               <Loader2 className="w-3 h-3 animate-spin" />
               {uploadStatusText || 'Processing...'}
             </span>
           ) : (
             <span>Attach spreadsheets or documents (max 50MB total)</span>
           )}
-          <span className="text-slate-300">•</span>
+          <span className="text-[var(--border-strong)]">·</span>
           <span>Commands: /think, /forecast, /plan, /workflowA, /ralph-loop, /reuse off, /retrain</span>
-          <span className="text-slate-300">•</span>
+          <span className="text-[var(--border-strong)]">·</span>
           <span>Enter to send, Shift+Enter for newline</span>
         </div>
       )}

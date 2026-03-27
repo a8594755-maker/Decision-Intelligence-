@@ -10,7 +10,7 @@ function ChatSkeleton() {
     <div className="p-6 space-y-4 animate-pulse">
       {Array.from({ length: 4 }).map((_, idx) => (
         <div key={idx} className={`flex ${idx % 2 ? 'justify-end' : 'justify-start'}`}>
-          <div className={`h-16 rounded-2xl ${idx % 2 ? 'w-64 bg-blue-100/70' : 'w-80 bg-[var(--surface-subtle)]'}`} />
+          <div className={`h-16 rounded-2xl ${idx % 2 ? 'w-64 bg-[var(--brand-50)]' : 'w-80 bg-[var(--surface-subtle)]'}`} />
         </div>
       ))}
     </div>
@@ -21,6 +21,7 @@ function ChatThread({
   messages,
   isTyping,
   streamingContent,
+  streamingToolCalls = [],
   thinkingSteps,
   formatTime,
   renderSpecialMessage,
@@ -29,6 +30,8 @@ function ChatThread({
   showInitialEmptyState,
   isLoading,
   variant = 'default',
+  thinkingPanelActive = false,
+  onOpenThinkingPanel,
 }) {
   const scrollRef = useRef(null);
   const [isPinnedToBottom, setIsPinnedToBottom] = useState(true);
@@ -83,29 +86,56 @@ function ChatThread({
         ) : (
           <div className={isAIEmployeeVariant ? 'mx-auto w-full max-w-3xl space-y-6' : 'space-y-4'}>
             {hasMessages && messages.map((message, idx) => (
-              <ChatMessageBubble
-                key={`${message.timestamp || idx}_${idx}`}
-                message={message}
-                renderSpecialMessage={renderSpecialMessage}
-                timestampText={message.type ? '' : formatTime(message.timestamp)}
-                variant={variant}
-              />
+              <div key={`${message.timestamp || idx}_${idx}`} data-msg-idx={idx}>
+                <ChatMessageBubble
+                  message={message}
+                  renderSpecialMessage={renderSpecialMessage}
+                  timestampText={message.type ? '' : formatTime(message.timestamp)}
+                  variant={variant}
+                />
+              </div>
             ))}
             {thinkingSteps?.length > 0 && isTyping && (
-              <ThinkingStepsDisplay steps={thinkingSteps} />
+              <ThinkingStepsDisplay
+                steps={thinkingSteps}
+                mode="inline"
+                onOpenPanel={onOpenThinkingPanel}
+              />
             )}
             {isTyping ? (
-              <div className="w-full flex justify-start">
+              <div className="w-full space-y-2">
                 {typingMessage ? (
-                  <ChatMessageBubble
-                    message={typingMessage}
-                    renderSpecialMessage={renderSpecialMessage}
-                    timestampText=""
-                    variant={variant}
-                  />
+                  <div className="flex justify-start">
+                    <ChatMessageBubble
+                      message={typingMessage}
+                      renderSpecialMessage={renderSpecialMessage}
+                      timestampText=""
+                      variant={variant}
+                    />
+                  </div>
                 ) : (
-                  <div className={`${isAIEmployeeVariant ? 'px-1 py-1 text-[var(--text-primary)]' : 'rounded-2xl rounded-bl-md border border-[var(--border-default)] bg-white px-4 py-2.5 shadow-sm dark:border-[var(--border-default)] dark:bg-[var(--surface-card)]'}`}>
+                  <div className="px-0 py-1 text-[var(--text-primary)]">
                     <TypingIndicator />
+                  </div>
+                )}
+                {/* Streaming tool call status bar */}
+                {streamingToolCalls.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 px-1">
+                    {streamingToolCalls.map((tc, i) => (
+                      <span
+                        key={`${tc.name}-${i}`}
+                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium ${
+                          tc.status === 'running'
+                            ? 'bg-[var(--status-info-bg)] text-[var(--status-info-text)] animate-pulse'
+                            : tc.status === 'done'
+                              ? 'bg-[var(--status-success-bg)] text-[var(--status-success-text)]'
+                              : 'bg-[var(--status-danger-bg)] text-[var(--status-danger-text)]'
+                        }`}
+                      >
+                        {tc.status === 'running' ? '⏳' : tc.status === 'done' ? '✅' : '❌'}
+                        {tc.name}
+                      </span>
+                    ))}
                   </div>
                 )}
               </div>

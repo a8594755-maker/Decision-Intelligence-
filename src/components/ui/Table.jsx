@@ -1,7 +1,7 @@
 import React, { useRef } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 
-const ROW_HEIGHT = 44;
+const ROW_HEIGHT = 44; // matches --table-row-height
 const VIRTUALIZE_THRESHOLD = 100;
 
 /**

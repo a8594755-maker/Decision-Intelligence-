@@ -45,7 +45,8 @@ describe('agentResponsePrompt', () => {
     expect(prompt).toContain('choose ONE primary growth basis');
     expect(prompt).toContain('SUBSTITUTE METRIC DISCLOSURE (MANDATORY):');
     expect(prompt).toContain('2016-2018 CAGR is not reliable because 2016 covers only 3 months; using 2017-2018 comparable growth instead.');
-    expect(prompt).toContain('SUMMARY DENSITY RULE:');
+    // SUMMARY DENSITY RULE moved to deterministic enforcer (enforceSummaryDensity)
+    expect(prompt).not.toContain('SUMMARY DENSITY RULE:');
     expect(prompt).toContain('LIMITED COVERAGE RULE:');
     expect(prompt).toContain('"limited annual coverage", "three yearly observations", or "insufficient periods for time-series inference".');
     expect(prompt).toContain('FORMAT DISCIPLINE:');

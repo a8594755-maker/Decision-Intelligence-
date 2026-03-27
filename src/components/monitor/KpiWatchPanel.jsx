@@ -93,7 +93,7 @@ function CreateRuleForm({ onSubmit, onCancel }) {
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
   return (
-    <form onSubmit={handleSubmit} className="border border-indigo-200 dark:border-indigo-800 rounded-lg p-3 bg-indigo-50/50 dark:bg-indigo-950/20 space-y-2">
+    <form onSubmit={handleSubmit} className="border border-[var(--brand-500)] rounded-lg p-3 bg-[var(--accent-active)] space-y-2">
       <div className="grid grid-cols-2 gap-2">
         <label className="block">
           <span className="text-[10px] uppercase tracking-wider text-slate-500">Name</span>
@@ -148,7 +148,7 @@ function CreateRuleForm({ onSubmit, onCancel }) {
         </label>
       </div>
       <div className="flex gap-2 pt-1">
-        <button type="submit" className="px-3 py-1 bg-indigo-600 text-white rounded text-xs font-medium hover:bg-indigo-700">
+        <button type="submit" className="px-3 py-1 bg-[var(--brand-600)] text-white rounded text-xs font-medium hover:bg-[var(--brand-700)]">
           Create Rule
         </button>
         <button type="button" onClick={onCancel} className="px-3 py-1 bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 rounded text-xs font-medium hover:bg-slate-300">
@@ -199,7 +199,7 @@ export default function KpiWatchPanel({
           onClick={() => setActiveTab('rules')}
           className={`flex-1 py-2 text-xs font-medium text-center transition-colors ${
             activeTab === 'rules'
-              ? 'text-indigo-600 border-b-2 border-indigo-600'
+              ? 'text-[var(--brand-600)] border-b-2 border-[var(--brand-600)]'
               : 'text-slate-500 hover:text-slate-700'
           }`}
         >
@@ -224,7 +224,7 @@ export default function KpiWatchPanel({
             {!showCreate && (
               <button
                 onClick={() => setShowCreate(true)}
-                className="flex items-center gap-1.5 px-2 py-1 text-xs text-indigo-600 hover:text-indigo-700 font-medium"
+                className="flex items-center gap-1.5 px-2 py-1 text-xs text-[var(--brand-600)] hover:text-[var(--brand-700)] font-medium"
               >
                 <Plus className="w-3.5 h-3.5" /> Add Watch Rule
               </button>
@@ -252,7 +252,7 @@ export default function KpiWatchPanel({
                   <div className="flex items-center gap-1.5">
                     <button
                       onClick={e => { e.stopPropagation(); onTestRule?.(rule.id); }}
-                      className="p-1 text-slate-400 hover:text-indigo-600" title="Test rule"
+                      className="p-1 text-slate-400 hover:text-[var(--brand-600)]" title="Test rule"
                     >
                       <Play className="w-3 h-3" />
                     </button>

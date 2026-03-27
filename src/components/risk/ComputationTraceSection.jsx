@@ -17,7 +17,7 @@ const ComputationTraceSection = ({ trace }) => {
         onClick={() => setExpanded(!expanded)}
         className="flex items-center gap-2 mb-2 w-full text-left"
       >
-        <HelpCircle className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+        <HelpCircle className="w-4 h-4 text-[var(--brand-600)]" />
         <h4 className="font-semibold text-slate-700 dark:text-slate-300 flex-1">
           How was this computed?
         </h4>
@@ -30,7 +30,7 @@ const ComputationTraceSection = ({ trace }) => {
           {trace.steps.map((step, idx) => (
             <div key={step.label} className="text-xs">
               <div className="flex items-center gap-2 mb-1">
-                <span className="w-5 h-5 flex items-center justify-center rounded-full bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 text-[10px] font-bold">
+                <span className="w-5 h-5 flex items-center justify-center rounded-full bg-[var(--accent-active)] text-[var(--brand-600)] text-[10px] font-bold">
                   {idx + 1}
                 </span>
                 <span className="font-semibold text-slate-700 dark:text-slate-300">{step.label}</span>
@@ -83,7 +83,7 @@ const ComputationTraceSection = ({ trace }) => {
                       {hint.currentState} &rarr; {hint.potentialState}
                     </div>
                     {hint.estimatedImpact && (
-                      <div className="text-indigo-600 dark:text-indigo-400 mt-0.5 font-medium">
+                      <div className="text-[var(--brand-600)] mt-0.5 font-medium">
                         Impact: {hint.estimatedImpact}
                       </div>
                     )}

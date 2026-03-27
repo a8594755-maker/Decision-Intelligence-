@@ -611,14 +611,22 @@ export const invokeAiProxyStream = async (mode, payload = {}, { signal, timeoutM
 
   console.info(`[aiProxy] Stream connected in ${elapsed}ms — reading SSE events...`);
 
+  let idleTimeoutId;
   try {
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
 
+    // Switch to activity-based (idle) timeout: reset on each chunk so long
+    // streams that are actively sending data are never aborted.
+    clearTimeout(timeoutId);
+    idleTimeoutId = setTimeout(() => timeoutController.abort(new Error(`AI proxy stream idle timeout after ${timeoutMs}ms`)), timeoutMs);
+
     while (true) {
       const { done, value } = await reader.read();
+      clearTimeout(idleTimeoutId);
       if (done) break;
+      idleTimeoutId = setTimeout(() => timeoutController.abort(new Error(`AI proxy stream idle timeout after ${timeoutMs}ms`)), timeoutMs);
 
       buffer += decoder.decode(value, { stream: true });
 
@@ -639,7 +647,7 @@ export const invokeAiProxyStream = async (mode, payload = {}, { signal, timeoutM
       }
     }
   } finally {
-    clearTimeout(timeoutId);
+    clearTimeout(idleTimeoutId);
     console.info(`[aiProxy] Stream completed in ${Math.round(performance.now() - t0)}ms`);
   }
 };

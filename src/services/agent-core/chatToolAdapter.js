@@ -12,6 +12,7 @@
 import { BUILTIN_TOOLS } from '../ai-infra/builtinToolCatalog.js';
 import { getToolById, listTools, incrementUsage } from '../ai-infra/toolRegistryService.js';
 import { createScenario } from '../planning/diScenariosService.js';
+import { resolveToolGroups } from './toolGroupRegistry.js';
 
 // ── Convert catalog → LLM tool definitions ──────────────────────────────────
 
@@ -68,7 +69,7 @@ function catalogEntryToToolDef(entry) {
 }
 
 function selectBuiltinTools(opts = {}) {
-  const { categories, toolIds, excludePython = true } = opts;
+  const { categories, toolIds, groups, excludePython = true } = opts;
 
   let tools = BUILTIN_TOOLS;
 
@@ -78,7 +79,11 @@ function selectBuiltinTools(opts = {}) {
   if (categories?.length) {
     tools = tools.filter((t) => categories.includes(t.category));
   }
-  if (toolIds?.length) {
+  // groups: resolve group names to tool IDs, then filter
+  if (Array.isArray(groups) && groups.length > 0) {
+    const groupToolIds = resolveToolGroups(groups);
+    tools = tools.filter((t) => groupToolIds.includes(t.id));
+  } else if (toolIds?.length) {
     tools = tools.filter((t) => toolIds.includes(t.id));
   }
 
@@ -92,13 +97,14 @@ function selectBuiltinTools(opts = {}) {
  * @param {object} [opts]
  * @param {string[]} [opts.categories] - Only include tools from these categories
  * @param {string[]} [opts.toolIds] - Only include these tool IDs
+ * @param {string[]} [opts.groups] - Tool groups from toolGroupRegistry (e.g. ['analysis_core']). Takes precedence over toolIds.
  * @param {boolean}  [opts.excludePython] - Skip Python API tools (default: true)
  * @param {boolean}  [opts.includeRegistered] - Include registered tools (default: true)
  * @returns {Array} OpenAI-format tool definitions
  */
 export function getToolDefinitions(opts = {}) {
-  const { categories, toolIds, excludePython = true, includeRegistered = true } = opts;
-  const tools = selectBuiltinTools({ categories, toolIds, excludePython });
+  const { categories, toolIds, groups, excludePython = true, includeRegistered = true } = opts;
+  const tools = selectBuiltinTools({ categories, toolIds, groups, excludePython });
 
   const defs = tools.map(catalogEntryToToolDef);
 
@@ -116,8 +122,8 @@ export function getToolDefinitions(opts = {}) {
  * This helps the LLM understand what it can do without sending full schemas.
  */
 export function getToolSummaryForPrompt(opts = {}) {
-  const { categories, toolIds, excludePython = true } = opts;
-  const lines = selectBuiltinTools({ categories, toolIds, excludePython })
+  const { categories, toolIds, groups, excludePython = true } = opts;
+  const lines = selectBuiltinTools({ categories, toolIds, groups, excludePython })
     .map((t) => `- ${t.id}: ${t.name} — ${t.description}`);
 
   return [

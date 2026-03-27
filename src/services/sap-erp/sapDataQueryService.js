@@ -52,7 +52,7 @@ export const SAP_TABLE_REGISTRY = {
     description: 'Sales order headers with status and timestamps',
     columns: ['order_id', 'customer_id', 'order_status', 'order_purchase_timestamp', 'order_approved_at', 'order_delivered_carrier_date', 'order_delivered_customer_date', 'order_estimated_delivery_date'],
     columnDescriptions: {
-      order_status: 'Order lifecycle status: delivered, shipped, canceled, unavailable, processing, created, approved, invoiced.',
+      order_status: 'Order lifecycle status: delivered, shipped, canceled, unavailable, processing, created, approved, invoiced. For revenue/demand analysis, consider filtering: WHERE order_status NOT IN (\'canceled\', \'unavailable\').',
       order_purchase_timestamp: 'ISO timestamp string (e.g. "2017-05-22 10:15:46"). NOT a unix epoch. Use ::TIMESTAMP to cast for date functions.',
       order_delivered_customer_date: 'Actual delivery timestamp. Compare with order_estimated_delivery_date: if actual < estimated → EARLY delivery (good). If actual > estimated → LATE delivery (bad).',
       order_estimated_delivery_date: 'Promised delivery timestamp. Delivery variance = estimated - actual. Positive = early (good), negative = late (bad). Early deliveries correlate with HIGHER review scores.',
@@ -66,7 +66,7 @@ export const SAP_TABLE_REGISTRY = {
     columns: ['order_id', 'order_item_id', 'product_id', 'seller_id', 'shipping_limit_date', 'price', 'freight_value'],
     columnDescriptions: {
       order_item_id: 'Sequential line-item number within an order (1, 2, 3…). NOT a quantity — do not use in SUM or arithmetic.',
-      price: 'Unit price of this line item in BRL. Use SUM(price) for total revenue.',
+      price: 'Unit price of this line item in BRL (excludes freight). SUM(price) gives item-level revenue. For customer-paid total including freight, use payments.payment_value instead — SUM(payment_value) is typically ~15-20% higher than SUM(price). Always disclose which column you use when reporting "revenue".',
       freight_value: 'Per-item shipping cost in BRL.',
       shipping_limit_date: 'Deadline by which the seller must ship this item.',
     },
@@ -453,6 +453,118 @@ function coerceRow(row) {
   return obj;
 }
 
+// ── Post-query Result Annotations ─────────────────────────────────────────────
+
+/**
+ * Automatically annotate query results with data quality warnings that the LLM
+ * will see in the tool call response. These annotations are generalized — they
+ * detect patterns (status columns, monetary proxies, near-zero periods) from
+ * column names and values, not from hardcoded dataset knowledge.
+ *
+ * @param {object[]} rows - query result rows
+ * @param {string} sql - the executed SQL string
+ * @param {string[]} tables - table names referenced in the SQL
+ * @returns {{ warnings: string[], profile: object }}
+ */
+function annotateQueryResult(rows, sql, tables = []) {
+  const warnings = [];
+  const profile = {};
+  if (!Array.isArray(rows) || rows.length === 0) return { warnings, profile };
+
+  const firstRow = rows[0];
+  if (typeof firstRow !== 'object' || firstRow === null) return { warnings, profile };
+  const columns = Object.keys(firstRow);
+
+  // ── 1. Period count: detect time-grouped queries and report actual distinct periods ──
+  const dateCol = columns.find(col =>
+    /^(month|period|date|year_month|order_month|purchase_month)$/i.test(col)
+    || /date_trunc|_month$/i.test(col)
+  );
+  // Only annotate period counts when rows look like a time-grouped series (≥3 rows).
+  // Scalar summaries (1-2 rows) may have columns like start_month/end_month that
+  // match the date pattern but don't represent distinct time periods.
+  if (dateCol && rows.length >= 3) {
+    const distinctPeriods = new Set();
+    for (const row of rows) {
+      const val = row[dateCol];
+      if (val != null && val !== '' && val !== 0) distinctPeriods.add(String(val));
+    }
+    profile.distinct_periods = distinctPeriods.size;
+    profile.period_column = dateCol;
+    warnings.push(`Actual distinct periods in result: ${distinctPeriods.size} (column: ${dateCol}). When reporting period counts, use this number — do not count calendar gaps as data periods.`);
+  }
+
+  // ── 2. Status distribution: detect status-like columns and show distribution ──
+  const statusCol = columns.find(col =>
+    /^(status|order_status|state|狀態)$/i.test(col)
+  );
+  if (statusCol) {
+    const statusCounts = {};
+    for (const row of rows) {
+      const val = String(row[statusCol] || 'null');
+      statusCounts[val] = (statusCounts[val] || 0) + 1;
+    }
+    profile.status_distribution = statusCounts;
+    const dist = Object.entries(statusCounts)
+      .sort((a, b) => b[1] - a[1])
+      .map(([k, v]) => `${k}=${v}`)
+      .join(', ');
+    const hasCancelled = Object.keys(statusCounts).some(s =>
+      /cancel|unavailable|void|取消/i.test(s)
+    );
+    if (hasCancelled) {
+      warnings.push(
+        `Status distribution in result: ${dist}. NOTE: result includes cancelled/unavailable records. `
+        + 'For revenue or demand analysis, consider adding WHERE order_status NOT IN (\'canceled\', \'unavailable\') or disclose their inclusion in caveats.'
+      );
+    }
+  }
+
+  // ── 3. Monetary column alternatives: if SUM(price) is used, note payment_value ──
+  const sqlUpper = (sql || '').toUpperCase();
+  const usesSumPrice = /SUM\s*\(\s*(?:OI\.|ORDER_ITEMS\.)?PRICE\s*\)/i.test(sql);
+  const usesPayments = tables.some(t => /payment/i.test(t));
+  if (usesSumPrice && !usesPayments) {
+    const hasPaymentTable = !!SAP_TABLE_REGISTRY.payments;
+    if (hasPaymentTable) {
+      warnings.push(
+        'Note: This query uses SUM(order_items.price) which is the item-level price excluding freight. '
+        + 'The payments table has payment_value which is the customer-paid total (includes freight, ~15-20% higher). '
+        + 'If reporting "revenue" or "total sales", disclose which column is used and the approximate bias direction.'
+      );
+    }
+  }
+
+  // ── 4. Near-zero period warning: detect periods with aggregated values <1% of median ──
+  if (dateCol && rows.length >= 5) {
+    const numericCols = columns.filter(col => {
+      if (col === dateCol) return false;
+      return typeof rows[0][col] === 'number' || typeof rows[1]?.[col] === 'number';
+    });
+
+    for (const col of numericCols.slice(0, 3)) {
+      const values = rows.map(r => Number(r[col])).filter(v => Number.isFinite(v) && v > 0);
+      if (values.length < 5) continue;
+      const sorted = [...values].sort((a, b) => a - b);
+      const median = sorted[Math.floor(sorted.length / 2)];
+      if (median <= 0) continue;
+
+      for (const row of rows) {
+        const val = Number(row[col]);
+        if (Number.isFinite(val) && val > 0 && val < median * 0.01) {
+          warnings.push(
+            `Warning: period ${row[dateCol]} has ${col}=${val}, which is <1% of the median (${median.toFixed(2)}). `
+            + 'This is likely incomplete data coverage, not a real collapse. Exclude from trend/average calculations or disclose in caveats.'
+          );
+          break; // one warning per column is enough
+        }
+      }
+    }
+  }
+
+  return { warnings, profile };
+}
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 /**
@@ -526,6 +638,9 @@ export async function executeQuery({ sql }) {
     const truncated = allRows.length > MAX_RESULT_ROWS;
     const limited = truncated ? allRows.slice(0, MAX_RESULT_ROWS) : allRows;
 
+    // Auto-annotate results with data quality warnings for the LLM
+    const annotations = annotateQueryResult(limited, trimmed, tables);
+
     return {
       success: true,
       rows: limited,
@@ -536,6 +651,8 @@ export async function executeQuery({ sql }) {
         emptyReason: allRows.length === 0 ? 'no_matching_rows' : null,
       },
       ...(truncated ? { note: `Result truncated to ${MAX_RESULT_ROWS} rows (total: ${allRows.length})` } : {}),
+      ...(annotations.warnings.length > 0 ? { data_warnings: annotations.warnings } : {}),
+      ...(Object.keys(annotations.profile).length > 0 ? { data_profile: annotations.profile } : {}),
     };
   } catch (err) {
     console.error('[sapDataQuery] SQL error:', err.message, '| SQL:', trimmed.slice(0, 300));

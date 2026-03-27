@@ -116,7 +116,7 @@ export default function PlanTableWidget({ data = {}, onApprove, onEdit }) {
                 {columns.map(col => (
                   <th
                     key={col}
-                    className="pb-2 font-medium cursor-pointer hover:text-indigo-600 select-none"
+                    className="pb-2 font-medium cursor-pointer hover:text-[var(--brand-600)] select-none"
                     onClick={() => toggleSort(col)}
                   >
                     <span className="flex items-center gap-1">

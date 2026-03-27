@@ -66,14 +66,14 @@ function KpiTile(props) {
 function EmployeeCard({ employee, kpis, cost, trust, onViewTasks }) {
   const templateEntry = Object.values(WORKER_TEMPLATES).find((t) => t.role === employee.role);
   const iconKey = templateEntry?.icon;
-  const iconClassName = "w-5 h-5 text-indigo-600 dark:text-indigo-400";
+  const iconClassName = "w-5 h-5 text-[var(--brand-600)]";
 
   return (
     <Card variant="elevated" className="p-6 flex flex-col gap-5">
       {/* Header */}
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-full bg-indigo-100 dark:bg-indigo-900/30 flex items-center justify-center flex-shrink-0">
+          <div className="w-10 h-10 rounded-full bg-[var(--accent-active)] flex items-center justify-center flex-shrink-0">
             {iconKey === 'bar-chart' ? <BarChart3 className={iconClassName} />
               : iconKey === 'file-text' ? <FileText className={iconClassName} />
               : iconKey === 'shield-check' ? <ShieldCheck className={iconClassName} />
@@ -125,7 +125,7 @@ function EmployeeCard({ employee, kpis, cost, trust, onViewTasks }) {
           label="On-Time %"
           value={kpis?.on_time_rate_pct != null ? `${kpis.on_time_rate_pct}%` : '—'}
           icon={BarChart3}
-          color="text-indigo-600"
+          color="text-[var(--brand-600)]"
         />
         <KpiTile
           label="Review Pass %"
@@ -157,7 +157,7 @@ function EmployeeCard({ employee, kpis, cost, trust, onViewTasks }) {
       <div className="flex gap-2 pt-1">
         <button
           onClick={onViewTasks}
-          className="flex-1 flex items-center justify-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700 transition-colors"
+          className="flex-1 flex items-center justify-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium bg-[var(--brand-600)] text-white hover:bg-[var(--brand-700)] transition-colors"
         >
           View Tasks
           <ChevronRight className="w-4 h-4" />
@@ -214,7 +214,7 @@ function CreateWorkerModal({ onClose, onCreated, existingRoles }) {
     return (
       <Modal isOpen onClose={onClose} title="Create Worker">
         <div className="p-6 flex items-center justify-center">
-          <div className="w-5 h-5 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
+          <div className="w-5 h-5 border-2 border-[var(--brand-600)] border-t-transparent rounded-full animate-spin" />
         </div>
       </Modal>
     );
@@ -247,7 +247,7 @@ function CreateWorkerModal({ onClose, onCreated, existingRoles }) {
         </p>
         {filteredTemplates.map((tmpl) => {
           const tmplIconKey = tmpl.icon;
-          const tmplIconCls = "w-5 h-5 text-indigo-600 dark:text-indigo-400";
+          const tmplIconCls = "w-5 h-5 text-[var(--brand-600)]";
           const caps = tmpl.allowed_capabilities || tmpl.capabilities || [];
           return (
             <button
@@ -256,7 +256,7 @@ function CreateWorkerModal({ onClose, onCreated, existingRoles }) {
               className="w-full flex items-start gap-3 p-4 rounded-lg border text-left transition-colors hover:bg-[var(--surface-subtle)]"
               style={{ borderColor: 'var(--border-default)' }}
             >
-              <div className="w-10 h-10 rounded-full bg-indigo-100 dark:bg-indigo-900/30 flex items-center justify-center flex-shrink-0">
+              <div className="w-10 h-10 rounded-full bg-[var(--accent-active)] flex items-center justify-center flex-shrink-0">
                 {tmplIconKey === 'bar-chart' ? <BarChart3 className={tmplIconCls} />
                   : tmplIconKey === 'file-text' ? <FileText className={tmplIconCls} />
                   : tmplIconKey === 'shield-check' ? <ShieldCheck className={tmplIconCls} />
@@ -281,7 +281,7 @@ function CreateWorkerModal({ onClose, onCreated, existingRoles }) {
                   {caps.map((cap) => (
                     <span
                       key={cap}
-                      className="px-1.5 py-0.5 text-[10px] rounded bg-indigo-50 text-indigo-600 dark:bg-indigo-900/20"
+                      className="px-1.5 py-0.5 text-[10px] rounded bg-[var(--accent-active)] text-[var(--brand-600)]"
                     >
                       {cap}
                     </span>
@@ -348,7 +348,7 @@ function TeamPerformanceSummary({ workers, kpisMap, costsMap, trustMap = {} }) {
     { label: 'Total Completed', value: totalCompleted, icon: CheckCircle2, color: 'text-emerald-600' },
     { label: 'Open Tasks', value: totalOpen, icon: Clock, color: 'text-blue-600' },
     { label: 'Overdue', value: totalOverdue, icon: XCircle, color: 'text-red-600' },
-    { label: 'Avg On-Time %', value: avgOnTime != null ? `${avgOnTime}%` : '—', icon: BarChart3, color: 'text-indigo-600' },
+    { label: 'Avg On-Time %', value: avgOnTime != null ? `${avgOnTime}%` : '—', icon: BarChart3, color: 'text-[var(--brand-600)]' },
     { label: 'Avg Review Pass %', value: avgReviewPass != null ? `${avgReviewPass}%` : '—', icon: AlertTriangle, color: 'text-amber-600' },
     { label: 'Total Cost', value: totalCost > 0 ? `$${totalCost.toFixed(2)}` : '—', icon: DollarSign, color: 'text-slate-600' },
     { label: 'Cost / Task', value: costPerTask ? `$${costPerTask}` : '—', icon: DollarSign, color: 'text-slate-600' },
@@ -468,12 +468,12 @@ export default function EmployeesPage() {
         style={{ backgroundColor: 'var(--surface-card)', borderColor: 'var(--border-default)' }}
       >
         <div className="flex items-center gap-2.5">
-          <Bot className="w-5 h-5 text-indigo-600" />
+          <Bot className="w-5 h-5 text-[var(--brand-600)]" />
           <span className="font-semibold text-sm" style={{ color: 'var(--text-primary)' }}>
             Digital Workers
           </span>
           {workers.length > 0 && (
-            <span className="text-xs px-1.5 py-0.5 rounded-full bg-indigo-50 text-indigo-600 dark:bg-indigo-900/20">
+            <span className="text-xs px-1.5 py-0.5 rounded-full bg-[var(--accent-active)] text-[var(--brand-600)]">
               {workers.length}
             </span>
           )}
@@ -489,7 +489,7 @@ export default function EmployeesPage() {
           </button>
           <button
             onClick={() => setShowCreate(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-indigo-600 text-white hover:bg-indigo-700 transition-colors"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-[var(--brand-600)] text-white hover:bg-[var(--brand-700)] transition-colors"
           >
             <Plus className="w-3.5 h-3.5" />
             Create Worker
@@ -501,7 +501,7 @@ export default function EmployeesPage() {
       <div className="flex-1 overflow-y-auto p-6">
         {loading ? (
           <div className="flex items-center justify-center h-32">
-            <div className="w-6 h-6 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
+            <div className="w-6 h-6 border-2 border-[var(--brand-600)] border-t-transparent rounded-full animate-spin" />
           </div>
         ) : workers.length > 0 ? (
           <div className="max-w-3xl space-y-4">
@@ -541,13 +541,13 @@ export default function EmployeesPage() {
           </div>
         ) : (
           <div className="flex flex-col items-center justify-center h-48 gap-4">
-            <Bot className="w-12 h-12 text-indigo-300" />
+            <Bot className="w-12 h-12 text-[var(--brand-500)]" />
             <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
               No digital workers yet. Create your first one.
             </p>
             <button
               onClick={() => setShowCreate(true)}
-              className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700 transition-colors"
+              className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium bg-[var(--brand-600)] text-white hover:bg-[var(--brand-700)] transition-colors"
             >
               <Plus className="w-4 h-4" />
               Create Worker

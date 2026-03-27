@@ -43,7 +43,7 @@ function NavItem({ to, label, icon: Icon, end }) {
       className={({ isActive }) =>
         `flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
           isActive
-            ? 'bg-indigo-50 text-indigo-700'
+            ? 'bg-[var(--accent-active)] text-[var(--brand-700)]'
             : 'hover:bg-gray-50'
         }`
       }
@@ -70,7 +70,7 @@ export default function ContextPanel({ recentArtifacts = [], activeWorker, user 
       {/* Logo / Title */}
       <div className="px-3 py-3 border-b" style={{ borderColor: 'var(--border-default)' }}>
         <div className="flex items-center gap-2">
-          <div className="w-7 h-7 rounded-lg bg-indigo-600 flex items-center justify-center">
+          <div className="w-7 h-7 rounded-lg bg-[var(--brand-600)] flex items-center justify-center">
             <Zap size={14} className="text-white" />
           </div>
           <div>
@@ -84,7 +84,7 @@ export default function ContextPanel({ recentArtifacts = [], activeWorker, user 
       {activeWorker && (
         <div className="px-3 py-2 border-b" style={{ borderColor: 'var(--border-default)' }}>
           <div className="flex items-center gap-2 p-2 rounded-lg" style={{ backgroundColor: 'var(--surface-raised)' }}>
-            <Bot size={14} className="text-indigo-500" />
+            <Bot size={14} className="text-[var(--brand-500)]" />
             <div className="min-w-0 flex-1">
               <p className="text-xs font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
                 {activeWorker.name || 'Aiden'}
@@ -156,7 +156,7 @@ export default function ContextPanel({ recentArtifacts = [], activeWorker, user 
       {/* User footer */}
       <div className="px-3 py-2 border-t" style={{ borderColor: 'var(--border-default)' }}>
         <div className="flex items-center gap-2">
-          <div className="w-6 h-6 rounded-full bg-indigo-100 flex items-center justify-center text-[10px] font-bold text-indigo-600">
+          <div className="w-6 h-6 rounded-full bg-[var(--accent-active)] flex items-center justify-center text-[10px] font-bold text-[var(--brand-600)]">
             {(user?.email?.[0] || 'U').toUpperCase()}
           </div>
           <span className="text-[10px] truncate" style={{ color: 'var(--text-muted)' }}>

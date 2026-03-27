@@ -17,6 +17,14 @@ ALTER TABLE ai_proxy_tasks ENABLE ROW LEVEL SECURITY;
 
 -- Server-to-server (service role) can read/write everything
 -- Authenticated users can read any task (tasks are ephemeral, no user_id needed)
-CREATE POLICY ai_proxy_tasks_read ON ai_proxy_tasks FOR SELECT USING (true);
-CREATE POLICY ai_proxy_tasks_insert ON ai_proxy_tasks FOR INSERT WITH CHECK (true);
-CREATE POLICY ai_proxy_tasks_update ON ai_proxy_tasks FOR UPDATE USING (true);
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'ai_proxy_tasks' AND policyname = 'ai_proxy_tasks_read') THEN
+    CREATE POLICY ai_proxy_tasks_read ON ai_proxy_tasks FOR SELECT USING (true);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'ai_proxy_tasks' AND policyname = 'ai_proxy_tasks_insert') THEN
+    CREATE POLICY ai_proxy_tasks_insert ON ai_proxy_tasks FOR INSERT WITH CHECK (true);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'ai_proxy_tasks' AND policyname = 'ai_proxy_tasks_update') THEN
+    CREATE POLICY ai_proxy_tasks_update ON ai_proxy_tasks FOR UPDATE USING (true);
+  END IF;
+END $$;

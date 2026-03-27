@@ -15,18 +15,18 @@ import {
 import { Card } from '../components/ui';
 import { getOperationalHealthSummary as getOperationalSummary } from '../services/observability/operationalMetrics';
 
-function MetricCard({ icon, label, value, sub, accent = 'text-indigo-600' }) {
+function MetricCard({ icon, label, value, sub, accent = 'text-[var(--brand-600)]' }) {
   const Icon = icon;
   return (
     <Card className="!p-4">
       <div className="flex items-start gap-3">
-        <div className="p-2 rounded-lg bg-slate-100 dark:bg-slate-800">
+        <div className="p-2 rounded-lg bg-[var(--surface-subtle)]">
           {Icon ? <Icon className={`w-5 h-5 ${accent}`} /> : null}
         </div>
         <div>
-          <p className="text-xs text-slate-500">{label}</p>
+          <p className="text-xs text-[var(--text-muted)]">{label}</p>
           <p className="text-xl font-bold mt-0.5" style={{ color: 'var(--text-primary)' }}>{value}</p>
-          {sub && <p className="text-[10px] text-slate-400 mt-0.5">{sub}</p>}
+          {sub && <p className="text-[10px] text-[var(--text-muted)] mt-0.5">{sub}</p>}
         </div>
       </div>
     </Card>
@@ -37,8 +37,8 @@ function HealthSection({ title, icon: SectionIcon, metrics, children }) {
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2">
-        {SectionIcon && <SectionIcon className="w-4 h-4 text-slate-400" />}
-        <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-500">{title}</h3>
+        {SectionIcon && <SectionIcon className="w-4 h-4 text-[var(--text-muted)]" />}
+        <h3 className="text-sm font-semibold uppercase tracking-wide text-[var(--text-muted)]">{title}</h3>
       </div>
       {metrics && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -119,7 +119,7 @@ function SystemHealthBar({ summary }) {
 
   return (
     <Card className="!p-4">
-      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-3">System Health</p>
+      <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)] mb-3">System Health</p>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <StatusIndicator status={importHealth} label="Data Import" />
         <StatusIndicator status={planningHealth} label="Planning Engine" />
@@ -159,7 +159,7 @@ function DataQualitySection({ summary }) {
       icon: Database,
       label: 'Avg Score',
       value: dq.quality_trend?.avgScore != null ? `${(dq.quality_trend.avgScore * 100).toFixed(0)}%` : '--',
-      accent: 'text-indigo-600',
+      accent: 'text-[var(--brand-600)]',
     },
   ];
 
@@ -252,7 +252,7 @@ export default function OpsDashboard() {
     if (!summary) return [];
     const plan = summary.planning || {};
     return [
-      { icon: Calculator, label: 'Plan Attempts', value: plan.attempts || 0, accent: 'text-indigo-600' },
+      { icon: Calculator, label: 'Plan Attempts', value: plan.attempts || 0, accent: 'text-[var(--brand-600)]' },
       { icon: Activity, label: 'Successes', value: plan.successes || 0, accent: 'text-emerald-600' },
       { icon: Clock, label: 'P50 Latency', value: plan.latency_p50_ms > 0 ? `${plan.latency_p50_ms}ms` : '--', accent: 'text-blue-600' },
       { icon: AlertTriangle, label: 'Zero-Result Plans', value: plan.zero_result_plans || 0, accent: plan.zero_result_plans > 0 ? 'text-red-600' : 'text-emerald-600' },
@@ -265,22 +265,22 @@ export default function OpsDashboard() {
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
-            <p className="text-xs font-semibold tracking-widest uppercase text-indigo-500">OPERATIONS</p>
+            <p className="text-xs font-semibold tracking-widest uppercase text-[var(--brand-500)]">OPERATIONS</p>
             <h1 className="text-2xl font-bold tracking-tight" style={{ color: 'var(--text-primary)' }}>
               Ops Dashboard
             </h1>
             {lastRefresh && (
-              <p className="text-[10px] text-slate-400 mt-1">
+              <p className="text-[10px] text-[var(--text-muted)] mt-1">
                 Last refreshed: {lastRefresh.toLocaleTimeString()}
               </p>
             )}
           </div>
           <button
             onClick={refresh}
-            className="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+            className="p-2 rounded-lg hover:bg-[var(--surface-subtle)] transition-colors"
             title="Refresh"
           >
-            <RefreshCw className={`w-5 h-5 text-slate-500 ${loading ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`w-5 h-5 text-[var(--text-muted)] ${loading ? 'animate-spin' : ''}`} />
           </button>
         </div>
 
@@ -308,9 +308,9 @@ export default function OpsDashboard() {
         {/* No data message */}
         {!summary && !loading && (
           <Card className="!p-8 text-center">
-            <BarChart3 className="w-12 h-12 mx-auto mb-3 text-slate-300 dark:text-slate-600" />
-            <p className="text-sm text-slate-500">No operational data available yet.</p>
-            <p className="text-xs text-slate-400 mt-1">Run imports and planning tasks to generate metrics.</p>
+            <BarChart3 className="w-12 h-12 mx-auto mb-3 text-[var(--text-muted)]" />
+            <p className="text-sm text-[var(--text-muted)]">No operational data available yet.</p>
+            <p className="text-xs text-[var(--text-muted)] mt-1">Run imports and planning tasks to generate metrics.</p>
           </Card>
         )}
       </div>

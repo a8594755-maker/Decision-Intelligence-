@@ -152,7 +152,7 @@ export default function DecisionReviewPanel({
   return (
     <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden">
       {/* Header */}
-      <div className="bg-gradient-to-r from-indigo-50 to-white dark:from-indigo-950/30 dark:to-slate-900 px-4 py-3 border-b border-slate-200 dark:border-slate-700">
+      <div className="bg-gradient-to-r from-[var(--brand-50)] to-white dark:from-[var(--brand-50)] dark:to-slate-900 px-4 py-3 border-b border-slate-200 dark:border-slate-700">
         <div className="flex items-center justify-between">
           <div>
             <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100">
@@ -171,7 +171,7 @@ export default function DecisionReviewPanel({
         <Section title="Recommendation" icon={ShieldCheck}>
           <p className="text-sm text-slate-700 dark:text-slate-200 mb-2">{brief.summary}</p>
           {brief.recommended_action_label && (
-            <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 text-sm font-medium">
+            <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-[var(--accent-active)] text-[var(--brand-600)] text-sm font-medium">
               <ArrowUpRight className="w-4 h-4" />
               {brief.recommended_action_label}
             </div>
@@ -354,7 +354,7 @@ export default function DecisionReviewPanel({
             onClick={handleSubmit}
             className={`w-full py-2 rounded text-sm font-medium transition-colors ${
               decision
-                ? 'bg-indigo-600 text-white hover:bg-indigo-700'
+                ? 'bg-[var(--brand-600)] text-white hover:bg-[var(--brand-700)]'
                 : 'bg-slate-100 text-slate-400 cursor-not-allowed'
             }`}
           >

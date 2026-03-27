@@ -10,18 +10,18 @@ import {
   buildAnswerContractResponseSchema,
   buildAgentCandidateJudgePrompt,
   buildAgentCandidateJudgeResponseSchema,
-  buildAgentBriefReviewPrompt,
-  buildAgentBriefReviewResponseSchema,
   buildAgentBriefSynthesisPrompt,
+  buildAgentBriefSynthesisPromptV2,
   buildAgentBriefResponseSchema,
+  buildAgentBriefResponseSchemaV2,
   buildAgentQaCrossReviewPrompt,
   buildAgentQaReviewResponseSchema,
   buildAgentQaRepairSynthesisPrompt,
   buildAgentQaSelfReviewPrompt,
   validateAgentBrief,
+  validateAgentBriefV2,
   validateAgentBriefRepair,
   validateAgentCandidateJudge,
-  validateAgentBriefReview,
   validateAgentQaReview,
   validateAnswerContract,
 } from '../../prompts/agentResponsePrompt';
@@ -61,6 +61,7 @@ export const DI_PROMPT_IDS = Object.freeze({
   AGENT_QA_CROSS_REVIEW: 'prompt_11_agent_qa_cross_review',
   AGENT_QA_REPAIR_SYNTHESIS: 'prompt_12_agent_qa_repair_synthesis',
   AGENT_CANDIDATE_JUDGE: 'prompt_13_agent_candidate_judge',
+  AGENT_BRIEF_SYNTHESIS_V2: 'prompt_14_agent_brief_synthesis_v2',
 });
 
 const DEFAULT_DI_GEMINI_MODEL = 'gemini-3.1-pro-preview';
@@ -139,14 +140,14 @@ const buildPromptResponseSchema = (promptId) => {
   if (promptId === DI_PROMPT_IDS.AGENT_ANSWER_CONTRACT) {
     return buildAnswerContractResponseSchema();
   }
+  if (promptId === DI_PROMPT_IDS.AGENT_BRIEF_SYNTHESIS_V2) {
+    return buildAgentBriefResponseSchemaV2();
+  }
   if (
     promptId === DI_PROMPT_IDS.AGENT_BRIEF_SYNTHESIS
     || promptId === DI_PROMPT_IDS.AGENT_QA_REPAIR_SYNTHESIS
   ) {
     return buildAgentBriefResponseSchema();
-  }
-  if (promptId === DI_PROMPT_IDS.AGENT_BRIEF_REVIEW) {
-    return buildAgentBriefReviewResponseSchema();
   }
   if (
     promptId === DI_PROMPT_IDS.AGENT_QA_SELF_REVIEW
@@ -204,8 +205,8 @@ const validatePromptContract = (promptId, parsed) => {
     return validateAgentBrief(parsed);
   }
 
-  if (promptId === DI_PROMPT_IDS.AGENT_BRIEF_REVIEW) {
-    return validateAgentBriefReview(parsed);
+  if (promptId === DI_PROMPT_IDS.AGENT_BRIEF_SYNTHESIS_V2) {
+    return validateAgentBriefV2(parsed);
   }
 
   if (promptId === DI_PROMPT_IDS.AGENT_QA_SELF_REVIEW || promptId === DI_PROMPT_IDS.AGENT_QA_CROSS_REVIEW) {
@@ -247,7 +248,7 @@ const toPromptText = (promptId, input) => {
   if (promptId === DI_PROMPT_IDS.AGENT_ANSWER_CONTRACT) return buildAgentAnswerContractPrompt(input);
   if (promptId === DI_PROMPT_IDS.AGENT_CANDIDATE_JUDGE) return buildAgentCandidateJudgePrompt(input);
   if (promptId === DI_PROMPT_IDS.AGENT_BRIEF_SYNTHESIS) return buildAgentBriefSynthesisPrompt(input);
-  if (promptId === DI_PROMPT_IDS.AGENT_BRIEF_REVIEW) return buildAgentBriefReviewPrompt(input);
+  if (promptId === DI_PROMPT_IDS.AGENT_BRIEF_SYNTHESIS_V2) return buildAgentBriefSynthesisPromptV2(input);
   if (promptId === DI_PROMPT_IDS.AGENT_QA_SELF_REVIEW) return buildAgentQaSelfReviewPrompt(input);
   if (promptId === DI_PROMPT_IDS.AGENT_QA_CROSS_REVIEW) return buildAgentQaCrossReviewPrompt(input);
   if (promptId === DI_PROMPT_IDS.AGENT_QA_REPAIR_SYNTHESIS) return buildAgentQaRepairSynthesisPrompt(input);

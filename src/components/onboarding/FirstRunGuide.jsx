@@ -30,8 +30,8 @@ const STEPS = [
     icon: Calculator,
     title: 'Run a Plan',
     description: 'Click "Run Workflow A" to generate a replenishment plan. The system calculates optimal order quantities, considering inventory, demand forecasts, and lead times.',
-    color: 'text-indigo-600',
-    bg: 'bg-indigo-50 dark:bg-indigo-900/20',
+    color: 'text-[var(--brand-600)]',
+    bg: 'bg-[var(--accent-active)]',
   },
   {
     icon: BarChart3,
@@ -100,7 +100,7 @@ export default function FirstRunGuide() {
             <div
               key={i}
               className={`w-2 h-2 rounded-full transition-colors ${
-                i === step ? 'bg-indigo-600' : i < step ? 'bg-indigo-300' : 'bg-slate-200 dark:bg-slate-700'
+                i === step ? 'bg-[var(--brand-600)]' : i < step ? 'bg-[var(--brand-300)]' : 'bg-slate-200 dark:bg-slate-700'
               }`}
             />
           ))}

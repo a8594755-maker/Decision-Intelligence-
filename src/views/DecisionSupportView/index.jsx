@@ -6,6 +6,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useLocation } from 'react-router-dom';
 import { Activity, Bot, FileText } from 'lucide-react';
+import ThinkingPanel from '../../components/chat/ThinkingPanel';
 import { Card, Button } from '../../components/ui';
 import { supabase, userFilesService } from '../../services/infra/supabaseClient';
 import { prepareChatUploadFromFile, prepareChatUploadFromFiles, buildDataSummaryCardPayload, MAX_UPLOAD_BYTES } from '../../services/data-prep/chatDatasetProfilingService';
@@ -16,6 +17,7 @@ import { datasetProfilesService, registerLocalProfile } from '../../services/dat
 import { reuseMemoryService } from '../../services/memory/reuseMemoryService';
 import { streamChatWithAI, getLastUsedModel } from '../../services/ai-infra/geminiAPI';
 import { runAgentLoop, ANALYSIS_AGENT_TOOL_IDS } from '../../services/agent-core/chatAgentLoop';
+import { runAgentPipelineV2 } from '../../services/agent-core/agentPipelineV2';
 import { detectDomain, buildChallengerInstruction, buildOptimizerInstruction } from '../../services/data-prep/analysisDomainEnrichment';
 import { registerTool, approveTool } from '../../services/ai-infra/toolRegistryService';
 import { invalidateRegisteredToolsCache } from '../../services/agent-core/chatToolAdapter';
@@ -59,11 +61,12 @@ import { resolveActionToIntent } from '../../services/chat/chatActionRegistry';
 import { handleParameterChange, handlePlanComparison, buildComparisonSummaryText } from '../../services/chat/chatRefinementService';
 import { generateAnalysisBlueprint, executeModule as executeBlueprintModule } from '../../services/data-prep/analysisBlueprintService';
 import { buildAgentPresentationPayload, buildImmediatePresentation, runBackgroundQa, resolveAgentAnswerContract, summarizeToolCallsForPrompt } from '../../services/agent-core/agentResponsePresentationService.js';
-import { saveSnapshot } from '../../services/data-prep/analysisSnapshotService.js';
+import { saveSnapshot, synthesizeBriefFromText } from '../../services/data-prep/analysisSnapshotService.js';
 import { judgeAgentCandidates, judgeOptimizedCandidate } from '../../services/agent-core/agentCandidateJudgeService.js';
 import { resolveAgentExecutionStrategy } from '../../services/agent-core/agentExecutionStrategyService.js';
 import { resolveQaEscalationMode } from '../../services/agent-core/qaEscalationPolicy.js';
 import { buildDirectAnalysisAgentPrompt, resolveDirectAnalysisRequest } from '../../services/ai-infra/directAnalysisService.js';
+import { isAnalyticalRequest } from '../../services/ai-infra/queryIntentClassifier.js';
 import { parseManualThinkingDirective, resolveChatThinkingPolicy } from '../../services/chat/chatThinkingPolicyService.js';
 import { handleDataQuery } from '../../services/sap-erp/sapQueryChatHandler.js';
 import { SAP_DATASET_INFO } from '../../services/sap-erp/sapDataQueryService.js';
@@ -316,16 +319,19 @@ function buildBlockedTrace(candidates = []) {
   };
 }
 
-export default function DecisionSupportView({ user, addNotification, mode = 'di', activeWorkerId = null, activeWorkerLabel = null }) {
+export default function DecisionSupportView({ user, addNotification, mode = 'di', activeWorkerId = null, activeWorkerLabel = null, deepLinkConversation = null, deepLinkMessage = null }) {
   const isAIEmployeeMode = mode === 'ai_employee';
   const userStorageSuffix = user?.id || 'anon';
   const [input, setInput] = useState('');
   const [pendingAttachments, setPendingAttachments] = useState([]);
   const [isTyping, setIsTyping] = useState(false);
   const [streamingContent, setStreamingContent] = useState('');
+  const [streamingToolCalls, setStreamingToolCalls] = useState([]);
   const [thinkingSteps, setThinkingSteps] = useState([]);
   const thinkingStepsRef = useRef([]);
   const thinkingAgentCountersRef = useRef({});
+  const thinkingStartTimeRef = useRef(null);
+  const [showThinkingPanel, setShowThinkingPanel] = useState(false);
   const [domainContext, setDomainContext] = useState(null);
   const [contextLoading, setContextLoading] = useState(false);
   const [isUploadingDataset, setIsUploadingDataset] = useState(false);
@@ -347,11 +353,19 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
   const clearThinkingSteps = useCallback(() => {
     thinkingStepsRef.current = [];
     thinkingAgentCountersRef.current = {};
+    thinkingStartTimeRef.current = null;
     setThinkingSteps([]);
+    // Don't close panel — let user see final state until they dismiss
   }, []);
 
   const appendThinkingStep = useCallback((data) => {
     if (!data || typeof data === 'string' || !data.content) return;
+
+    // Auto-open thinking panel on first step
+    if (!thinkingStartTimeRef.current) {
+      thinkingStartTimeRef.current = Date.now();
+      setShowThinkingPanel(true);
+    }
 
     setThinkingSteps((prev) => {
       const last = prev[prev.length - 1];
@@ -395,6 +409,10 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
 
     if (steps.length === 0) return null;
 
+    const elapsedSeconds = thinkingStartTimeRef.current
+      ? Math.floor((Date.now() - thinkingStartTimeRef.current) / 1000)
+      : undefined;
+
     return {
       role: 'ai',
       type: 'thinking_trace_card',
@@ -402,6 +420,7 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
         steps,
         completed: true,
         defaultCollapsed: true,
+        elapsedSeconds,
       },
       timestamp: new Date().toISOString(),
     };
@@ -428,11 +447,11 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
   const [agentExecEvents, setAgentExecEvents] = useState([]);
   const [agentExecLoopState, setAgentExecLoopState] = useState(null);
   const [agentExecTaskTitle, setAgentExecTaskTitle] = useState('');
-  const [agentExecPanelOpen, setAgentExecPanelOpen] = useState(false);
+  const agentExecPanelOpen = false; // drawer removed — kept for SSE guard
   const [agentExecSSETaskId, setAgentExecSSETaskId] = useState(null);
   const ralphAbortRef = useRef(null); // AbortController for Ralph Loop cancellation
   const agentExecEventsRef = useRef([]); // Mirror of agentExecEvents for use in event handlers
-  const [aiEmployeeDrawer, setAiEmployeeDrawer] = useState(null);
+  // aiEmployeeDrawer removed — Profile/Steps/Artifacts panels consolidated into Workers Hub
   const [delegatedWorker, setDelegatedWorker] = useState(null);
 
   // ── Data Learning: profile + insights ─────────────────────────────────
@@ -619,6 +638,28 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
     handleNewConversation,
     handleDeleteConversation,
   } = convManager;
+
+  // ── Deep-link: select conversation + scroll to message from URL params ──
+  const deepLinkHandledRef = useRef(false);
+  useEffect(() => {
+    if (deepLinkHandledRef.current || !deepLinkConversation || !conversations.length) return;
+    const target = conversations.find(c => c.id === deepLinkConversation);
+    if (!target) return;
+    deepLinkHandledRef.current = true;
+    setCurrentConversationId(target.id);
+    // Scroll to specific message after a short delay for render
+    if (deepLinkMessage != null) {
+      const msgIdx = Number(deepLinkMessage);
+      setTimeout(() => {
+        const el = document.querySelector(`[data-msg-idx="${msgIdx}"]`);
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          el.classList.add('ring-2', 'ring-[var(--brand-500)]', 'ring-offset-2');
+          setTimeout(() => el.classList.remove('ring-2', 'ring-[var(--brand-500)]', 'ring-offset-2'), 3000);
+        }
+      }, 500);
+    }
+  }, [deepLinkConversation, deepLinkMessage, conversations, setCurrentConversationId]);
 
   const currentConversationThinkingMode = currentConversationId
     ? (conversationDatasetContext[currentConversationId]?.manual_thinking_mode || null)
@@ -1121,56 +1162,9 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
     try { localStorage.setItem(splitRatioStorageKey, String(clamped)); } catch { /* noop */ }
   }, [splitRatioStorageKey]);
 
-  const openAIEmployeeProfile = useCallback(() => {
-    setAiEmployeeDrawer('profile');
-  }, []);
-
-  const closeAIEmployeeProfile = useCallback(() => {
-    setAiEmployeeDrawer((current) => (current === 'profile' ? null : current));
-  }, []);
-
-  const openAIEmployeeExecution = useCallback(() => {
-    if (agentExecLoopState?.steps?.length || agentExecEvents.length > 0) {
-      setAgentExecPanelOpen(true);
-      setAiEmployeeDrawer('execution');
-    }
-  }, [agentExecEvents.length, agentExecLoopState]);
-
-  const closeAIEmployeeExecution = useCallback(() => {
-    setAgentExecPanelOpen(false);
-    setAgentExecSSETaskId(null);
-    setAiEmployeeDrawer((current) => (current === 'execution' ? null : current));
-  }, []);
-
-  const openAIEmployeeArtifacts = useCallback(() => {
-    if (!currentConversationId) return;
-    updateCanvasState(currentConversationId, (prev) => ({ ...prev, isOpen: true }));
-    setAiEmployeeDrawer('artifacts');
-  }, [currentConversationId, updateCanvasState]);
-
-  const closeAIEmployeeArtifacts = useCallback(() => {
-    if (currentConversationId) {
-      updateCanvasState(currentConversationId, (prev) => ({ ...prev, isOpen: false }));
-    }
-    setAiEmployeeDrawer((current) => (current === 'artifacts' ? null : current));
-  }, [currentConversationId, updateCanvasState]);
-
   const dismissAIEmployeeOverlays = useCallback(() => {
     handleCloseSidebar();
-    if (aiEmployeeDrawer === 'profile') {
-      closeAIEmployeeProfile();
-    } else if (aiEmployeeDrawer === 'artifacts') {
-      closeAIEmployeeArtifacts();
-    } else if (aiEmployeeDrawer === 'execution') {
-      closeAIEmployeeExecution();
-    }
-  }, [
-    aiEmployeeDrawer,
-    closeAIEmployeeArtifacts,
-    closeAIEmployeeExecution,
-    closeAIEmployeeProfile,
-    handleCloseSidebar,
-  ]);
+  }, [handleCloseSidebar]);
 
   const handleSelectAIConversation = useCallback((conversationId) => {
     setCurrentConversationId(conversationId);
@@ -2290,9 +2284,16 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
         answerContract,
         callbacks: {
           onTextChunk: streamToUser ? (chunk) => setStreamingContent((prev) => prev + chunk) : undefined,
-          onToolCall: streamToUser ? ({ name }) => setStreamingContent((prev) => prev + `\n🔧 Running **${name}**...\n`) : undefined,
+          onToolCall: streamToUser ? ({ name }) => {
+            setStreamingToolCalls((prev) => [...prev, { name, status: 'running', ts: Date.now() }]);
+          } : undefined,
           onToolResult: streamToUser ? ({ name, success, error: err }) => {
-            setStreamingContent((prev) => prev + (success ? `✅ **${name}** done\n` : `❌ **${name}** failed: ${err}\n`));
+            setStreamingToolCalls((prev) =>
+              prev.map((tc) => tc.name === name && tc.status === 'running'
+                ? { ...tc, status: success ? 'done' : 'failed', error: err || undefined }
+                : tc
+              )
+            );
           } : undefined,
           onThinking: (data) => appendThinkingStep({ ...data, ...agentMeta }),
         },
@@ -2672,8 +2673,22 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
       },
     ]);
 
+    // ── Insights Hub: persist analysis snapshot (fire-and-forget) ──
+    const directBrief = selectedCandidate?.presentation?.brief;
+    if (directBrief?.headline && user?.id) {
+      const msgCount = (currentMessages?.length || 0) + (thinkingTraceMessage ? 2 : 1);
+      saveSnapshot({
+        userId: user.id,
+        conversationId: currentConversationId,
+        messageIndex: msgCount - 1,
+        brief: directBrief,
+        query,
+        toolCallsSummary: selectedCandidate?.result?.toolCalls?.length ? `${selectedCandidate.result.toolCalls.length} tool call(s)` : null,
+      }).catch((err) => console.warn('[DSV:snapshot] direct-analysis save failed:', err?.message));
+    }
+
     return selectedCandidate?.result || null;
-  }, [appendAgentThinkingNote, appendMessagesToCurrentConversation, appendThinkingStep, buildTaskInputData, buildThinkingTraceMessage, clearThinkingSteps, getDatasetProfileId, systemPrompt, user?.id]);
+  }, [appendAgentThinkingNote, appendMessagesToCurrentConversation, appendThinkingStep, buildTaskInputData, buildThinkingTraceMessage, clearThinkingSteps, getDatasetProfileId, systemPrompt, user?.id, currentConversationId]);
 
   // ── Blueprint Execution Handlers ────────────────────────────────────────
   const handleRunBlueprintModule = useCallback(async (module) => {
@@ -2733,6 +2748,7 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
 
     setIsTyping(true);
     setStreamingContent('');
+    setStreamingToolCalls([]);
 
     try {
       if (textareaRef.current) { textareaRef.current.style.height = 'auto'; }
@@ -2965,6 +2981,159 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
       setIsTyping(false); setStreamingContent(''); return;
     }
 
+    // ── /task — Assign task to Digital Worker ──────────────────────────────
+    if (command === '/task') {
+      const taskDescription = trimmed.replace(/^\/task\s*/i, '').trim();
+      const taskDescriptionWithAttachments = buildMessageWithAttachmentContext(taskDescription, resolvedAttachments);
+      if (!taskDescription) {
+        appendMessagesToCurrentConversation([{
+          role: 'ai',
+          content: [
+            '**`/task` — Assign Task to Digital Worker**',
+            '',
+            'Usage: `/task <任務描述>`',
+            '',
+            'Examples:',
+            '- `/task 做月報`',
+            '- `/task Generate monthly replenishment report`',
+            '- `/task 分析最近三個月的銷售趨勢並產出報告`',
+            '- `/task Prepare MBR deck with forecast and risk analysis`',
+          ].join('\n'),
+          timestamp: new Date().toISOString(),
+        }]);
+        setIsTyping(false); setStreamingContent(''); return;
+      }
+
+      try {
+        const assignedWorker = await getAssignedWorker();
+        if (!assignedWorker?.id) throw new Error('No digital worker available.');
+
+        // ── Intake gate (dedup, routing, SLA) ──
+        let intakeWorkOrder = null;
+        try {
+          const intakeResult = await processIntake({
+            source: INTAKE_SOURCES.CHAT,
+            message: taskDescriptionWithAttachments,
+            employeeId: assignedWorker.id,
+            userId: user?.id,
+            metadata: { source_ref: 'slash_task', attachments: resolvedAttachments },
+          });
+          intakeWorkOrder = intakeResult?.workOrder || null;
+          if (intakeResult?.status === 'duplicate') {
+            appendMessagesToCurrentConversation([{
+              role: 'ai',
+              content: `A similar task already exists (${intakeResult.workOrder?.title || 'duplicate'}). Check the Task Board for details.`,
+              timestamp: new Date().toISOString(),
+            }]);
+            setIsTyping(false); setStreamingContent(''); return;
+          }
+        } catch (intakeErr) {
+          console.warn('[DSV] /task intake normalization failed (non-blocking):', intakeErr?.message);
+        }
+
+        // Decompose
+        const decomposition = await decomposeTask({
+          userMessage: taskDescriptionWithAttachments,
+          sessionContext: sessionCtx.context,
+          userId: user?.id,
+        });
+
+        if (!decomposition?.subtasks?.length) {
+          appendMessagesToCurrentConversation([{
+            role: 'ai',
+            content: 'Could not decompose this instruction into actionable tasks. Please try rephrasing.',
+            timestamp: new Date().toISOString(),
+          }]);
+          setIsTyping(false); setStreamingContent(''); return;
+        }
+
+        // Show TaskPlanCard for approval
+        appendMessagesToCurrentConversation([{
+          role: 'ai',
+          type: 'task_plan_card',
+          payload: decomposition,
+          content: `Task decomposed into ${decomposition.subtasks.length} step(s). Please review and approve.`,
+          timestamp: new Date().toISOString(),
+          _approveContext: {
+            title: intakeWorkOrder?.title || taskDescriptionWithAttachments.slice(0, 120),
+            description: decomposition.original_instruction || taskDescriptionWithAttachments,
+            source_type: intakeWorkOrder?.source || 'chat',
+            priority: intakeWorkOrder?.priority,
+            due_at: intakeWorkOrder?.sla?.due_at,
+            owner_hint: intakeWorkOrder?.owner_hint,
+            dedup_key: intakeWorkOrder?.dedup_key,
+          },
+          _onApprove: async (approvedDecomp) => {
+            try {
+              const inputData = buildTaskInputData(runtimeDatasetContext, resolvedAttachments);
+              const finalDecomp = approvedDecomp || decomposition;
+              const steps = (finalDecomp.subtasks || []).map((s, i) => ({
+                name: s.name || s.step_name || `step_${i}`,
+                tool_hint: s.tool_hint || s.description || s.name,
+                tool_type: s.workflow_type || s.tool_type || 'python_tool',
+                builtin_tool_id: s.builtin_tool_id || null,
+                input_args: s.input_args || {},
+                review_checkpoint: s.review_checkpoint || false,
+              }));
+
+              const plan = {
+                title: intakeWorkOrder?.title || taskDescriptionWithAttachments.slice(0, 120),
+                description: decomposition.original_instruction || taskDescriptionWithAttachments,
+                steps,
+                inputData,
+                taskMeta: intakeWorkOrder ? {
+                  source_type: intakeWorkOrder.source,
+                  priority: intakeWorkOrder.priority,
+                  due_at: intakeWorkOrder.sla?.due_at,
+                  owner_hint: intakeWorkOrder.owner_hint,
+                  dedup_key: intakeWorkOrder.dedup_key,
+                  attachments: resolvedAttachments,
+                } : { source_type: 'chat' },
+                llmConfig: { provider: 'anthropic', model: 'claude-sonnet-4-6', temperature: 0.15, max_tokens: 4096 },
+              };
+
+              const worker = await getAssignedWorker();
+              if (!worker?.id) throw new Error('No digital worker is available for this task.');
+
+              const { taskId } = await submitPlan(plan, worker.id, user?.id);
+
+              setAgentExecEvents([]);
+              agentExecEventsRef.current = [];
+              setAgentExecTaskTitle(taskDescriptionWithAttachments.slice(0, 80));
+              setAgentExecSSETaskId(taskId);
+
+              const initLoopSteps = steps.map((s, i) => ({
+                name: s.name, index: i, status: 'pending',
+                workflow_type: s.tool_type, retry_count: 0,
+              }));
+              setAgentExecLoopState({ steps: initLoopSteps, started_at: new Date().toISOString() });
+
+              appendMessagesToCurrentConversation([{
+                role: 'ai',
+                content: `Task created. Executing ${steps.length} steps via orchestrator...`,
+                timestamp: new Date().toISOString(),
+              }]);
+
+              await orchestratorApprovePlan(taskId, user?.id);
+            } catch (execErr) {
+              appendMessagesToCurrentConversation([{
+                role: 'ai',
+                content: `Task execution failed: ${execErr?.message || 'Unknown error'}`,
+                timestamp: new Date().toISOString(),
+              }]);
+            }
+          },
+        }]);
+      } catch (taskErr) {
+        appendMessagesToCurrentConversation([{
+          role: 'ai',
+          content: `Task decomposition failed: ${taskErr?.message || 'Unknown error'}`,
+          timestamp: new Date().toISOString(),
+        }]);
+      }
+      setIsTyping(false); setStreamingContent(''); return;
+    }
+
     if (command === '/ralph-loop' || command === '/ralph') {
       const taskDescription = trimmed.replace(/^\/ralph(-loop)?\s*/i, '').trim();
       const taskDescriptionWithAttachments = buildMessageWithAttachmentContext(taskDescription, resolvedAttachments);
@@ -3064,7 +3233,7 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
         setAgentExecEvents([]);
         agentExecEventsRef.current = [];
         setAgentExecTaskTitle(`[Ralph] ${taskDescription.slice(0, 60)}`);
-        setAgentExecPanelOpen(true);
+        // panel removed — task execution visible in Workers Hub Task Board
         setAgentExecSSETaskId(taskId);
 
         const initLoopSteps = steps.map((s, i) => ({
@@ -3272,6 +3441,18 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
               return;
             }
 
+            // Analytical / follow-up requests → full agent loop (has query_sap_data tool)
+            if (isAnalyticalRequest(effectiveMessage)) {
+              await runDirectAnalysisAgent({
+                query: effectiveMessage,
+                history: updatedMessages,
+                runtimeDatasetContext,
+                attachments: resolvedAttachments,
+                modelMode: baseModelMode,
+              });
+              return;
+            }
+
             const sqlResult = await handleDataQuery(effectiveMessage, {
               targetDataset: selectedDatasetId || undefined,
             });
@@ -3325,128 +3506,6 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
             const rankedOptions = negCtx.evaluation?.ranked_options || [];
             const evalResult = rankedOptions.find((r) => r.option_id === matchedOption.option_id) || null;
             await handleApplyNegotiationOption(matchedOption, evalResult, { planRunId: negCtx.active_plan_run_id });
-          },
-          assignTask: async ({ userMessage }) => {
-            try {
-              const effectiveMessage = buildMessageWithAttachmentContext(userMessage || messageText, resolvedAttachments);
-
-              // ── Gate 1: Unified intake normalization ──
-              const assignedWorker = await getAssignedWorker();
-              if (!assignedWorker?.id) throw new Error('No worker available for task assignment.');
-              let intakeWorkOrder = null;
-              try {
-                const intakeResult = await processIntake({
-                  source: INTAKE_SOURCES.CHAT,
-                  message: effectiveMessage,
-                  employeeId: assignedWorker.id,
-                  userId: user?.id,
-                  metadata: { source_ref: 'assign_task_intent', attachments: resolvedAttachments },
-                });
-                intakeWorkOrder = intakeResult?.workOrder || null;
-                if (intakeResult?.status === 'duplicate') {
-                  appendMessagesToCurrentConversation([{ role: 'ai', content: `A similar task already exists (${intakeResult.workOrder?.title || 'duplicate'}). Check the Task Board for details.`, timestamp: new Date().toISOString() }]);
-                  return;
-                }
-              } catch (intakeErr) {
-                console.warn('[DSV] assignTask intake normalization failed (non-blocking):', intakeErr?.message);
-              }
-
-              // 1. Decompose user instruction into structured subtasks
-              const decomposition = await decomposeTask({ userMessage: effectiveMessage, sessionContext: sessionCtx.context, userId: user?.id });
-
-              if (!decomposition?.subtasks?.length) {
-                appendMessagesToCurrentConversation([{ role: 'ai', content: 'Could not decompose this instruction into actionable tasks. Please try rephrasing.', timestamp: new Date().toISOString() }]);
-                return;
-              }
-
-              // 2. Show TaskPlanCard for user approval
-              appendMessagesToCurrentConversation([{
-                role: 'ai',
-                type: 'task_plan_card',
-                payload: decomposition,
-                content: `Task decomposed into ${decomposition.subtasks.length} step(s). Please review and approve.`,
-                timestamp: new Date().toISOString(),
-                _approveContext: {
-                  title: intakeWorkOrder?.title || effectiveMessage.slice(0, 120),
-                  description: decomposition.original_instruction || effectiveMessage,
-                  source_type: intakeWorkOrder?.source || 'chat',
-                  priority: intakeWorkOrder?.priority,
-                  due_at: intakeWorkOrder?.sla?.due_at,
-                  owner_hint: intakeWorkOrder?.owner_hint,
-                  dedup_key: intakeWorkOrder?.dedup_key,
-                },
-                _onApprove: async (approvedDecomp) => {
-                  try {
-                    const inputData = buildTaskInputData(runtimeDatasetContext, resolvedAttachments);
-
-                    const finalDecomp = approvedDecomp || decomposition;
-                    const steps = (finalDecomp.subtasks || []).map((s, i) => ({
-                      name: s.name || s.step_name || `step_${i}`,
-                      tool_hint: s.tool_hint || s.description || s.name,
-                      tool_type: s.workflow_type || s.tool_type || 'python_tool',
-                      builtin_tool_id: s.builtin_tool_id || null,
-                      input_args: s.input_args || {},
-                      review_checkpoint: s.review_checkpoint || false,
-                    }));
-
-                    const plan = {
-                      title: intakeWorkOrder?.title || effectiveMessage.slice(0, 120),
-                      description: decomposition.original_instruction || effectiveMessage,
-                      steps,
-                      inputData,
-                      taskMeta: intakeWorkOrder ? {
-                        source_type: intakeWorkOrder.source,
-                        priority: intakeWorkOrder.priority,
-                        due_at: intakeWorkOrder.sla?.due_at,
-                        owner_hint: intakeWorkOrder.owner_hint,
-                        dedup_key: intakeWorkOrder.dedup_key,
-                        attachments: resolvedAttachments,
-                      } : { source_type: 'chat' },
-                      llmConfig: { provider: 'anthropic', model: 'claude-sonnet-4-6', temperature: 0.15, max_tokens: 4096 },
-                    };
-
-                    const assignedWorker = await getAssignedWorker();
-                    if (!assignedWorker?.id) {
-                      throw new Error('No digital worker is available for this task.');
-                    }
-
-                    const { taskId } = await submitPlan(plan, assignedWorker.id, user?.id);
-
-                    setAgentExecEvents([]);
-                    agentExecEventsRef.current = [];
-                    setAgentExecTaskTitle(effectiveMessage.slice(0, 80));
-                    setAgentExecPanelOpen(true);
-                    setAgentExecSSETaskId(taskId);
-
-                    const initLoopSteps = steps.map((s, i) => ({
-                      name: s.name, index: i, status: 'pending',
-                      workflow_type: s.tool_type, retry_count: 0,
-                    }));
-                    setAgentExecLoopState({ steps: initLoopSteps, started_at: new Date().toISOString() });
-
-                    appendMessagesToCurrentConversation([{
-                      role: 'ai',
-                      content: `Task created. Executing ${steps.length} steps via orchestrator...`,
-                      timestamp: new Date().toISOString(),
-                    }]);
-
-                    await orchestratorApprovePlan(taskId, user?.id);
-                  } catch (execErr) {
-                    appendMessagesToCurrentConversation([{
-                      role: 'ai',
-                      content: `Task execution failed: ${execErr?.message || 'Unknown error'}`,
-                      timestamp: new Date().toISOString(),
-                    }]);
-                  }
-                },
-              }]);
-            } catch (decompErr) {
-              appendMessagesToCurrentConversation([{
-                role: 'ai',
-                content: `Task decomposition failed: ${decompErr?.message || 'Unknown error'}`,
-                timestamp: new Date().toISOString(),
-              }]);
-            }
           },
           appendMessage: (msg) => appendMessagesToCurrentConversation([msg]),
           onNoDataset: () => appendMessagesToCurrentConversation([{ role: 'ai', content: 'Please upload a dataset first. You can drag and drop a CSV or XLSX file into the chat.', timestamp: new Date().toISOString() }]),
@@ -4086,7 +4145,21 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
           brief: snapshotBrief,
           query: trimmedVisibleInput || messageText,
           toolCallsSummary: agentPayload?.toolCalls?.length ? `${agentPayload.toolCalls.length} tool call(s)` : null,
-        }).catch(() => {}); // fire-and-forget — never block the main flow
+        }).catch((err) => console.warn('[DSV:snapshot] save failed:', err?.message));
+      }
+      // Fallback: synthesize brief from plain-text AI responses for Insights Hub
+      else if (fullResult && typeof fullResult === 'string' && fullResult.length > 200 && user?.id && !aiErrorPayload) {
+        const synthBrief = synthesizeBriefFromText(fullResult);
+        if (synthBrief?.headline) {
+          saveSnapshot({
+            userId: user.id,
+            conversationId: currentConversationId,
+            messageIndex: finalMessages.length - 1,
+            brief: synthBrief,
+            query: trimmedVisibleInput || messageText,
+            toolCallsSummary: null,
+          }).catch((err) => console.warn('[DSV:snapshot] synth save failed:', err?.message));
+        }
       }
     } catch (error) {
       console.error('[DSV] handleSend failed:', error);
@@ -4189,27 +4262,7 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
     contextLoading,
   ]);
 
-  useEffect(() => {
-    if (!isAIEmployeeMode) return;
-    const nextOpen = Boolean(agentExecPanelOpen);
-    if (nextOpen && !prevAIExecOpenRef.current) {
-      setAiEmployeeDrawer('execution');
-    } else if (!nextOpen && prevAIExecOpenRef.current) {
-      setAiEmployeeDrawer((current) => (current === 'execution' ? null : current));
-    }
-    prevAIExecOpenRef.current = nextOpen;
-  }, [agentExecPanelOpen, isAIEmployeeMode]);
-
-  useEffect(() => {
-    if (!isAIEmployeeMode) return;
-    const nextOpen = Boolean(activeCanvasState?.isOpen);
-    if (nextOpen && !prevAICanvasOpenRef.current) {
-      setAiEmployeeDrawer((current) => (current === 'execution' ? current : 'artifacts'));
-    } else if (!nextOpen && prevAICanvasOpenRef.current) {
-      setAiEmployeeDrawer((current) => (current === 'artifacts' ? null : current));
-    }
-    prevAICanvasOpenRef.current = nextOpen;
-  }, [activeCanvasState?.isOpen, isAIEmployeeMode]);
+  // Drawer sync effects removed — panels consolidated into Workers Hub
 
   const handleConfigureApiKey = useCallback(() => {
     addNotification?.('AI keys are now managed in Supabase Edge Function secrets (GEMINI_API_KEY / DEEPSEEK_API_KEY).', 'info');
@@ -4264,7 +4317,7 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
           setAgentExecEvents([]);
           agentExecEventsRef.current = [];
           setAgentExecTaskTitle((ctx.title || '').slice(0, 80));
-          setAgentExecPanelOpen(true);
+          // panel removed — task execution visible in Workers Hub Task Board
           setAgentExecSSETaskId(taskId);
           const initLoopSteps = steps.map((s, i) => ({
             name: s.name, index: i, status: 'pending',
@@ -4392,72 +4445,19 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
       ? `Delegating to ${delegatedWorkerName} · Live task: ${agentExecTaskTitle}`
       : `Delegating to ${delegatedWorkerName}`;
 
-  let aiEmployeeSecondaryPanel = null;
-  if (isAIEmployeeMode && aiEmployeeDrawer === 'profile') {
-    aiEmployeeSecondaryPanel = {
-      title: 'Worker Profile',
-      description: 'Skills, recent tasks, and current workload.',
-      onClose: closeAIEmployeeProfile,
-      content: (
-        <div className="h-full overflow-y-auto">
-          <EmployeeProfilePanel userId={user?.id} employeeId={delegatedWorker?.id || activeWorkerId || null} />
-        </div>
-      ),
-    };
-  } else if (isAIEmployeeMode && aiEmployeeDrawer === 'execution') {
-    aiEmployeeSecondaryPanel = {
-      title: 'Live Execution',
-      description: agentExecTaskTitle || 'Current task orchestration and step trace.',
-      onClose: closeAIEmployeeExecution,
-      content: (
-        <AgentExecutionPanel
-          loopState={agentExecLoopState}
-          stepEvents={agentExecEvents}
-          taskTitle={agentExecTaskTitle}
-          onClose={closeAIEmployeeExecution}
-          sseConnected={agentSSE.connected}
-        />
-      ),
-    };
-  } else if (isAIEmployeeMode && aiEmployeeDrawer === 'artifacts') {
-    aiEmployeeSecondaryPanel = {
-      title: 'Artifacts',
-      description: 'Logs, code, charts, topology, and downloadable outputs.',
-      onClose: closeAIEmployeeArtifacts,
-      content: (
-        <CanvasPanel
-          onToggleOpen={closeAIEmployeeArtifacts}
-          activeTab={activeCanvasState.activeTab}
-          onTabChange={(tabId) => {
-            if (!currentConversationId) return;
-            updateCanvasState(currentConversationId, (prev) => ({ ...prev, activeTab: tabId }));
-          }}
-          run={activeCanvasState.run}
-          logs={activeCanvasState.logs}
-          stepStatuses={activeCanvasState.stepStatuses}
-          codeText={activeCanvasState.codeText}
-          chartPayload={effectiveCanvasChartPayload}
-          forecastSeriesGroups={forecastSeriesGroups}
-          downloads={activeCanvasState.downloads}
-          topologyGraph={effectiveCanvasChartPayload.topology_graph || null}
-          topologyRunId={topologyRunId}
-          onRunTopology={handleRunTopology}
-          topologyRunning={Boolean(activeCanvasState.topologyRunning)}
-          userId={user?.id || null}
-          latestPlanRunId={latestPlanRunId}
-          datasetProfileId={activeDatasetContext?.dataset_profile_id || null}
-          datasetProfileRow={activeDatasetContext?.dataset_profile_id ? {
-            id: activeDatasetContext.dataset_profile_id,
-            user_file_id: activeDatasetContext.user_file_id || null,
-            profile_json: activeDatasetContext.profileJson || {},
-            contract_json: activeDatasetContext.contractJson || {},
-          } : null}
-          onPopout={null}
-          isDetached={false}
-        />
-      ),
-    };
-  }
+  const thinkingPanelCompleted = !isTyping && thinkingSteps.length > 0;
+  const aiEmployeeSidePanel = showThinkingPanel && thinkingSteps.length > 0
+    ? {
+        content: (
+          <ThinkingPanel
+            steps={thinkingSteps}
+            completed={thinkingPanelCompleted}
+            startTime={thinkingStartTimeRef.current}
+            onClose={() => setShowThinkingPanel(false)}
+          />
+        ),
+      }
+    : null;
 
   return (
     <div className="h-full w-full flex flex-col p-2 md:p-3 animate-fade-in">
@@ -4485,36 +4485,13 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
               onClose={handleCloseSidebar}
             />
           )}
-          actions={[
-            {
-              key: 'profile',
-              label: 'Profile',
-              icon: Bot,
-              onClick: openAIEmployeeProfile,
-              active: aiEmployeeDrawer === 'profile',
-            },
-            {
-              key: 'steps',
-              label: 'Steps',
-              icon: Activity,
-              onClick: openAIEmployeeExecution,
-              active: aiEmployeeDrawer === 'execution',
-              disabled: !agentExecLoopState?.steps?.length && agentExecEvents.length === 0,
-            },
-            {
-              key: 'artifacts',
-              label: 'Artifacts',
-              icon: FileText,
-              onClick: openAIEmployeeArtifacts,
-              active: aiEmployeeDrawer === 'artifacts',
-              disabled: !aiEmployeeHasArtifacts,
-            },
-          ]}
+          actions={[]}
           thread={currentConversation ? (
             <ChatThread
               messages={currentMessages}
               isTyping={isTyping}
               streamingContent={streamingContent}
+              streamingToolCalls={streamingToolCalls}
               thinkingSteps={thinkingSteps}
               formatTime={formatTime}
               renderSpecialMessage={renderSpecialMessage}
@@ -4526,11 +4503,13 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
               showInitialEmptyState={currentMessages.length <= 1 && !isTyping}
               isLoading={false}
               variant="ai_employee"
+              thinkingPanelActive={showThinkingPanel}
+              onOpenThinkingPanel={() => setShowThinkingPanel(true)}
             />
           ) : (
             <div className="flex flex-1 items-center justify-center px-6">
               <div className="max-w-xl text-center">
-                <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-[22px] bg-slate-900 text-white shadow-sm dark:bg-slate-100 dark:text-slate-900">
+                <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-[22px] bg-[var(--brand-600)] text-white shadow-sm">
                   <Bot className="h-8 w-8" />
                 </div>
                 <h2 className="text-3xl font-semibold tracking-tight text-[var(--text-primary)]">
@@ -4541,7 +4520,7 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
                 </p>
                 <button
                   type="button"
-                  className="mt-6 rounded-full bg-slate-900 px-5 py-3 text-sm font-medium text-white transition hover:bg-slate-700 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-slate-200"
+                  className="mt-6 rounded-lg bg-[var(--brand-600)] px-5 py-3 text-sm font-medium text-white transition hover:bg-[var(--brand-700)] cursor-pointer"
                   onClick={handleNewConversation}
                 >
                   New chat
@@ -4580,7 +4559,7 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
               variant="ai_employee"
             />
           ) : null}
-          secondaryPanel={aiEmployeeSecondaryPanel}
+          sidePanel={aiEmployeeSidePanel}
         />
       ) : (
         <SplitShell
@@ -4623,13 +4602,15 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
                     messages={currentMessages}
                     isTyping={isTyping}
                     streamingContent={streamingContent}
-              thinkingSteps={thinkingSteps}
+                    streamingToolCalls={streamingToolCalls}
+                    thinkingSteps={thinkingSteps}
                     formatTime={formatTime}
                     renderSpecialMessage={renderSpecialMessage}
                     quickPrompts={QUICK_PROMPTS}
                     onSelectPrompt={(promptText) => { setInput(promptText); textareaRef.current?.focus(); }}
                     showInitialEmptyState={currentMessages.length <= 1 && !isTyping}
                     isLoading={false}
+                    thinkingPanelActive={false}
                   />
 
                   <ChatComposer

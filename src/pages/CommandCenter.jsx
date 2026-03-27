@@ -145,7 +145,7 @@ export default function CommandCenter() {
         {/* ── Header with inline quick actions ── */}
         <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3 mb-2">
           <div>
-            <p className="text-xs font-semibold tracking-widest uppercase text-indigo-500 mb-1">
+            <p className="text-xs font-semibold tracking-widest uppercase text-[var(--brand-500)] mb-1">
               OVERVIEW
             </p>
             <h1
@@ -168,7 +168,7 @@ export default function CommandCenter() {
                 color: 'var(--text-primary)',
               }}
             >
-              <Calculator className="w-3.5 h-3.5 text-indigo-600" />
+              <Calculator className="w-3.5 h-3.5 text-[var(--brand-600)]" />
               Plan
             </button>
             <button
@@ -275,7 +275,7 @@ export default function CommandCenter() {
             {/* Verified ratio */}
             {overview.estimated_ratio && (
               <div className="flex items-center gap-1.5">
-                <Database className="w-4 h-4 text-indigo-500" />
+                <Database className="w-4 h-4 text-[var(--brand-500)]" />
                 <span style={{ color: 'var(--text-secondary)' }}>
                   {overview.estimated_ratio.verified}/{overview.estimated_ratio.total} verified
                 </span>
@@ -349,7 +349,7 @@ export default function CommandCenter() {
                   <Card key={approval.id} variant="elevated" className="!p-3">
                     <div className="flex items-center gap-3">
                       <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${
-                        isExpired ? 'bg-slate-400'
+                        isExpired ? 'bg-[var(--text-muted)]'
                           : isCritical ? 'bg-red-500 animate-pulse'
                             : isUrgent ? 'bg-amber-500'
                               : approval.urgency === 'critical' ? 'bg-red-500'
@@ -361,7 +361,7 @@ export default function CommandCenter() {
                           {approval.title}
                         </p>
                         <div className="flex items-center gap-2 mt-0.5">
-                          <span className="text-[10px] uppercase font-medium text-slate-500">
+                          <span className="text-[10px] uppercase font-medium" style={{ color: 'var(--text-muted)' }}>
                             {approval.type?.replace(/_/g, ' ')}
                           </span>
                           {approval.expires_at && (
@@ -402,7 +402,7 @@ export default function CommandCenter() {
           <Card>
             {loadingActivity ? (
               <div className="flex items-center justify-center py-10">
-                <div className="w-5 h-5 rounded-md bg-indigo-600 animate-pulse" />
+                <div className="w-5 h-5 rounded-md bg-[var(--brand-600)] animate-pulse" />
               </div>
             ) : recentActivity.length === 0 ? (
               <div className="text-center py-10">

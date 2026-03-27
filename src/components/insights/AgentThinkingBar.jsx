@@ -44,26 +44,26 @@ export default function AgentThinkingBar({ thinking, loading, progress }) {
   if (!loading && !thinking) return null;
 
   return (
-    <div className="rounded-xl border border-indigo-200 dark:border-indigo-800 bg-indigo-50/50 dark:bg-indigo-950/20 overflow-hidden transition-all">
+    <div className="rounded-xl border border-[var(--brand-500)] bg-[var(--accent-active)] overflow-hidden transition-all">
       {/* Header */}
       <button
         onClick={() => setExpanded((v) => !v)}
-        className="w-full flex items-center gap-2 px-4 py-2.5 text-left hover:bg-indigo-50 dark:hover:bg-indigo-950/30 transition-colors"
+        className="w-full flex items-center gap-2 px-4 py-2.5 text-left hover:bg-[var(--accent-active)] transition-colors"
       >
         {loading ? (
-          <Loader2 className="w-4 h-4 text-indigo-500 animate-spin" />
+          <Loader2 className="w-4 h-4 text-[var(--brand-500)] animate-spin" />
         ) : (
-          <Brain className="w-4 h-4 text-indigo-500" />
+          <Brain className="w-4 h-4 text-[var(--brand-500)]" />
         )}
-        <span className="text-sm font-medium text-indigo-700 dark:text-indigo-300">
+        <span className="text-sm font-medium text-[var(--brand-600)]">
           {loading
             ? (progress || 'Agent is analyzing your data...')
             : 'Agent reasoning'}
         </span>
         <span className="ml-auto">
           {expanded
-            ? <ChevronUp className="w-4 h-4 text-indigo-400" />
-            : <ChevronDown className="w-4 h-4 text-indigo-400" />}
+            ? <ChevronUp className="w-4 h-4 text-[var(--brand-500)]" />
+            : <ChevronDown className="w-4 h-4 text-[var(--brand-500)]" />}
         </span>
       </button>
 
@@ -71,12 +71,12 @@ export default function AgentThinkingBar({ thinking, loading, progress }) {
       {expanded && (
         <div className="px-4 pb-3">
           {loading ? (
-            <p className="text-sm text-indigo-600/80 dark:text-indigo-400/80 leading-relaxed">
+            <p className="text-sm text-[var(--brand-600)] leading-relaxed">
               {progress || 'Gathering insights from your analysis reports...'}
-              <span className="inline-block w-1.5 h-4 bg-indigo-500 ml-0.5 animate-pulse" />
+              <span className="inline-block w-1.5 h-4 bg-[var(--brand-500)] ml-0.5 animate-pulse" />
             </p>
           ) : displayText ? (
-            <p className="text-sm text-indigo-600/80 dark:text-indigo-400/80 leading-relaxed whitespace-pre-wrap">
+            <p className="text-sm text-[var(--brand-600)] leading-relaxed whitespace-pre-wrap">
               {displayText}
             </p>
           ) : null}

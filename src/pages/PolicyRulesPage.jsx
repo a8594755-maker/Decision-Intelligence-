@@ -35,7 +35,7 @@ const RULE_TYPE_COLORS = {
   [RULE_TYPES.REVIEW_REQUIRED]:    'text-blue-600 bg-blue-50 dark:bg-blue-900/20',
   [RULE_TYPES.RATE_LIMIT]:         'text-red-600 bg-red-50 dark:bg-red-900/20',
   [RULE_TYPES.DATA_ACCESS]:        'text-emerald-600 bg-emerald-50 dark:bg-emerald-900/20',
-  [RULE_TYPES.TIME_WINDOW]:        'text-slate-600 bg-slate-100 dark:bg-slate-800',
+  [RULE_TYPES.TIME_WINDOW]:        'text-[var(--text-secondary)] bg-[var(--surface-subtle)]',
 };
 
 // ── Rule Card ────────────────────────────────────────────────────────────────
@@ -53,12 +53,12 @@ function RuleCard({ rule, onEdit, onToggle, onDelete }) {
             <span className="font-medium text-sm" style={{ color: 'var(--text-primary)' }}>{rule.name}</span>
             <span className={`px-1.5 py-0.5 text-[10px] rounded font-medium ${typeColor}`}>{typeLabel}</span>
             {rule.capability_class && (
-              <span className="px-1.5 py-0.5 text-[10px] rounded bg-indigo-50 text-indigo-600 dark:bg-indigo-900/20 font-medium">
+              <span className="px-1.5 py-0.5 text-[10px] rounded bg-[var(--accent-active)] text-[var(--brand-600)] font-medium">
                 {rule.capability_class}
               </span>
             )}
             {isDefault && (
-              <span className="px-1.5 py-0.5 text-[10px] rounded bg-slate-100 text-slate-500 dark:bg-slate-800 font-medium">Default</span>
+              <span className="px-1.5 py-0.5 text-[10px] rounded bg-[var(--surface-subtle)] font-medium" style={{ color: 'var(--text-muted)' }}>Default</span>
             )}
           </div>
           {rule.description && (
@@ -282,7 +282,7 @@ function RuleForm({ initial, onSave, onCancel, saving }) {
       {/* Save/Cancel */}
       <div className="flex gap-2 pt-2">
         <button onClick={() => onSave(form)} disabled={saving || !form.name}
-          className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 transition-colors">
+          className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium bg-[var(--brand-600)] text-white hover:bg-[var(--brand-700)] disabled:opacity-50 transition-colors">
           <Save className="w-3.5 h-3.5" />{saving ? 'Saving...' : 'Save Rule'}
         </button>
         <button onClick={onCancel}
@@ -367,10 +367,10 @@ export default function PolicyRulesPage() {
         style={{ backgroundColor: 'var(--surface-card)', borderColor: 'var(--border-default)' }}
       >
         <div className="flex items-center gap-2.5">
-          <Shield className="w-5 h-5 text-indigo-600" />
+          <Shield className="w-5 h-5 text-[var(--brand-600)]" />
           <span className="font-semibold text-sm" style={{ color: 'var(--text-primary)' }}>Governance Rules</span>
           {rules.length > 0 && (
-            <span className="text-xs px-1.5 py-0.5 rounded-full bg-indigo-50 text-indigo-600 dark:bg-indigo-900/20">
+            <span className="text-xs px-1.5 py-0.5 rounded-full bg-[var(--accent-active)] text-[var(--brand-600)]">
               {rules.filter(r => r.is_active).length} active
             </span>
           )}
@@ -386,7 +386,7 @@ export default function PolicyRulesPage() {
           </button>
           <button
             onClick={() => setEditing('new')}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-indigo-600 text-white hover:bg-indigo-700 transition-colors"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-[var(--brand-600)] text-white hover:bg-[var(--brand-700)] transition-colors"
           >
             <Plus className="w-3.5 h-3.5" />
             New Rule
@@ -398,7 +398,7 @@ export default function PolicyRulesPage() {
       <div className="flex-1 overflow-y-auto p-6">
         {loading ? (
           <div className="flex items-center justify-center h-32">
-            <div className="w-6 h-6 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
+            <div className="w-6 h-6 border-2 border-[var(--brand-600)] border-t-transparent rounded-full animate-spin" />
           </div>
         ) : (
           <div className="max-w-3xl space-y-3">
@@ -422,7 +422,7 @@ export default function PolicyRulesPage() {
 
             {rules.length === 0 && !editing && (
               <div className="flex flex-col items-center justify-center h-48 gap-3">
-                <Shield className="w-10 h-10 text-indigo-300" />
+                <Shield className="w-10 h-10 text-[var(--brand-500)]" />
                 <p className="text-sm" style={{ color: 'var(--text-muted)' }}>No governance rules configured.</p>
               </div>
             )}

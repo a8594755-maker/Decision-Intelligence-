@@ -147,7 +147,7 @@ export default function AdminJobControlCenter({ setView }) {
               <select
                 value={filters.status}
                 onChange={(e) => setFilters({ ...filters, status: e.target.value })}
-                className="mt-1 block w-32 rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                className="mt-1 block w-32 rounded-md border-gray-300 shadow-sm focus:border-[var(--brand-500)] focus:ring-[var(--brand-500)] sm:text-sm"
               >
                 <option value="">All</option>
                 <option value="pending">Pending</option>
@@ -162,7 +162,7 @@ export default function AdminJobControlCenter({ setView }) {
               <select
                 value={filters.jobType}
                 onChange={(e) => setFilters({ ...filters, jobType: e.target.value })}
-                className="mt-1 block w-40 rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                className="mt-1 block w-40 rounded-md border-gray-300 shadow-sm focus:border-[var(--brand-500)] focus:ring-[var(--brand-500)] sm:text-sm"
               >
                 <option value="">All</option>
                 <option value="bom_explosion">BOM Explosion</option>
@@ -183,7 +183,7 @@ export default function AdminJobControlCenter({ setView }) {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-8">
         {loading ? (
           <div className="flex items-center justify-center h-64">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[var(--brand-600)]"></div>
           </div>
         ) : jobs.length === 0 ? (
           <div className="bg-white rounded-lg shadow p-8 text-center">
@@ -250,7 +250,7 @@ export default function AdminJobControlCenter({ setView }) {
                       <div className="flex items-center">
                         <div className="w-16 bg-gray-200 rounded-full h-2 mr-2">
                           <div
-                            className="bg-indigo-600 h-2 rounded-full"
+                            className="bg-[var(--brand-600)] h-2 rounded-full"
                             style={{ width: `${job.progress || 0}%` }}
                           />
                         </div>
@@ -281,7 +281,7 @@ export default function AdminJobControlCenter({ setView }) {
                             e.stopPropagation();
                             handleRetryJob(job);
                           }}
-                          className="text-indigo-600 hover:text-indigo-900"
+                          className="text-[var(--brand-600)] hover:text-[var(--brand-700)]"
                         >
                           Retry
                         </button>
@@ -347,7 +347,7 @@ function JobDetailModal({ job, onClose, onCancel, onRetry }) {
             </div>
             <div className="w-full bg-gray-200 rounded-full h-2">
               <div
-                className="bg-indigo-600 h-2 rounded-full"
+                className="bg-[var(--brand-600)] h-2 rounded-full"
                 style={{ width: `${job.progress || 0}%` }}
               />
             </div>
@@ -430,7 +430,7 @@ function JobDetailModal({ job, onClose, onCancel, onRetry }) {
           {['failed', 'cancelled'].includes(job.status) && (
             <button
               onClick={onRetry}
-              className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700"
+              className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-[var(--brand-600)] hover:bg-[var(--brand-700)]"
             >
               Retry Job
             </button>

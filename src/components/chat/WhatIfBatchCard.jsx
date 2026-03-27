@@ -44,7 +44,7 @@ export default function WhatIfBatchCard({ payload, onSelectScenario }) {
   const isDone = batch_status === 'done' || batch_status === 'partial';
 
   return (
-    <Card className="w-full border border-blue-200 dark:border-blue-800 bg-blue-50/40 dark:bg-blue-900/10">
+    <Card category="analysis" className="w-full border border-blue-200 dark:border-blue-800 bg-blue-50/40 dark:bg-blue-900/10">
       <div className="space-y-3">
 
         {/* Header */}
@@ -52,10 +52,10 @@ export default function WhatIfBatchCard({ payload, onSelectScenario }) {
           <div className="flex items-center gap-2">
             <FlaskConical className="w-4 h-4 text-blue-600 shrink-0" />
             <div>
-              <h4 className="font-semibold text-sm text-slate-800 dark:text-slate-100">
+              <h4 className="font-semibold text-sm text-[var(--text-primary)]">
                 What-If Batch Analysis
               </h4>
-              <p className="text-[11px] text-slate-500 dark:text-slate-400">
+              <p className="text-[11px] text-[var(--text-muted)]">
                 {isRunning
                   ? `Running ${total} scenario${total !== 1 ? 's' : ''}\u2026`
                   : `${succeeded} of ${total} scenarios completed`}
@@ -77,7 +77,7 @@ export default function WhatIfBatchCard({ payload, onSelectScenario }) {
             {results.map((r, idx) => (
               <div key={idx} className="flex items-center gap-2">
                 <StatusIcon status={r.status} />
-                <span className="text-xs text-slate-700 dark:text-slate-200 flex-1 truncate">
+                <span className="text-xs text-[var(--text-secondary)] flex-1 truncate">
                   {r.name}
                 </span>
                 {r.status === 'failed' && r.error && (
@@ -101,7 +101,7 @@ export default function WhatIfBatchCard({ payload, onSelectScenario }) {
             <div className="border-t border-blue-100 dark:border-blue-800/40 pt-2">
               <button
                 onClick={() => setShowDetails((v) => !v)}
-                className="w-full flex items-center justify-between text-xs text-slate-600 dark:text-slate-300 hover:text-slate-800 dark:hover:text-slate-100 transition-colors"
+                className="w-full flex items-center justify-between text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
               >
                 <span className="font-medium">
                   {showDetails ? 'Hide' : 'Show'} Comparison Matrix
@@ -123,13 +123,13 @@ export default function WhatIfBatchCard({ payload, onSelectScenario }) {
 
         {/* Collapsed recommendation summary */}
         {isDone && multi_scenario_summary?.recommended_scenario && !showDetails && (
-          <div className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300">
+          <div className="flex items-center gap-2 text-xs text-[var(--text-secondary)]">
             <span className="text-amber-500">{'\u2605'}</span>
             <span>
               Best overall:{' '}
               <strong>{multi_scenario_summary.recommended_scenario.name}</strong>
               {multi_scenario_summary.recommended_scenario.key_reasons?.[0] && (
-                <span className="text-slate-400 ml-1">
+                <span className="text-[var(--text-muted)] ml-1">
                   {'\u2014'} {multi_scenario_summary.recommended_scenario.key_reasons[0]}
                 </span>
               )}

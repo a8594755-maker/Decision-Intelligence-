@@ -54,13 +54,18 @@ export const Card = ({
   category,
   onClick,
   hoverEffect = false,
+  compact = false,
+  loading = false,
 }) => {
+  const padding = compact ? 'p-3' : 'p-4 md:p-6';
+
   return (
     <div
       onClick={onClick}
       className={[
         VARIANTS[variant] || VARIANTS.default,
-        'p-4 md:p-6',
+        padding,
+        'relative',
         category && CARD_CATEGORIES[category]
           ? `border-l-[3px] border-l-[var(${CARD_CATEGORIES[category]})]`
           : '',
@@ -70,6 +75,15 @@ export const Card = ({
         className,
       ].filter(Boolean).join(' ')}
     >
+      {loading && (
+        <div className="absolute inset-0 bg-[var(--surface-card)]/80 rounded-xl flex items-center justify-center z-10">
+          <div className="w-full max-w-[80%] space-y-3">
+            <div className="h-4 bg-[var(--surface-subtle)] rounded animate-pulse w-3/4" />
+            <div className="h-3 bg-[var(--surface-subtle)] rounded animate-pulse w-full" />
+            <div className="h-3 bg-[var(--surface-subtle)] rounded animate-pulse w-2/3" />
+          </div>
+        </div>
+      )}
       {children}
     </div>
   );

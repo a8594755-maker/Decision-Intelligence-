@@ -100,13 +100,13 @@ function computeSlaStatus(item) {
   const now = Date.now();
   const deadline = new Date(sla.deadline).getTime();
   const remaining = deadline - now;
-  if (remaining <= 0) return { label: 'SLA Exceeded', color: 'bg-red-50 text-red-600 dark:bg-red-900/20 dark:text-red-400' };
+  if (remaining <= 0) return { label: 'SLA Exceeded', color: 'bg-[var(--status-danger-bg)] text-[var(--status-danger-text)]' };
   // "approaching" = within 25% of total duration or less than 1 hour
   const created = new Date(item.created_at).getTime();
   const totalWindow = deadline - created;
   const threshold = Math.min(totalWindow * 0.25, 3600000); // 25% or 1h
-  if (remaining <= threshold) return { label: 'SLA Soon', color: 'bg-amber-50 text-amber-600 dark:bg-amber-900/20 dark:text-amber-400' };
-  return { label: 'Within SLA', color: 'bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-400' };
+  if (remaining <= threshold) return { label: 'SLA Soon', color: 'bg-[var(--status-warning-bg)] text-[var(--status-warning-text)]' };
+  return { label: 'Within SLA', color: 'bg-[var(--status-success-bg)] text-[var(--status-success-text)]' };
 }
 
 function StatusBanner({ latestRun }) {
@@ -123,8 +123,8 @@ function StatusBanner({ latestRun }) {
       }}
     >
       {succeeded
-        ? <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0" />
-        : <AlertTriangle className="w-4 h-4 text-red-500 flex-shrink-0" />
+        ? <CheckCircle2 className="w-4 h-4 text-[var(--status-success)] flex-shrink-0" />
+        : <AlertTriangle className="w-4 h-4 text-[var(--status-danger)] flex-shrink-0" />
       }
       <span style={{ color: 'var(--text-primary)' }}>
         {latestRun.summary || (succeeded ? 'Completed successfully' : 'Completed with issues')}
@@ -230,14 +230,14 @@ function StepTracker({ loopState }) {
   if (!steps?.length) return null;
 
   const statusColor = {
-    succeeded: 'bg-emerald-500 border-emerald-200',
-    done: 'bg-emerald-500 border-emerald-200',
-    running: 'bg-blue-500 border-blue-200 animate-pulse',
-    failed: 'bg-red-500 border-red-200',
-    review_hold: 'bg-amber-500 border-amber-200',
-    waiting_input: 'bg-amber-500 border-amber-200',
-    pending: 'bg-slate-300 border-slate-200',
-    skipped: 'bg-slate-200 border-slate-100',
+    succeeded: 'bg-[var(--status-success)] border-[var(--status-success)]',
+    done: 'bg-[var(--status-success)] border-[var(--status-success)]',
+    running: 'bg-[var(--cat-plan)] border-[var(--cat-plan)] animate-pulse',
+    failed: 'bg-[var(--status-danger)] border-[var(--status-danger)]',
+    review_hold: 'bg-[var(--status-warning)] border-[var(--status-warning)]',
+    waiting_input: 'bg-[var(--status-warning)] border-[var(--status-warning)]',
+    pending: 'bg-[var(--text-muted)] border-[var(--border-default)]',
+    skipped: 'bg-[var(--surface-subtle)] border-[var(--border-default)]',
   };
 
   return (
@@ -275,11 +275,11 @@ function RevisionDiffView({ runs }) {
       </div>
       <div className="grid grid-cols-2 gap-3">
         <div className="p-3 rounded-xl" style={{ backgroundColor: 'rgba(239, 68, 68, 0.05)' }}>
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-red-500 mb-1">Previous</p>
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-[var(--status-danger)] mb-1">Previous</p>
           <p className="text-xs leading-5" style={{ color: 'var(--text-secondary)' }}>{previousSummary}</p>
         </div>
         <div className="p-3 rounded-xl" style={{ backgroundColor: 'rgba(16, 185, 129, 0.05)' }}>
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-emerald-500 mb-1">Current</p>
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-[var(--status-success)] mb-1">Current</p>
           <p className="text-xs leading-5" style={{ color: 'var(--text-secondary)' }}>{currentSummary}</p>
         </div>
       </div>
@@ -509,9 +509,9 @@ function DeliverableViewer({ item }) {
               </div>
               {traceCompleteness && (
                 <span className={`px-2 py-0.5 rounded-full text-[11px] font-medium ${
-                  traceCompleteness.score >= 80 ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-400' :
-                  traceCompleteness.score >= 50 ? 'bg-amber-50 text-amber-600 dark:bg-amber-900/20 dark:text-amber-400' :
-                  'bg-red-50 text-red-600 dark:bg-red-900/20 dark:text-red-400'
+                  traceCompleteness.score >= 80 ? 'bg-[var(--status-success-bg)] text-[var(--status-success-text)]' :
+                  traceCompleteness.score >= 50 ? 'bg-[var(--status-warning-bg)] text-[var(--status-warning-text)]' :
+                  'bg-[var(--status-danger-bg)] text-[var(--status-danger-text)]'
                 }`}>
                   {traceCompleteness.score}% traced
                 </span>
@@ -537,11 +537,11 @@ function DeliverableViewer({ item }) {
                   {governanceItems.map((gi) => (
                     <div key={gi.id} className="flex items-center gap-2 text-xs">
                       <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
-                        gi.status === GOVERNANCE_STATUS.APPROVED ? 'bg-emerald-500' :
-                        gi.status === GOVERNANCE_STATUS.REJECTED ? 'bg-red-500' :
-                        gi.status === GOVERNANCE_STATUS.ESCALATED ? 'bg-amber-500' :
-                        gi.status === GOVERNANCE_STATUS.EXPIRED ? 'bg-slate-400' :
-                        'bg-blue-500'
+                        gi.status === GOVERNANCE_STATUS.APPROVED ? 'bg-[var(--status-success)]' :
+                        gi.status === GOVERNANCE_STATUS.REJECTED ? 'bg-[var(--status-danger)]' :
+                        gi.status === GOVERNANCE_STATUS.ESCALATED ? 'bg-[var(--status-warning)]' :
+                        gi.status === GOVERNANCE_STATUS.EXPIRED ? 'bg-[var(--text-muted)]' :
+                        'bg-[var(--cat-plan)]'
                       }`} />
                       <span className="capitalize" style={{ color: 'var(--text-secondary)' }}>
                         {(gi.type || 'approval').replace(/_/g, ' ')}
@@ -649,7 +649,7 @@ function RevisionLogPanel({ item, onDecision, deciding }) {
         {loopSteps.length > 0 && (
           <div className="px-4 pt-4 pb-2">
             <div className="flex items-center gap-1.5 mb-3">
-              <Zap className="w-3.5 h-3.5 text-amber-500" />
+              <Zap className="w-3.5 h-3.5 text-[var(--status-warning)]" />
               <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>
                 AI Processing Steps
               </span>
@@ -662,11 +662,11 @@ function RevisionLogPanel({ item, onDecision, deciding }) {
                     {/* Dot on timeline */}
                     <div
                       className={`absolute -left-[calc(0.5rem+1px)] top-1 w-3 h-3 rounded-full border-2 ${
-                        step.status === STEP_STATES.SUCCEEDED ? 'bg-emerald-500 border-emerald-200' :
-                        step.status === STEP_STATES.FAILED ? 'bg-red-500 border-red-200' :
-                        step.status === STEP_STATES.REVIEW_HOLD ? 'bg-amber-500 border-amber-200' :
-                        step.status === STEP_STATES.RUNNING ? 'bg-blue-500 border-blue-200 animate-pulse' :
-                        'bg-slate-300 border-slate-200'
+                        step.status === STEP_STATES.SUCCEEDED ? 'bg-[var(--status-success)] border-[var(--status-success)]' :
+                        step.status === STEP_STATES.FAILED ? 'bg-[var(--status-danger)] border-[var(--status-danger)]' :
+                        step.status === STEP_STATES.REVIEW_HOLD ? 'bg-[var(--status-warning)] border-[var(--status-warning)]' :
+                        step.status === STEP_STATES.RUNNING ? 'bg-[var(--cat-plan)] border-[var(--cat-plan)] animate-pulse' :
+                        'bg-[var(--text-muted)] border-[var(--border-default)]'
                       }`}
                     />
 
@@ -676,7 +676,7 @@ function RevisionLogPanel({ item, onDecision, deciding }) {
                           {step.name}
                         </span>
                         {retried && (
-                          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">
+                          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-[var(--status-warning-bg)] text-[var(--status-warning-text)] font-medium">
                             {step.retry_count} retry
                           </span>
                         )}
@@ -687,7 +687,7 @@ function RevisionLogPanel({ item, onDecision, deciding }) {
                         </p>
                       )}
                       {step.error && (
-                        <p className="text-xs mt-0.5 text-red-500 line-clamp-2">
+                        <p className="text-xs mt-0.5 text-[var(--status-danger)] line-clamp-2">
                           Error: {step.error}
                         </p>
                       )}
@@ -716,8 +716,8 @@ function RevisionLogPanel({ item, onDecision, deciding }) {
             {runs.slice(0, 5).map((run, i) => (
               <div key={run.id || i} className="flex items-center gap-2 py-1.5 text-xs">
                 {run.status === 'succeeded'
-                  ? <CheckCircle2 className="w-3 h-3 text-emerald-500" />
-                  : <XCircle className="w-3 h-3 text-red-500" />
+                  ? <CheckCircle2 className="w-3 h-3 text-[var(--status-success)]" />
+                  : <XCircle className="w-3 h-3 text-[var(--status-danger)]" />
                 }
                 <span style={{ color: 'var(--text-secondary)' }}>
                   {run.summary?.slice(0, 60) || run.status}
@@ -793,7 +793,7 @@ function RevisionLogPanel({ item, onDecision, deciding }) {
                   onDecision(item, runs[0], 'rejected', comment);
                 }}
                 disabled={deciding}
-                className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-sm font-medium border border-red-200 text-red-600 hover:bg-red-50 disabled:opacity-50 transition-colors"
+                className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-sm font-medium border border-[var(--status-danger)] text-[var(--status-danger)] hover:bg-[var(--status-danger-bg)] disabled:opacity-50 transition-colors"
               >
                 {deciding === 'rejected'
                   ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -848,7 +848,7 @@ function QueueItem({ item, isSelected, onClick }) {
           </span>
         )}
         {retries > 0 && (
-          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">
+          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-[var(--status-warning-bg)] text-[var(--status-warning-text)] font-medium">
             {retries} self-fix
           </span>
         )}
@@ -962,7 +962,7 @@ export default function EmployeeReviewPage() {
             Review Center
           </span>
           {!loading && items.length > 0 && (
-            <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
+            <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-[var(--status-warning-bg)] text-[var(--status-warning-text)]">
               {items.length} pending
             </span>
           )}
@@ -980,9 +980,9 @@ export default function EmployeeReviewPage() {
       {toast && (
         <div
           className={`mx-6 mt-3 flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium ${
-            toast.type === 'success' ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400' :
-            toast.type === 'warning' ? 'bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-400' :
-            'bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-400'
+            toast.type === 'success' ? 'bg-[var(--status-success-bg)] text-[var(--status-success-text)]' :
+            toast.type === 'warning' ? 'bg-[var(--status-warning-bg)] text-[var(--status-warning-text)]' :
+            'bg-[var(--status-danger-bg)] text-[var(--status-danger-text)]'
           }`}
         >
           {toast.type === 'success'
@@ -1006,7 +1006,7 @@ export default function EmployeeReviewPage() {
               </div>
             ) : items.length === 0 ? (
               <div className="px-3 py-12 text-center">
-                <CheckCircle2 className="w-10 h-10 text-emerald-400 mx-auto mb-3" />
+                <CheckCircle2 className="w-10 h-10 text-[var(--status-success)] mx-auto mb-3" />
                 <p className="text-sm font-medium" style={{ color: 'var(--text-secondary)' }}>
                   All clear!
                 </p>

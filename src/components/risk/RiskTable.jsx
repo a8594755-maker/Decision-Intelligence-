@@ -288,7 +288,7 @@ const RiskTable = ({
           <div className="flex items-center gap-1 justify-center">
             {risk.topAction && (
               <span
-                className="text-[9px] px-1.5 py-0.5 rounded bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 font-medium truncate max-w-[60px]"
+                className="text-[9px] px-1.5 py-0.5 rounded bg-[var(--accent-active)] text-[var(--brand-600)] font-medium truncate max-w-[60px]"
                 title={risk.topAction.description}
               >
                 {risk.topAction.title.split(' ').slice(0, 2).join(' ')}
@@ -431,7 +431,7 @@ const RiskTable = ({
             
             <th
               onClick={() => handleSort('decisionRankingScore')}
-              className="px-2 py-2 text-right text-xs font-semibold uppercase text-indigo-600 dark:text-indigo-400 cursor-pointer hover:bg-slate-200 dark:hover:bg-slate-700 w-[55px] min-w-[55px]"
+              className="px-2 py-2 text-right text-xs font-semibold uppercase text-[var(--brand-600)] cursor-pointer hover:bg-slate-200 dark:hover:bg-slate-700 w-[55px] min-w-[55px]"
             >
               <div className="flex items-center justify-end gap-1">
                 Rank

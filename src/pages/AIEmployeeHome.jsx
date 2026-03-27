@@ -31,10 +31,10 @@ const DecisionSupportView = lazy(() => import('../views/DecisionSupportView'));
 // ── Quick Stats Card ────────────────────────────────────────────────────────
 
 // eslint-disable-next-line no-unused-vars -- Icon is rendered in JSX below
-function QuickStat({ icon: Icon, label, value, trend, accent = 'text-indigo-600' }) {
+function QuickStat({ icon: Icon, label, value, trend, accent = 'text-[var(--brand-600)]' }) {
   return (
-    <div className="flex items-center gap-3 p-3 rounded-lg bg-white dark:bg-slate-800/50 border" style={{ borderColor: 'var(--border-default)' }}>
-      <div className="p-2 rounded-lg bg-slate-50 dark:bg-slate-800">
+    <div className="flex items-center gap-3 p-3 rounded-lg bg-[var(--surface-card)] border" style={{ borderColor: 'var(--border-default)' }}>
+      <div className="p-2 rounded-lg bg-[var(--surface-subtle)]">
         <Icon className={`w-4 h-4 ${accent}`} />
       </div>
       <div className="flex-1 min-w-0">
@@ -55,7 +55,7 @@ function QuickStat({ icon: Icon, label, value, trend, accent = 'text-indigo-600'
 // ── Worker Status Row ───────────────────────────────────────────────────────
 
 const WORKER_STATUS_STYLES = {
-  [EMPLOYEE_STATE_TO_DB[EMPLOYEE_STATES.IDLE]]: { color: 'text-slate-500', bg: 'bg-slate-100 dark:bg-slate-800', dot: 'bg-slate-400' },
+  [EMPLOYEE_STATE_TO_DB[EMPLOYEE_STATES.IDLE]]: { color: 'text-slate-500', bg: 'bg-[var(--surface-subtle)]', dot: 'bg-slate-400' },
   [EMPLOYEE_STATE_TO_DB[EMPLOYEE_STATES.BUSY]]: { color: 'text-blue-600', bg: 'bg-blue-50 dark:bg-blue-900/20', dot: 'bg-blue-500' },
   [EMPLOYEE_STATE_TO_DB[EMPLOYEE_STATES.REVIEW_NEEDED]]: { color: 'text-amber-600', bg: 'bg-amber-50 dark:bg-amber-900/20', dot: 'bg-amber-500' },
   [EMPLOYEE_STATE_TO_DB[EMPLOYEE_STATES.ERROR]]: { color: 'text-red-600', bg: 'bg-red-50 dark:bg-red-900/20', dot: 'bg-red-500' },
@@ -73,8 +73,8 @@ function WorkerRow({ worker, kpis, onClick }) {
       className="w-full flex items-center gap-3 p-3 rounded-lg border text-left transition-colors hover:bg-[var(--surface-subtle)]"
       style={{ borderColor: 'var(--border-default)' }}
     >
-      <div className="w-8 h-8 rounded-full bg-indigo-100 dark:bg-indigo-900/30 flex items-center justify-center flex-shrink-0">
-        <Bot className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+      <div className="w-8 h-8 rounded-full bg-[var(--accent-active)] flex items-center justify-center flex-shrink-0">
+        <Bot className="w-4 h-4 text-[var(--brand-600)]" />
       </div>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
@@ -126,7 +126,7 @@ function ActivityFeed({ dailySummary }) {
     items.push({ icon: AlertTriangle, text: `${dailySummary.reviews_pending} review(s) pending`, color: 'text-amber-600' });
   }
   if (dailySummary.artifacts_generated > 0) {
-    items.push({ icon: FileText, text: `${dailySummary.artifacts_generated} artifact(s) generated`, color: 'text-indigo-600' });
+    items.push({ icon: FileText, text: `${dailySummary.artifacts_generated} artifact(s) generated`, color: 'text-[var(--brand-600)]' });
   }
 
   if (items.length === 0) {
@@ -306,7 +306,7 @@ export default function AIEmployeeHome() {
           <div className="flex items-center gap-2 min-w-0">
             <button
               onClick={() => setView('dashboard')}
-              className="text-xs font-medium px-2 py-1 rounded hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+              className="text-xs font-medium px-2 py-1 rounded hover:bg-[var(--surface-subtle)] transition-colors"
               style={{ color: 'var(--text-secondary)' }}
             >
               &larr; Dashboard
@@ -319,7 +319,7 @@ export default function AIEmployeeHome() {
                 <select
                   value={selectedWorker?.id || ''}
                   onChange={(event) => persistSelectedWorker(event.target.value)}
-                  className="min-w-[180px] max-w-[260px] px-2.5 py-1 rounded-lg border text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  className="min-w-[180px] max-w-[260px] px-2.5 py-1 rounded-lg border text-xs focus:outline-none focus:ring-2 focus:ring-[var(--brand-500)]"
                   style={{ borderColor: 'var(--border-default)', backgroundColor: 'var(--surface-bg)', color: 'var(--text-primary)' }}
                 >
                   {workers.map((worker) => (
@@ -333,7 +333,7 @@ export default function AIEmployeeHome() {
           </div>
           <button
             onClick={() => navigate(selectedWorker ? `/employees/tasks?worker=${selectedWorker.id}` : '/employees/tasks')}
-            className="text-xs font-medium px-2 py-1 rounded hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors whitespace-nowrap"
+            className="text-xs font-medium px-2 py-1 rounded hover:bg-[var(--surface-subtle)] transition-colors whitespace-nowrap"
             style={{ color: 'var(--text-secondary)' }}
           >
             Task Board &rarr;
@@ -427,7 +427,7 @@ export default function AIEmployeeHome() {
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
-            <p className="text-xs font-semibold tracking-widest uppercase text-indigo-500">DIGITAL WORKFORCE</p>
+            <p className="text-xs font-semibold tracking-widest uppercase text-[var(--brand-500)]">DIGITAL WORKFORCE</p>
             <h1 className="text-2xl font-bold tracking-tight" style={{ color: 'var(--text-primary)' }}>
               Manager Console
             </h1>
@@ -435,14 +435,14 @@ export default function AIEmployeeHome() {
           <div className="flex items-center gap-2">
             <button
               onClick={() => navigate('/workspace')}
-              className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700 transition-colors"
+              className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium bg-[var(--brand-600)] text-white hover:bg-[var(--brand-700)] transition-colors"
             >
               <Activity className="w-4 h-4" />
               Workspace
             </button>
             <button
               onClick={() => navigate('/employees/tasks')}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium border transition-colors hover:bg-slate-50 dark:hover:bg-slate-800"
+              className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium border transition-colors hover:bg-[var(--surface-subtle)]"
               style={{ borderColor: 'var(--border-default)', color: 'var(--text-secondary)' }}
             >
               <ClipboardList className="w-3.5 h-3.5" />
@@ -459,7 +459,7 @@ export default function AIEmployeeHome() {
             onChange={(e) => setNewTaskText(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleCreateTask(); } }}
             placeholder="Describe a new task\u2026 (e.g. \u300c\u672c\u6708\u88dc\u8ca8\u8a08\u756b\u300d\u3001\u300crun forecast for dataset 5\u300d)"
-            className="flex-1 px-3 py-2 rounded-lg border text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            className="flex-1 px-3 py-2 rounded-lg border text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-500)]"
             style={{ borderColor: 'var(--border-default)', backgroundColor: 'var(--surface-card)', color: 'var(--text-primary)' }}
             disabled={creatingTask}
           />
@@ -479,7 +479,7 @@ export default function AIEmployeeHome() {
 
         {/* Quick Stats */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <QuickStat icon={Users} label="Workers" value={stats.workerCount} accent="text-indigo-600" />
+          <QuickStat icon={Users} label="Workers" value={stats.workerCount} accent="text-[var(--brand-600)]" />
           <QuickStat icon={CheckCircle2} label="Completed" value={stats.totalCompleted} accent="text-emerald-600" />
           <QuickStat icon={Clock} label="Open Tasks" value={stats.totalOpen} accent="text-blue-600" />
           <QuickStat
@@ -551,7 +551,7 @@ export default function AIEmployeeHome() {
                     </div>
                     <button
                       onClick={() => navigate('/employees/approvals')}
-                      className="text-xs px-2.5 py-1 rounded-md font-medium bg-indigo-600 text-white hover:bg-indigo-700 transition-colors"
+                      className="text-xs px-2.5 py-1 rounded-md font-medium bg-[var(--brand-600)] text-white hover:bg-[var(--brand-700)] transition-colors"
                     >
                       Review
                     </button>
@@ -580,7 +580,7 @@ export default function AIEmployeeHome() {
                 return (
                   <Card key={w.id} className="!p-3">
                     <div className="flex items-center gap-2 mb-2">
-                      <Bot className="w-3.5 h-3.5 text-indigo-500" />
+                      <Bot className="w-3.5 h-3.5 text-[var(--brand-500)]" />
                       <span className="text-xs font-medium truncate" style={{ color: 'var(--text-primary)' }}>{w.name}</span>
                     </div>
                     <div className="flex items-end gap-2 mb-1.5">
@@ -594,7 +594,7 @@ export default function AIEmployeeHome() {
                         {autonomyLevel}
                       </span>
                     </div>
-                    <div className="w-full h-1.5 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden">
+                    <div className="w-full h-1.5 bg-[var(--surface-subtle)] rounded-full overflow-hidden">
                       <div
                         className={`h-full rounded-full ${
                           trustScore >= 80 ? 'bg-emerald-500' : trustScore >= 60 ? 'bg-blue-500' : trustScore >= 30 ? 'bg-amber-500' : 'bg-red-500'
@@ -628,7 +628,7 @@ export default function AIEmployeeHome() {
                     {/* Header */}
                     <div className="flex items-center justify-between mb-3">
                       <div className="flex items-center gap-2">
-                        <Bot className="w-4 h-4 text-indigo-500" />
+                        <Bot className="w-4 h-4 text-[var(--brand-500)]" />
                         <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{w.name}</span>
                       </div>
                       <div className="flex items-center gap-1.5">
@@ -652,7 +652,7 @@ export default function AIEmployeeHome() {
                         <span className="text-xs text-slate-400">/100</span>
                       </div>
                       <div className="flex-1 ml-3">
-                        <div className="w-full h-2 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden">
+                        <div className="w-full h-2 bg-[var(--surface-subtle)] rounded-full overflow-hidden">
                           <div
                             className={`h-full rounded-full transition-all ${
                               perf.health_score >= 80 ? 'bg-emerald-500' : perf.health_score >= 60 ? 'bg-blue-500' : perf.health_score >= 40 ? 'bg-amber-500' : 'bg-red-500'
@@ -666,19 +666,19 @@ export default function AIEmployeeHome() {
                     {/* Key Metrics Grid */}
                     {m && (
                       <div className="grid grid-cols-3 gap-2 text-center">
-                        <div className="p-1.5 rounded bg-slate-50 dark:bg-slate-800/50">
+                        <div className="p-1.5 rounded bg-[var(--surface-subtle)]">
                           <p className="text-[9px] text-slate-500">1st Pass</p>
                           <p className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>
                             {m.first_pass_acceptance_rate != null ? `${Math.round(m.first_pass_acceptance_rate * 100)}%` : '--'}
                           </p>
                         </div>
-                        <div className="p-1.5 rounded bg-slate-50 dark:bg-slate-800/50">
+                        <div className="p-1.5 rounded bg-[var(--surface-subtle)]">
                           <p className="text-[9px] text-slate-500">Avg Review</p>
                           <p className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>
                             {m.avg_review_score != null ? Math.round(m.avg_review_score) : '--'}
                           </p>
                         </div>
-                        <div className="p-1.5 rounded bg-slate-50 dark:bg-slate-800/50">
+                        <div className="p-1.5 rounded bg-[var(--surface-subtle)]">
                           <p className="text-[9px] text-slate-500">Replay</p>
                           <p className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>
                             {perf.replay_completeness?.avg_score ?? '--'}%
@@ -693,7 +693,7 @@ export default function AIEmployeeHome() {
                         <p className="text-[9px] text-slate-500 uppercase tracking-wide mb-1">Autonomy by Task Type</p>
                         <div className="flex flex-wrap gap-1">
                           {Object.entries(perf.autonomy_by_task_type).slice(0, 4).map(([wf, data]) => (
-                            <span key={wf} className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800">
+                            <span key={wf} className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--surface-subtle)]">
                               <span className="text-slate-500">{wf}:</span>{' '}
                               <span className="font-medium" style={{ color: 'var(--text-primary)' }}>{data.recommended_level}</span>
                             </span>
@@ -716,13 +716,13 @@ export default function AIEmployeeHome() {
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => setShowAddWorker(!showAddWorker)}
-                  className="text-xs px-2 py-1 rounded-md font-medium bg-indigo-50 text-indigo-600 hover:bg-indigo-100 dark:bg-indigo-900/30 dark:text-indigo-400 transition-colors"
+                  className="text-xs px-2 py-1 rounded-md font-medium bg-[var(--accent-active)] text-[var(--brand-600)] hover:bg-[var(--accent-active)] transition-colors"
                 >
                   + Add Worker
                 </button>
                 <button
                   onClick={() => navigate('/employees')}
-                  className="text-xs text-indigo-600 hover:text-indigo-700 font-medium"
+                  className="text-xs text-[var(--brand-600)] hover:text-[var(--brand-700)] font-medium"
                 >
                   Manage &rarr;
                 </button>
@@ -731,7 +731,7 @@ export default function AIEmployeeHome() {
 
             {/* Add Worker Panel */}
             {showAddWorker && (
-              <div className="p-3 rounded-lg border bg-slate-50 dark:bg-slate-800/50 space-y-2" style={{ borderColor: 'var(--border-default)' }}>
+              <div className="p-3 rounded-lg border bg-[var(--surface-subtle)] space-y-2" style={{ borderColor: 'var(--border-default)' }}>
                 <p className="text-xs font-medium" style={{ color: 'var(--text-primary)' }}>Select worker template:</p>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                   {availableTemplates.map((tmpl) => (
@@ -753,8 +753,8 @@ export default function AIEmployeeHome() {
                       className="flex items-center gap-2 p-2 rounded-lg border text-left transition-colors hover:bg-white dark:hover:bg-slate-700 disabled:opacity-50"
                       style={{ borderColor: 'var(--border-default)' }}
                     >
-                      <div className="w-8 h-8 rounded-full bg-indigo-100 dark:bg-indigo-900/30 flex items-center justify-center flex-shrink-0">
-                        <Sparkles className="w-4 h-4 text-indigo-500" />
+                      <div className="w-8 h-8 rounded-full bg-[var(--accent-active)] flex items-center justify-center flex-shrink-0">
+                        <Sparkles className="w-4 h-4 text-[var(--brand-500)]" />
                       </div>
                       <div className="min-w-0">
                         <p className="text-xs font-medium truncate" style={{ color: 'var(--text-primary)' }}>{tmpl.name}</p>
@@ -770,7 +770,7 @@ export default function AIEmployeeHome() {
 
             {loading ? (
               <div className="flex items-center justify-center h-32">
-                <div className="w-5 h-5 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
+                <div className="w-5 h-5 border-2 border-[var(--brand-600)] border-t-transparent rounded-full animate-spin" />
               </div>
             ) : workers.length > 0 ? (
               <div className="space-y-2">
@@ -789,7 +789,7 @@ export default function AIEmployeeHome() {
                 <p className="text-sm text-slate-500">No workers yet.</p>
                 <button
                   onClick={() => navigate('/employees')}
-                  className="mt-2 text-xs text-indigo-600 hover:underline"
+                  className="mt-2 text-xs text-[var(--brand-600)] hover:underline"
                 >
                   Create your first worker &rarr;
                 </button>
@@ -821,7 +821,7 @@ export default function AIEmployeeHome() {
                   <button
                     key={link.path}
                     onClick={() => navigate(link.path)}
-                    className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-left text-xs transition-colors hover:bg-slate-50 dark:hover:bg-slate-800"
+                    className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-left text-xs transition-colors hover:bg-[var(--surface-subtle)]"
                     style={{ color: 'var(--text-secondary)' }}
                   >
                     <link.icon className="w-3.5 h-3.5 text-slate-400" />

@@ -73,6 +73,53 @@ function filterGarbageText(items) {
 }
 
 /**
+ * Extract a plain string from a value that may be an object or JSON string.
+ * Used to ensure text DB columns receive strings, not serialized objects.
+ */
+function extractText(val, preferredKeys) {
+  if (val == null) return null;
+  if (typeof val === 'string') {
+    if (val.startsWith('{')) {
+      try {
+        const p = JSON.parse(val);
+        for (const k of preferredKeys) { if (typeof p[k] === 'string') return p[k]; }
+      } catch { /* not JSON, return as-is */ }
+    }
+    return val;
+  }
+  if (typeof val === 'object') {
+    for (const k of preferredKeys) { if (typeof val[k] === 'string') return val[k]; }
+    return null;
+  }
+  return String(val);
+}
+
+/**
+ * Normalize a brief object before saving to ensure all fields are the correct type.
+ * Prevents objects/JSON from leaking into text columns.
+ */
+function normalizeBriefForSnapshot(brief) {
+  if (!brief || typeof brief !== 'object') return brief;
+  const out = { ...brief };
+
+  out.headline = extractText(out.headline, ['headline', 'title']) || out.headline;
+  out.summary = extractText(out.summary, ['body', 'summary', 'text']);
+  out.executive_summary = extractText(out.executive_summary, ['executive_summary', 'summary', 'text']);
+
+  if (Array.isArray(out.metric_pills)) {
+    out.metric_pills = out.metric_pills.filter(p => p?.label && p?.value != null);
+  }
+  if (Array.isArray(out.key_findings)) {
+    out.key_findings = out.key_findings.map(f => typeof f === 'string' ? f : f?.text || f?.finding || String(f)).filter(Boolean);
+  }
+  if (Array.isArray(out.implications)) {
+    out.implications = out.implications.map(f => typeof f === 'string' ? f : f?.text || String(f)).filter(Boolean);
+  }
+
+  return out;
+}
+
+/**
  * Persist an AgentBrief snapshot to `analysis_snapshots`.
  *
  * Designed as fire-and-forget — callers should NOT await this in the critical path.
@@ -89,16 +136,18 @@ function filterGarbageText(items) {
 export async function saveSnapshot({ userId, conversationId, messageIndex, brief, query, toolCallsSummary }) {
   if (!brief?.headline || !userId || !conversationId) return null;
 
+  const b = normalizeBriefForSnapshot(brief);
+
   try {
     const row = {
       user_id: userId,
       conversation_id: conversationId,
       message_index: messageIndex,
-      headline: brief.headline,
-      summary: brief.summary || null,
-      executive_summary: brief.executive_summary || null,
-      metric_pills: brief.metric_pills || [],
-      chart_specs: (brief.charts || []).map(c => ({
+      headline: b.headline,
+      summary: b.summary || null,
+      executive_summary: b.executive_summary || null,
+      metric_pills: b.metric_pills || [],
+      chart_specs: (b.charts || []).map(c => ({
         type: c.type,
         data: (c.data || []).slice(0, 100),
         xKey: c.xKey,
@@ -109,12 +158,12 @@ export async function saveSnapshot({ userId, conversationId, messageIndex, brief
         xAxisLabel: c.xAxisLabel,
         yAxisLabel: c.yAxisLabel,
       })),
-      table_specs: brief.tables || [],
-      key_findings: filterGarbageText(brief.key_findings || []),
-      implications: filterGarbageText(brief.implications || []),
-      caveats: filterGarbageText(brief.caveats || []),
-      next_steps: filterGarbageText(brief.next_steps || []),
-      tags: inferTags(brief, query),
+      table_specs: b.tables || [],
+      key_findings: filterGarbageText(b.key_findings || []),
+      implications: filterGarbageText(b.implications || []),
+      caveats: filterGarbageText(b.caveats || []),
+      next_steps: filterGarbageText(b.next_steps || []),
+      tags: inferTags(b, query),
       data_timestamp: new Date().toISOString(),
       query_text: query || null,
       tool_calls_summary: toolCallsSummary || null,
@@ -219,7 +268,7 @@ export async function archiveSnapshot(snapshotId) {
  * Synthesize a brief from plain-text AI message content.
  * Extracts headline, summary, key findings, and metrics from unstructured text.
  */
-function synthesizeBriefFromText(content) {
+export function synthesizeBriefFromText(content) {
   if (!content || typeof content !== 'string') return null;
   const text = content.trim();
 

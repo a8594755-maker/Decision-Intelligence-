@@ -1409,6 +1409,228 @@ function splitIncompatibleCharts(charts) {
   });
 }
 
+// ── V2 Schema Normalization ──────────────────────────────────────────────
+// Convert between V2 narrative shape and V1 flat shape for backward compat.
+
+const BRIEF_V2_ENABLED = typeof import.meta?.env?.VITE_DI_BRIEF_V2 === 'string'
+  && import.meta.env.VITE_DI_BRIEF_V2 === 'true';
+
+/**
+ * Convert V2 brief (narrative.headline + narrative.body) to V1 flat shape.
+ * Produces both narrative and flat fields so old card code still works.
+ */
+export function normalizeV2ToFlat(brief) {
+  if (!isPlainObject(brief) || !isPlainObject(brief.narrative)) return brief;
+  return {
+    ...brief,
+    headline: brief.narrative.headline || brief.headline || 'Analysis complete.',
+    summary: brief.narrative.body || brief.summary || '',
+    executive_summary: null, // V2 removes this field
+    // Merge implications into next_steps if present
+    implications: [],
+    next_steps: [
+      ...(Array.isArray(brief.next_steps) ? brief.next_steps : []),
+      ...(Array.isArray(brief.implications) ? brief.implications : []),
+    ],
+  };
+}
+
+/**
+ * Convert V1 flat brief to V2 narrative shape for new rendering.
+ */
+export function normalizeFlatToV2(brief) {
+  if (!isPlainObject(brief)) return brief;
+  if (isPlainObject(brief.narrative)) return brief; // Already V2
+  return {
+    ...brief,
+    narrative: {
+      headline: brief.headline || 'Analysis complete.',
+      body: brief.summary || '',
+    },
+  };
+}
+
+// ── Card Shape Unification (Phase 3) ────────────────────────────────────
+// Normalize AnalysisResult and AnalysisInsight payloads to the canonical brief shape.
+
+/**
+ * Normalize AnalysisResultCard payload to AgentBriefCard brief shape.
+ * Maps: title→headline, summary→summary, metrics→metric_pills, highlights→key_findings.
+ */
+export function normalizeAnalysisResultToBrief(payload) {
+  if (!isPlainObject(payload)) return null;
+  const metricPills = Object.entries(payload.metrics || {}).map(([label, value]) => ({
+    label,
+    value: typeof value === 'number' ? String(value) : String(value || ''),
+  }));
+  return {
+    headline: payload.title || 'Analysis complete.',
+    summary: payload.summary || '',
+    metric_pills: metricPills,
+    tables: Array.isArray(payload.tables) ? payload.tables : [],
+    charts: Array.isArray(payload.charts) ? payload.charts : [],
+    key_findings: Array.isArray(payload.highlights) ? payload.highlights : [],
+    implications: [],
+    caveats: [],
+    next_steps: Array.isArray(payload.details) ? payload.details : [],
+    methodology_note: payload._methodology?.queries?.length > 0
+      ? `Queries: ${payload._methodology.queries.join('; ')}`
+      : null,
+    // Preserve original fields for AnalysisResultCard-specific features
+    _analysisType: payload.analysisType || null,
+    _dataSource: payload._dataSource || null,
+    _executionMeta: payload._executionMeta || null,
+  };
+}
+
+/**
+ * Normalize AnalysisInsightCard payload to AgentBriefCard brief shape.
+ * Maps: sections.executive_summary→headline, sections.key_findings→key_findings, etc.
+ */
+export function normalizeAnalysisInsightToBrief(payload) {
+  if (!isPlainObject(payload)) return null;
+  const sections = payload.sections || {};
+  // Sections can be strings (markdown) or arrays — normalize to arrays
+  const toArray = (val) => {
+    if (Array.isArray(val)) return val;
+    if (typeof val === 'string' && val.trim()) return val.split('\n\n').filter(Boolean);
+    return [];
+  };
+  return {
+    headline: typeof sections.executive_summary === 'string'
+      ? sections.executive_summary.split('.')[0] + '.'
+      : 'Analysis Insights',
+    summary: typeof sections.executive_summary === 'string' ? sections.executive_summary : '',
+    metric_pills: [],
+    tables: [],
+    charts: [],
+    key_findings: toArray(sections.key_findings),
+    implications: [],
+    caveats: toArray(sections.risk_alerts),
+    next_steps: toArray(sections.recommendations),
+    methodology_note: null,
+    _deepDives: Array.isArray(payload.deepDives) ? payload.deepDives : [],
+    _dataSource: Array.isArray(sections.data_sources) ? sections.data_sources.join(', ') : null,
+  };
+}
+
+// ── Phase 1 Deterministic Enforcers ─────────────────────────────────────
+// Pure functions that enforce rules previously embedded in the synthesis prompt.
+// Each takes a brief and returns a (possibly mutated) brief.
+
+/**
+ * Remove metric pills that are non-numeric (time periods, trend directions, labels).
+ * Prompt rule replaced: METRIC PILLS QUALITY (lines 350-356).
+ */
+function enforceMetricPillQuality(brief) {
+  if (!Array.isArray(brief.metric_pills)) return brief;
+  const NON_NUMERIC_PATTERNS = [
+    /^(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*\s+\d{4}/i, // "Sep 2016 - Oct 2018"
+    /^\d{4}\s*[-–]\s*\d{4}$/,                                          // "2016-2018"
+    /^(upward|downward|stable|increasing|decreasing|flat)/i,           // trend directions
+    /^(q[1-4]|h[12])\s+\d{4}/i,                                        // "Q1 2025"
+    /^\d+\s+(months?|years?|weeks?|days?|periods?)$/i,                 // "12 months"
+    /^(seasonal|cyclical|trending)/i,                                   // categorical labels
+  ];
+  brief.metric_pills = brief.metric_pills.filter(pill => {
+    const val = String(pill?.value || '').trim();
+    if (!val) return false;
+    // Must contain at least one digit to be considered numeric
+    if (!/\d/.test(val)) return false;
+    return !NON_NUMERIC_PATTERNS.some(pat => pat.test(val));
+  });
+  return brief;
+}
+
+/**
+ * Cap metric pills to max 4 (short) or 6 (analysis).
+ * Prompt rule replaced: METRIC PILL LIMITS (line 398).
+ */
+function enforceMetricPillLimits(brief, brevity) {
+  if (!Array.isArray(brief.metric_pills)) return brief;
+  const max = brevity === 'analysis' ? 6 : 4;
+  if (brief.metric_pills.length > max) {
+    brief.metric_pills = brief.metric_pills.slice(0, max);
+  }
+  return brief;
+}
+
+/**
+ * Fix comma-separated yKey values by splitting into series array.
+ * Prompt rule replaced: CHART yKey RULE (line 390).
+ */
+function enforceChartYKeyRule(brief) {
+  if (!Array.isArray(brief.charts)) return brief;
+  brief.charts = brief.charts.map(chart => {
+    const yKey = String(chart?.yKey || '');
+    if (!yKey.includes(',')) return chart;
+    const keys = yKey.split(',').map(k => k.trim()).filter(Boolean);
+    if (keys.length < 2) return chart;
+    return {
+      ...chart,
+      yKey: keys[0],
+      series: keys,
+    };
+  });
+  return brief;
+}
+
+/**
+ * Detect verbatim repetition of exact metric values across headline/summary/key_findings
+ * and remove duplicates from lower-priority fields.
+ * Priority: metric_pills > headline > key_findings > summary.
+ * Prompt rule replaced: FIELD DEDUPLICATION (lines 391-398).
+ */
+function enforceFieldDeduplication(brief) {
+  if (!Array.isArray(brief.metric_pills) || brief.metric_pills.length === 0) return brief;
+  // Collect exact numeric strings from pills
+  const pillValues = new Set(
+    brief.metric_pills
+      .map(p => String(p?.value || '').trim())
+      .filter(v => v && /\d/.test(v))
+  );
+  if (pillValues.size === 0) return brief;
+
+  // Count how many times each pill value appears verbatim in key_findings
+  if (Array.isArray(brief.key_findings) && brief.key_findings.length > 1) {
+    const findingsWithPillCount = brief.key_findings.map(f => {
+      const str = String(f || '');
+      let count = 0;
+      for (const pv of pillValues) {
+        if (str.includes(pv)) count++;
+      }
+      return { finding: f, pillOverlap: count, hasUniqueInsight: str.length > 40 };
+    });
+    // Remove findings that are ONLY restating pill values (short + high overlap)
+    brief.key_findings = findingsWithPillCount
+      .filter(({ pillOverlap, hasUniqueInsight }) => hasUniqueInsight || pillOverlap === 0)
+      .map(({ finding }) => finding);
+  }
+  return brief;
+}
+
+/**
+ * Cap exact numbers in summary to ~3, replacing excess with references.
+ * Prompt rule replaced: SUMMARY DENSITY RULE (line 387).
+ */
+function enforceSummaryDensity(brief) {
+  if (typeof brief.summary !== 'string') return brief;
+  // Count distinct exact numbers in summary (e.g., "5,202,955" or "R$119.98")
+  const numberMatches = brief.summary.match(/(?:[$€£R\$¥]?\s*)?[\d,]+(?:\.\d+)?(?:\s*[%xX])?/g) || [];
+  // Filter to meaningful numbers (not single digits or years)
+  const meaningfulNumbers = numberMatches.filter(m => {
+    const cleaned = m.replace(/[,$€£R¥%xX\s]/g, '');
+    const num = parseFloat(cleaned);
+    return num > 31 && !/^(19|20)\d{2}$/.test(cleaned); // exclude years and small numbers
+  });
+  // If summary has too many numbers, it's a signal but we don't aggressively strip
+  // (stripping numbers from prose is risky). Instead, add a soft density note for QA.
+  if (meaningfulNumbers.length > 6 && !brief._densityWarning) {
+    brief._densityWarning = `Summary contains ${meaningfulNumbers.length} distinct numeric values; consider moving supporting metrics to tables.`;
+  }
+  return brief;
+}
+
 function normalizeBriefForQa(brief, fallbackBrief, { brevity, toolCalls = [] } = {}) {
   const normalized = normalizeBrief(brief, fallbackBrief, { brevity });
 
@@ -1453,6 +1675,13 @@ function normalizeBriefForQa(brief, fallbackBrief, { brevity, toolCalls = [] } =
       normalized.key_findings = uniqueStrings(brief.key_findings.map(cleanFloatingPointInText)).slice(0, maxPills);
     }
   }
+
+  // ── Deterministic enforcers (Phase 1) ──
+  enforceMetricPillQuality(normalized);
+  enforceMetricPillLimits(normalized, brevity);
+  enforceChartYKeyRule(normalized);
+  enforceFieldDeduplication(normalized);
+  enforceSummaryDensity(normalized);
 
   return normalized;
 }
@@ -2483,6 +2712,199 @@ function detectMagnitudeMismatches({ brief, toolCalls = [] }) {
   }
 
   return mismatches;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Cross-column contamination: a number from column A cited in context of column B
+// ═══════════════════════════════════════════════════════════════════════════
+
+const REVENUE_CONTEXT = /revenue|sales|gmv|amount|payment|price|cost|freight|value|營收|收入|銷售|金額|價格/i;
+const COUNT_CONTEXT = /\borders?\b|order_count|count|orders|items|customers|sellers|buyers|筆|訂單|數量/i;
+
+/**
+ * Detect when a numeric value from one column type (e.g., count) appears
+ * in free-text context describing a different column type (e.g., revenue).
+ * This catches cross-contamination bugs where the LLM pastes a count value
+ * where a monetary value should be, or vice versa.
+ */
+function detectCrossColumnContamination(brief, toolCalls = []) {
+  const issues = [];
+  const columnRanges = buildSqlColumnRanges(toolCalls);
+  if (columnRanges.size === 0) return issues;
+
+  // Build column→value lookup with type tag
+  const columnValueMap = new Map(); // numeric → [{ col, isMonetary, isCount }]
+  for (const [col, range] of columnRanges.entries()) {
+    for (const val of range.values) {
+      if (!columnValueMap.has(val)) columnValueMap.set(val, []);
+      columnValueMap.get(val).push({ col, isMonetary: range.isMonetary, isCount: range.isCount });
+    }
+  }
+
+  // Extract claims from key_findings and summary only (most error-prone free text)
+  const narrativeText = [
+    ...(brief?.key_findings || []),
+    brief?.summary || '',
+  ].filter(Boolean).join('\n');
+
+  const claims = extractNarrativeNumericClaims(narrativeText);
+
+  for (const claim of claims) {
+    // Find which column(s) this number comes from (exact or ±1% match)
+    let matchedSources = [];
+    for (const [evidenceVal, sources] of columnValueMap.entries()) {
+      if (Math.abs(claim.value - evidenceVal) / Math.max(Math.abs(evidenceVal), 1) <= 0.01) {
+        matchedSources.push(...sources);
+      }
+    }
+    if (matchedSources.length === 0) continue;
+
+    // Check if ALL matched sources are one type but the sentence context is the other
+    const allMonetary = matchedSources.every(s => s.isMonetary && !s.isCount);
+    const allCount = matchedSources.every(s => s.isCount && !s.isMonetary);
+    if (!allMonetary && !allCount) continue; // ambiguous column type — skip
+
+    const sentenceMentionsRevenue = REVENUE_CONTEXT.test(claim.sentence);
+    const sentenceMentionsCount = COUNT_CONTEXT.test(claim.sentence);
+
+    // Cross-contamination: count value in revenue context, or monetary value in count context
+    if (allCount && sentenceMentionsRevenue && !sentenceMentionsCount) {
+      const cols = [...new Set(matchedSources.map(s => s.col))].join(', ');
+      issues.push(
+        `Cross-contamination: value ${claim.raw} originates from count column(s) [${cols}] but is cited in a revenue/monetary context: "${claim.sentence.slice(0, 120)}..."`
+      );
+    } else if (allMonetary && sentenceMentionsCount && !sentenceMentionsRevenue) {
+      const cols = [...new Set(matchedSources.map(s => s.col))].join(', ');
+      issues.push(
+        `Cross-contamination: value ${claim.raw} originates from monetary column(s) [${cols}] but is cited in an order-count/quantity context: "${claim.sentence.slice(0, 120)}..."`
+      );
+    }
+  }
+
+  return issues;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Period count mismatch: narrative claims "N months/periods" ≠ actual SQL rows
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Detect when the narrative claims a number of time periods (e.g., "25 months")
+ * that doesn't match the actual distinct periods found in query results.
+ */
+function detectPeriodCountMismatch(brief, toolCalls = []) {
+  const issues = [];
+
+  // Extract actual distinct period count from SQL results that have date columns
+  const actualPeriods = countDistinctPeriodsFromToolCalls(toolCalls);
+  if (actualPeriods === null) return issues; // no time-grouped queries found
+
+  // Search narrative for period count claims
+  const narrativeText = [
+    brief?.headline || '',
+    brief?.summary || '',
+    ...(brief?.key_findings || []),
+  ].filter(Boolean).join(' ');
+
+  // Match patterns like "25 months", "24 calendar months", "N periods", "N 個月"
+  const periodClaimPattern = /(\d+)\s*(?:calendar[- ])?(?:months?|periods?|time[- ]?periods?|個月|月份)/gi;
+  const matches = [...narrativeText.matchAll(periodClaimPattern)];
+
+  for (const match of matches) {
+    const claimed = parseInt(match[1], 10);
+    if (!Number.isFinite(claimed) || claimed < 2) continue;
+
+    // Allow ±1 tolerance for edge-case rounding, but flag larger discrepancies
+    if (Math.abs(claimed - actualPeriods) > 1) {
+      issues.push(
+        `Period count mismatch: narrative claims ${claimed} periods but SQL results contain ${actualPeriods} distinct periods with data. `
+        + 'Count only periods with actual data rows, not calendar gaps.'
+      );
+    }
+  }
+
+  // Also check metric pills for period claims
+  for (const pill of (brief?.metric_pills || [])) {
+    const label = String(pill?.label || '').toLowerCase();
+    if (!/month|period|月/.test(label)) continue;
+    const pillNum = parseNumericValue(pill?.value);
+    if (!Number.isFinite(pillNum) || pillNum < 2) continue;
+    // Skip pills whose value is clearly NOT a period count:
+    // currency amounts (R$, $, €, etc.) or magnitudes > 120 (no dataset has 120+ periods)
+    const valStr = String(pill?.value || '');
+    const isCurrency = /[$€£¥₹]|R\$|NT\$|元|円/.test(valStr);
+    if (isCurrency || pillNum > 120) continue;
+    if (Math.abs(pillNum - actualPeriods) > 1) {
+      issues.push(
+        `Metric pill "${pill.label}: ${pill.value}" claims ${pillNum} periods but SQL results contain ${actualPeriods} distinct periods with data.`
+      );
+    }
+  }
+
+  return issues;
+}
+
+/**
+ * Count distinct time periods from SQL query results that appear to be
+ * time-grouped aggregations (have a date/month column as dimension).
+ */
+function countDistinctPeriodsFromToolCalls(toolCalls = []) {
+  let maxDistinctPeriods = null;
+
+  for (const tc of (Array.isArray(toolCalls) ? toolCalls : [])) {
+    if (tc?.name !== 'query_sap_data' || tc?.result?.success === false) continue;
+    const rows = getStructuredRows(tc);
+    if (rows.length < 3) continue;
+
+    // Find date/month column
+    const firstRow = rows[0];
+    if (!isPlainObject(firstRow)) continue;
+    const dateCol = Object.keys(firstRow).find(col =>
+      /^(month|period|date|year_month|order_month|purchase_month|時間|月份)$/i.test(col)
+      || /date_trunc|month/i.test(col)
+    );
+    if (!dateCol) continue;
+
+    // Count distinct non-null values
+    const distinctPeriods = new Set();
+    for (const row of rows) {
+      const val = row[dateCol];
+      if (val != null && val !== '' && val !== 0) distinctPeriods.add(String(val));
+    }
+
+    if (distinctPeriods.size > 0) {
+      maxDistinctPeriods = Math.max(maxDistinctPeriods || 0, distinctPeriods.size);
+    }
+  }
+
+  return maxDistinctPeriods;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Monetary proxy detection: SUM(price) used when payment_value exists
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Detect when SQL queries use an item-level monetary column (e.g., price)
+ * while the dataset also has an order-level payment column (e.g., payment_value),
+ * and the narrative treats the result as "revenue" without proxy disclosure.
+ * Returns a descriptive string if detected, or null otherwise.
+ */
+function detectMonetaryProxyUsage(toolCalls = [], narrativeText = '') {
+  // Check if any SQL uses item-level price columns
+  const usesPrice = (Array.isArray(toolCalls) ? toolCalls : []).some(tc => {
+    const sql = String(tc?.args?.sql || '');
+    return tc?.name === 'query_sap_data'
+      && tc?.result?.success !== false
+      && /SUM\s*\(\s*(?:oi\.|order_items\.)?price\s*\)/i.test(sql);
+  });
+  if (!usesPrice) return null;
+
+  // Check if the narrative treats it as revenue
+  const treatsAsRevenue = /revenue|total\s*(?:revenue|sales|income)|營收|銷售額|總收入/i.test(narrativeText);
+  if (!treatsAsRevenue) return null;
+
+  return 'failed, proxy-based, or partial evidence — SUM(price) used as revenue proxy while payment_value column exists in the dataset';
 }
 
 /**
@@ -3576,13 +3998,53 @@ export function computeDeterministicQa({
     }
   }
 
-  // Proxy disclosure check
+  // Proxy disclosure check (expanded: also detect monetary proxy from SQL column patterns)
   const proxyUsageHinted = /as.*(?:lead time|前置時間)|(?:delivery|交貨).*(?:as|作為|當作)|used.*as.*proxy|作為.*替代/i.test(combinedNarrativeText);
+  const monetaryProxyDetected = detectMonetaryProxyUsage(toolCalls, combinedNarrativeText);
   const proxyDisclosed = /proxy|surrogate|approximate|替代指標|代理指標|近似值/i.test(combinedNarrativeText);
-  if (proxyUsageHinted && !proxyDisclosed) {
-    issues.push('Agent appears to use a proxy metric without explicit disclosure.');
-    repairInstructions.push('Explicitly label any proxy metrics used with "⚠️ Proxy" and assess their impact on accuracy.');
+  if ((proxyUsageHinted || monetaryProxyDetected) && !proxyDisclosed) {
+    const proxyIssue = monetaryProxyDetected
+      ? `Brief is missing a caveat despite ${monetaryProxyDetected}.`
+      : 'Agent appears to use a proxy metric without explicit disclosure.';
+    issues.push(proxyIssue);
+    repairInstructions.push(
+      'Explicitly label any proxy metrics used with "⚠️ Proxy: Using [actual_column] as proxy for [ideal_column]." '
+      + 'State the direction and estimated magnitude of bias.'
+    );
     dimensionScores.methodology_transparency = Math.max(0, dimensionScores.methodology_transparency - 4);
+    dimensionScores.caveat_quality = Math.max(0, dimensionScores.caveat_quality - 2);
+    qaFlags.undisclosed_proxy = true;
+  }
+
+  // ── Cross-reference check: verify numbers in free text match the correct metric label ──
+  const crossRefIssues = detectCrossColumnContamination(brief, toolCalls);
+  for (const issue of crossRefIssues) {
+    blockers.push(issue);
+    issues.push(issue);
+    dimensionScores.correctness = Math.max(0, dimensionScores.correctness - 4);
+    dimensionScores.evidence_alignment = Math.max(0, dimensionScores.evidence_alignment - 3);
+  }
+  if (crossRefIssues.length > 0) {
+    repairInstructions.push(
+      'Cross-contamination detected: a numeric value from one column (e.g., order count) '
+      + 'is cited in a context that describes a different metric (e.g., revenue). '
+      + 'Verify every number in key_findings and summary against the correct source column.'
+    );
+    qaFlags.cross_column_contamination = true;
+  }
+
+  // ── Period count consistency: claimed "N months" must match actual distinct periods ──
+  const periodCountIssues = detectPeriodCountMismatch(brief, toolCalls);
+  for (const issue of periodCountIssues) {
+    issues.push(issue);
+    dimensionScores.correctness = Math.max(0, dimensionScores.correctness - 2);
+  }
+  if (periodCountIssues.length > 0) {
+    repairInstructions.push(
+      'Period count mismatch: the narrative claims a different number of periods than the actual distinct '
+      + 'periods in the SQL results. Count only periods with actual data rows, not calendar gaps.'
+    );
+    qaFlags.period_count_mismatch = true;
   }
 
   // ── Caveat contradiction: caveats that question generate_chart results ──
@@ -3869,8 +4331,11 @@ async function synthesizeBrief({
   });
 
   try {
+    const promptId = BRIEF_V2_ENABLED
+      ? DI_PROMPT_IDS.AGENT_BRIEF_SYNTHESIS_V2
+      : DI_PROMPT_IDS.AGENT_BRIEF_SYNTHESIS;
     const result = await runDiPrompt({
-      promptId: DI_PROMPT_IDS.AGENT_BRIEF_SYNTHESIS,
+      promptId,
       input: {
         userMessage,
         answerContract,
@@ -3882,7 +4347,12 @@ async function synthesizeBrief({
       temperature: 0.1,
       maxOutputTokens: 4096,
     });
-    const brief = normalizeBriefForQa(result?.parsed, fallbackBrief, { brevity: answerContract?.brevity, toolCalls });
+    let parsed = result?.parsed;
+    // V2 responses have narrative.headline — normalize to flat shape for downstream compat
+    if (isPlainObject(parsed?.narrative)) {
+      parsed = normalizeV2ToFlat(parsed);
+    }
+    const brief = normalizeBriefForQa(parsed, fallbackBrief, { brevity: answerContract?.brevity, toolCalls });
     autoInjectMissingCaveats(brief, toolCalls);
     return brief;
   } catch (error) {
@@ -4016,18 +4486,6 @@ async function requestQaReview({
       },
     };
   }
-}
-
-function shouldEscalateQa({ deterministicQa, selfReview, forceCrossReview = false }) {
-  if (forceCrossReview) return true;
-  if ((deterministicQa?.blockers || []).length > 0) return true;
-  if ((selfReview?.qa?.score ?? 10) < QA_PASS_THRESHOLD) return true;
-  return Boolean(
-    deterministicQa?.flags?.contradictions
-    || deterministicQa?.flags?.chart_mismatch
-    || deterministicQa?.flags?.empty_evidence
-    || deterministicQa?.flags?.tool_failure_overconfidence
-  );
 }
 
 export async function repairBrief({
@@ -4531,6 +4989,238 @@ export async function runBackgroundQa({
   });
 }
 
+// ── V2 Pipeline: renderFromEvidence ──────────────────────────────────────────
+// Phase 3 of the 4-phase pipeline. Takes EvidenceBundleV1 (not raw LLM prose)
+// and produces the final JSON brief using a dedicated renderer model.
+
+/**
+ * Render a JSON brief from an EvidenceBundle (V2 pipeline Phase 3).
+ *
+ * This replaces the 5-stage JSON recovery chain with a clean render path:
+ *   EvidenceBundle → LLM renderer → JSON brief → deterministic QA
+ *
+ * The renderer receives ONLY verified evidence data and rendering rules
+ * (CAGR interpretation, caveats, formatting). It never sees raw agent prose.
+ *
+ * @param {Object} params
+ * @param {Object} params.evidenceBundle - EvidenceBundleV1.toBundle() output
+ * @param {Object} params.turnPlan - TurnPlanV1 from the planner
+ * @param {string} params.userMessage - Original user message
+ * @param {string} [params.rendererModel] - Model to use (default: from routing service)
+ * @returns {Promise<Object>} { brief, qa, trace, skippedSteps }
+ */
+export async function renderFromEvidence({
+  evidenceBundle,
+  turnPlan,
+  userMessage,
+  rendererModel = null,
+}) {
+  const answerContract = {
+    task_type: turnPlan?.task_type || 'mixed',
+    required_dimensions: turnPlan?.required_dimensions || [],
+    required_outputs: turnPlan?.required_outputs || [],
+    audience_language: turnPlan?.answer_language || 'en',
+    brevity: 'analysis',
+  };
+
+  // If no evidence, return empty brief
+  if (!evidenceBundle || (evidenceBundle.summary?.totalEntries === 0)) {
+    return {
+      brief: {
+        headline: 'No data available',
+        summary: 'The analysis tools returned no data for this query. Please check the dataset or try a different question.',
+        metric_pills: [],
+        tables: [],
+        charts: evidenceBundle?.charts || [],
+        key_findings: [],
+        caveats: ['No tool results contained data rows.'],
+        next_steps: ['Try a different query or upload a dataset.'],
+        methodology_note: '',
+      },
+      qa: { status: 'pass', score: 5.0, skipped: true },
+      trace: { source: 'v2_no_evidence' },
+      skippedSteps: ['renderer_llm', 'qa_llm'],
+    };
+  }
+
+  // ── Build renderer prompt with evidence data ──
+  const synthesisBrief = evidenceBundle.synthesis_brief || {};
+  const rendererPrompt = buildRendererPrompt({
+    evidenceBundle,
+    synthesisBrief,
+    answerContract,
+    userMessage,
+    analystDraft: evidenceBundle.analyst_draft || '',
+  });
+
+  // ── Call renderer LLM ──
+  let brief = null;
+  try {
+    const result = await runDiPrompt({
+      promptId: DI_PROMPT_IDS.AGENT_RESPONSE,
+      input: {
+        userMessage: rendererPrompt,
+      },
+      temperature: 0.2,
+      maxOutputTokens: 4096,
+    });
+
+    brief = result?.parsed;
+  } catch (err) {
+    console.warn('[renderFromEvidence] Renderer LLM failed:', err?.message);
+  }
+
+  // ── Fallback: build brief deterministically from evidence ──
+  if (!brief || !brief.headline) {
+    brief = buildDeterministicBriefFromEvidence(evidenceBundle, answerContract);
+  }
+
+  // ── Inject charts from evidence bundle ──
+  if (evidenceBundle.charts?.length > 0 && (!brief.charts || brief.charts.length === 0)) {
+    brief.charts = evidenceBundle.charts;
+  }
+
+  // ── Inject auto-detected caveats ──
+  if (evidenceBundle.caveats?.length > 0) {
+    const existingCaveats = new Set((brief.caveats || []).map(c => c.toLowerCase()));
+    for (const caveat of evidenceBundle.caveats) {
+      if (!existingCaveats.has(caveat.toLowerCase())) {
+        brief.caveats = [...(brief.caveats || []), caveat];
+      }
+    }
+  }
+
+  // ── Deterministic QA ──
+  const deterministicQa = computeDeterministicQa(brief, {
+    answerContract,
+    toolCalls: [], // tool calls are in evidence bundle
+    userMessage,
+    mode: 'analysis',
+  });
+
+  return {
+    brief,
+    qa: deterministicQa,
+    trace: {
+      source: 'v2_render_from_evidence',
+      evidence_count: evidenceBundle.summary?.totalEntries || 0,
+      evidence_rows: evidenceBundle.summary?.totalRows || 0,
+      warnings: evidenceBundle.warnings || [],
+    },
+    skippedSteps: [],
+    answerContract,
+  };
+}
+
+/**
+ * Build the renderer prompt with evidence data and rendering rules.
+ * This is where CAGR/caveat/formatting rules live — NOT in the executor prompt.
+ */
+function buildRendererPrompt({ evidenceBundle, synthesisBrief, answerContract, userMessage, analystDraft }) {
+  const evidenceText = JSON.stringify(synthesisBrief, null, 2).slice(0, 30000);
+
+  return `You are a senior data analyst renderer. Your job is to produce a polished JSON brief from verified evidence data.
+
+## User Question
+"${String(userMessage || '').slice(0, 500)}"
+
+## Analyst Draft
+${analystDraft || '(No draft provided)'}
+
+## Verified Evidence Data
+${evidenceText}
+
+## Auto-Detected Caveats
+${(evidenceBundle.caveats || []).map(c => `- ${c}`).join('\n') || '(none)'}
+
+## Data Lineage
+${(evidenceBundle.lineage || []).map(l => `- ${l.metric}: ${l.row_count} rows from ${l.source_tool} (confidence: ${l.confidence})`).join('\n') || '(none)'}
+
+## Rendering Rules (CRITICAL)
+
+Growth Rate / CAGR Interpretation:
+- Treat SQL expressions like POWER(end/start, 1/periods) - 1 as raw ratio-like outputs.
+- If a column named *cagr*, *growth*, or *rate* has value > 1.0, treat it as a raw formula value or multiplier. Do NOT silently apply x100.
+- If value < 1.0 and metadata indicates a decimal rate, display as percentage consistently.
+- UNIT CONSISTENCY: The same metric MUST use the same unit everywhere in your JSON.
+
+Mandatory Caveats:
+- PROXY DATA: If data covers a subset of the broad category asked about, add a proxy data caveat.
+- SAMPLE SIZE: If any aggregation has fewer than 30 data points, caveat statistical reliability.
+- TEMPORAL COVERAGE: If data covers fewer periods than asked, state actual coverage.
+- METHODOLOGY: For derived metrics (CAGR, moving averages, percentiles), state the formula in methodology_note.
+
+Formatting:
+- Format numbers for business readability. Use K/M/B suffixes for large numbers.
+- Round to at most 2 decimal places. Percentages show 1 decimal.
+- Every conclusion must cite at least one specific number from the evidence.
+
+## Output Schema (must match exactly)
+{
+  "headline": "one-sentence conclusion",
+  "executive_summary": "one sentence with 1-2 key numbers",
+  "summary": "markdown narrative under 500 words",
+  "metric_pills": [{"label": "string", "value": "string", "source": "string"}],
+  "data_lineage": [{"metric": "string", "sql_ref": "string", "row_count": 0, "confidence": "high"}],
+  "tables": [{"title": "string", "columns": ["string"], "rows": [["value"]]}],
+  "charts": [],
+  "key_findings": ["string"],
+  "implications": ["string"],
+  "caveats": ["string"],
+  "next_steps": ["string"],
+  "methodology_note": "string"
+}
+
+Answer language: ${answerContract.audience_language === 'zh' ? 'Chinese (Traditional)' : 'English'}
+Required dimensions: ${(answerContract.required_dimensions || []).join(', ') || 'none specified'}
+
+Return ONLY valid JSON. No markdown fences. No commentary.`;
+}
+
+/**
+ * Build a brief deterministically from evidence when the LLM renderer fails.
+ */
+function buildDeterministicBriefFromEvidence(evidenceBundle, answerContract) {
+  const metrics = evidenceBundle.normalized_metrics || [];
+  const pills = metrics.slice(0, 6).map(m => ({
+    label: m.label,
+    value: m.value,
+    source: m.source_tool,
+  }));
+
+  return {
+    headline: 'Analysis results',
+    executive_summary: metrics.length > 0
+      ? `Found ${metrics.length} metrics from ${evidenceBundle.summary?.totalEntries || 0} data sources.`
+      : 'No metrics extracted from the data.',
+    summary: evidenceBundle.analyst_draft || 'Data analysis complete. See metrics and tables below.',
+    metric_pills: pills,
+    data_lineage: (evidenceBundle.lineage || []).map(l => ({
+      metric: l.metric,
+      sql_ref: l.sql_ref,
+      row_count: l.row_count,
+      confidence: l.confidence,
+    })),
+    tables: [],
+    charts: evidenceBundle.charts || [],
+    key_findings: [],
+    implications: [],
+    caveats: evidenceBundle.caveats || [],
+    next_steps: [],
+    methodology_note: 'Deterministic rendering from evidence bundle (LLM renderer unavailable).',
+  };
+}
+
+export {
+  enforceMetricPillQuality,
+  enforceMetricPillLimits,
+  enforceChartYKeyRule,
+  enforceFieldDeduplication,
+  enforceSummaryDensity,
+  extractBalancedJsonObjectCandidates,
+  tryParseJsonCandidate,
+};
+
 export default {
   buildAgentPresentationPayload,
   buildDeterministicAnswerContract,
@@ -4540,4 +5230,5 @@ export default {
   computeDeterministicQa,
   reviewAgentBriefDeterministically,
   resolveAgentAnswerContract,
+  renderFromEvidence,
 };

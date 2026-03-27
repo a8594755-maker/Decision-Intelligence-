@@ -18,12 +18,12 @@ import { saveJsonArtifact } from '../../utils/artifactStore';
 
 const SUPPORTED_METHODS = ['zscore', 'iqr', 'isolation_forest'];
 
-function getNumericValues(rows, column) {
+export function getNumericValues(rows, column) {
   return rows.map((r, i) => ({ index: i, raw: r[column], value: Number(r[column]) }))
     .filter(v => !isNaN(v.value));
 }
 
-function computeStats(nums) {
+export function computeStats(nums) {
   if (nums.length === 0) return null;
   const sorted = [...nums].sort((a, b) => a - b);
   const sum = sorted.reduce((s, v) => s + v, 0);

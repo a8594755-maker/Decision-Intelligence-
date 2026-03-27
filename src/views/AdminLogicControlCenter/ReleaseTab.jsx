@@ -227,7 +227,7 @@ export default function ReleaseTab({
                 <div className={`
                   w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium
                   ${step.status === 'complete' ? 'bg-green-500 text-white' : ''}
-                  ${step.status === 'current' ? 'bg-indigo-600 text-white ring-4 ring-indigo-100' : ''}
+                  ${step.status === 'current' ? 'bg-[var(--brand-600)] text-white ring-4 ring-[var(--brand-100)]' : ''}
                   ${step.status === 'pending' ? 'bg-gray-200 text-gray-500' : ''}
                   ${step.status === 'failed' ? 'bg-red-500 text-white ring-4 ring-red-100' : ''}
                 `}>
@@ -245,7 +245,7 @@ export default function ReleaseTab({
                 </div>
                 <span className={`
                   mt-2 text-xs font-medium
-                  ${step.status === 'current' ? 'text-indigo-600' : ''}
+                  ${step.status === 'current' ? 'text-[var(--brand-600)]' : ''}
                   ${step.status === 'failed' ? 'text-red-600' : ''}
                   ${step.status !== 'current' && step.status !== 'failed' ? 'text-gray-500' : ''}
                 `}>
@@ -294,13 +294,13 @@ export default function ReleaseTab({
                   value={comment}
                   onChange={(e) => setComment(e.target.value)}
                   placeholder="Describe the changes and why they're needed..."
-                  className="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                  className="w-full rounded-md border-gray-300 shadow-sm focus:border-[var(--brand-500)] focus:ring-[var(--brand-500)] sm:text-sm"
                   rows={3}
                 />
                 <button
                   onClick={handleSubmit}
                   disabled={loading || !comment.trim()}
-                  className="mt-2 inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50"
+                  className="mt-2 inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-[var(--brand-600)] hover:bg-[var(--brand-700)] disabled:opacity-50"
                 >
                   {loading ? 'Submitting...' : 'Submit for Approval'}
                 </button>
@@ -316,7 +316,7 @@ export default function ReleaseTab({
                   value={comment}
                   onChange={(e) => setComment(e.target.value)}
                   placeholder="Approval comment (optional)..."
-                  className="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                  className="w-full rounded-md border-gray-300 shadow-sm focus:border-[var(--brand-500)] focus:ring-[var(--brand-500)] sm:text-sm"
                   rows={2}
                 />
                 <div className="mt-2 flex space-x-3">
@@ -350,7 +350,7 @@ export default function ReleaseTab({
                       type="datetime-local"
                       value={effectiveDate}
                       onChange={(e) => setEffectiveDate(e.target.value)}
-                      className="mt-1 block rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                      className="mt-1 block rounded-md border-gray-300 shadow-sm focus:border-[var(--brand-500)] focus:ring-[var(--brand-500)] sm:text-sm"
                     />
                   </div>
                 </div>
@@ -358,7 +358,7 @@ export default function ReleaseTab({
                   value={comment}
                   onChange={(e) => setComment(e.target.value)}
                   placeholder="Publish comment (optional)..."
-                  className="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                  className="w-full rounded-md border-gray-300 shadow-sm focus:border-[var(--brand-500)] focus:ring-[var(--brand-500)] sm:text-sm"
                   rows={2}
                 />
                 <button
@@ -436,7 +436,7 @@ export default function ReleaseTab({
               <button
                 onClick={handleRunRegression}
                 disabled={regressionLoading}
-                className="inline-flex items-center px-3 py-1.5 border border-transparent rounded-md text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50"
+                className="inline-flex items-center px-3 py-1.5 border border-transparent rounded-md text-sm font-medium text-white bg-[var(--brand-600)] hover:bg-[var(--brand-700)] disabled:opacity-50"
               >
                 {regressionLoading ? 'Running...' : 'Run Tests'}
               </button>

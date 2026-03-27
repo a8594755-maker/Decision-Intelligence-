@@ -66,7 +66,7 @@ const FEATURE_TO_INTENTS = {
   [FEATURES.DIGITAL_TWIN]: ['RUN_DIGITAL_TWIN'],
   [FEATURES.NEGOTIATION]:  ['ACCEPT_NEGOTIATION_OPTION'],
   [FEATURES.APPROVAL]:     ['APPROVE', 'REJECT'],
-  [FEATURES.AI_EMPLOYEE]:  ['ASSIGN_TASK'],
+  // ASSIGN_TASK removed from intent routing — now triggered via /task slash command only
 };
 
 // ── Feature → Action ID mapping ──────────────────────────────────────────────
@@ -83,7 +83,7 @@ const FEATURE_TO_ACTIONS = {
   [FEATURES.RISK_AWARE]:   ['run_risk_plan'],
   [FEATURES.NEGOTIATION]:  ['start_negotiation', 'review_negotiation'],
   [FEATURES.APPROVAL]:     ['request_approval', 'review_approval', 'build_evidence_pack'],
-  [FEATURES.AI_EMPLOYEE]:  ['assign_task'],
+  // assign_task action button removed — use /task slash command instead
 };
 
 // ── Feature → Slash command mapping ──────────────────────────────────────────
@@ -100,6 +100,7 @@ const FEATURE_TO_COMMANDS = {
   [FEATURES.TRANSCRIPT_INTAKE]: ['/transcript'],
   [FEATURES.DATASET_REUSE]:     ['/reuse'],
   [FEATURES.RETRAIN]:           ['/retrain'],
+  [FEATURES.AI_EMPLOYEE]:       ['/task'],
 };
 
 // ── Internal state ───────────────────────────────────────────────────────────

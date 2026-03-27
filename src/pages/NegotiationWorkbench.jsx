@@ -33,7 +33,7 @@ const STATUS_CONFIG = {
   active:               { label: 'Active',    icon: Clock,        color: 'text-blue-600 dark:text-blue-400',    bg: 'bg-blue-100 dark:bg-blue-900/40' },
   resolved_agreement:   { label: 'Agreement', icon: CheckCircle2, color: 'text-emerald-600 dark:text-emerald-400', bg: 'bg-emerald-100 dark:bg-emerald-900/40' },
   resolved_walkaway:    { label: 'Walk-Away', icon: XCircle,      color: 'text-red-600 dark:text-red-400',      bg: 'bg-red-100 dark:bg-red-900/40' },
-  expired:              { label: 'Expired',   icon: AlertTriangle, color: 'text-slate-500 dark:text-slate-400',  bg: 'bg-slate-100 dark:bg-slate-700' },
+  expired:              { label: 'Expired',   icon: AlertTriangle, color: 'text-[var(--text-muted)]',  bg: 'bg-[var(--surface-subtle)]' },
 };
 
 const ROUND_LABELS = ['OPENING', 'CONCESSION', 'CLOSING'];
@@ -57,25 +57,25 @@ function CaseListItem({ c, isSelected, onClick }) {
       onClick={onClick}
       className={`w-full text-left px-3 py-3 rounded-lg transition-colors ${
         isSelected
-          ? 'bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-700/50'
-          : 'hover:bg-slate-50 dark:hover:bg-slate-800/50 border border-transparent'
+          ? 'bg-[var(--accent-active)] border border-[var(--brand-500)]'
+          : 'hover:bg-[var(--surface-subtle)] border border-transparent'
       }`}
     >
       <div className="flex items-center gap-2">
         <StatusIcon className={`w-4 h-4 flex-shrink-0 ${cfg.color}`} />
-        <span className="text-sm font-medium text-slate-800 dark:text-slate-200 truncate">
+        <span className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
           Run #{c.plan_run_id}
         </span>
         <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${cfg.bg} ${cfg.color}`}>
           {cfg.label}
         </span>
       </div>
-      <div className="mt-1 flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+      <div className="mt-1 flex items-center gap-2 text-xs" style={{ color: 'var(--text-muted)' }}>
         <span className="capitalize">{c.trigger}</span>
-        <span className="text-slate-300 dark:text-slate-600">&middot;</span>
+        <span className="text-[var(--border-default)]">&middot;</span>
         <span>Round: {roundName}</span>
       </div>
-      <div className="mt-0.5 text-[10px] text-slate-400 dark:text-slate-500">
+      <div className="mt-0.5 text-[10px]" style={{ color: 'var(--text-muted)' }}>
         {new Date(c.created_at).toLocaleDateString()} {new Date(c.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
       </div>
     </button>
@@ -87,7 +87,7 @@ function CaseListItem({ c, isSelected, onClick }) {
 function CaseDetail({ caseData, events, onAction, onRefresh }) {
   if (!caseData) {
     return (
-      <div className="flex-1 flex items-center justify-center text-slate-400 dark:text-slate-500">
+      <div className="flex-1 flex items-center justify-center" style={{ color: 'var(--text-muted)' }}>
         <div className="text-center">
           <Handshake className="w-12 h-12 mx-auto mb-3 opacity-30" />
           <p className="text-sm">Select a negotiation case to view details</p>
@@ -164,45 +164,45 @@ function CaseDetail({ caseData, events, onAction, onRefresh }) {
             <Shield className="w-5 h-5 text-purple-600 dark:text-purple-400" />
           </div>
           <div>
-            <h2 className="text-lg font-semibold text-slate-800 dark:text-slate-200">
+            <h2 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>
               Negotiation · Run #{caseData.plan_run_id}
             </h2>
-            <div className="flex items-center gap-2 text-sm text-slate-500 dark:text-slate-400">
+            <div className="flex items-center gap-2 text-sm" style={{ color: 'var(--text-muted)' }}>
               <StatusIcon className={`w-3.5 h-3.5 ${cfg.color}`} />
               <span>{cfg.label}</span>
-              <span className="text-slate-300 dark:text-slate-600">&middot;</span>
+              <span style={{ color: 'var(--border-default)' }}>&middot;</span>
               <span className="capitalize">{caseData.trigger}</span>
-              <span className="text-slate-300 dark:text-slate-600">&middot;</span>
+              <span style={{ color: 'var(--border-default)' }}>&middot;</span>
               <span>Round: {caseData.current_round_name}</span>
             </div>
           </div>
         </div>
         <button
           onClick={onRefresh}
-          className="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+          className="p-2 rounded-lg hover:bg-[var(--surface-subtle)] transition-colors"
           title="Refresh"
         >
-          <RefreshCw className="w-4 h-4 text-slate-400" />
+          <RefreshCw className="w-4 h-4" style={{ color: 'var(--text-muted)' }} />
         </button>
       </div>
 
       {/* Buyer position */}
       {caseData.buyer_position && caseData.buyer_position.name && (
         <Card variant="elevated" className="!p-4">
-          <div className="text-xs font-semibold text-slate-600 dark:text-slate-300 uppercase tracking-wide mb-2">
+          <div className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: 'var(--text-secondary)' }}>
             Buyer Position
           </div>
           <div className="flex items-center gap-4 text-sm">
-            <span className="font-medium text-slate-800 dark:text-slate-200">
+            <span className="font-medium" style={{ color: 'var(--text-primary)' }}>
               {caseData.buyer_position.name}
             </span>
             {caseData.buyer_position.risk_score != null && (
-              <span className="text-xs text-slate-500">
+              <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
                 Risk score: {caseData.buyer_position.risk_score}
               </span>
             )}
             {caseData.scenario_id && (
-              <span className="text-xs text-slate-500">
+              <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
                 Scenario: {caseData.scenario_id}
               </span>
             )}
@@ -213,14 +213,14 @@ function CaseDetail({ caseData, events, onAction, onRefresh }) {
       {/* Supplier KPIs */}
       {caseData.supplier_kpis && Object.keys(caseData.supplier_kpis).length > 0 && (
         <Card variant="elevated" className="!p-4">
-          <div className="text-xs font-semibold text-slate-600 dark:text-slate-300 uppercase tracking-wide mb-2">
+          <div className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: 'var(--text-secondary)' }}>
             Supplier KPIs
           </div>
           <div className="grid grid-cols-3 gap-3">
             {Object.entries(caseData.supplier_kpis).map(([key, val]) => (
               <div key={key} className="text-sm">
-                <span className="text-xs text-slate-500">{key}:</span>{' '}
-                <span className="font-medium text-slate-800 dark:text-slate-200">
+                <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{key}:</span>{' '}
+                <span className="font-medium" style={{ color: 'var(--text-primary)' }}>
                   {typeof val === 'number' ? val.toFixed(3) : String(val)}
                 </span>
               </div>
@@ -231,7 +231,7 @@ function CaseDetail({ caseData, events, onAction, onRefresh }) {
 
       {/* Strategy Insight */}
       <Card variant="elevated" className="!p-4">
-        <div className="text-xs font-semibold text-slate-600 dark:text-slate-300 uppercase tracking-wide mb-3">
+        <div className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: 'var(--text-secondary)' }}>
           AI Strategy Recommendation
         </div>
         <div className="flex items-center gap-3 mb-3">
@@ -244,14 +244,14 @@ function CaseDetail({ caseData, events, onAction, onRefresh }) {
           }`}>
             {strategyResult.strategy}
           </span>
-          <span className="text-xs text-slate-500 dark:text-slate-400">
+          <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
             Position: <strong>{strategyResult.positionStrength}</strong> (Power Score: {strategyResult.powerScore})
           </span>
         </div>
-        <ul className="text-xs text-slate-600 dark:text-slate-400 space-y-1">
+        <ul className="text-xs space-y-1" style={{ color: 'var(--text-secondary)' }}>
           {strategyResult.reasoning.map((r, i) => (
             <li key={i} className="flex items-start gap-1.5">
-              <span className="text-slate-400 mt-0.5">•</span>
+              <span className="mt-0.5" style={{ color: 'var(--text-muted)' }}>•</span>
               <span>{r}</span>
             </li>
           ))}
@@ -260,30 +260,30 @@ function CaseDetail({ caseData, events, onAction, onRefresh }) {
 
       {/* BATNA Analysis */}
       <Card variant="elevated" className="!p-4">
-        <div className="text-xs font-semibold text-slate-600 dark:text-slate-300 uppercase tracking-wide mb-3">
+        <div className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: 'var(--text-secondary)' }}>
           BATNA Analysis
         </div>
         <div className="grid grid-cols-2 gap-3 text-sm">
           <div>
-            <span className="text-xs text-slate-500">Alternative Available</span>
-            <p className="font-medium text-slate-800 dark:text-slate-200">
+            <span className="text-xs" style={{ color: 'var(--text-muted)' }}>Alternative Available</span>
+            <p className="font-medium" style={{ color: 'var(--text-primary)' }}>
               {strategyResult.batna.hasAlternative ? 'Yes' : 'No'}
             </p>
           </div>
           <div>
-            <span className="text-xs text-slate-500">Alt. Premium</span>
-            <p className="font-medium text-slate-800 dark:text-slate-200">
+            <span className="text-xs" style={{ color: 'var(--text-muted)' }}>Alt. Premium</span>
+            <p className="font-medium" style={{ color: 'var(--text-primary)' }}>
               +{(strategyResult.batna.alternativePremiumPct * 100).toFixed(0)}%
             </p>
           </div>
           <div>
-            <span className="text-xs text-slate-500">Switching Cost</span>
-            <p className="font-medium text-slate-800 dark:text-slate-200">
+            <span className="text-xs" style={{ color: 'var(--text-muted)' }}>Switching Cost</span>
+            <p className="font-medium" style={{ color: 'var(--text-primary)' }}>
               ${strategyResult.batna.switchingCostUsd.toLocaleString()}
             </p>
           </div>
           <div>
-            <span className="text-xs text-slate-500">Walk-Away Risk</span>
+            <span className="text-xs" style={{ color: 'var(--text-muted)' }}>Walk-Away Risk</span>
             <p className={`font-medium ${
               strategyResult.batna.walkawayRisk === 'high'
                 ? 'text-red-600' : strategyResult.batna.walkawayRisk === 'medium'
@@ -297,21 +297,21 @@ function CaseDetail({ caseData, events, onAction, onRefresh }) {
 
       {/* Counter-Offer Recommendation (active negotiations only) */}
       {counterOffer && caseData.status === 'active' && (
-        <Card variant="elevated" className="!p-4 border-l-4 border-indigo-400">
-          <div className="text-xs font-semibold text-indigo-600 dark:text-indigo-400 uppercase tracking-wide mb-2">
+        <Card variant="elevated" className="!p-4 border-l-4 border-[var(--brand-500)]">
+          <div className="text-xs font-semibold text-[var(--brand-600)] uppercase tracking-wide mb-2">
             Counter-Offer Recommendation · {counterOffer.roundName}
             {counterOffer.isLastRound && (
               <span className="ml-2 text-red-500 text-[10px]">(FINAL ROUND)</span>
             )}
           </div>
-          <div className="text-sm text-slate-700 dark:text-slate-300 mb-2 italic">
+          <div className="text-sm mb-2 italic" style={{ color: 'var(--text-secondary)' }}>
             {counterOffer.tactic}
           </div>
           {counterOffer.explanation.length > 0 && (
-            <ul className="text-xs text-slate-600 dark:text-slate-400 space-y-1 mb-2">
+            <ul className="text-xs space-y-1 mb-2" style={{ color: 'var(--text-secondary)' }}>
               {counterOffer.explanation.map((e, i) => (
                 <li key={i} className="flex items-start gap-1.5">
-                  <span className="text-indigo-400 mt-0.5">→</span>
+                  <span className="text-[var(--brand-500)] mt-0.5">→</span>
                   <span>{e}</span>
                 </li>
               ))}
@@ -335,7 +335,7 @@ function CaseDetail({ caseData, events, onAction, onRefresh }) {
       {outcomeScorecard && (
         <Card variant="elevated" className="!p-4">
           <div className="flex items-center justify-between mb-3">
-            <div className="text-xs font-semibold text-slate-600 dark:text-slate-300 uppercase tracking-wide">
+            <div className="text-xs font-semibold uppercase tracking-wide" style={{ color: 'var(--text-secondary)' }}>
               Negotiation Scorecard
             </div>
             <div className={`text-2xl font-black ${
@@ -347,7 +347,7 @@ function CaseDetail({ caseData, events, onAction, onRefresh }) {
               {outcomeScorecard.grade}
             </div>
           </div>
-          <div className="text-sm text-slate-700 dark:text-slate-300 mb-3">
+          <div className="text-sm mb-3" style={{ color: 'var(--text-secondary)' }}>
             Overall Score: <strong>{outcomeScorecard.score}</strong>/100
             {outcomeScorecard.better_than_batna != null && (
               <span className={`ml-3 text-xs font-medium ${
@@ -360,8 +360,8 @@ function CaseDetail({ caseData, events, onAction, onRefresh }) {
           <div className="space-y-2">
             {outcomeScorecard.analysis.map((a, i) => (
               <div key={i} className="flex items-center gap-3">
-                <span className="text-xs text-slate-500 w-20">{a.factor}</span>
-                <div className="flex-1 h-2 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden">
+                <span className="text-xs w-20" style={{ color: 'var(--text-muted)' }}>{a.factor}</span>
+                <div className="flex-1 h-2 bg-[var(--surface-subtle)] rounded-full overflow-hidden">
                   <div
                     className={`h-full rounded-full ${
                       a.score >= 80 ? 'bg-emerald-500' : a.score >= 60 ? 'bg-blue-500' : a.score >= 40 ? 'bg-amber-500' : 'bg-red-500'
@@ -369,7 +369,7 @@ function CaseDetail({ caseData, events, onAction, onRefresh }) {
                     style={{ width: `${a.score}%` }}
                   />
                 </div>
-                <span className="text-xs font-medium text-slate-600 dark:text-slate-400 w-8 text-right">{a.score}</span>
+                <span className="text-xs font-medium w-8 text-right" style={{ color: 'var(--text-secondary)' }}>{a.score}</span>
               </div>
             ))}
           </div>
@@ -379,10 +379,10 @@ function CaseDetail({ caseData, events, onAction, onRefresh }) {
       {/* Raw Outcome Data (if resolved and no scorecard) */}
       {caseData.outcome && !outcomeScorecard && (
         <Card variant="elevated" className="!p-4">
-          <div className="text-xs font-semibold text-slate-600 dark:text-slate-300 uppercase tracking-wide mb-2">
+          <div className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: 'var(--text-secondary)' }}>
             Outcome
           </div>
-          <pre className="text-xs text-slate-700 dark:text-slate-300 whitespace-pre-wrap font-mono bg-slate-50 dark:bg-slate-800/50 rounded p-3">
+          <pre className="text-xs whitespace-pre-wrap font-mono bg-[var(--surface-subtle)] rounded p-3" style={{ color: 'var(--text-secondary)' }}>
             {JSON.stringify(caseData.outcome, null, 2)}
           </pre>
         </Card>
@@ -488,10 +488,10 @@ export default function NegotiationWorkbench() {
             </h1>
             <button
               onClick={loadCases}
-              className="ml-auto p-1.5 rounded-md hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+              className="ml-auto p-1.5 rounded-md hover:bg-[var(--surface-subtle)] transition-colors"
               title="Refresh list"
             >
-              <RefreshCw className="w-3.5 h-3.5 text-slate-400" />
+              <RefreshCw className="w-3.5 h-3.5 w-3.5 h-3.5" style={{ color: 'var(--text-muted)' }} />
             </button>
           </div>
 
@@ -512,11 +512,11 @@ export default function NegotiationWorkbench() {
 
           {/* Filter */}
           <div className="flex items-center gap-2">
-            <Filter className="w-3.5 h-3.5 text-slate-400" />
+            <Filter className="w-3.5 h-3.5 w-3.5 h-3.5" style={{ color: 'var(--text-muted)' }} />
             <select
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
-              className="flex-1 text-xs rounded-md border px-2 py-1.5 bg-white dark:bg-slate-800"
+              className="flex-1 text-xs rounded-md border px-2 py-1.5 bg-[var(--surface-card)]"
               style={{ borderColor: 'var(--border-default)', color: 'var(--text-primary)' }}
             >
               {FILTER_OPTIONS.map((opt) => (
@@ -530,10 +530,10 @@ export default function NegotiationWorkbench() {
         <div className="flex-1 overflow-y-auto p-2 space-y-1">
           {loading ? (
             <div className="flex items-center justify-center py-12">
-              <Loader2 className="w-5 h-5 animate-spin text-slate-400" />
+              <Loader2 className="w-5 h-5 animate-spin w-3.5 h-3.5" style={{ color: 'var(--text-muted)' }} />
             </div>
           ) : cases.length === 0 ? (
-            <div className="text-center py-12 text-sm text-slate-400 dark:text-slate-500">
+            <div className="text-center py-12 text-sm" style={{ color: 'var(--text-muted)' }}>
               <Handshake className="w-8 h-8 mx-auto mb-2 opacity-30" />
               <p>No negotiation cases yet.</p>
               <p className="text-xs mt-1">Cases are created when a plan is infeasible or has KPI shortfall.</p>

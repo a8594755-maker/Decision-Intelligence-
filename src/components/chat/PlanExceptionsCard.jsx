@@ -45,8 +45,8 @@ const categoryMeta = (category) => {
   };
 
   return map[category] || {
-    color: 'text-slate-700 dark:text-slate-300',
-    bg: 'bg-slate-100 dark:bg-slate-800/60',
+    color: 'text-[var(--text-secondary)]',
+    bg: 'bg-[var(--surface-subtle)]',
     label: category || 'Unknown'
   };
 };
@@ -85,10 +85,10 @@ function ConstraintRow({ constraint, isBinding }) {
   const label = toBusinessConstraintLabel(constraint);
 
   return (
-    <li className="border border-slate-200 dark:border-slate-700 rounded-md overflow-hidden">
+    <li className="border border-[var(--border-default)] rounded-md overflow-hidden">
       <button
         type="button"
-        className="w-full flex items-start gap-2 px-3 py-2 text-left hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors"
+        className="w-full flex items-start gap-2 px-3 py-2 text-left hover:bg-[var(--accent-hover)] transition-colors"
         onClick={() => setExpanded((prev) => !prev)}
         aria-expanded={expanded}
       >
@@ -97,7 +97,7 @@ function ConstraintRow({ constraint, isBinding }) {
         ) : (
           <CheckCircle2 className="w-3.5 h-3.5 mt-0.5 text-emerald-500 shrink-0" />
         )}
-        <span className="flex-1 text-xs font-medium text-slate-700 dark:text-slate-200 leading-tight">
+        <span className="flex-1 text-xs font-medium text-[var(--text-secondary)] leading-tight">
           {label}
         </span>
         {constraint?.severity && isBinding && (
@@ -109,31 +109,31 @@ function ConstraintRow({ constraint, isBinding }) {
           </span>
         )}
         {constraint?.tag && (
-          <span className="text-[10px] font-mono text-slate-400 dark:text-slate-500 ml-1 shrink-0">
+          <span className="text-[10px] font-mono text-[var(--text-muted)] ml-1 shrink-0">
             {String(constraint.tag).length > 24 ? `${String(constraint.tag).slice(0, 24)}...` : String(constraint.tag)}
           </span>
         )}
-        <span className="ml-1 text-slate-400">
+        <span className="ml-1 text-[var(--text-muted)]">
           {expanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
         </span>
       </button>
 
       {expanded && (
-        <div className="px-3 pb-3 pt-1 bg-slate-50/70 dark:bg-slate-800/30 border-t border-slate-100 dark:border-slate-700 space-y-1.5 text-[11px] text-slate-600 dark:text-slate-300">
+        <div className="px-3 pb-3 pt-1 bg-[var(--surface-subtle)] border-t border-[var(--border-default)] space-y-1.5 text-[11px] text-[var(--text-secondary)]">
           {constraint?.details && (
-            <p><span className="font-medium text-slate-700 dark:text-slate-200">Details:</span> {String(constraint.details)}</p>
+            <p><span className="font-medium text-[var(--text-secondary)]">Details:</span> {String(constraint.details)}</p>
           )}
           {constraint?.description && constraint.description !== label && (
-            <p><span className="font-medium text-slate-700 dark:text-slate-200">Description:</span> {String(constraint.description)}</p>
+            <p><span className="font-medium text-[var(--text-secondary)]">Description:</span> {String(constraint.description)}</p>
           )}
           {constraint?.sku && (
-            <p><span className="font-medium text-slate-700 dark:text-slate-200">SKU:</span> {String(constraint.sku)}</p>
+            <p><span className="font-medium text-[var(--text-secondary)]">SKU:</span> {String(constraint.sku)}</p>
           )}
           {constraint?.period && (
-            <p><span className="font-medium text-slate-700 dark:text-slate-200">Period:</span> {String(constraint.period)}</p>
+            <p><span className="font-medium text-[var(--text-secondary)]">Period:</span> {String(constraint.period)}</p>
           )}
           {constraint?.scope && constraint.scope !== 'global' && (
-            <p><span className="font-medium text-slate-700 dark:text-slate-200">Scope:</span> {String(constraint.scope)}</p>
+            <p><span className="font-medium text-[var(--text-secondary)]">Scope:</span> {String(constraint.scope)}</p>
           )}
         </div>
       )}
@@ -146,7 +146,7 @@ function ObjectiveTermsPanel({ terms }) {
 
   return (
     <div>
-      <p className="font-medium text-slate-700 dark:text-slate-200 mb-1.5 text-xs flex items-center gap-1.5">
+      <p className="font-medium text-[var(--text-secondary)] mb-1.5 text-xs flex items-center gap-1.5">
         <Zap className="w-3.5 h-3.5 text-blue-500" />
         Objective Breakdown
       </p>
@@ -154,19 +154,19 @@ function ObjectiveTermsPanel({ terms }) {
         {terms.map((term, index) => (
           <div
             key={`${term?.name || 'term'}-${index}`}
-            className="flex justify-between items-center rounded bg-slate-100/70 dark:bg-slate-800/50 px-2.5 py-1.5 gap-2"
+            className="flex justify-between items-center rounded bg-[var(--surface-subtle)] px-2.5 py-1.5 gap-2"
           >
-            <span className="text-[11px] text-slate-500 dark:text-slate-400 capitalize truncate max-w-[65%]">
+            <span className="text-[11px] text-[var(--text-muted)] capitalize truncate max-w-[65%]">
               {String(term?.name || 'term').replace(/_/g, ' ')}
             </span>
-            <span className="text-[11px] font-semibold text-slate-700 dark:text-slate-200 shrink-0">
+            <span className="text-[11px] font-semibold text-[var(--text-secondary)] shrink-0">
               {formatObjectiveValue(term?.name, term?.value)}
             </span>
           </div>
         ))}
       </div>
       {terms.some((term) => term?.note) && (
-        <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-1 italic">
+        <p className="text-[10px] text-[var(--text-muted)] mt-1 italic">
           {String(terms.find((term) => term?.note)?.note || '')}
         </p>
       )}
@@ -179,7 +179,7 @@ function SuggestedActionsPanel({ actions }) {
 
   return (
     <div>
-      <p className="font-medium text-slate-700 dark:text-slate-200 mb-1.5 text-xs flex items-center gap-1.5">
+      <p className="font-medium text-[var(--text-secondary)] mb-1.5 text-xs flex items-center gap-1.5">
         <Lightbulb className="w-3.5 h-3.5 text-amber-500" />
         Solver Suggestions
       </p>
@@ -187,7 +187,7 @@ function SuggestedActionsPanel({ actions }) {
         {actions.map((action, index) => (
           <li
             key={`action-${index}`}
-            className="flex items-start gap-1.5 text-[11px] text-slate-600 dark:text-slate-300"
+            className="flex items-start gap-1.5 text-[11px] text-[var(--text-secondary)]"
           >
             <span className="shrink-0 w-4 h-4 rounded-full bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 text-[9px] font-bold flex items-center justify-center mt-0.5">
               {index + 1}
@@ -226,7 +226,7 @@ export default function PlanExceptionsCard({ payload }) {
     && bindingConstraints.length === 0;
 
   return (
-    <Card className="w-full border border-amber-200 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-900/10">
+    <Card category="plan" className="w-full border border-amber-200 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-900/10">
       <div className="space-y-4">
         <div className="flex items-center justify-between">
           <h4 className="font-semibold text-sm flex items-center gap-2">
@@ -252,15 +252,15 @@ export default function PlanExceptionsCard({ payload }) {
         </div>
 
         {(solverGap !== null || solveTimeMs !== null || solverEngine) && (
-          <div className="flex flex-wrap gap-3 text-[11px] text-slate-500 dark:text-slate-400 border-b border-amber-100 dark:border-amber-800/40 pb-2">
+          <div className="flex flex-wrap gap-3 text-[11px] text-[var(--text-muted)] border-b border-amber-100 dark:border-amber-800/40 pb-2">
             {solverEngine && (
               <span>
-                Engine: <span className="font-mono text-slate-700 dark:text-slate-300">{String(solverEngine)}</span>
+                Engine: <span className="font-mono text-[var(--text-secondary)]">{String(solverEngine)}</span>
               </span>
             )}
             {solveTimeMs !== null && (
               <span>
-                Solve time: <span className="font-semibold text-slate-700 dark:text-slate-300">{String(solveTimeMs)}ms</span>
+                Solve time: <span className="font-semibold text-[var(--text-secondary)]">{String(solveTimeMs)}ms</span>
               </span>
             )}
             {solverGap !== null && (
@@ -274,7 +274,7 @@ export default function PlanExceptionsCard({ payload }) {
         )}
 
         {allClear ? (
-          <p className="text-xs text-slate-600 dark:text-slate-300">No infeasible reasons or constraint violations reported.</p>
+          <p className="text-xs text-[var(--text-secondary)]">No infeasible reasons or constraint violations reported.</p>
         ) : (
           <div className="space-y-4 text-xs">
             {bindingConstraints.length > 0 && (
@@ -297,8 +297,8 @@ export default function PlanExceptionsCard({ payload }) {
 
             {infeasibleReasons.length > 0 && (
               <div>
-                <p className="font-medium text-slate-700 dark:text-slate-200 mb-1">Solver reasons</p>
-                <ul className="list-disc list-inside text-slate-600 dark:text-slate-300 space-y-1">
+                <p className="font-medium text-[var(--text-secondary)] mb-1">Solver reasons</p>
+                <ul className="list-disc list-inside text-[var(--text-secondary)] space-y-1">
                   {infeasibleReasons.slice(0, 8).map((reason, idx) => (
                     <li key={`${reason}-${idx}`}>{reason}</li>
                   ))}
@@ -308,8 +308,8 @@ export default function PlanExceptionsCard({ payload }) {
 
             {violations.length > 0 && (
               <div>
-                <p className="font-medium text-slate-700 dark:text-slate-200 mb-1">Constraint violations</p>
-                <ul className="list-disc list-inside text-slate-600 dark:text-slate-300 space-y-1">
+                <p className="font-medium text-[var(--text-secondary)] mb-1">Constraint violations</p>
+                <ul className="list-disc list-inside text-[var(--text-secondary)] space-y-1">
                   {violations.slice(0, 8).map((violation, idx) => (
                     <li key={`${violation.rule}-${idx}`}>
                       <strong>{violation.rule}</strong>: {violation.details}
@@ -321,8 +321,8 @@ export default function PlanExceptionsCard({ payload }) {
 
             {roundingNotes.length > 0 && (
               <div>
-                <p className="font-medium text-slate-700 dark:text-slate-200 mb-1">Rounding adjustments</p>
-                <ul className="list-disc list-inside text-slate-600 dark:text-slate-300 space-y-1">
+                <p className="font-medium text-[var(--text-secondary)] mb-1">Rounding adjustments</p>
+                <ul className="list-disc list-inside text-[var(--text-secondary)] space-y-1">
                   {roundingNotes.slice(0, 8).map((note, idx) => (
                     <li key={`${note}-${idx}`}>{note}</li>
                   ))}
@@ -331,8 +331,8 @@ export default function PlanExceptionsCard({ payload }) {
             )}
             {bomBottlenecks.length > 0 && (
               <div>
-                <p className="font-medium text-slate-700 dark:text-slate-200 mb-1">Top BOM bottlenecks</p>
-                <ul className="list-disc list-inside text-slate-600 dark:text-slate-300 space-y-1">
+                <p className="font-medium text-[var(--text-secondary)] mb-1">Top BOM bottlenecks</p>
+                <ul className="list-disc list-inside text-[var(--text-secondary)] space-y-1">
                   {bomBottlenecks.slice(0, 5).map((row, idx) => (
                     <li key={`${row.component_sku}-${idx}`}>
                       <strong>{row.component_sku}</strong>: missing {Number(row.missing_qty || 0).toFixed(2)}
@@ -360,7 +360,7 @@ export default function PlanExceptionsCard({ payload }) {
           <div className="border-t border-amber-100 dark:border-amber-800/40 pt-2">
             <button
               type="button"
-              className="flex items-center gap-1.5 text-[11px] text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 transition-colors"
+              className="flex items-center gap-1.5 text-[11px] text-[var(--text-muted)] hover:text-[var(--text-secondary)] transition-colors"
               onClick={() => setShowPassing((prev) => !prev)}
             >
               {showPassing ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}

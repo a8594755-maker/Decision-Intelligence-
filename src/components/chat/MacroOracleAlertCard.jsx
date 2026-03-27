@@ -84,7 +84,7 @@ function CfrAssessmentRow({ assessment }) {
   const style = ASSESSMENT_STYLES[assessment.supplier_assessment] || ASSESSMENT_STYLES.mixed;
 
   return (
-    <div className="rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/30 p-2.5">
+    <div className="rounded-md border border-[var(--border-default)] bg-[var(--surface-subtle)] p-2.5">
       <div className="text-[10px] font-semibold text-[var(--text-muted)] uppercase tracking-wider mb-1.5 flex items-center gap-1">
         <Shield className="w-3 h-3" />
         CFR Game-Theory Assessment
@@ -144,8 +144,8 @@ export default function MacroOracleAlertCard({ payload, onAction }) {
     ? 'border-red-300 dark:border-red-800'
     : 'border-amber-200 dark:border-amber-800';
   const bgGradient = isTrigger
-    ? 'from-white to-red-50/30 dark:from-slate-900 dark:to-red-950/10'
-    : 'from-white to-amber-50/30 dark:from-slate-900 dark:to-amber-950/10';
+    ? 'from-white to-red-50/30 dark:from-[var(--surface-card)] dark:to-red-950/10'
+    : 'from-white to-amber-50/30 dark:from-[var(--surface-card)] dark:to-amber-950/10';
 
   return (
     <Card category="risk" className={`border ${borderColor} bg-gradient-to-br ${bgGradient}`}>
@@ -179,7 +179,7 @@ export default function MacroOracleAlertCard({ payload, onAction }) {
       {/* Risk Impact */}
       {risk_delta.total_delta != null && (
         <div className="flex items-center gap-2 mb-3 text-xs">
-          <Activity className="w-3.5 h-3.5 text-slate-400" />
+          <Activity className="w-3.5 h-3.5 text-[var(--text-muted)]" />
           <span className="text-[var(--text-muted)]">Risk impact:</span>
           <span className={`font-mono font-medium ${risk_delta.total_delta > 30 ? 'text-red-600 dark:text-red-400' : 'text-orange-600 dark:text-orange-400'}`}>
             +{risk_delta.total_delta.toFixed(1)}
@@ -224,11 +224,11 @@ export default function MacroOracleAlertCard({ payload, onAction }) {
 
       {/* Evidence Chain (collapsible) */}
       {evidence_chain.length > 0 && (
-        <div className="border-t border-slate-200 dark:border-slate-700 pt-2 mt-1">
+        <div className="border-t border-[var(--border-default)] pt-2 mt-1">
           <button
             type="button"
             onClick={() => setShowEvidence(v => !v)}
-            className="flex items-center gap-1 text-[10px] font-semibold text-[var(--text-muted)] uppercase tracking-wider hover:text-slate-700 dark:hover:text-slate-300"
+            className="flex items-center gap-1 text-[10px] font-semibold text-[var(--text-muted)] uppercase tracking-wider hover:text-[var(--text-secondary)]"
           >
             <AlertTriangle className="w-3 h-3" />
             Evidence Chain ({evidence_chain.length} steps)
@@ -238,7 +238,7 @@ export default function MacroOracleAlertCard({ payload, onAction }) {
             <div className="mt-2 space-y-1">
               {evidence_chain.map((step, i) => (
                 <div key={i} className="flex items-center gap-2 text-[11px]">
-                  <span className="w-4 h-4 rounded-full bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 flex items-center justify-center text-[9px] font-bold shrink-0">
+                  <span className="w-4 h-4 rounded-full bg-[var(--surface-subtle)] text-[var(--text-secondary)] flex items-center justify-center text-[9px] font-bold shrink-0">
                     {i + 1}
                   </span>
                   <span className="font-mono text-[10px] text-[var(--text-muted)] w-24 shrink-0">

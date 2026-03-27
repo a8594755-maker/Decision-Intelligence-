@@ -286,13 +286,6 @@ Choose based on DATA SHAPE: temporal x-axis → line, categorical → bar, propo
 HEADLINE RELEVANCE RULE:
 When ranking by ratios or percentages, do NOT lead with the smallest segments even if they have the highest ratio. Lead with segments that have BOTH meaningful scale AND notable metric values. A 47% risk share in a R$2K category is less actionable than a 20% risk share in a R$400K category. Always consider absolute impact, not just relative ranking.
 
-SCALE COMPATIBILITY (MANDATORY for multi-series charts):
-- All series in a single chart MUST have similar scales (values within ~10x of each other).
-- NEVER combine: correlation coefficients (-1~1) with counts (thousands), percentages (0-100) with absolute revenue (millions), p-values (0~1) with sample sizes (hundreds+).
-- If metrics have different units or magnitudes, use SEPARATE charts — one per metric.
-- OK together: revenue_2017 vs revenue_2018, region_growth_pct vs overall_growth_pct.
-- NOT OK: pearson_corr + sample_size, gini + category_revenue, growth_pct + total_revenue.
-
 ${domainEnrichment ? `\n${domainEnrichment}\n` : ''}
 ## CRITICAL RULES (violation of any is a hard failure)
 
@@ -347,10 +340,6 @@ ${domainEnrichment ? `\n${domainEnrichment}\n` : ''}
 - SECONDARY METRIC PLACEMENT:
   If a secondary growth lens is useful for nuance, place it in methodology_note or one key_findings item.
   Keep the main summary anchored on the primary growth basis only.
-- METRIC PILLS QUALITY: Each metric pill must contain a NUMERIC KPI value that aids decision-making.
-  Do NOT use pills for: time periods, trend directions (up/down), categorical labels, metadata, or seasonal periods.
-  Good: "Revenue Growth: +2,349%" / "Peak Month Orders: 7,289" / "Avg Order Value: R$119.98"
-  Bad: "Time Period: Sep 2016 - Oct 2018" / "Trend Direction: Upward" / "Seasonal Period: 12 months"
 - METRIC PILL HIERARCHY:
   Prefer at most one growth-rate pill unless the user explicitly requested multiple growth methodologies.
   If both a growth-rate pill and an average-monthly-value pill exist, do not compare them as if they were the same type of metric.
@@ -384,66 +373,130 @@ ${domainEnrichment ? `\n${domainEnrichment}\n` : ''}
     ? 'Because the user requested histogram quantiles, the summary or key findings must explicitly mention P25, P50, P75, and P90 (or P95 if P90 is unavailable) when those values exist in the evidence.'
     : 'If quantiles are requested and supported by the evidence, summarize the key cut points directly instead of only saying they were marked.'}
 - FORMAT DISCIPLINE: Do not list raw SQL-style decimals in narrative unless the value must remain exact for the requested comparison. Prefer business-formatted values in pills and exact values in tables.
-- SUMMARY DENSITY RULE: Keep summary to at most 3 exact numbers and at most 1 primary benchmark comparison. Use tables, pills, and methodology_note for supporting metrics.
 - Tables must be structured JSON tables, not markdown or pseudo-table text.
 - Charts: when tool evidence contains numeric comparison data (e.g. strategy A vs B, category breakdowns), generate inline chart specs in the "charts" array. Use "grouped_bar" for side-by-side comparisons, "scatter" for two-variable relationships, "bar" for single-metric rankings. Each chart needs type, title, xKey, yKey, and a data array of objects. Keep data to ≤25 rows per chart. If a generate_chart artifact already covers the visualization, do not duplicate it in charts.
-- CHART yKey RULE (MANDATORY): yKey must be a SINGLE column name string. For multi-series charts (grouped_bar, stacked_bar, line with multiple series), put the extra column names in the "series" array — NOT in yKey. Example: yKey: "orders", series: ["orders", "revenue"]. NEVER use comma-separated values in yKey like "orders,revenue".
-- FIELD DEDUPLICATION (MANDATORY):
-  • headline: ONE sentence, the single most important conclusion. No numbers unless they ARE the conclusion.
-  • executive_summary: ONE sentence with 1-2 key numbers. Must NOT repeat the headline.
-  • summary: Narrative interpretation of WHY the numbers matter. Reference metric pills by name ("as shown in the Gini metric above") instead of restating values.
-  • metric_pills: The default place for raw KPI values. One exact value may appear in key_findings when required to satisfy a required comparison dimension.
-  • key_findings: Insights that go BEYOND what metric pills show — patterns, comparisons, anomalies, causality. Each finding must contain information not present in any pill label+value pair.
-  • If a number already appears in metric_pills, summary should reference it contextually ("the high Gini coefficient suggests...") instead of restating the exact value.
-- METRIC PILL LIMITS: Maximum 4 pills for brevity="short", maximum 6 for brevity="analysis". Pick the most decision-relevant metrics. Move supporting metrics to evidence tables.
+- key_findings should contain insights BEYOND what metric pills show — patterns, comparisons, anomalies, causality.
 - FIELD PRIORITY: Always complete ALL required fields (headline, summary, key_findings, implications, caveats, next_steps) before generating optional fields (tables, charts, metric_pills). If output space is limited, use fewer table rows and chart data points rather than omitting required fields.
 - Use empty arrays when a section is not needed.
 ${buildAnalysisDepthRules(answerContract)}`;
 }
 
-export function buildAgentBriefReviewPrompt({
+/**
+ * V2 synthesis prompt: consolidated narrative schema.
+ * Replaces headline + executive_summary + summary with narrative.headline + narrative.body.
+ * Removes implications (merged into next_steps).
+ * Activated by VITE_DI_BRIEF_V2=true feature flag.
+ */
+export function buildAgentBriefSynthesisPromptV2({
   userMessage,
   answerContract,
-  brief,
   toolCalls = [],
   finalAnswerText = '',
+  mode = 'default',
+  repairInstructions = [],
+  domainEnrichment = '',
 }) {
-  return `You are the Quality Reviewer for a business-analysis brief card.
+  const quantileHistogramRequested = requestIncludesQuantileHistogram(answerContract, userMessage);
+  return `You are the Presentation Synthesizer for a business-analysis chat agent.
 
 You MUST return one valid JSON object and NOTHING else.
 No markdown. No code fences. No commentary. No extra keys.
 
-## Task
-Judge whether the brief is production-ready relative to the user's request and evidence.
+## Goal
+Convert the agent's raw output + tool evidence into a concise, professional brief card.
+The brief must answer the user's request directly and avoid raw execution/debug transcript.
 
 ## Inputs
+- Mode: ${mode}
 - User message: "${clampText(userMessage, 2500)}"
 - Answer contract: ${clampText(JSON.stringify(answerContract || {}), 1600)}
-- Brief: ${clampText(JSON.stringify(brief || {}), 5000)}
-- Raw final narrative: "${clampText(finalAnswerText, 3000)}"
+- Raw final narrative: "${clampText(finalAnswerText, 4000)}"
 - Tool evidence:
-${clampText(summarizeToolCalls(toolCalls), 4000)}
+${clampText(summarizeToolCalls(toolCalls), 5000)}
+
+## Repair instructions
+${repairInstructions.length > 0 ? repairInstructions.map((item) => `- ${item}`).join('\n') : '- none'}
 
 ## Output JSON schema
 {
-  "pass": true,
-  "issues": ["string"],
-  "missing_dimensions": ["string"],
-  "contradictory_claims": ["string"],
-  "repair_instructions": ["string"]
+  "narrative": {
+    "headline": "string (ONE sentence — the single most important conclusion with 1-2 key numbers)",
+    "body": "string (markdown narrative, 120-350 words for analysis / under 100 words for short. Interpret WHY the numbers matter, WHAT they imply, WHAT to do. Do NOT restate metric_pills values — reference them by name instead.)"
+  },
+  "metric_pills": [{ "label": "string", "value": "string", "source": "string (optional — e.g. 'SQL query #2, 1247 rows')" }],
+  "data_lineage": [{ "metric": "string", "sql_ref": "string (e.g. 'query #2')", "row_count": "number", "confidence": "high|medium|low" }],
+  "tables": [{
+    "title": "string",
+    "columns": ["string"],
+    "rows": [["string or number"]]
+  }],
+  "charts": [{
+    "type": "bar | grouped_bar | stacked_bar | horizontal_bar | line | area | scatter | pie | donut | histogram | lorenz | heatmap | treemap | waterfall | radar | funnel",
+    "title": "string",
+    "xKey": "string (column name for X axis)",
+    "yKey": "string (single column name for Y axis)",
+    "series": ["string (column names for multi-series, used with grouped_bar/stacked_bar)"],
+    "data": [{ "xKeyName": "value", "seriesName": "number" }],
+    "xAxisLabel": "string (optional)",
+    "yAxisLabel": "string (optional)"
+  }],
+  "key_findings": ["string"],
+  "caveats": ["string"],
+  "next_steps": ["string (actionable recommendations — include strategic implications here)"],
+  "methodology_note": "string (optional — formula/model/assumption disclosure)"
 }
 
-## Review checklist
-- Does the brief cover every required dimension from the contract?
-- Are the charts/tables aligned to the user request?
-- Did debug logs, failed attempts, SQL transcript, or pseudo-table text leak into the brief?
-- Does the brief include caveats when evidence is partial, proxy-based, or blocked?
-- Are any claims contradictory to the evidence summary?
-- Does the brief cite specific numbers from queries that returned 0 rows (marked ⚠ ZERO ROWS)? If yes, flag as a contradictory_claim.
+CHART TYPE SELECTION (do NOT default to "bar" for everything):
+• Time series (monthly/weekly trend) → "line" or "area"
+• Distribution of a single variable → "histogram"
+• Part-of-whole (≤7 categories) → "pie" or "donut"
+• Ranking → "bar" or "horizontal_bar" (>5 items prefer horizontal)
+• Side-by-side comparison of 2+ metrics → "grouped_bar"
+• Stacked composition → "stacked_bar"
+• Two-variable relationship → "scatter"
+Choose based on DATA SHAPE: temporal x-axis → line, categorical → bar, proportional → pie.
+
+HEADLINE RELEVANCE RULE:
+When ranking by ratios or percentages, lead with segments that have BOTH meaningful scale AND notable metric values.
+
+${domainEnrichment ? `\n${domainEnrichment}\n` : ''}
+## CRITICAL RULES (violation of any is a hard failure)
+
+1. NUMERIC FIDELITY: Every number in metric_pills, tables, narrative, and key_findings
+   MUST be directly traceable to a value in the tool evidence. You may NOT perform mental
+   arithmetic on source values. If a derived value doesn't exist in evidence, state "data not available".
+
+2. UNIT FIDELITY: When columnMeta provides a "unit" field, obey it:
+   - "ratio_multiplier" → keep raw ratio or "Nx" form. Do NOT convert to % unless evidence has *_pct field.
+   - "currency" + "likely_currency" → use the indicated currency symbol
+   - "percentage" → display with % sign, do not divide by 100
+   - "count" → display as integer, no decimal places
+
+3. MANDATORY CAVEATS: You MUST include at least one caveat if ANY tool call failed, you used proxy metrics, or data covers <12 months / <100 rows.
+
+4. EVIDENCE PRIORITY: Prefer analysisPayloads.metrics over sampleRows. Do NOT aggregate sampleRows yourself.
 
 ## Rules
-- If the brief is good enough for display, return pass=true.
-- If not, keep repair instructions concrete and minimal.`;
+- For brevity="short": keep narrative.body under 100 words.
+- For brevity="analysis": narrative.body should be 120-350 words — explain WHY, WHAT it implies, WHAT to do.
+- DIRECT ANSWER FIRST: The first 1-2 sentences of narrative.body must answer the user's question directly.
+- narrative.headline and narrative.body must NOT repeat each other. headline is the conclusion; body is the interpretation.
+- DATA LINEAGE: For each key metric pill, include a matching data_lineage entry.
+- METHODOLOGY PRESERVATION: Preserve formulas, model names, and parameter definitions in key_findings or methodology_note.
+- Do not include SQL, debug logs, or tool-by-tool narration in the narrative or findings.
+- If charts already exist, add interpretation instead of restating KPIs.
+- Cover all required dimensions from the answer contract.
+- PRIMARY GROWTH BASELINE RULE: Choose ONE primary growth basis. Do not present multiple parallel growth metrics unless explicitly requested.
+- SUBSTITUTE METRIC DISCLOSURE: If CAGR/YoY is unreliable due to partial-year coverage, state that explicitly and name the substitute.
+- CAVEATS: Must add caveats for failed tools, proxy metrics, data limitations. Do NOT add self-contradictory caveats.
+- PARTIAL-YEAR COVERAGE: Do NOT compute CAGR using partial-year endpoints. State partial coverage explicitly.
+- ${quantileHistogramRequested
+    ? 'The summary or key findings must explicitly mention P25, P50, P75, and P90 when available in evidence.'
+    : 'If quantiles are requested and supported, summarize the key cut points directly.'}
+- key_findings should contain insights BEYOND what metric pills show — patterns, comparisons, anomalies, causality.
+- FIELD PRIORITY: Complete ALL required fields (narrative, key_findings, caveats, next_steps) before optional fields (tables, charts, metric_pills).
+- Use empty arrays when a section is not needed.
+${buildAnalysisDepthRules(answerContract)}`;
 }
 
 function buildQaReviewSchemaText() {
@@ -760,21 +813,6 @@ export function validateAgentBriefRepair(parsed) {
   );
 }
 
-export function validateAgentBriefReview(parsed) {
-  return (
-    isPlainObject(parsed)
-    && typeof parsed.pass === 'boolean'
-    && Array.isArray(parsed.issues)
-    && parsed.issues.every((item) => typeof item === 'string')
-    && Array.isArray(parsed.missing_dimensions)
-    && parsed.missing_dimensions.every((item) => typeof item === 'string')
-    && Array.isArray(parsed.contradictory_claims)
-    && parsed.contradictory_claims.every((item) => typeof item === 'string')
-    && Array.isArray(parsed.repair_instructions)
-    && parsed.repair_instructions.every((item) => typeof item === 'string')
-  );
-}
-
 export function validateAgentQaReview(parsed) {
   const coreValid = (
     isPlainObject(parsed)
@@ -944,24 +982,125 @@ export function buildAgentBriefResponseSchema() {
   };
 }
 
-export function buildAgentBriefReviewResponseSchema() {
+/**
+ * V2 brief response schema: uses narrative.headline + narrative.body instead of flat headline + summary.
+ * Removes implications (merged into next_steps).
+ */
+export function buildAgentBriefResponseSchemaV2() {
   return {
     type: 'object',
     properties: {
-      pass: { type: 'boolean' },
-      issues: STRING_ARRAY_SCHEMA,
-      missing_dimensions: STRING_ARRAY_SCHEMA,
-      contradictory_claims: STRING_ARRAY_SCHEMA,
-      repair_instructions: STRING_ARRAY_SCHEMA,
+      narrative: {
+        type: 'object',
+        properties: {
+          headline: { type: 'string' },
+          body: { type: 'string' },
+        },
+        required: ['headline', 'body'],
+      },
+      metric_pills: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            label: { type: 'string' },
+            value: { type: 'string' },
+          },
+          required: ['label', 'value'],
+        },
+      },
+      tables: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            title: { type: 'string' },
+            columns: STRING_ARRAY_SCHEMA,
+            rows: {
+              type: 'array',
+              items: {
+                type: 'array',
+                items: { type: 'string' },
+              },
+            },
+          },
+          required: ['columns', 'rows'],
+        },
+      },
+      charts: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            type: { type: 'string' },
+            title: { type: 'string' },
+            xKey: { type: 'string' },
+            yKey: { type: 'string' },
+            series: STRING_ARRAY_SCHEMA,
+            data: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {},
+              },
+            },
+            xAxisLabel: { type: 'string' },
+            yAxisLabel: { type: 'string' },
+          },
+        },
+      },
+      key_findings: STRING_ARRAY_SCHEMA,
+      caveats: STRING_ARRAY_SCHEMA,
+      next_steps: STRING_ARRAY_SCHEMA,
+      methodology_note: { type: 'string' },
     },
     required: [
-      'pass',
-      'issues',
-      'missing_dimensions',
-      'contradictory_claims',
-      'repair_instructions',
+      'narrative',
+      'metric_pills',
+      'tables',
+      'charts',
+      'key_findings',
+      'caveats',
+      'next_steps',
     ],
   };
+}
+
+/**
+ * V2 brief validator: checks narrative.headline + narrative.body structure.
+ */
+export function validateAgentBriefV2(parsed) {
+  const hasNarrative = isPlainObject(parsed?.narrative)
+    && typeof parsed.narrative.headline === 'string'
+    && typeof parsed.narrative.body === 'string';
+
+  const hasMetricPills = parsed?.metric_pills == null || (
+    Array.isArray(parsed.metric_pills)
+    && parsed.metric_pills.every((item) => isPlainObject(item) && typeof item.label === 'string' && typeof item.value === 'string')
+  );
+
+  const hasTables = parsed?.tables == null || (
+    Array.isArray(parsed.tables)
+    && parsed.tables.every((table) => (
+      isPlainObject(table)
+      && Array.isArray(table.columns)
+      && Array.isArray(table.rows)
+    ))
+  );
+
+  const hasStringList = (field) => parsed?.[field] == null || (
+    Array.isArray(parsed[field]) && parsed[field].every((item) => typeof item === 'string')
+  );
+
+  return (
+    isPlainObject(parsed)
+    && hasNarrative
+    && hasMetricPills
+    && hasTables
+    && hasStringList('key_findings')
+    && hasStringList('caveats')
+    && hasStringList('next_steps')
+  );
 }
 
 export function buildAgentQaReviewResponseSchema() {
@@ -1010,19 +1149,19 @@ export function buildAgentCandidateJudgeResponseSchema() {
 export default {
   buildAgentAnswerContractPrompt,
   buildAgentBriefSynthesisPrompt,
-  buildAgentBriefReviewPrompt,
+  buildAgentBriefSynthesisPromptV2,
   buildAgentQaSelfReviewPrompt,
   buildAgentQaCrossReviewPrompt,
   buildAgentQaRepairSynthesisPrompt,
   buildAgentCandidateJudgePrompt,
   buildAnswerContractResponseSchema,
   buildAgentBriefResponseSchema,
-  buildAgentBriefReviewResponseSchema,
+  buildAgentBriefResponseSchemaV2,
   buildAgentQaReviewResponseSchema,
   buildAgentCandidateJudgeResponseSchema,
   validateAnswerContract,
   validateAgentBrief,
-  validateAgentBriefReview,
+  validateAgentBriefV2,
   validateAgentQaReview,
   validateAgentCandidateJudge,
 };

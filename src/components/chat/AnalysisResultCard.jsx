@@ -84,7 +84,7 @@ export function EnhanceableChart({ chart, height = 220, title, summary, context 
   // --- Toggle Pills ---
   const pillBase = 'text-[10px] font-medium px-2 py-0.5 rounded-full transition-colors';
   const pillActive = 'bg-blue-100 text-blue-700 dark:bg-blue-900/60 dark:text-blue-300';
-  const pillInactive = 'text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 cursor-pointer';
+  const pillInactive = 'text-[var(--text-muted)] hover:text-[var(--text-secondary)] cursor-pointer';
 
   const pills = [
     { key: 'original', label: 'Original' },
@@ -160,7 +160,7 @@ export function EnhanceableChart({ chart, height = 220, title, summary, context 
         </div>
         <button
           onClick={() => setExpanded(true)}
-          className="p-1 rounded-md text-slate-400 hover:text-slate-600 hover:bg-slate-100 dark:hover:text-slate-300 dark:hover:bg-slate-800 transition-colors"
+          className="p-1 rounded-md text-[var(--text-muted)] hover:text-[var(--text-secondary)] hover:bg-[var(--accent-hover)] transition-colors"
           title="Expand chart"
         >
           <Maximize2 size={13} />
@@ -180,12 +180,12 @@ export function EnhanceableChart({ chart, height = 220, title, summary, context 
           className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm"
           onClick={(e) => { if (e.target === e.currentTarget) setExpanded(false); }}
         >
-          <div className="relative w-[92vw] max-w-[1200px] max-h-[90vh] bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-700 flex flex-col overflow-hidden">
+          <div className="relative w-[92vw] max-w-[1200px] max-h-[90vh] bg-[var(--surface-card)] rounded-2xl shadow-2xl border border-[var(--border-default)] flex flex-col overflow-hidden">
             {/* Header */}
-            <div className="flex items-center justify-between px-5 py-3 border-b border-slate-200 dark:border-slate-700">
+            <div className="flex items-center justify-between px-5 py-3 border-b border-[var(--border-default)]">
               <div className="flex items-center gap-3">
                 {(title || context?.title) && (
-                  <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-200 truncate max-w-[400px]">
+                  <h3 className="text-sm font-semibold text-[var(--text-secondary)] truncate max-w-[400px]">
                     {title || context.title}
                   </h3>
                 )}
@@ -195,7 +195,7 @@ export function EnhanceableChart({ chart, height = 220, title, summary, context 
               </div>
               <button
                 onClick={() => setExpanded(false)}
-                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 dark:hover:text-slate-300 dark:hover:bg-slate-800 transition-colors"
+                className="p-1.5 rounded-lg text-[var(--text-muted)] hover:text-[var(--text-secondary)] hover:bg-[var(--accent-hover)] transition-colors"
               >
                 <X size={18} />
               </button>
@@ -261,7 +261,7 @@ export default function AnalysisResultCard({ payload }) {
   const metricEntries = Object.entries(metrics);
 
   return (
-    <div className="w-full rounded-xl border border-blue-200 dark:border-blue-800 bg-gradient-to-br from-blue-50/80 to-white dark:from-blue-950/30 dark:to-gray-900 shadow-sm overflow-hidden">
+    <div className="w-full rounded-xl border border-blue-200 dark:border-blue-800 border-l-[3px] border-l-[var(--cat-analysis)] bg-gradient-to-br from-blue-50/80 to-white dark:from-blue-950/30 dark:to-gray-900 shadow-sm overflow-hidden">
       {/* Header */}
       <div className="px-4 pt-4 pb-2">
         <div className="flex items-start gap-2">
@@ -270,7 +270,7 @@ export default function AnalysisResultCard({ payload }) {
           </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
-              <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100">{title}</h3>
+              <h3 className="text-sm font-semibold text-[var(--text-primary)]">{title}</h3>
               {_dataSource && (
                 <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">
                   <FileSpreadsheet className="w-2.5 h-2.5" />
@@ -278,7 +278,7 @@ export default function AnalysisResultCard({ payload }) {
                 </span>
               )}
               {_executionMeta?.llm_model && (
-                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-indigo-100 text-indigo-600 dark:bg-indigo-900/40 dark:text-indigo-300">
+                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-[var(--accent-active)] text-[var(--brand-600)]">
                   <Sparkles className="w-2.5 h-2.5" />
                   {_executionMeta.llm_model}
                 </span>
@@ -287,7 +287,7 @@ export default function AnalysisResultCard({ payload }) {
           </div>
         </div>
         {summary && (
-          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{summary}</p>
+          <p className="mt-1 text-xs text-[var(--text-muted)]">{summary}</p>
         )}
       </div>
 
@@ -296,11 +296,11 @@ export default function AnalysisResultCard({ payload }) {
         <div className="px-4 pb-3">
           <div className={`grid ${metricsGridCols(metricEntries.length)} gap-2`}>
             {metricEntries.map(([key, value]) => (
-              <div key={key} className="rounded-lg bg-white/80 dark:bg-gray-800/60 border border-slate-100 dark:border-slate-700 px-3 py-2">
-                <div className="text-[10px] font-medium text-slate-400 dark:text-slate-500 tracking-wide truncate" title={formatMetricLabel(key)}>
+              <div key={key} className="rounded-lg bg-[var(--surface-card)] border border-[var(--border-default)] px-3 py-2">
+                <div className="text-[10px] font-medium text-[var(--text-muted)] tracking-wide truncate" title={formatMetricLabel(key)}>
                   {formatMetricLabel(key)}
                 </div>
-                <div className="text-sm font-semibold text-slate-800 dark:text-slate-100 mt-0.5 truncate" title={String(value)}>
+                <div className="text-sm font-semibold text-[var(--text-primary)] mt-0.5 truncate" title={String(value)}>
                   {formatMetricValue(value)}
                 </div>
               </div>
@@ -365,13 +365,13 @@ export default function AnalysisResultCard({ payload }) {
             }
 
             return (
-              <div key={ti} className="mt-2 overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700">
-                {tbl.title && <div className="text-xs font-medium text-slate-500 dark:text-slate-400 px-3 py-1.5 bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-700">{tbl.title}</div>}
+              <div key={ti} className="mt-2 overflow-x-auto rounded-lg border border-[var(--border-default)]">
+                {tbl.title && <div className="text-xs font-medium text-[var(--text-muted)] px-3 py-1.5 bg-[var(--surface-subtle)] border-b border-[var(--border-default)]">{tbl.title}</div>}
                 <table className="w-full text-xs border-collapse">
                   <thead>
-                    <tr className="border-b border-slate-200 dark:border-slate-600 bg-slate-50/50 dark:bg-slate-800/30">
+                    <tr className="border-b border-[var(--border-default)] bg-[var(--surface-subtle)]">
                       {tbl.columns.map((col, ci) => (
-                        <th key={ci} className={`py-1.5 px-2.5 text-slate-500 dark:text-slate-400 font-medium whitespace-nowrap ${numericCols.has(ci) ? 'text-right' : 'text-left'}`}>
+                        <th key={ci} className={`py-1.5 px-2.5 text-[var(--text-muted)] font-medium whitespace-nowrap ${numericCols.has(ci) ? 'text-right' : 'text-left'}`}>
                           {col}
                         </th>
                       ))}
@@ -379,9 +379,9 @@ export default function AnalysisResultCard({ payload }) {
                   </thead>
                   <tbody>
                     {(tbl.rows || []).slice(0, 20).map((row, ri) => (
-                      <tr key={ri} className={`border-b border-slate-100 dark:border-slate-700/50 hover:bg-blue-50/40 dark:hover:bg-blue-900/10 ${ri % 2 === 1 ? 'bg-slate-50/40 dark:bg-slate-800/20' : ''}`}>
+                      <tr key={ri} className={`border-b border-[var(--border-default)]/50 hover:bg-blue-50/40 dark:hover:bg-blue-900/10 ${ri % 2 === 1 ? 'bg-[var(--surface-subtle)]/40' : ''}`}>
                         {(Array.isArray(row) ? row : Object.values(row)).map((cell, ci) => (
-                          <td key={ci} className={`py-1.5 px-2.5 text-slate-700 dark:text-slate-300 whitespace-nowrap ${numericCols.has(ci) ? 'text-right tabular-nums' : ''}`}>
+                          <td key={ci} className={`py-1.5 px-2.5 text-[var(--text-secondary)] whitespace-nowrap ${numericCols.has(ci) ? 'text-right tabular-nums' : ''}`}>
                             {numericCols.has(ci) ? formatMetricValue(cell) : cell}
                           </td>
                         ))}
@@ -390,7 +390,7 @@ export default function AnalysisResultCard({ payload }) {
                   </tbody>
                 </table>
                 {(tbl.rows || []).length > 20 && (
-                  <div className="text-[10px] text-slate-400 px-3 py-1.5 border-t border-slate-100 dark:border-slate-700">Showing 20 of {tbl.rows.length} rows</div>
+                  <div className="text-[10px] text-[var(--text-muted)] px-3 py-1.5 border-t border-[var(--border-default)]">Showing 20 of {tbl.rows.length} rows</div>
                 )}
               </div>
             );
@@ -403,7 +403,7 @@ export default function AnalysisResultCard({ payload }) {
         <div className="px-4 pb-4">
           <button
             onClick={() => setShowDetails(!showDetails)}
-            className="flex items-center gap-1 text-xs font-medium text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors"
+            className="flex items-center gap-1 text-xs font-medium text-[var(--text-muted)] hover:text-[var(--text-secondary)] transition-colors"
           >
             {showDetails ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
             {showDetails ? 'Hide' : 'Show'} Details ({details.length})
@@ -411,7 +411,7 @@ export default function AnalysisResultCard({ payload }) {
           {showDetails && (
             <div className="mt-2 space-y-1">
               {details.map((d, i) => (
-                <div key={i} className="flex items-start gap-2 text-xs text-slate-600 dark:text-slate-400">
+                <div key={i} className="flex items-start gap-2 text-xs text-[var(--text-secondary)]">
                   <span className="text-blue-400 mt-0.5">&#9679;</span>
                   <span>{d}</span>
                 </div>
@@ -423,10 +423,10 @@ export default function AnalysisResultCard({ payload }) {
 
       {/* Methodology (collapsible) — data sources, SQL queries, Python code */}
       {hasMethodology && (
-        <div className="px-4 pb-4 border-t border-slate-200 dark:border-slate-700 pt-3">
+        <div className="px-4 pb-4 border-t border-[var(--border-default)] pt-3">
           <button
             onClick={() => setShowMethodology(!showMethodology)}
-            className="flex items-center gap-1.5 text-xs font-medium text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors"
+            className="flex items-center gap-1.5 text-xs font-medium text-[var(--text-muted)] hover:text-[var(--text-secondary)] transition-colors"
           >
             <Code2 className="w-3.5 h-3.5" />
             {showMethodology ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
@@ -477,17 +477,17 @@ function MethodologySection({ methodology, executionMeta }) {
     <div className="mt-3 space-y-3">
       {/* Engine + model badge */}
       <div className="flex items-center gap-2 flex-wrap">
-        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-[var(--surface-subtle)] text-[var(--text-secondary)]">
           <Code2 className="w-3 h-3" />
           {engine}
         </span>
         {model && (
-          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300">
+          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-[var(--accent-active)] text-[var(--brand-600)]">
             {model}
           </span>
         )}
         {execMs && (
-          <span className="text-[10px] text-slate-400">{execMs}ms</span>
+          <span className="text-[10px] text-[var(--text-muted)]">{execMs}ms</span>
         )}
       </div>
 
@@ -495,8 +495,8 @@ function MethodologySection({ methodology, executionMeta }) {
       {dataSources.length > 0 && (
         <div>
           <div className="flex items-center gap-1 mb-1.5">
-            <Database className="w-3 h-3 text-slate-400" />
-            <span className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">Data Sources</span>
+            <Database className="w-3 h-3 text-[var(--text-muted)]" />
+            <span className="text-[10px] font-semibold text-[var(--text-muted)] uppercase tracking-wide">Data Sources</span>
           </div>
           <div className="flex flex-wrap gap-1.5">
             {dataSources.map((src, i) => (
@@ -511,7 +511,7 @@ function MethodologySection({ methodology, executionMeta }) {
       {/* SQL queries */}
       {queries.length > 0 && (
         <div>
-          <div className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1.5">
+          <div className="text-[10px] font-semibold text-[var(--text-muted)] uppercase tracking-wide mb-1.5">
             SQL Queries ({queries.length})
           </div>
           <div className="space-y-2">
@@ -530,7 +530,7 @@ function MethodologySection({ methodology, executionMeta }) {
       {/* Python code */}
       {code && (
         <div>
-          <div className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1.5">
+          <div className="text-[10px] font-semibold text-[var(--text-muted)] uppercase tracking-wide mb-1.5">
             Generated Python Code
           </div>
           <CodeBlock code={code} language="Python" />
@@ -552,7 +552,7 @@ function CodeBlock({ code, language, label }) {
 
   return (
     <div className="rounded-lg overflow-hidden border border-slate-700">
-      <div className="flex items-center justify-between px-3 py-1.5 bg-slate-800 text-[10px] text-slate-400">
+      <div className="flex items-center justify-between px-3 py-1.5 bg-slate-800 text-[10px] text-[var(--text-muted)]">
         <span className="font-medium">{label || language}</span>
         <button
           onClick={handleCopy}

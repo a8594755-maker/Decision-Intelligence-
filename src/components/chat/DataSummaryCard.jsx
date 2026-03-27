@@ -50,7 +50,7 @@ function computeReadiness(sheets = []) {
 function ReadinessHint({ missing }) {
   if (!missing || missing.length === 0) return null;
   return (
-    <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-0.5">
+    <p className="text-[11px] text-[var(--status-warning)] mt-0.5">
       Missing: {missing.join(', ')}
     </p>
   );
@@ -65,8 +65,8 @@ function CapabilityIndicator({ capabilities }) {
     <div className="flex flex-wrap gap-1.5 mt-2">
       {entries.map(([key, cap]) => {
         const colors = {
-          full: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300',
-          partial: 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300',
+          full: 'bg-[var(--status-success-bg)] text-[var(--status-success-text)]',
+          partial: 'bg-[var(--status-warning-bg)] text-[var(--status-warning-text)]',
           unavailable: 'bg-[var(--surface-subtle)] text-[var(--text-muted)]',
         };
         const icons = {
@@ -126,7 +126,7 @@ export default function DataSummaryCard({
   const ignoredSheets = sheets.filter(s => IGNORED_SHEET_PATTERN.test(s.sheet_name || ''));
 
   return (
-    <Card category="data" className="w-full border border-blue-200 dark:border-blue-800 bg-blue-50/70 dark:bg-blue-900/10">
+    <Card category="data" className="w-full border border-[var(--border-default)] bg-[var(--surface-card)]">
       <div className="space-y-3">
         <div className="flex items-start justify-between gap-3">
           <div>
@@ -215,11 +215,11 @@ export default function DataSummaryCard({
                   </td>
                   <td className="px-2 py-1">
                     {sheet.validation_status === 'pass' ? (
-                      <span className="inline-flex items-center gap-1 text-emerald-600">
+                      <span className="inline-flex items-center gap-1 text-[var(--status-success)]">
                         <CheckCircle2 className="w-3 h-3" /> pass
                       </span>
                     ) : (
-                      <span className="inline-flex items-center gap-1 text-amber-600">
+                      <span className="inline-flex items-center gap-1 text-[var(--status-warning)]">
                         <AlertTriangle className="w-3 h-3" /> fail
                       </span>
                     )}

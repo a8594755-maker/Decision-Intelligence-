@@ -131,7 +131,7 @@ export default function SandboxTab({ draftVersion, publishedVersion, canEdit }) 
             <select
               value={testParams.plantId}
               onChange={(e) => setTestParams(prev => ({ ...prev, plantId: e.target.value }))}
-              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-[var(--brand-500)] focus:ring-[var(--brand-500)] sm:text-sm"
             >
               <option value="">All Plants</option>
               {plants.map(plant => (
@@ -147,7 +147,7 @@ export default function SandboxTab({ draftVersion, publishedVersion, canEdit }) 
               placeholder="e.g. 2025-W01, 2025-W02"
               value={testParams.timeBuckets.join(', ')}
               onChange={handleTimeBucketsChange}
-              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-[var(--brand-500)] focus:ring-[var(--brand-500)] sm:text-sm"
             />
             <p className="mt-1 text-xs text-gray-500">Comma-separated list</p>
           </div>
@@ -160,7 +160,7 @@ export default function SandboxTab({ draftVersion, publishedVersion, canEdit }) 
               max="1000"
               value={testParams.maxFgCount}
               onChange={(e) => setTestParams(prev => ({ ...prev, maxFgCount: parseInt(e.target.value) }))}
-              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-[var(--brand-500)] focus:ring-[var(--brand-500)] sm:text-sm"
             />
             <p className="mt-1 text-xs text-gray-500">Limit for faster testing</p>
           </div>
@@ -176,7 +176,7 @@ export default function SandboxTab({ draftVersion, publishedVersion, canEdit }) 
           <button
             onClick={handleStartTest}
             disabled={loading || polling}
-            className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50"
+            className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-[var(--brand-600)] hover:bg-[var(--brand-700)] disabled:opacity-50"
           >
             {loading ? (
               <>
@@ -214,7 +214,7 @@ export default function SandboxTab({ draftVersion, publishedVersion, canEdit }) 
             </div>
             <div className="w-full bg-gray-200 rounded-full h-2">
               <div 
-                className="bg-indigo-600 h-2 rounded-full transition-all duration-300"
+                className="bg-[var(--brand-600)] h-2 rounded-full transition-all duration-300"
                 style={{ width: `${testRun.progress}%` }}
               />
             </div>

@@ -28,13 +28,7 @@ export default function AgentQualityCard({ qa, judgeDecision = null }) {
   const normalizedIssues = Array.isArray(qa?.issues) ? qa.issues.filter(Boolean) : [];
   const dimensionScores = qa?.dimension_scores || {};
   const reviewerList = Array.isArray(qa?.reviewers) ? qa.reviewers : [];
-  const hasAvailableCrossReview = reviewerList.some((reviewer) => reviewer?.stage === 'cross_model' && reviewer?.available !== false);
-  const hasUnavailableCrossReview = reviewerList.some((reviewer) => reviewer?.stage === 'cross_model' && reviewer?.available === false);
-  const reviewStatusLabel = hasAvailableCrossReview
-    ? 'Cross-model review used'
-    : hasUnavailableCrossReview
-      ? 'Cross-model review unavailable'
-      : 'Self-review only';
+  const reviewStatusLabel = 'Unified review';
 
   const dimensionEntries = useMemo(() => {
     return Object.entries(DIMENSION_LABELS).map(([key, label]) => ({
@@ -47,7 +41,7 @@ export default function AgentQualityCard({ qa, judgeDecision = null }) {
   if (!qa) return null;
 
   return (
-    <Card className="w-full border-slate-200 dark:border-slate-700 bg-slate-50/80 dark:bg-slate-900/40 p-0">
+    <Card category="analysis" className="w-full border-[var(--border-default)] bg-[var(--surface-base)] p-0">
       <button
         type="button"
         onClick={() => setExpanded((value) => !value)}
@@ -58,31 +52,31 @@ export default function AgentQualityCard({ qa, judgeDecision = null }) {
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">Answer Quality</span>
+            <span className="text-sm font-semibold text-[var(--text-primary)]">Answer Quality</span>
             <TonePill status={qa.status}>{qa.status}</TonePill>
           </div>
-          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500 dark:text-slate-400">
+          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[var(--text-muted)]">
             <span>{`Score ${Number(qa.score || 0).toFixed(1)} / ${Number(qa.pass_threshold || 8).toFixed(1)}`}</span>
             <span>{reviewStatusLabel}</span>
             <span>{qa.repair_attempted ? 'Repair executed' : 'No repair needed'}</span>
             {judgeDecision?.winnerLabel ? <span>{`Winner: ${judgeDecision.winnerLabel}`}</span> : null}
           </div>
         </div>
-        {expanded ? <ChevronDown size={16} className="text-slate-400" /> : <ChevronRight size={16} className="text-slate-400" />}
+        {expanded ? <ChevronDown size={16} className="text-[var(--text-muted)]" /> : <ChevronRight size={16} className="text-[var(--text-muted)]" />}
       </button>
 
       {expanded ? (
-        <div className="space-y-4 border-t border-slate-200 px-4 py-4 dark:border-slate-800">
+        <div className="space-y-4 border-t border-[var(--border-default)] px-4 py-4 dark:border-[var(--border-default)]">
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {dimensionEntries.map((item) => (
               <div
                 key={item.key}
-                className="rounded-xl border border-slate-200 bg-white px-3 py-3 dark:border-slate-700 dark:bg-slate-900/40"
+                className="rounded-xl border border-[var(--border-default)] bg-[var(--surface-card)] px-3 py-3"
               >
-                <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500 dark:text-slate-400">
+                <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--text-muted)]">
                   {item.label}
                 </div>
-                <div className="mt-1 text-lg font-semibold text-slate-900 dark:text-slate-100">
+                <div className="mt-1 text-lg font-semibold text-[var(--text-primary)]">
                   {item.value == null ? 'N/A' : item.value.toFixed(1)}
                 </div>
               </div>
@@ -91,13 +85,13 @@ export default function AgentQualityCard({ qa, judgeDecision = null }) {
 
           {normalizedIssues.length > 0 ? (
             <div className="space-y-2">
-              <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">
+              <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">
                 Top Issues
               </div>
               <ul className="space-y-1.5">
                 {normalizedIssues.slice(0, 3).map((issue) => (
-                  <li key={issue} className="flex items-start gap-2 text-sm text-slate-700 dark:text-slate-200">
-                    <BadgeCheck size={14} className="mt-1 shrink-0 text-slate-400 dark:text-slate-500" />
+                  <li key={issue} className="flex items-start gap-2 text-sm text-[var(--text-secondary)]">
+                    <BadgeCheck size={14} className="mt-1 shrink-0 text-[var(--text-muted)]" />
                     <span>{issue}</span>
                   </li>
                 ))}
@@ -107,10 +101,10 @@ export default function AgentQualityCard({ qa, judgeDecision = null }) {
 
           {judgeDecision ? (
             <div className="space-y-2">
-              <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">
+              <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">
                 Judge Verdict
               </div>
-              <div className="rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-900/40 dark:text-slate-200">
+              <div className="rounded-xl border border-[var(--border-default)] bg-[var(--surface-card)] px-3 py-3 text-sm text-[var(--text-secondary)]">
                 {judgeDecision.summary ? <p>{judgeDecision.summary}</p> : null}
                 {Array.isArray(judgeDecision.rationale) && judgeDecision.rationale.length > 0 ? (
                   <ul className="mt-2 space-y-1">
@@ -119,7 +113,7 @@ export default function AgentQualityCard({ qa, judgeDecision = null }) {
                     ))}
                   </ul>
                 ) : null}
-                <div className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+                <div className="mt-2 text-xs text-[var(--text-muted)]">
                   {[judgeDecision?.reviewer?.provider, judgeDecision?.reviewer?.model].filter(Boolean).join(' · ')}
                 </div>
               </div>
@@ -128,27 +122,27 @@ export default function AgentQualityCard({ qa, judgeDecision = null }) {
 
           {reviewerList.length > 0 ? (
             <div className="space-y-2">
-              <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">
+              <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">
                 Reviewer Details
               </div>
               <div className="space-y-2">
                 {reviewerList.map((reviewer, index) => (
                   <div
                     key={`${reviewer.stage}-${reviewer.provider}-${index}`}
-                    className="rounded-xl border border-slate-200 bg-white px-3 py-3 dark:border-slate-700 dark:bg-slate-900/40"
+                    className="rounded-xl border border-[var(--border-default)] bg-[var(--surface-card)] px-3 py-3"
                   >
-                    <div className="flex flex-wrap items-center gap-2 text-sm text-slate-900 dark:text-slate-100">
-                      <span className="font-semibold">{reviewer.stage === 'cross_model' ? 'Cross-model' : 'Self-review'}</span>
-                      <span className="text-slate-500 dark:text-slate-400">{reviewer.provider || 'unknown provider'}</span>
-                      <span className="text-slate-500 dark:text-slate-400">{reviewer.model || 'unknown model'}</span>
-                      <span className="ml-auto text-xs font-medium text-slate-500 dark:text-slate-400">
+                    <div className="flex flex-wrap items-center gap-2 text-sm text-[var(--text-primary)]">
+                      <span className="font-semibold">{reviewer.stage === 'cross_model' ? 'Cross-model' : 'Reviewer'}</span>
+                      <span className="text-[var(--text-muted)]">{reviewer.provider || 'unknown provider'}</span>
+                      <span className="text-[var(--text-muted)]">{reviewer.model || 'unknown model'}</span>
+                      <span className="ml-auto text-xs font-medium text-[var(--text-muted)]">
                         {reviewer.score === 0 && Array.isArray(reviewer.issues) && reviewer.issues.some((i) => /unavailable/i.test(i))
                           ? 'Unavailable'
                           : `Score ${Number(reviewer.score || 0).toFixed(1)}`}
                       </span>
                     </div>
                     {Array.isArray(reviewer.issues) && reviewer.issues.length > 0 ? (
-                      <ul className="mt-2 space-y-1 text-sm text-slate-600 dark:text-slate-300">
+                      <ul className="mt-2 space-y-1 text-sm text-[var(--text-secondary)]">
                         {reviewer.issues.map((issue) => (
                           <li key={issue}>{issue}</li>
                         ))}

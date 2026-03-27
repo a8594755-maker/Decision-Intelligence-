@@ -70,7 +70,7 @@ function WorkspaceInner() {
       <Suspense
         fallback={
           <div className="h-full flex items-center justify-center">
-            <div className="w-8 h-8 rounded-lg bg-indigo-600 animate-pulse" />
+            <div className="w-8 h-8 rounded-lg bg-[var(--brand-600)] animate-pulse" />
           </div>
         }
       >
@@ -78,6 +78,8 @@ function WorkspaceInner() {
           user={user}
           addNotification={addNotification}
           mode="ai_employee"
+          deepLinkConversation={searchParams.get('conversation')}
+          deepLinkMessage={searchParams.get('msg')}
         />
       </Suspense>
     </UnifiedWorkspaceLayout>

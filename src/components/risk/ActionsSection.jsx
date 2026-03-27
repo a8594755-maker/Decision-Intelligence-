@@ -28,7 +28,7 @@ const ActionsSection = ({ actions = [], decisionRankingScore }) => {
   return (
     <div>
       <div className="flex items-center gap-2 mb-2">
-        <Zap className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+        <Zap className="w-4 h-4 text-[var(--brand-600)]" />
         <h4 className="font-semibold text-slate-700 dark:text-slate-300 flex-1">
           Recommended Actions
         </h4>
@@ -46,9 +46,9 @@ const ActionsSection = ({ actions = [], decisionRankingScore }) => {
         {actions.map((action, idx) => {
           const Icon = ACTION_ICONS[action.type] || Zap;
           return (
-            <div key={action.type} className={`bg-slate-50 dark:bg-slate-900/50 rounded-lg p-3 ${idx === 0 ? 'border-2 border-indigo-200 dark:border-indigo-800' : 'border border-slate-200 dark:border-slate-700'}`}>
+            <div key={action.type} className={`bg-slate-50 dark:bg-slate-900/50 rounded-lg p-3 ${idx === 0 ? 'border-2 border-[var(--brand-500)]' : 'border border-slate-200 dark:border-slate-700'}`}>
               <div className="flex items-start gap-2">
-                <Icon className="w-4 h-4 text-indigo-600 dark:text-indigo-400 mt-0.5 flex-shrink-0" />
+                <Icon className="w-4 h-4 text-[var(--brand-600)] mt-0.5 flex-shrink-0" />
                 <div className="flex-1">
                   <div className="flex items-center gap-2 mb-0.5">
                     <span className="text-sm font-semibold text-slate-700 dark:text-slate-300">

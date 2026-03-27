@@ -156,7 +156,7 @@ export default function EditTab({
                 max="100"
                 value={config.limits.MAX_BOM_DEPTH}
                 onChange={(e) => handleConfigChange('limits.MAX_BOM_DEPTH', parseInt(e.target.value))}
-                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-[var(--brand-500)] focus:ring-[var(--brand-500)] sm:text-sm"
               />
               <p className="mt-1 text-xs text-gray-500">Maximum recursion depth (1-100)</p>
             </div>
@@ -172,7 +172,7 @@ export default function EditTab({
                 step="1000"
                 value={config.limits.MAX_TRACE_ROWS_PER_RUN}
                 onChange={(e) => handleConfigChange('limits.MAX_TRACE_ROWS_PER_RUN', parseInt(e.target.value))}
-                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-[var(--brand-500)] focus:ring-[var(--brand-500)] sm:text-sm"
               />
               <p className="mt-1 text-xs text-gray-500">Explosion protection (1K-2M)</p>
             </div>
@@ -188,7 +188,7 @@ export default function EditTab({
                 step="100"
                 value={config.limits.MAX_FG_DEMAND_ROWS}
                 onChange={(e) => handleConfigChange('limits.MAX_FG_DEMAND_ROWS', parseInt(e.target.value))}
-                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-[var(--brand-500)] focus:ring-[var(--brand-500)] sm:text-sm"
               />
             </div>
 
@@ -203,7 +203,7 @@ export default function EditTab({
                 step="100"
                 value={config.limits.MAX_BOM_EDGES_ROWS}
                 onChange={(e) => handleConfigChange('limits.MAX_BOM_EDGES_ROWS', parseInt(e.target.value))}
-                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-[var(--brand-500)] focus:ring-[var(--brand-500)] sm:text-sm"
               />
             </div>
 
@@ -218,7 +218,7 @@ export default function EditTab({
                 step="10"
                 value={config.limits.ZOMBIE_AFTER_SECONDS}
                 onChange={(e) => handleConfigChange('limits.ZOMBIE_AFTER_SECONDS', parseInt(e.target.value))}
-                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-[var(--brand-500)] focus:ring-[var(--brand-500)] sm:text-sm"
               />
               <p className="mt-1 text-xs text-gray-500">Job heartbeat threshold (30-600s)</p>
             </div>
@@ -233,7 +233,7 @@ export default function EditTab({
                 max="10"
                 value={config.limits.MAX_CONCURRENT_JOBS_PER_USER}
                 onChange={(e) => handleConfigChange('limits.MAX_CONCURRENT_JOBS_PER_USER', parseInt(e.target.value))}
-                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-[var(--brand-500)] focus:ring-[var(--brand-500)] sm:text-sm"
               />
             </div>
           </div>
@@ -250,7 +250,7 @@ export default function EditTab({
                   step="100"
                   value={config.limits.INSERT_CHUNK_SIZE_DEMAND}
                   onChange={(e) => handleConfigChange('limits.INSERT_CHUNK_SIZE_DEMAND', parseInt(e.target.value))}
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-[var(--brand-500)] focus:ring-[var(--brand-500)] sm:text-sm"
                 />
               </div>
               <div>
@@ -262,7 +262,7 @@ export default function EditTab({
                   step="500"
                   value={config.limits.INSERT_CHUNK_SIZE_TRACE}
                   onChange={(e) => handleConfigChange('limits.INSERT_CHUNK_SIZE_TRACE', parseInt(e.target.value))}
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-[var(--brand-500)] focus:ring-[var(--brand-500)] sm:text-sm"
                 />
               </div>
             </div>
@@ -288,7 +288,7 @@ export default function EditTab({
               <select
                 value={config.rules.cycle_policy}
                 onChange={(e) => handleConfigChange('rules.cycle_policy', e.target.value)}
-                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-[var(--brand-500)] focus:ring-[var(--brand-500)] sm:text-sm"
               >
                 <option value="warn_and_cut">Warn and Cut</option>
                 <option value="fail">Fail Job</option>
@@ -301,7 +301,7 @@ export default function EditTab({
               <select
                 value={config.rules.max_depth_policy}
                 onChange={(e) => handleConfigChange('rules.max_depth_policy', e.target.value)}
-                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-[var(--brand-500)] focus:ring-[var(--brand-500)] sm:text-sm"
               >
                 <option value="warn_and_cut">Warn and Cut</option>
                 <option value="fail">Fail Job</option>
@@ -318,7 +318,7 @@ export default function EditTab({
                 <select
                   value={config.rules.edge_selection.plant_match_strategy}
                   onChange={(e) => handleConfigChange('rules.edge_selection.plant_match_strategy', e.target.value)}
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-[var(--brand-500)] focus:ring-[var(--brand-500)] sm:text-sm"
                 >
                   <option value="exact_first_then_null">Exact First, Then Null</option>
                   <option value="exact_only">Exact Only</option>
@@ -331,7 +331,7 @@ export default function EditTab({
                 <select
                   value={config.rules.edge_selection.priority_strategy}
                   onChange={(e) => handleConfigChange('rules.edge_selection.priority_strategy', e.target.value)}
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-[var(--brand-500)] focus:ring-[var(--brand-500)] sm:text-sm"
                 >
                   <option value="min_priority">Min Priority First</option>
                   <option value="max_priority">Max Priority First</option>
@@ -346,7 +346,7 @@ export default function EditTab({
                 id="validity_enforced"
                 checked={config.rules.edge_selection.validity_enforced}
                 onChange={(e) => handleConfigChange('rules.edge_selection.validity_enforced', e.target.checked)}
-                className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
+                className="h-4 w-4 text-[var(--brand-600)] focus:ring-[var(--brand-500)] border-gray-300 rounded"
               />
               <label htmlFor="validity_enforced" className="ml-2 block text-sm text-gray-700">
                 Enforce valid_from / valid_to dates
@@ -366,7 +366,7 @@ export default function EditTab({
                   step="0.01"
                   value={config.rules.scrap_yield.default_scrap_rate}
                   onChange={(e) => handleConfigChange('rules.scrap_yield.default_scrap_rate', parseFloat(e.target.value))}
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-[var(--brand-500)] focus:ring-[var(--brand-500)] sm:text-sm"
                 />
               </div>
               <div>
@@ -378,7 +378,7 @@ export default function EditTab({
                   step="0.01"
                   value={config.rules.scrap_yield.default_yield_rate}
                   onChange={(e) => handleConfigChange('rules.scrap_yield.default_yield_rate', parseFloat(e.target.value))}
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-[var(--brand-500)] focus:ring-[var(--brand-500)] sm:text-sm"
                 />
               </div>
               <div>
@@ -390,7 +390,7 @@ export default function EditTab({
                   step="0.01"
                   value={config.rules.scrap_yield.max_scrap_rate}
                   onChange={(e) => handleConfigChange('rules.scrap_yield.max_scrap_rate', parseFloat(e.target.value))}
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-[var(--brand-500)] focus:ring-[var(--brand-500)] sm:text-sm"
                 />
               </div>
               <div>
@@ -402,7 +402,7 @@ export default function EditTab({
                   step="0.01"
                   value={config.rules.scrap_yield.min_yield_rate}
                   onChange={(e) => handleConfigChange('rules.scrap_yield.min_yield_rate', parseFloat(e.target.value))}
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-[var(--brand-500)] focus:ring-[var(--brand-500)] sm:text-sm"
                 />
               </div>
             </div>
@@ -428,7 +428,7 @@ export default function EditTab({
               <select
                 value={config.sharding.strategy}
                 onChange={(e) => handleConfigChange('sharding.strategy', e.target.value)}
-                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-[var(--brand-500)] focus:ring-[var(--brand-500)] sm:text-sm"
               >
                 <option value="none">No Sharding</option>
                 <option value="by_time_bucket">By Time Bucket</option>
@@ -445,7 +445,7 @@ export default function EditTab({
                   max="52"
                   value={config.sharding.shard_size_weeks}
                   onChange={(e) => handleConfigChange('sharding.shard_size_weeks', parseInt(e.target.value))}
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-[var(--brand-500)] focus:ring-[var(--brand-500)] sm:text-sm"
                 />
               </div>
             )}
@@ -457,7 +457,7 @@ export default function EditTab({
               <select
                 value={config.sharding.merge_policy}
                 onChange={(e) => handleConfigChange('sharding.merge_policy', e.target.value)}
-                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-[var(--brand-500)] focus:ring-[var(--brand-500)] sm:text-sm"
               >
                 <option value="sum">Sum</option>
                 <option value="dedupe">Deduplicate</option>
@@ -486,7 +486,7 @@ export default function EditTab({
               <select
                 value={config.staging.commit_mode}
                 onChange={(e) => handleConfigChange('staging.commit_mode', e.target.value)}
-                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-[var(--brand-500)] focus:ring-[var(--brand-500)] sm:text-sm"
               >
                 <option value="all_or_nothing">All or Nothing</option>
                 <option value="best_effort">Best Effort</option>
@@ -500,7 +500,7 @@ export default function EditTab({
                 id="auto_cleanup"
                 checked={config.staging.auto_cleanup_on_fail}
                 onChange={(e) => handleConfigChange('staging.auto_cleanup_on_fail', e.target.checked)}
-                className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
+                className="h-4 w-4 text-[var(--brand-600)] focus:ring-[var(--brand-500)] border-gray-300 rounded"
               />
               <label htmlFor="auto_cleanup" className="ml-2 block text-sm text-gray-700">
                 Auto-cleanup on failure

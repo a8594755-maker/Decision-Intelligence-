@@ -97,16 +97,16 @@ export default function PlanComparisonCard({ payload }) {
   const { previous, current, deltas } = payload;
 
   return (
-    <Card className="border-indigo-200 dark:border-indigo-800 bg-indigo-50/60 dark:bg-indigo-900/10">
+    <Card category="plan" className="border-[var(--brand-500)] bg-[var(--accent-active)]">
       <div className="space-y-3">
         {/* Header */}
         <div className="flex items-start justify-between gap-3">
           <div>
             <h4 className="font-semibold text-sm flex items-center gap-2">
-              <GitCompareArrows className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+              <GitCompareArrows className="w-4 h-4 text-[var(--brand-600)]" />
               Plan Comparison
             </h4>
-            <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">
+            <p className="text-xs text-[var(--text-secondary)] mt-0.5">
               Run #{previous?.run_id ?? '?'} vs Run #{current?.run_id ?? '?'}
             </p>
           </div>
@@ -126,21 +126,21 @@ export default function PlanComparisonCard({ payload }) {
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
             <thead>
-              <tr className="border-b border-slate-200 dark:border-slate-700">
-                <th className="text-left py-1.5 pr-3 font-medium text-slate-500 dark:text-slate-400">KPI</th>
-                <th className="text-right py-1.5 px-3 font-medium text-slate-500 dark:text-slate-400">Previous</th>
-                <th className="text-right py-1.5 px-3 font-medium text-slate-500 dark:text-slate-400">Current</th>
-                <th className="text-right py-1.5 pl-3 font-medium text-slate-500 dark:text-slate-400">Change</th>
+              <tr className="border-b border-[var(--border-default)]">
+                <th className="text-left py-1.5 pr-3 font-medium text-[var(--text-muted)]">KPI</th>
+                <th className="text-right py-1.5 px-3 font-medium text-[var(--text-muted)]">Previous</th>
+                <th className="text-right py-1.5 px-3 font-medium text-[var(--text-muted)]">Current</th>
+                <th className="text-right py-1.5 pl-3 font-medium text-[var(--text-muted)]">Change</th>
               </tr>
             </thead>
             <tbody>
               {KPI_ROWS.map(({ key, label, DeltaComponent: _DeltaComponent }) => (
-                <tr key={key} className="border-b border-slate-100 dark:border-slate-800 last:border-0">
-                  <td className="py-1.5 pr-3 font-medium text-slate-700 dark:text-slate-300">{label}</td>
-                  <td className="text-right py-1.5 px-3 text-slate-600 dark:text-slate-400 tabular-nums">
+                <tr key={key} className="border-b border-[var(--border-default)] last:border-0">
+                  <td className="py-1.5 pr-3 font-medium text-[var(--text-secondary)]">{label}</td>
+                  <td className="text-right py-1.5 px-3 text-[var(--text-secondary)] tabular-nums">
                     {formatKpi(key, previous?.kpis?.[key])}
                   </td>
-                  <td className="text-right py-1.5 px-3 text-slate-900 dark:text-slate-100 font-medium tabular-nums">
+                  <td className="text-right py-1.5 px-3 text-[var(--text-primary)] font-medium tabular-nums">
                     {formatKpi(key, current?.kpis?.[key])}
                   </td>
                   <td className="text-right py-1.5 pl-3">

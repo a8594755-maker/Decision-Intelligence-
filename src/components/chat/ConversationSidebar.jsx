@@ -7,7 +7,7 @@ function SidebarSkeleton({ collapsed }) {
     return (
       <div className="p-2 space-y-2 animate-pulse">
         {Array.from({ length: 7 }).map((_, idx) => (
-          <div key={idx} className="h-9 w-9 rounded-lg bg-slate-200 dark:bg-slate-800 mx-auto" />
+          <div key={idx} className="h-9 w-9 rounded-lg bg-[var(--surface-subtle)] mx-auto" />
         ))}
       </div>
     );
@@ -58,7 +58,7 @@ function ConversationSidebar({
           <button
             type="button"
             title={title}
-            className="h-9 w-9 inline-flex items-center justify-center rounded-lg bg-gradient-to-br from-blue-500 to-blue-600 text-white shadow-sm hover:from-blue-600 hover:to-blue-700 transition-all"
+            className="h-9 w-9 inline-flex items-center justify-center rounded-lg bg-[var(--brand-600)] text-white shadow-sm hover:bg-[var(--brand-700)] transition-all cursor-pointer"
             onClick={onExpandFromCollapsed}
           >
             <Bot className="w-4 h-4" />
@@ -105,7 +105,7 @@ function ConversationSidebar({
                   onClick={() => onSelectConversation?.(conversation.id)}
                   className={`w-full aspect-square rounded-lg flex items-center justify-center text-sm font-medium transition-all duration-150 ${
                     active
-                      ? 'bg-blue-600 text-white shadow-sm'
+                      ? 'bg-[var(--brand-600)] text-white shadow-sm'
                       : 'bg-transparent text-[var(--text-secondary)] hover:bg-[var(--accent-hover)]'
                   }`}
                 >
@@ -126,7 +126,7 @@ function ConversationSidebar({
       <div className="px-3 py-3 border-b border-[var(--border-default)]/60">
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 min-w-0">
-            <span className="inline-flex p-1.5 rounded-lg bg-gradient-to-br from-blue-500 to-blue-600 text-white shadow-sm">
+            <span className="inline-flex p-1.5 rounded-lg bg-[var(--brand-600)] text-white shadow-sm">
               <Bot className="w-4 h-4" />
             </span>
             <p className="text-sm font-semibold text-[var(--text-primary)] truncate">{title}</p>
@@ -149,7 +149,7 @@ function ConversationSidebar({
             value={searchQuery}
             onChange={(event) => onSearchQueryChange?.(event.target.value)}
             placeholder="Search conversations..."
-            className="w-full pl-8 pr-3 py-2 rounded-lg border border-[var(--border-default)] bg-[var(--surface-base)] dark:bg-slate-800/70 text-sm outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-400 transition-all placeholder:text-[var(--text-muted)]"
+            className="w-full pl-8 pr-3 py-2 rounded-lg border border-[var(--border-default)] bg-[var(--surface-base)] text-sm outline-none focus:ring-2 focus:ring-[var(--focus-ring)]/40 focus:border-[var(--focus-ring)] transition-all placeholder:text-[var(--text-muted)]"
           />
         </div>
       </div>

@@ -35,13 +35,15 @@ CREATE POLICY "Users can insert own profile"
   ON public.user_profiles FOR INSERT
   WITH CHECK (auth.uid() = user_id);
 
--- live_tables — may not exist in all environments
+-- live_tables — may not exist in all environments, and may lack user_id column
 DO $$
 BEGIN
-  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'live_tables') THEN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'live_tables' AND column_name = 'user_id'
+  ) THEN
     EXECUTE 'ALTER TABLE public.live_tables ENABLE ROW LEVEL SECURITY';
 
-    -- Only create policies if they don't already exist
     IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'live_tables' AND policyname = 'Users can view own live_tables') THEN
       EXECUTE $p$
         CREATE POLICY "Users can view own live_tables"
@@ -74,6 +76,12 @@ BEGIN
           USING (auth.uid() = user_id)
       $p$;
     END IF;
+  ELSIF EXISTS (
+    SELECT 1 FROM information_schema.tables
+    WHERE table_schema = 'public' AND table_name = 'live_tables'
+  ) THEN
+    -- Table exists but has no user_id — just enable RLS without user-scoped policies
+    EXECUTE 'ALTER TABLE public.live_tables ENABLE ROW LEVEL SECURITY';
   END IF;
 END
 $$;
@@ -147,7 +155,8 @@ CREATE POLICY "Users can insert regression results for own tests"
 -- Also convert to SECURITY INVOKER.
 -- ============================================================================
 
-CREATE OR REPLACE VIEW public.v_import_history
+DROP VIEW IF EXISTS public.v_import_history;
+CREATE VIEW public.v_import_history
   WITH (security_invoker = on)
 AS
 SELECT

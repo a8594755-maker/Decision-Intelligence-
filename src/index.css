@@ -1,5 +1,5 @@
-@import "tailwindcss";
 @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700&display=swap');
+@import "tailwindcss";
 
 /* ============================================================
    Decision-Intelligence Design Tokens
@@ -61,6 +61,13 @@
   /* === Accent & interactive === */
   --accent-hover:  var(--surface-subtle);
   --accent-active: var(--brand-50);
+
+  /* === Tab bar & badges === */
+  --tab-indicator: var(--brand-600);
+  --tab-active-bg: var(--brand-50);
+  --tab-hover-bg: var(--surface-subtle);
+  --badge-count-bg: var(--risk-critical);
+  --badge-count-text: #ffffff;
 
   /* === Focus === */
   --focus-ring: var(--brand-500);

@@ -67,6 +67,7 @@ export default function useConversationManager({
 }) {
   const [conversations, setConversationsRaw] = useState([]);
   const [isConversationsLoading, setIsConversationsLoading] = useState(true);
+  const persistFailNotifiedRef = useRef(false);
   const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
   const [conversationSearch, setConversationSearch] = useState('');
   const [currentConversationId, setCurrentConversationIdRaw] = useState(() => loadLastConversationId(mode));
@@ -114,9 +115,15 @@ export default function useConversationManager({
       try {
         if (isTableUnavailable()) {
           const local = loadLocalConversations(user.id);
-          console.info(`[DSV:convLoad] table unavailable, localStorage has ${local.length} conversations, ${filterByWorkspace(local).length} after workspace filter (mode=${mode})`);
+          const filtered = filterByWorkspace(local);
+          console.info(`[DSV:convLoad] table unavailable, localStorage has ${local.length} conversations, ${filtered.length} after workspace filter (mode=${mode})`);
           if (active) {
-            setConversationsRaw(filterByWorkspace(local));
+            if (filtered.length === 0 && local.length > 0) {
+              addNotification?.('Cloud database temporarily unavailable — no chats found for this workspace in local cache.', 'warning');
+            } else if (filtered.length === 0) {
+              addNotification?.('Cloud database temporarily unavailable — chats may not load.', 'warning');
+            }
+            setConversationsRaw(filtered);
             setIsConversationsLoading(false);
             setHasLoadedOnce(true);
           }
@@ -174,8 +181,10 @@ export default function useConversationManager({
         console.warn('[DSV:convLoad] conversations query failed, falling back to localStorage:', error?.message);
         markTableUnavailable();
         const local = loadLocalConversations(user.id);
-        console.info(`[DSV:convLoad] fallback localStorage: ${local.length} total, ${filterByWorkspace(local).length} after filter (mode=${mode})`);
-        setConversationsRaw(filterByWorkspace(local));
+        const filtered = filterByWorkspace(local);
+        console.info(`[DSV:convLoad] fallback localStorage: ${local.length} total, ${filtered.length} after filter (mode=${mode})`);
+        addNotification?.('Could not reach cloud database — showing locally cached chats only.', 'warning');
+        setConversationsRaw(filtered);
         setIsConversationsLoading(false);
         setHasLoadedOnce(true);
       } catch (err) {
@@ -183,8 +192,10 @@ export default function useConversationManager({
         if (!active) return;
         markTableUnavailable();
         const local = loadLocalConversations(user.id);
-        console.info(`[DSV:convLoad] error fallback localStorage: ${local.length} total, ${filterByWorkspace(local).length} after filter (mode=${mode})`);
-        setConversationsRaw(filterByWorkspace(local));
+        const filtered = filterByWorkspace(local);
+        console.info(`[DSV:convLoad] error fallback localStorage: ${local.length} total, ${filtered.length} after filter (mode=${mode})`);
+        addNotification?.('Failed to load chats — showing locally cached chats only.', 'warning');
+        setConversationsRaw(filtered);
         setIsConversationsLoading(false);
         setHasLoadedOnce(true);
       }
@@ -280,6 +291,16 @@ export default function useConversationManager({
         }
 
         console.warn('[DSV] Supabase persist failed:', error.message);
+
+        const notifyPersistFailure = () => {
+          if (!persistFailNotifiedRef.current) {
+            persistFailNotifiedRef.current = true;
+            addNotification?.('Chat not synced to cloud — exists only in this browser. Data may be lost on refresh.', 'warning');
+            // Reset after 5 min so user gets reminded again if still failing
+            setTimeout(() => { persistFailNotifiedRef.current = false; }, 5 * 60_000);
+          }
+        };
+
         // Older schemas may still lack workspace; retry once without it.
         if (error.message?.includes('workspace')) {
           const { workspace: _ws, ...withoutWorkspace } = upsertPayload;
@@ -288,7 +309,8 @@ export default function useConversationManager({
             .upsert(withoutWorkspace, { onConflict: 'id' })
             .then(({ error: retryErr }) => {
               if (retryErr) {
-                markTableUnavailable();
+                // Do NOT markTableUnavailable — write failures must not block reads
+                notifyPersistFailure();
               } else {
                 sessionStorage.removeItem(TABLE_UNAVAILABLE_KEY);
               }
@@ -296,15 +318,10 @@ export default function useConversationManager({
           return;
         }
 
-        if (db) {
-          markTableUnavailable();
-        } else {
-          try {
-            sessionStorage.setItem(TABLE_UNAVAILABLE_KEY, '1');
-          } catch {
-            // noop
-          }
-        }
+        // Do NOT markTableUnavailable here — a write (upsert) failure should
+        // never prevent subsequent reads. Only SELECT failures in the load
+        // path should mark the table unavailable.
+        notifyPersistFailure();
       });
   }, [user?.id]);
 
@@ -331,10 +348,11 @@ export default function useConversationManager({
     if (!user?.id) return;
     const SYNC_MS = 60_000;
     const interval = setInterval(() => {
+      // Always clear unavailable flag to allow retry — even when 0 conversations
+      // in current workspace. Without this, empty workspaces stay permanently locked out.
+      sessionStorage.removeItem(TABLE_UNAVAILABLE_KEY);
       const current = conversationsRef.current;
       if (!current?.length) return;
-      // Clear unavailable flag to allow retry — if persist fails, it will re-mark
-      sessionStorage.removeItem(TABLE_UNAVAILABLE_KEY);
       const cutoff = Date.now() - SYNC_MS - 5000;
       for (const conv of current) {
         if (new Date(conv.updated_at).getTime() > cutoff) {
@@ -408,7 +426,8 @@ export default function useConversationManager({
         const { error: retryErr } = await db.from('conversations').insert([withoutWorkspace]);
         if (retryErr) {
           console.warn(`[DSV:convNew] Supabase insert retry also failed: ${retryErr.message}`);
-          markTableUnavailable();
+          // Do NOT markTableUnavailable — write failures must not block reads
+          addNotification?.('Chat not synced to cloud — exists only in this browser. Data may be lost on refresh.', 'warning');
         } else {
           console.info('[DSV:convNew] Supabase insert succeeded without workspace column');
         }

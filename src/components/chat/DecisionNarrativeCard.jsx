@@ -24,7 +24,7 @@ const SL_CLASS_META = {
   acceptable: { text: 'text-amber-700 dark:text-amber-300', bg: 'bg-amber-100 dark:bg-amber-900/30' },
   poor: { text: 'text-orange-700 dark:text-orange-300', bg: 'bg-orange-100 dark:bg-orange-900/30' },
   critical: { text: 'text-red-700 dark:text-red-300', bg: 'bg-red-100 dark:bg-red-900/30' },
-  unknown: { text: 'text-slate-700 dark:text-slate-300', bg: 'bg-slate-100 dark:bg-slate-800' }
+  unknown: { text: 'text-[var(--text-secondary)]', bg: 'bg-[var(--surface-subtle)]' }
 };
 
 function EvidenceRefsList({ refs = [] }) {
@@ -34,7 +34,7 @@ function EvidenceRefsList({ refs = [] }) {
       {refs.map((ref, idx) => (
         <span
           key={`${ref}-${idx}`}
-          className="text-[10px] font-mono bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded px-1.5 py-0.5 text-slate-500 dark:text-slate-400"
+          className="text-[10px] font-mono bg-[var(--surface-subtle)] border border-[var(--border-default)] rounded px-1.5 py-0.5 text-[var(--text-muted)]"
         >
           {ref}
         </span>
@@ -51,14 +51,14 @@ function ConstraintRow({ constraint }) {
     <div
       className={`rounded-md border px-2.5 py-2 text-xs ${constraint?.binding
         ? 'border-orange-200 dark:border-orange-700 bg-orange-50/50 dark:bg-orange-900/10'
-        : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/40'}`}
+        : 'border-[var(--border-default)] bg-[var(--surface-card)]'}`}
     >
       <div className="flex items-center gap-2">
         {constraint?.binding
           ? <AlertTriangle className="w-3.5 h-3.5 text-orange-500 shrink-0" />
           : <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />}
 
-        <span className="font-medium text-slate-700 dark:text-slate-200">{constraint?.name || '-'}</span>
+        <span className="font-medium text-[var(--text-secondary)]">{constraint?.name || '-'}</span>
 
         {constraint?.binding ? <Badge type="warning">Binding</Badge> : null}
         {constraint?.violations > 0 ? (
@@ -68,7 +68,7 @@ function ConstraintRow({ constraint }) {
         {hasImpact ? (
           <button
             type="button"
-            className="ml-auto text-slate-400 hover:text-slate-600"
+            className="ml-auto text-[var(--text-muted)] hover:text-[var(--text-secondary)]"
             onClick={() => setShowImpact((v) => !v)}
           >
             {showImpact ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
@@ -77,13 +77,13 @@ function ConstraintRow({ constraint }) {
       </div>
 
       {constraint?.details ? (
-        <p className="mt-1 text-[10px] text-slate-400 dark:text-slate-500 break-words">{constraint.details}</p>
+        <p className="mt-1 text-[10px] text-[var(--text-muted)] break-words">{constraint.details}</p>
       ) : null}
 
       {showImpact && hasImpact ? (
         <div className="mt-1.5 pt-1.5 border-t border-orange-100 dark:border-orange-800/40">
           <p className="text-[11px] text-orange-700 dark:text-orange-300">{constraint.marginal_impact.description}</p>
-          <p className="text-[10px] text-slate-400 mt-0.5">Basis: {constraint.marginal_impact.evidence_basis}</p>
+          <p className="text-[10px] text-[var(--text-muted)] mt-0.5">Basis: {constraint.marginal_impact.evidence_basis}</p>
         </div>
       ) : null}
     </div>
@@ -111,14 +111,14 @@ export default function DecisionNarrativeCard({ payload, onRequestRelax }) {
   const StatusIcon = parsed.statusMeta.icon;
 
   return (
-    <Card className="w-full border border-slate-200 dark:border-slate-700">
+    <Card category="analysis" className="w-full border border-[var(--border-default)]">
       <div className="space-y-3">
         <div className="flex items-start justify-between gap-2">
           <div className="flex items-start gap-2">
             <Brain className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
             <div>
-              <h4 className="font-semibold text-sm text-slate-800 dark:text-slate-100">Decision Narrative</h4>
-              <p className="text-[11px] text-slate-400">Run #{payload.run_id || '-'}</p>
+              <h4 className="font-semibold text-sm text-[var(--text-primary)]">Decision Narrative</h4>
+              <p className="text-[11px] text-[var(--text-muted)]">Run #{payload.run_id || '-'}</p>
             </div>
           </div>
 
@@ -137,24 +137,24 @@ export default function DecisionNarrativeCard({ payload, onRequestRelax }) {
           </div>
         </div>
 
-        <div className="rounded-lg bg-slate-50 dark:bg-slate-800/50 px-3 py-2.5">
-          <p className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1">Situation</p>
-          <p className="text-xs text-slate-700 dark:text-slate-200 leading-relaxed">{payload?.situation?.text || '-'}</p>
+        <div className="rounded-lg bg-[var(--surface-subtle)] px-3 py-2.5">
+          <p className="text-[11px] font-semibold text-[var(--text-muted)] uppercase tracking-wide mb-1">Situation</p>
+          <p className="text-xs text-[var(--text-secondary)] leading-relaxed">{payload?.situation?.text || '-'}</p>
         </div>
 
         <div className="rounded-lg bg-blue-50 dark:bg-blue-900/10 border border-blue-200 dark:border-blue-800/40 px-3 py-2.5">
-          <p className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1">Key Driver</p>
-          <p className="text-xs text-slate-700 dark:text-slate-200 leading-relaxed">{payload?.driver?.text || '-'}</p>
+          <p className="text-[11px] font-semibold text-[var(--text-muted)] uppercase tracking-wide mb-1">Key Driver</p>
+          <p className="text-xs text-[var(--text-secondary)] leading-relaxed">{payload?.driver?.text || '-'}</p>
         </div>
 
         <div className="rounded-lg bg-emerald-50 dark:bg-emerald-900/10 border border-emerald-200 dark:border-emerald-800/40 px-3 py-2.5">
           <p className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-400 uppercase tracking-wide mb-1">Recommendation</p>
-          <p className="text-xs text-slate-700 dark:text-slate-200 leading-relaxed">{payload?.recommendation?.text || '-'}</p>
+          <p className="text-xs text-[var(--text-secondary)] leading-relaxed">{payload?.recommendation?.text || '-'}</p>
         </div>
 
         {Array.isArray(payload.trade_offs) && payload.trade_offs.length > 0 ? (
           <div>
-            <p className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1.5">Alternative Actions</p>
+            <p className="text-[11px] font-semibold text-[var(--text-muted)] uppercase tracking-wide mb-1.5">Alternative Actions</p>
             <div className="flex flex-wrap gap-1.5">
               {payload.trade_offs.map((tradeOff) => (
                 <button
@@ -176,7 +176,7 @@ export default function DecisionNarrativeCard({ payload, onRequestRelax }) {
             <button
               type="button"
               onClick={() => setShowConstraints((v) => !v)}
-              className="flex items-center gap-2 text-xs text-slate-500 hover:text-slate-700 dark:hover:text-slate-200 transition-colors w-full"
+              className="flex items-center gap-2 text-xs text-[var(--text-muted)] hover:text-[var(--text-secondary)] transition-colors w-full"
             >
               <BookOpen className="w-3.5 h-3.5" />
               <span>
@@ -198,11 +198,11 @@ export default function DecisionNarrativeCard({ payload, onRequestRelax }) {
           </div>
         ) : null}
 
-        <div className="pt-1 border-t border-slate-100 dark:border-slate-700 flex justify-end">
+        <div className="pt-1 border-t border-[var(--border-default)] flex justify-end">
           <button
             type="button"
             onClick={() => setShowEvidence((v) => !v)}
-            className="flex items-center gap-1 text-[11px] text-slate-400 hover:text-slate-600 transition-colors"
+            className="flex items-center gap-1 text-[11px] text-[var(--text-muted)] hover:text-[var(--text-secondary)] transition-colors"
           >
             Evidence ({(payload.all_evidence_refs || []).length})
             {showEvidence ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}

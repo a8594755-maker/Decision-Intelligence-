@@ -32,10 +32,10 @@ Given the user's message, classify the intent and extract structured entities (p
 Use the session context and domain context to resolve ambiguities.
 
 ## Session Context
-${clampText(sessionSummary, 4000)}
+${clampText(sessionSummary, 8000)}
 
 ## Domain Context
-${clampText(domainSummary, 4000)}
+${clampText(domainSummary, 6000)}
 
 ## Intent Taxonomy
 
@@ -45,7 +45,7 @@ ${clampText(domainSummary, 4000)}
 | RUN_FORECAST | User wants to run a demand forecast | "Run forecast", "Predict demand for next month" |
 | RUN_WORKFLOW_A | User wants to run the full planning pipeline (profile→forecast→optimize→verify) | "Run workflow A", "Execute the full planning pipeline" |
 | RUN_WORKFLOW_B | User wants to run risk scoring | "Run risk analysis", "Score supplier risk", "Run workflow B" |
-| QUERY_DATA | User asks a question about existing data, metrics, or results | "What's the current inventory?", "Show me the last plan KPIs" |
+| QUERY_DATA | User asks a question about existing data, metrics, results, patterns, or trends. Includes exploratory questions like "tell me more about X", "what patterns do you see", "analyze this chart/column" | "What's the current inventory?", "Show me the last plan KPIs", "Tell me more about Monthly Revenue", "What patterns do you see?", "分析這份資料", "What does this data show?" |
 | COMPARE_PLANS | User wants to compare current plan with previous or baseline | "Compare with last plan", "What changed?", "Show me the difference" |
 | CHANGE_PARAM | User wants to change a parameter and re-run | "Change budget to 500K", "Set service level to 97%", "Increase lead time by 2 days" |
 | WHAT_IF | User wants to run a what-if scenario | "What if demand increases 20%?", "What if lead time doubles?" |
@@ -53,7 +53,6 @@ ${clampText(domainSummary, 4000)}
 | REJECT | User wants to reject pending plans/POs | "Reject", "Cancel", "Don't approve" |
 | RUN_DIGITAL_TWIN | User wants to run a digital twin / supply chain simulation | "Run digital twin", "Simulate supply chain", "Run simulation with disaster scenario", "Digital twin analysis" |
 | ACCEPT_NEGOTIATION_OPTION | User wants to apply a negotiation option from the active negotiation panel | "Apply option 2", "Try budget increase", "Use opt_001", "Go with the recommended option", "Try option 3", "Accept the first option" |
-| ASSIGN_TASK | User wants the Digital Worker to execute a complex multi-step task (report generation, data analysis, custom workflow) | "Generate monthly report", "Analyze risks and prepare summary", "Run analysis on uploaded data", "Prepare MBR deck", "做月報", "分析這份資料" |
 | GENERAL_CHAT | General question, greeting, or anything that doesn't fit above | "Hello", "What can you do?", "Explain supply chain optimization" |
 
 ## Entity Extraction Rules
@@ -79,9 +78,26 @@ ${clampText(domainSummary, 4000)}
 - 0.5-0.7: Ambiguous, could be multiple intents (e.g., "Check the plan" → QUERY_DATA or COMPARE_PLANS)
 - Below 0.5: Very unclear, default to GENERAL_CHAT
 
+## Few-Shot Examples
+
+User: "幫我跑一個預測，看下個月需求量"
+→ {"intent":"RUN_FORECAST","confidence":0.95,"entities":{"planning_horizon_days":30,"freeform_query":"next month demand forecast"},"requires_dataset":true,"suggested_response":"I'll run a demand forecast for the next 30 days."}
+
+User: "Show me top 10 products by revenue"
+→ {"intent":"QUERY_DATA","confidence":0.95,"entities":{"freeform_query":"top 10 products by revenue"},"requires_dataset":false,"suggested_response":"I'll query the data to find the top 10 products by revenue."}
+
+User: "What if demand increases by 30% and lead time doubles?"
+→ {"intent":"WHAT_IF","confidence":0.95,"entities":{"demand_multiplier":1.3,"lead_time_delta_days":null,"freeform_query":"demand +30% and lead time doubles"},"requires_dataset":true,"suggested_response":"I'll run a what-if scenario with 30% demand increase and doubled lead time."}
+
+User: "分析這份資料有什麼趨勢"
+→ {"intent":"QUERY_DATA","confidence":0.90,"entities":{"freeform_query":"analyze data trends"},"requires_dataset":false,"suggested_response":"I'll analyze the data to identify key trends and patterns."}
+
+User: "Run a plan with budget 800K and 98% service level, include risk"
+→ {"intent":"RUN_PLAN","confidence":0.98,"entities":{"budget_cap":800000,"service_level_target":0.98,"risk_mode":"on","freeform_query":null},"requires_dataset":true,"suggested_response":"I'll generate a risk-aware replenishment plan with budget cap $800,000 and 98% service level target."}
+
 ## Output JSON Schema (must match exactly)
 {
-  "intent": "RUN_PLAN | RUN_FORECAST | RUN_WORKFLOW_A | RUN_WORKFLOW_B | QUERY_DATA | COMPARE_PLANS | CHANGE_PARAM | WHAT_IF | APPROVE | REJECT | GENERAL_CHAT | RUN_DIGITAL_TWIN | ACCEPT_NEGOTIATION_OPTION | ASSIGN_TASK",
+  "intent": "RUN_PLAN | RUN_FORECAST | RUN_WORKFLOW_A | RUN_WORKFLOW_B | QUERY_DATA | COMPARE_PLANS | CHANGE_PARAM | WHAT_IF | APPROVE | REJECT | GENERAL_CHAT | RUN_DIGITAL_TWIN | ACCEPT_NEGOTIATION_OPTION",
   "confidence": 0.0,
   "entities": {
     "budget_cap": null,
@@ -114,7 +130,6 @@ ${clampText(domainSummary, 4000)}
 - suggested_response: A brief, user-friendly message confirming the interpreted action (e.g., "I'll run a plan with budget cap $500,000 and service level target 97%.").
 - If user says something like "re-run" or "run again", map to the LAST intent in session context with same parameters, or RUN_PLAN if no history.
 - If user says "change X and re-run", intent = CHANGE_PARAM (the re-run is implicit).
-
 Now parse this user message:
 "${clampText(userMessage, 2000)}"`;
 }
@@ -166,7 +181,7 @@ export function validateIntentContract(parsed) {
     'RUN_PLAN', 'RUN_FORECAST', 'RUN_WORKFLOW_A', 'RUN_WORKFLOW_B',
     'QUERY_DATA', 'COMPARE_PLANS', 'CHANGE_PARAM', 'WHAT_IF',
     'APPROVE', 'REJECT', 'GENERAL_CHAT', 'RUN_DIGITAL_TWIN',
-    'ACCEPT_NEGOTIATION_OPTION', 'ASSIGN_TASK',
+    'ACCEPT_NEGOTIATION_OPTION',
   ];
   if (!validIntents.includes(parsed.intent)) return false;
 

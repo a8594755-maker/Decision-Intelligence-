@@ -88,18 +88,18 @@ function ForecastWidgetArtifact({ data = {} }) {
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b" style={{ borderColor: 'var(--border-default)' }}>
         <div className="flex items-center gap-2">
-          <TrendingUp size={18} className="text-indigo-500" />
+          <TrendingUp size={18} className="text-[var(--brand-500)]" />
           <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
             Demand Forecast — {materialCode}
           </h3>
         </div>
         <div className="flex items-center gap-1">
           <button onClick={() => setViewMode('chart')}
-            className={`p-1.5 rounded ${viewMode === 'chart' ? 'bg-indigo-100 text-indigo-600' : ''}`} title="Chart view">
+            className={`p-1.5 rounded ${viewMode === 'chart' ? 'bg-[var(--accent-active)] text-[var(--brand-600)]' : ''}`} title="Chart view">
             <BarChart3 size={14} />
           </button>
           <button onClick={() => setViewMode('table')}
-            className={`p-1.5 rounded ${viewMode === 'table' ? 'bg-indigo-100 text-indigo-600' : ''}`} title="Table view">
+            className={`p-1.5 rounded ${viewMode === 'table' ? 'bg-[var(--accent-active)] text-[var(--brand-600)]' : ''}`} title="Table view">
             <Table2 size={14} />
           </button>
         </div>
@@ -274,7 +274,7 @@ function ForecastWidgetLive({ user }) {
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b" style={{ borderColor: 'var(--border-default)' }}>
         <div className="flex items-center gap-2">
-          <TrendingUp size={18} className="text-indigo-500" />
+          <TrendingUp size={18} className="text-[var(--brand-500)]" />
           <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Component Forecast</h3>
         </div>
       </div>
@@ -312,7 +312,7 @@ function ForecastWidgetLive({ user }) {
           <button key={tab.key} onClick={() => setActiveTab(tab.key)}
             className={`px-4 py-2 text-xs font-medium border-b-2 transition-colors ${
               activeTab === tab.key
-                ? 'border-indigo-600 text-indigo-600'
+                ? 'border-[var(--brand-600)] text-[var(--brand-600)]'
                 : 'border-transparent text-gray-500 hover:text-gray-700'
             }`}>
             {tab.label}
@@ -332,7 +332,7 @@ function ForecastWidgetLive({ user }) {
       <div className="flex-1 overflow-auto px-4 py-2">
         {loading ? (
           <div className="flex items-center justify-center h-40">
-            <Loader2 className="w-6 h-6 animate-spin text-indigo-500" />
+            <Loader2 className="w-6 h-6 animate-spin text-[var(--brand-500)]" />
             <span className="ml-2 text-sm" style={{ color: 'var(--text-muted)' }}>Loading...</span>
           </div>
         ) : error ? (
@@ -396,7 +396,7 @@ function ForecastWidgetLive({ user }) {
             </thead>
             <tbody>
               {componentDemands.slice(0, 200).map((d, i) => (
-                <tr key={i} className="border-t hover:bg-indigo-50/20" style={{ borderColor: 'var(--border-subtle)' }}>
+                <tr key={i} className="border-t hover:bg-[var(--accent-active)]" style={{ borderColor: 'var(--border-subtle)' }}>
                   <td className="py-1 text-xs font-medium">{d.material_code || '-'}</td>
                   <td className="py-1 text-xs">{d.plant_id || '-'}</td>
                   <td className="py-1 text-xs">{d.time_bucket || '-'}</td>

@@ -92,7 +92,7 @@ export default function ApiUsageTab() {
         <button
           onClick={refresh}
           disabled={loading}
-          className="flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-800 disabled:opacity-50"
+          className="flex items-center gap-1 text-xs text-[var(--brand-600)] hover:text-[var(--brand-700)] disabled:opacity-50"
         >
           <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
           Refresh
@@ -100,7 +100,7 @@ export default function ApiUsageTab() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <KpiCard icon={Activity} label="API Calls" value={formatTokens(todayKpis.call_count)} color="text-indigo-500" />
+        <KpiCard icon={Activity} label="API Calls" value={formatTokens(todayKpis.call_count)} color="text-[var(--brand-500)]" />
         <KpiCard icon={Hash} label="Total Tokens" value={formatTokens(todayKpis.total_tokens)} color="text-emerald-500" />
         <KpiCard icon={DollarSign} label="Est. Cost" value={formatCost(todayKpis.total_cost_usd)} color="text-amber-500" />
       </div>
@@ -119,7 +119,7 @@ export default function ApiUsageTab() {
                 onClick={() => setDateRange(d)}
                 className={`px-2.5 py-1 text-xs rounded-md font-medium transition-colors ${
                   dateRange === d
-                    ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400'
+                    ? 'bg-[var(--accent-active)] text-[var(--brand-600)]'
                     : 'hover:bg-slate-100 dark:hover:bg-slate-800'
                 }`}
                 style={dateRange !== d ? { color: 'var(--text-secondary)' } : undefined}

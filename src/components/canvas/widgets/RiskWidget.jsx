@@ -344,7 +344,7 @@ function RiskWidgetLiveImpl({ user, globalDataSource }) {
           <div className="flex items-center gap-0.5 p-0.5 rounded border" style={{ borderColor: 'var(--border-default)' }}>
             {[{ icon: Table2, mode: 'table' }, { icon: LayoutGrid, mode: 'grid' }, { icon: List, mode: 'list' }].map(({ icon: Icon, mode }) => (
               <button key={mode} onClick={() => setViewMode(mode)}
-                className={`p-1 rounded ${viewMode === mode ? 'bg-indigo-100 text-indigo-600' : ''}`} title={mode}>
+                className={`p-1 rounded ${viewMode === mode ? 'bg-[var(--accent-active)] text-[var(--brand-600)]' : ''}`} title={mode}>
                 {React.createElement(Icon, { size: 13 })}
               </button>
             ))}
@@ -439,7 +439,7 @@ function RiskWidgetLiveImpl({ user, globalDataSource }) {
             </thead>
             <tbody>
               {displayRows.map((row, i) => (
-                <tr key={i} className="border-t cursor-pointer hover:bg-indigo-50/20"
+                <tr key={i} className="border-t cursor-pointer hover:bg-[var(--accent-active)]"
                   style={{ borderColor: 'var(--border-subtle)' }}
                   onClick={() => setSelectedRow(selectedRow === row ? null : row)}>
                   <td className="py-1.5 font-medium">{row.item || '-'}</td>

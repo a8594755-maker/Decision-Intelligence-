@@ -28,11 +28,11 @@ function AlertRow({ alert, onExpedite, onRunScenario }) {
   const meta = SEVERITY_META[alert.severity] || SEVERITY_META.medium;
 
   return (
-    <div className={`rounded-lg border px-3 py-2.5 bg-white dark:bg-slate-900 ${meta.border}`}>
+    <div className={`rounded-lg border px-3 py-2.5 bg-[var(--surface-card)] ${meta.border}`}>
       <div className="space-y-1">
         {/* Title */}
         <div className="flex items-center gap-1.5 flex-wrap">
-          <span className="text-xs font-semibold text-slate-800 dark:text-slate-100 truncate">
+          <span className="text-xs font-semibold text-[var(--text-primary)] truncate">
             {alert.title}
           </span>
           <Badge type={meta.badge} className="text-[9px] px-1 py-0 shrink-0">
@@ -41,24 +41,24 @@ function AlertRow({ alert, onExpedite, onRunScenario }) {
         </div>
 
         {/* Message */}
-        <p className="text-[11px] text-slate-600 dark:text-slate-300 leading-relaxed">
+        <p className="text-[11px] text-[var(--text-secondary)] leading-relaxed">
           {alert.message}
         </p>
 
         {/* KPI chips */}
         <div className="flex flex-wrap gap-1.5">
           {alert.p_stockout > 0 && (
-            <span className="text-[10px] bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded px-1.5 py-0.5 text-slate-600 dark:text-slate-300">
+            <span className="text-[10px] bg-[var(--surface-subtle)] border border-[var(--border-default)] rounded px-1.5 py-0.5 text-[var(--text-secondary)]">
               P(out): {(alert.p_stockout * 100).toFixed(0)}%
             </span>
           )}
           {alert.impact_usd > 0 && (
-            <span className="text-[10px] bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded px-1.5 py-0.5 text-slate-600 dark:text-slate-300">
+            <span className="text-[10px] bg-[var(--surface-subtle)] border border-[var(--border-default)] rounded px-1.5 py-0.5 text-[var(--text-secondary)]">
               Exposure: ${alert.impact_usd.toLocaleString(undefined, { maximumFractionDigits: 0 })}
             </span>
           )}
           {alert.risk_score > 0 && (
-            <span className="text-[10px] bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded px-1.5 py-0.5 text-slate-600 dark:text-slate-300">
+            <span className="text-[10px] bg-[var(--surface-subtle)] border border-[var(--border-default)] rounded px-1.5 py-0.5 text-[var(--text-secondary)]">
               Risk: {alert.risk_score.toFixed(0)}
             </span>
           )}
@@ -66,7 +66,7 @@ function AlertRow({ alert, onExpedite, onRunScenario }) {
             <span className={`text-[10px] rounded px-1.5 py-0.5 font-medium
               ${alert.days_to_stockout <= 7
                 ? 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-700'
-                : 'bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-300'}`}>
+                : 'bg-[var(--surface-subtle)] border border-[var(--border-default)] text-[var(--text-secondary)]'}`}>
               {alert.days_to_stockout}d to stockout
             </span>
           )}
@@ -93,7 +93,7 @@ function AlertRow({ alert, onExpedite, onRunScenario }) {
           {alert.recommended_actions?.length > 0 && (
             <button
               onClick={() => setExpanded((v) => !v)}
-              className="text-[10px] text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 transition-colors"
+              className="text-[10px] text-[var(--text-muted)] hover:text-[var(--text-secondary)] transition-colors"
             >
               {expanded ? 'Hide actions' : 'Actions'}
             </button>
@@ -102,9 +102,9 @@ function AlertRow({ alert, onExpedite, onRunScenario }) {
 
         {/* Expanded actions */}
         {expanded && alert.recommended_actions?.length > 0 && (
-          <div className="mt-1.5 space-y-0.5 pl-2 border-l-2 border-slate-200 dark:border-slate-600">
+          <div className="mt-1.5 space-y-0.5 pl-2 border-l-2 border-[var(--border-default)]">
             {alert.recommended_actions.map((action, i) => (
-              <p key={i} className="text-[11px] text-slate-600 dark:text-slate-300">
+              <p key={i} className="text-[11px] text-[var(--text-secondary)]">
                 &bull; {action}
               </p>
             ))}
@@ -126,16 +126,16 @@ export default function ProactiveAlertCard({ payload, onExpedite, onRunScenario 
   const displayAlerts = showAll ? alerts : alerts.slice(0, 3);
 
   return (
-    <Card className="w-full border border-red-200 dark:border-red-800/50">
+    <Card category="risk" className="w-full border border-red-200 dark:border-red-800/50">
       <div className="space-y-3">
 
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
-            <h4 className="font-semibold text-sm text-slate-800 dark:text-slate-100">
+            <h4 className="font-semibold text-sm text-[var(--text-primary)]">
               Proactive Risk Alerts
             </h4>
-            <p className="text-[11px] text-slate-400">
+            <p className="text-[11px] text-[var(--text-muted)]">
               {[
                 summary?.critical_count > 0 && `${summary.critical_count} critical`,
                 summary?.high_count > 0 && `${summary.high_count} high`,
@@ -169,7 +169,7 @@ export default function ProactiveAlertCard({ payload, onExpedite, onRunScenario 
         {alerts.length > 3 && (
           <button
             onClick={() => setShowAll((v) => !v)}
-            className="w-full text-xs text-center text-slate-500 hover:text-slate-700 transition-colors"
+            className="w-full text-xs text-center text-[var(--text-muted)] hover:text-[var(--text-secondary)] transition-colors"
           >
             {showAll ? 'Show less' : `Show ${alerts.length - 3} more alert${alerts.length - 3 !== 1 ? 's' : ''}`}
           </button>

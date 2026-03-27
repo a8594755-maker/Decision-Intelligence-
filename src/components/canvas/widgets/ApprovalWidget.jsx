@@ -59,7 +59,7 @@ export default function ApprovalWidget({ data = {}, onApprove, onReject, onReque
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b" style={{ borderColor: 'var(--border-default)' }}>
         <div className="flex items-center gap-2">
-          <FileText size={18} className="text-indigo-500" />
+          <FileText size={18} className="text-[var(--brand-500)]" />
           <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Review & Approve</h3>
         </div>
         {isResolved && (
@@ -84,7 +84,7 @@ export default function ApprovalWidget({ data = {}, onApprove, onReject, onReque
 
         {/* Recommendation */}
         {data.recommendation && (
-          <div className="p-3 rounded-lg border-l-4 border-indigo-500" style={{ backgroundColor: 'var(--surface-raised)' }}>
+          <div className="p-3 rounded-lg border-l-4 border-[var(--brand-500)]" style={{ backgroundColor: 'var(--surface-raised)' }}>
             <span className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>Recommendation</span>
             <p className="text-sm mt-1 font-medium" style={{ color: 'var(--text-primary)' }}>{data.recommendation}</p>
           </div>

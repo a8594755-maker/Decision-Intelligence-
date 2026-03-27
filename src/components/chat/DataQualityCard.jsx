@@ -154,7 +154,7 @@ export default function DataQualityCard({ payload }) {
               <div key={i} className="flex items-start gap-2 px-2.5 py-1.5 rounded bg-[var(--surface-subtle)] text-[11px]">
                 <Info className="w-3.5 h-3.5 text-[var(--text-muted)] mt-0.5 flex-shrink-0" />
                 <div>
-                  <p className="text-slate-600 dark:text-slate-300">{fb.message}</p>
+                  <p className="text-[var(--text-secondary)]">{fb.message}</p>
                   {fb.degradesCapability && (
                     <p className="text-[var(--text-muted)] mt-0.5 flex items-center gap-1">
                       <Upload className="w-3 h-3" />

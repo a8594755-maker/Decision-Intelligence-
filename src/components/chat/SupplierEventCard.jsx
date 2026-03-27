@@ -14,7 +14,7 @@ const SEVERITY_STYLES = {
   critical: { badge: 'danger',  border: 'border-red-200 dark:border-red-800/40' },
   high:     { badge: 'warning', border: 'border-orange-200 dark:border-orange-800/40' },
   medium:   { badge: 'info',    border: 'border-amber-200 dark:border-amber-800/40' },
-  low:      { badge: 'default', border: 'border-slate-200 dark:border-slate-700/40' },
+  low:      { badge: 'default', border: 'border-[var(--border-default)]' },
 };
 
 const EVENT_TYPE_LABELS = {
@@ -34,11 +34,11 @@ export default function SupplierEventCard({ payload }) {
   const typeLabel = EVENT_TYPE_LABELS[event.event_type] || event.event_type;
 
   return (
-    <Card className={`border ${style.border} bg-white dark:bg-slate-900`}>
+    <Card category="risk" className={`border ${style.border} bg-[var(--surface-card)]`}>
       <div className="px-3 py-2.5 space-y-2">
         {/* Header */}
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-xs font-semibold text-slate-800 dark:text-slate-100">
+          <span className="text-xs font-semibold text-[var(--text-primary)]">
             Supplier Event: {typeLabel}
           </span>
           <Badge type={style.badge} className="text-[9px] px-1 py-0">
@@ -47,7 +47,7 @@ export default function SupplierEventCard({ payload }) {
         </div>
 
         {/* Event details */}
-        <div className="text-[11px] text-slate-600 dark:text-slate-300 space-y-0.5">
+        <div className="text-[11px] text-[var(--text-secondary)] space-y-0.5">
           {event.supplier_name && (
             <div><span className="font-medium">Supplier:</span> {event.supplier_name} ({event.supplier_id})</div>
           )}
@@ -61,7 +61,7 @@ export default function SupplierEventCard({ payload }) {
             <p className="mt-1">{event.description}</p>
           )}
           {event.occurred_at && (
-            <div className="text-[10px] text-slate-400">{new Date(event.occurred_at).toLocaleString()}</div>
+            <div className="text-[10px] text-[var(--text-muted)]">{new Date(event.occurred_at).toLocaleString()}</div>
           )}
         </div>
 
@@ -69,7 +69,7 @@ export default function SupplierEventCard({ payload }) {
         {risk_delta && (
           <div className="flex gap-2 text-[10px]">
             {risk_delta.score_before != null && risk_delta.score_after != null && (
-              <span className="text-slate-500 dark:text-slate-400">
+              <span className="text-[var(--text-muted)]">
                 Risk: {risk_delta.score_before.toFixed(1)} → {risk_delta.score_after.toFixed(1)}
                 {risk_delta.delta != null && (
                   <span className={risk_delta.delta > 0 ? 'text-red-500 ml-1' : 'text-green-500 ml-1'}>

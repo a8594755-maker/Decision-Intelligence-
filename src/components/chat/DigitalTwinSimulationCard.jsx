@@ -14,16 +14,16 @@ export default function DigitalTwinSimulationCard({ payload }) {
   const fmt = (v) => (v != null ? Number(v).toLocaleString(undefined, { maximumFractionDigits: 0 }) : '—');
 
   return (
-    <Card className="w-full border border-purple-200 dark:border-purple-800 bg-purple-50/60 dark:bg-purple-900/10 p-4">
+    <Card category="analysis" className="w-full border border-purple-200 dark:border-purple-800 bg-purple-50/60 dark:bg-purple-900/10 p-4">
       <div className="space-y-3">
         {/* Header */}
         <div className="flex items-start justify-between gap-3">
           <div>
-            <h4 className="font-semibold text-sm flex items-center gap-2 text-slate-800 dark:text-slate-200">
+            <h4 className="font-semibold text-sm flex items-center gap-2 text-[var(--text-primary)]">
               <Cpu className="w-4 h-4 text-purple-600 dark:text-purple-400" />
               Digital Twin Simulation
             </h4>
-            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+            <p className="text-xs text-[var(--text-muted)] mt-0.5">
               Scenario: <span className="capitalize">{payload.scenario || 'N/A'}</span>
               {payload.elapsed_seconds != null && ` · ${payload.elapsed_seconds.toFixed(1)}s`}
             </p>
@@ -45,7 +45,7 @@ export default function DigitalTwinSimulationCard({ payload }) {
 
         {/* Mini timeline */}
         {timeline.length > 0 && (
-          <div className="bg-white dark:bg-slate-800 rounded border border-slate-200 dark:border-slate-700 p-2">
+          <div className="bg-[var(--surface-card)] rounded border border-[var(--border-default)] p-2">
             <ResponsiveContainer width="100%" height={120}>
               <LineChart data={timeline}>
                 <XAxis dataKey="date" hide />

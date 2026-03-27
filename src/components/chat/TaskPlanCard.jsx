@@ -100,6 +100,7 @@ export default function TaskPlanCard({ decomposition, onApprove, onCancel, onEdi
   return (
     <div style={{
       border: '1px solid var(--border-default, #e2e8f0)',
+      borderLeft: '3px solid var(--cat-plan)',
       borderRadius: 12,
       overflow: 'hidden',
       background: 'var(--surface-card, #fafbff)',

@@ -43,12 +43,12 @@ function SidebarSkeleton() {
     <div className="space-y-5 px-3 py-4 animate-pulse">
       {Array.from({ length: 2 }).map((_, groupIdx) => (
         <div key={groupIdx}>
-          <div className="mb-2 h-3 w-20 rounded bg-slate-200 dark:bg-slate-800" />
+          <div className="mb-2 h-3 w-20 rounded bg-[var(--surface-subtle)]" />
           <div className="space-y-2">
             {Array.from({ length: 3 }).map((__, itemIdx) => (
-              <div key={itemIdx} className="rounded-2xl bg-slate-100 px-3 py-3 dark:bg-slate-800">
-                <div className="h-3 w-2/3 rounded bg-[var(--surface-subtle)]" />
-                <div className="mt-2 h-2.5 w-full rounded bg-[var(--surface-subtle)]" />
+              <div key={itemIdx} className="rounded-lg bg-[var(--surface-subtle)] px-3 py-3">
+                <div className="h-3 w-2/3 rounded bg-[var(--surface-base)]" />
+                <div className="mt-2 h-2.5 w-full rounded bg-[var(--surface-base)]" />
               </div>
             ))}
           </div>
@@ -88,18 +88,17 @@ function AIEmployeeConversationSidebar({
   );
 
   return (
-    <div className="flex h-full flex-col overflow-hidden rounded-[26px] border border-black/8 bg-[rgba(250,250,249,0.96)] shadow-[0_28px_70px_rgba(15,23,42,0.10)] backdrop-blur dark:border-white/10 dark:bg-[#161616]/96">
-      <div className="border-b border-black/8 px-4 py-4 dark:border-white/10">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <span className="inline-flex h-10 w-10 items-center justify-center rounded-[18px] bg-slate-900 text-white shadow-sm dark:bg-slate-100 dark:text-slate-900">
-                <Bot className="h-5 w-5" />
-              </span>
-              <div>
-                <p className="text-sm font-semibold text-[var(--text-primary)]">{title}</p>
-                <p className="text-xs text-[var(--text-muted)]">Digital Worker workspace</p>
-              </div>
+    <div className="flex h-full flex-col overflow-hidden bg-[var(--surface-card)]">
+      {/* Header */}
+      <div className="border-b border-[var(--border-default)] px-4 py-3">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <span className="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-[var(--brand-600)] text-white flex-shrink-0">
+              <Bot className="h-4.5 w-4.5" />
+            </span>
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-[var(--text-primary)] truncate">{title}</p>
+              <p className="text-[11px] text-[var(--text-muted)]">Workspace</p>
             </div>
           </div>
 
@@ -107,7 +106,7 @@ function AIEmployeeConversationSidebar({
             <button
               type="button"
               aria-label="Close conversation history"
-              className="rounded-full p-2 text-slate-500 transition hover:bg-[var(--accent-hover)]"
+              className="rounded-lg p-1.5 text-[var(--text-muted)] transition hover:bg-[var(--accent-hover)] cursor-pointer"
               onClick={onClose}
             >
               <X className="h-4 w-4" />
@@ -115,49 +114,53 @@ function AIEmployeeConversationSidebar({
           ) : null}
         </div>
 
+        {/* New chat button */}
         <button
           type="button"
-          className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-full bg-slate-900 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-slate-700 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-slate-200"
+          className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-[var(--brand-600)] px-4 py-2 text-sm font-medium text-white transition hover:bg-[var(--brand-700)] cursor-pointer"
           onClick={onNewConversation}
         >
           <Plus className="h-4 w-4" />
           New chat
         </button>
 
-        <label className="mt-4 block">
+        {/* Search */}
+        <label className="mt-3 block">
           <span className="sr-only">Search conversations</span>
           <div className="relative">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--text-muted)]" />
             <input
               type="text"
               value={searchQuery}
               onChange={(event) => onSearchQueryChange?.(event.target.value)}
               placeholder="Search chats"
-              className="w-full rounded-full border border-black/8 bg-white/90 py-2.5 pl-9 pr-3 text-sm text-slate-800 outline-none transition focus:border-slate-300 focus:ring-2 focus:ring-slate-200 dark:border-white/10 dark:bg-[#202020] dark:text-slate-100 dark:focus:border-slate-600 dark:focus:ring-slate-800"
+              className="w-full rounded-lg border border-[var(--border-default)] bg-[var(--surface-base)] py-2 pl-8 pr-3 text-sm text-[var(--text-primary)] outline-none transition focus:border-[var(--focus-ring)] focus:ring-2 focus:ring-[var(--focus-ring)]/30 placeholder:text-[var(--text-muted)]"
             />
           </div>
         </label>
       </div>
 
-      <div className="flex-1 overflow-y-auto chat-scrollbar px-2 py-3">
+      {/* Conversation list */}
+      <div className="flex-1 overflow-y-auto scrollbar-thin px-2 py-2">
         {isLoading ? (
           <SidebarSkeleton />
         ) : groupedConversations.length === 0 ? (
-          <div className="flex h-full flex-col items-center justify-center px-6 text-center">
-            <div className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-500 dark:bg-slate-800 dark:text-slate-400">
-              No saved chats
+          <div className="flex h-full flex-col items-center justify-center px-4 text-center">
+            <div className="w-10 h-10 rounded-lg bg-[var(--surface-subtle)] flex items-center justify-center mb-3">
+              <Bot className="w-5 h-5 text-[var(--text-muted)]" />
             </div>
-            <p className="mt-3 text-sm text-[var(--text-muted)]">
-              Start a new chat and your worker will keep the thread here.
+            <p className="text-sm font-medium text-[var(--text-secondary)]">No saved chats</p>
+            <p className="mt-1 text-xs text-[var(--text-muted)]">
+              Start a new chat to begin.
             </p>
           </div>
         ) : (
           groupedConversations.map((section) => (
-            <section key={section.key} className="mb-5 last:mb-0">
-              <div className="px-2 pb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+            <section key={section.key} className="mb-4 last:mb-0">
+              <div className="px-2 pb-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">
                 {section.label}
               </div>
-              <div className="space-y-1">
+              <div className="space-y-0.5">
                 {section.items.map((conversation) => (
                   <ConversationListItem
                     key={conversation.id}

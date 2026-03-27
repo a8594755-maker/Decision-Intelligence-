@@ -24,7 +24,7 @@ export default function AgentAlternativeCard({ candidate }) {
       : 'completed';
 
   return (
-    <Card className="w-full border-slate-200 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-900/30 p-0">
+    <Card category="analysis" className="w-full border-[var(--border-default)] bg-[var(--surface-base)] p-0">
       <button
         type="button"
         onClick={() => setExpanded((value) => !value)}
@@ -34,10 +34,10 @@ export default function AgentAlternativeCard({ candidate }) {
           <GitCompareArrows size={16} />
         </div>
         <div className="min-w-0 flex-1">
-          <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+          <div className="text-sm font-semibold text-[var(--text-primary)]">
             Alternative Answer
           </div>
-          <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+          <div className="mt-1 text-xs text-[var(--text-muted)]">
             {[candidate.label, candidate.provider, candidate.model].filter(Boolean).join(' · ')}
           </div>
         </div>
@@ -48,11 +48,11 @@ export default function AgentAlternativeCard({ candidate }) {
         }`}>
           {statusLabel}
         </div>
-        {expanded ? <ChevronDown size={16} className="text-slate-400" /> : <ChevronRight size={16} className="text-slate-400" />}
+        {expanded ? <ChevronDown size={16} className="text-[var(--text-muted)]" /> : <ChevronRight size={16} className="text-[var(--text-muted)]" />}
       </button>
 
       {expanded ? (
-        <div className="space-y-3 border-t border-slate-200 px-4 py-4 dark:border-slate-800">
+        <div className="space-y-3 border-t border-[var(--border-default)] px-4 py-4 dark:border-[var(--border-default)]">
           {hasBrief ? (
             <AgentBriefCard brief={candidate.brief} />
           ) : (

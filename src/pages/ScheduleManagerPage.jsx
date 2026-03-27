@@ -59,7 +59,7 @@ function ScheduleCard({ schedule, onPause, onResume, onDelete, onFireNow }) {
             <span className={`px-1.5 py-0.5 text-[10px] rounded font-medium ${
               isActive ? 'text-emerald-600 bg-emerald-50 dark:bg-emerald-900/20'
                 : isPaused ? 'text-amber-600 bg-amber-50 dark:bg-amber-900/20'
-                  : 'text-slate-500 bg-slate-100 dark:bg-slate-800'
+                  : 'text-[var(--text-muted)] bg-[var(--surface-subtle)]'
             }`}>
               {schedule.status}
             </span>
@@ -116,7 +116,7 @@ function ScheduleCard({ schedule, onPause, onResume, onDelete, onFireNow }) {
 
       {/* Workflow type */}
       {schedule.task_template?.template_id && (
-        <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-600 dark:bg-indigo-900/20 self-start">
+        <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--accent-active)] text-[var(--brand-600)] self-start">
           {schedule.task_template.template_id}
         </span>
       )}
@@ -246,7 +246,7 @@ function CreateScheduleModal({ onClose, onCreated, workers }) {
 
         <div className="flex gap-2 pt-2">
           <button onClick={handleCreate} disabled={creating || !form.employeeId}
-            className="flex-1 px-4 py-2 rounded-lg text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 transition-colors">
+            className="flex-1 px-4 py-2 rounded-lg text-sm font-medium bg-[var(--brand-600)] text-white hover:bg-[var(--brand-700)] disabled:opacity-50 transition-colors">
             {creating ? 'Creating...' : 'Create Schedule'}
           </button>
           <button onClick={onClose}
@@ -320,10 +320,10 @@ export default function ScheduleManagerPage() {
         style={{ backgroundColor: 'var(--surface-card)', borderColor: 'var(--border-default)' }}
       >
         <div className="flex items-center gap-2.5">
-          <Clock className="w-5 h-5 text-indigo-600" />
+          <Clock className="w-5 h-5 text-[var(--brand-600)]" />
           <span className="font-semibold text-sm" style={{ color: 'var(--text-primary)' }}>Schedule Manager</span>
           {schedules.length > 0 && (
-            <span className="text-xs px-1.5 py-0.5 rounded-full bg-indigo-50 text-indigo-600 dark:bg-indigo-900/20">
+            <span className="text-xs px-1.5 py-0.5 rounded-full bg-[var(--accent-active)] text-[var(--brand-600)]">
               {schedules.length}
             </span>
           )}
@@ -336,7 +336,7 @@ export default function ScheduleManagerPage() {
         <button
           onClick={() => setShowCreate(true)}
           disabled={workers.length === 0}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-[var(--brand-600)] text-white hover:bg-[var(--brand-700)] disabled:opacity-50 transition-colors"
         >
           <Plus className="w-3.5 h-3.5" />
           New Schedule
@@ -347,7 +347,7 @@ export default function ScheduleManagerPage() {
       <div className="flex-1 overflow-y-auto p-6">
         {loading ? (
           <div className="flex items-center justify-center h-32">
-            <div className="w-6 h-6 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
+            <div className="w-6 h-6 border-2 border-[var(--brand-600)] border-t-transparent rounded-full animate-spin" />
           </div>
         ) : (
           <div className="max-w-3xl space-y-3">
@@ -364,7 +364,7 @@ export default function ScheduleManagerPage() {
 
             {schedules.length === 0 && (
               <div className="flex flex-col items-center justify-center h-48 gap-3">
-                <Clock className="w-10 h-10 text-indigo-300" />
+                <Clock className="w-10 h-10 text-[var(--brand-500)]" />
                 <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
                   No schedules configured. Create one to automate recurring tasks.
                 </p>
