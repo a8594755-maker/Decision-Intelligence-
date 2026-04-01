@@ -57,3 +57,9 @@ export { EMPLOYEE_STATES, EMPLOYEE_EVENTS, employeeTransition } from './employee
 
 // ── Ralph Loop (autonomous agent loop) ──
 export { isRalphLoopEnabled, runRalphLoop, abortRalphLoop, abortAllRalphLoops } from './ralphLoopAdapter.js';
+
+// ── Claude Agent SDK (autonomous agent loop) ──
+export { isClaudeSdkEnabled, runClaudeSdkLoop, abortClaudeSdkLoop } from './claudeSdkAdapter.js';
+
+// ── Checkpointing (time-travel, resume, replay) ──
+export { createCheckpoint, getCheckpoints, getCheckpoint, getLatestCheckpoint, resumeFromCheckpoint, replayFromCheckpoint, pruneCheckpoints } from './checkpointService.js';

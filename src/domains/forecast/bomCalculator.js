@@ -56,7 +56,9 @@ export const ERROR_MESSAGES = {
   CIRCULAR_BOM: 'Circular BOM reference detected',
   MAX_DEPTH: (depth) => `BOM explosion depth exceeded maximum limit (${depth})`,
   MISSING_BOM_DEFINITION: (material) => `No BOM definition found for ${material}`,
-  
+  UOM_MISMATCH: (material, existing, incoming) =>
+    `UOM mismatch for ${material}: existing "${existing}" vs incoming "${incoming}"`,
+
   // 時間驗證
   INVALID_TIME_BUCKET: (bucket) => `Cannot parse time_bucket: ${bucket}`
 };
@@ -504,10 +506,28 @@ function explodeBOMRecursive(
       parentDemand.time_bucket,
       parentDemand.material_code
     );
-    
-    // 累加需求數量
-    const currentQty = componentDemandMap.get(key) || 0;
-    componentDemandMap.set(key, currentQty + parentDemand.demand_qty);
+
+    const demandUom = parentDemand.uom || DEFAULTS.DEFAULT_UOM;
+
+    // 累加需求數量，tracking UOM
+    const existing = componentDemandMap.get(key);
+    if (existing) {
+      if (existing.uom !== demandUom) {
+        errors.push({
+          type: 'UOM_MISMATCH',
+          severity: 'high',
+          message: ERROR_MESSAGES.UOM_MISMATCH(parentDemand.material_code, existing.uom, demandUom),
+          material: parentDemand.material_code,
+          plant_id: parentDemand.plant_id,
+          time_bucket: parentDemand.time_bucket,
+          existing_uom: existing.uom,
+          incoming_uom: demandUom
+        });
+      }
+      existing.qty += parentDemand.demand_qty;
+    } else {
+      componentDemandMap.set(key, { qty: parentDemand.demand_qty, uom: demandUom });
+    }
     
     // 記錄追溯資訊
     const fullPath = [...path, parentDemand.material_code];
@@ -549,12 +569,16 @@ function explodeBOMRecursive(
         4
       );
       
+      // Read UOM from BOM edge
+      const childUom = childEdge.uom || childEdge.child_uom || DEFAULTS.DEFAULT_UOM;
+
       // 建立子件需求物件
       const childDemand = {
         material_code: childEdge.child_material,
         plant_id: parentDemand.plant_id,
         time_bucket: parentDemand.time_bucket,
         demand_qty: childQty,
+        uom: childUom,
         id: null
       };
       
@@ -728,17 +752,17 @@ export function explodeBOM(fgDemands, bomEdges, options = {}) {
   
   // 將聚合 Map 轉換為 componentDemandRows
   const componentDemandRows = [];
-  for (const [key, demandQty] of componentDemandMap.entries()) {
+  for (const [key, entry] of componentDemandMap.entries()) {
     const { plantId, timeBucket, materialCode } = parseAggregationKey(key);
-    
+
     componentDemandRows.push({
       user_id: userId,
       batch_id: batchId,
       material_code: materialCode,
       plant_id: plantId,
       time_bucket: timeBucket,
-      demand_qty: demandQty,
-      uom: 'pcs',
+      demand_qty: entry.qty,
+      uom: entry.uom,
       notes: null
     });
   }

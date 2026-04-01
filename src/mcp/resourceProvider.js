@@ -7,6 +7,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { BUILTIN_TOOLS, TOOL_CATEGORY } from '../services/ai-infra/builtinToolCatalog.js';
+import { isArtifactUri, readArtifactResource, listRecentArtifacts } from './artifactResourceProvider.js';
 
 // ── Static resources ───────────────────────────────────────────────────────
 
@@ -30,6 +31,12 @@ export function listResources() {
       description: 'Shows which tools depend on which other tools. Useful for planning multi-step analyses.',
       mimeType: 'application/json',
     },
+    {
+      uri: 'di://artifacts/recent',
+      name: 'Recent Artifacts',
+      description: 'Browse the 20 most recent artifacts across all analysis runs.',
+      mimeType: 'application/json',
+    },
   ];
 }
 
@@ -44,7 +51,12 @@ export function listResourceTemplates() {
   ];
 }
 
-export function readResource(uri) {
+export async function readResource(uri) {
+  // Delegate artifact URIs to the artifact resource provider
+  if (isArtifactUri(uri)) {
+    return readArtifactResource(uri);
+  }
+
   if (uri === 'di://catalog/tools') {
     const summary = BUILTIN_TOOLS.map(t => ({
       id: t.id,

@@ -20,6 +20,14 @@ const InsightsHub = lazy(() => import('./pages/InsightsHub'));
 const ChartTest = lazy(() => import('./pages/ChartTest'));
 // @product: unified-workspace (Canvas Architecture)
 const WorkspacePage = lazy(() => import('./pages/WorkspacePage'));
+// @product: mbr-lab — standalone MBR generation test page
+const MbrLabPage = lazy(() => import('./pages/MbrLabPage'));
+// @product: kpi-lab — standalone KPI calculation test page
+const KpiLabPage = lazy(() => import('./pages/KpiLabPage'));
+// @product: variance-lab — standalone variance analysis test page
+const VarianceLabPage = lazy(() => import('./pages/VarianceLabPage'));
+// @product: anomaly-lab — standalone anomaly detection test page
+const AnomalyLabPage = lazy(() => import('./pages/AnomalyLabPage'));
 
 export const router = createBrowserRouter([
   {
@@ -58,6 +66,10 @@ export const router = createBrowserRouter([
       // @product: unified-workspace (Canvas Architecture — Trinity Layout)
       { path: 'workspace', element: <WorkspacePage /> },
       { path: 'ops', element: <OpsDashboard /> },
+      { path: 'mbr-lab', element: <MbrLabPage /> },
+      { path: 'kpi-lab', element: <KpiLabPage /> },
+      { path: 'variance-lab', element: <VarianceLabPage /> },
+      { path: 'anomaly-lab', element: <AnomalyLabPage /> },
       { path: 'sandbox', element: <SyntheticERPSandbox /> },
       { path: 'settings', element: <SettingsPage /> },
 

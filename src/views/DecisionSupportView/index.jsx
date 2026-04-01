@@ -700,8 +700,13 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
   }, [currentConversationId, setConversationDatasetContext]);
 
   const getDatasetProfileId = useCallback((datasetContext) => {
-    const numericId = Number(datasetContext?.dataset_profile_id);
-    return Number.isFinite(numericId) ? numericId : null;
+    const raw = datasetContext?.dataset_profile_id;
+    if (raw == null) return null;
+    // Accept both numeric DB ids and local-* string ids
+    const numericId = Number(raw);
+    if (Number.isFinite(numericId)) return numericId;
+    if (typeof raw === 'string' && raw.startsWith('local-')) return raw;
+    return null;
   }, []);
 
   const buildTaskInputData = useCallback((datasetContext, attachments = []) => {
@@ -1892,41 +1897,45 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
 
       setUploadStatusText('Building profile...');
       console.time('[DSV] upload:createProfile');
-      const PROFILE_TIMEOUT_MS = 20000;
-      let profileRecord = await Promise.race([
-        createDatasetProfileFromSheets({ userId: user.id, userFileId: fileRecord?.id || null, fileName: displayFileName, sheetsRaw: uploadPreparation.sheetsRaw, mappingPlans: uploadPreparation.mappingPlans, allowLLM: false }),
-        new Promise((resolve) => setTimeout(() => { console.warn('[DSV] createProfile DB timed out, using local-only profile'); resolve(null); }, PROFILE_TIMEOUT_MS))
-      ]);
-      console.timeEnd('[DSV] upload:createProfile');
 
-      if (!profileRecord) {
-        const mappingPlanMap = new Map((uploadPreparation.mappingPlans || []).map((p) => [String(p.sheet_name || '').toLowerCase(), p]));
-        profileRecord = {
-          id: `local-${Date.now()}`, user_id: user.id, fingerprint: datasetFingerprint,
-          profile_json: {
-            file_name: displayFileName,
-            global: { workflow_guess: { label: 'A', confidence: 0.5, reason: 'default (offline)' }, time_range_guess: { start: null, end: null }, minimal_questions: [] },
-            sheets: (uploadPreparation.sheetsRaw || []).map((s) => {
-              const plan = mappingPlanMap.get(String(s.sheet_name || '').toLowerCase()) || {};
-              return { sheet_name: s.sheet_name, likely_role: plan.upload_type || 'unknown', confidence: plan.confidence || 0, original_headers: s.columns || [], normalized_headers: (s.columns || []).map((c) => String(c).trim().toLowerCase()), grain_guess: { keys: [], time_column: null, granularity: 'unknown' }, column_semantics: [], quality_checks: { type_issues: [], null_rate: {}, outlier_rate: {} }, notes: [] };
-            })
-          },
-          contract_json: (() => {
-            const sheetsRawMap = new Map((uploadPreparation.sheetsRaw || []).map((s) => [String(s.sheet_name || '').toLowerCase(), s]));
-            const datasets = (uploadPreparation.mappingPlans || []).map((p) => {
-              const uploadType = p.upload_type || 'unknown';
-              const rawSheet = sheetsRawMap.get(String(p.sheet_name || '').toLowerCase()) || {};
-              const columns = rawSheet.columns || [];
-              const status = (uploadType && uploadType !== 'unknown') ? getRequiredMappingStatus({ uploadType, columns, columnMapping: p.mapping || {} }) : { coverage: 0, missingRequired: [], isComplete: false };
-              return { sheet_name: p.sheet_name, upload_type: uploadType, mapping: p.mapping || {}, requiredCoverage: Number((status.coverage || 0).toFixed(3)), missing_required_fields: status.missingRequired || [], validation: { status: status.isComplete ? 'pass' : 'fail', reasons: status.isComplete ? [] : [`Missing required fields: ${(status.missingRequired || []).join(', ')}`] } };
-            });
-            const allPass = datasets.length > 0 && datasets.every((d) => d.validation.status === 'pass');
-            return { datasets, validation: { status: allPass ? 'pass' : 'fail', reasons: allPass ? [] : ['One or more sheets failed required field coverage'] } };
-          })(),
-          created_at: new Date().toISOString(), _local: true, _inlineRawRows: uploadPreparation.rawRowsForStorage || []
-        };
-        registerLocalProfile(profileRecord);
-      }
+      // Build local profile synchronously first (never blocks on network)
+      const mappingPlanMap = new Map((uploadPreparation.mappingPlans || []).map((p) => [String(p.sheet_name || '').toLowerCase(), p]));
+      const localProfile = {
+        id: `local-${Date.now()}`, user_id: user.id, fingerprint: datasetFingerprint,
+        profile_json: {
+          file_name: displayFileName,
+          global: { workflow_guess: { label: 'A', confidence: 0.5, reason: 'default (local-first)' }, time_range_guess: { start: null, end: null }, minimal_questions: [] },
+          sheets: (uploadPreparation.sheetsRaw || []).map((s) => {
+            const plan = mappingPlanMap.get(String(s.sheet_name || '').toLowerCase()) || {};
+            return { sheet_name: s.sheet_name, likely_role: plan.upload_type || 'unknown', confidence: plan.confidence || 0, original_headers: s.columns || [], normalized_headers: (s.columns || []).map((c) => String(c).trim().toLowerCase()), grain_guess: { keys: [], time_column: null, granularity: 'unknown' }, column_semantics: [], quality_checks: { type_issues: [], null_rate: {}, outlier_rate: {} }, notes: [] };
+          })
+        },
+        contract_json: (() => {
+          const sheetsRawMap = new Map((uploadPreparation.sheetsRaw || []).map((s) => [String(s.sheet_name || '').toLowerCase(), s]));
+          const datasets = (uploadPreparation.mappingPlans || []).map((p) => {
+            const uploadType = p.upload_type || 'unknown';
+            const rawSheet = sheetsRawMap.get(String(p.sheet_name || '').toLowerCase()) || {};
+            const columns = rawSheet.columns || [];
+            const status = (uploadType && uploadType !== 'unknown') ? getRequiredMappingStatus({ uploadType, columns, columnMapping: p.mapping || {} }) : { coverage: 0, missingRequired: [], isComplete: false };
+            return { sheet_name: p.sheet_name, upload_type: uploadType, mapping: p.mapping || {}, requiredCoverage: Number((status.coverage || 0).toFixed(3)), missing_required_fields: status.missingRequired || [], validation: { status: status.isComplete ? 'pass' : 'fail', reasons: status.isComplete ? [] : [`Missing required fields: ${(status.missingRequired || []).join(', ')}`] } };
+          });
+          const allPass = datasets.length > 0 && datasets.every((d) => d.validation.status === 'pass');
+          return { datasets, validation: { status: allPass ? 'pass' : 'fail', reasons: allPass ? [] : ['One or more sheets failed required field coverage'] } };
+        })(),
+        created_at: new Date().toISOString(), _local: true, _inlineRawRows: uploadPreparation.rawRowsForStorage || []
+      };
+      registerLocalProfile(localProfile);
+
+      // Use local profile immediately, persist to Supabase in background (non-blocking)
+      let profileRecord = localProfile;
+      createDatasetProfileFromSheets({ userId: user.id, userFileId: fileRecord?.id || null, fileName: displayFileName, sheetsRaw: uploadPreparation.sheetsRaw, mappingPlans: uploadPreparation.mappingPlans, allowLLM: false })
+        .then((dbProfile) => {
+          if (dbProfile?.id && !String(dbProfile.id).startsWith('local-')) {
+            console.log('[DSV] createProfile persisted to DB in background, id:', dbProfile.id);
+          }
+        })
+        .catch((err) => { console.warn('[DSV] createProfile background persist failed:', err?.message); });
+      console.timeEnd('[DSV] upload:createProfile');
 
       if (profileRecord?.id && Array.isArray(uploadPreparation.rawRowsForStorage) && uploadPreparation.rawRowsForStorage.length > 0) {
         _rawRowsCache.set(String(profileRecord.id), uploadPreparation.rawRowsForStorage);
@@ -2060,7 +2069,9 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
       }
 
       const finalSignature = buildSignature(profileRecord?.profile_json || {}, profileRecord?.contract_json || {});
-      reuseMemoryService.upsertDatasetSimilarityIndex({ user_id: user.id, dataset_profile_id: profileRecord?.id, fingerprint: datasetFingerprint, signature_json: finalSignature }).catch((error) => { console.warn('[DecisionSupportView] Failed to persist similarity index:', error.message); });
+      if (profileRecord?.id && !String(profileRecord.id).startsWith('local-')) {
+        reuseMemoryService.upsertDatasetSimilarityIndex({ user_id: user.id, dataset_profile_id: profileRecord.id, fingerprint: datasetFingerprint, signature_json: finalSignature }).catch((error) => { console.warn('[DecisionSupportView] Failed to persist similarity index:', error.message); });
+      }
 
       const validationPassed = profileRecord?.contract_json?.validation?.status === 'pass';
       if (validationPassed) {
@@ -2764,7 +2775,9 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
         const resolution = await resolveAttachmentsForSend(attachmentsToSend);
         runtimeDatasetContext = resolution.datasetContext || runtimeDatasetContext;
         resolvedAttachments = resolution.attachments || [];
-        attachmentMessages = resolution.followUpMessages || [];
+        // Suppress "What should I do?" when user also typed a slash command
+        const isSlashCommand = effectiveVisibleInput?.trim().startsWith('/');
+        attachmentMessages = isSlashCommand ? [] : (resolution.followUpMessages || []);
       }
 
       const userMessage = {
@@ -2979,6 +2992,311 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
         }]);
       }
       setIsTyping(false); setStreamingContent(''); return;
+    }
+
+    // ── /mbr — ReAct Agent (LLM thinks + calls tools) ─────────────────────
+    // ── /clean, /kpi, /variance, /anomaly — Direct single-tool calls ─────
+
+    const getMbrSheets = () => {
+      const inputData = buildTaskInputData(runtimeDatasetContext, resolvedAttachments);
+      // Fallback: extract from attachments
+      if ((!inputData.sheets || Object.keys(inputData.sheets).length === 0) && resolvedAttachments.length > 0) {
+        for (const att of resolvedAttachments) {
+          if (att.sheets && typeof att.sheets === 'object') return att.sheets;
+          if (att.rawRows && Array.isArray(att.rawRows)) {
+            const sheetMap = {};
+            att.rawRows.forEach((row) => {
+              const sn = row.__sheet_name || 'Sheet1';
+              if (!sheetMap[sn]) sheetMap[sn] = [];
+              const clean = {};
+              Object.entries(row).forEach(([k, v]) => { if (k !== '__rowNum' && k !== '__sheet_name') clean[k] = v; });
+              sheetMap[sn].push(clean);
+            });
+            return sheetMap;
+          }
+        }
+      }
+      return inputData.sheets || null;
+    };
+
+    const ML_API_BASE = typeof import.meta !== 'undefined' && import.meta.env?.VITE_ML_API_URL
+      ? import.meta.env.VITE_ML_API_URL : 'http://localhost:8000';
+
+    if (command === '/mbr') {
+      const sheets = getMbrSheets();
+      if (!sheets || Object.keys(sheets).length === 0) {
+        appendMessagesToCurrentConversation([{
+          role: 'ai',
+          content: '**MBR Agent** requires data. Please upload an Excel file first, then type `/mbr`.',
+          timestamp: new Date().toISOString(),
+        }]);
+        setIsTyping(false); setStreamingContent(''); return;
+      }
+
+      // Use SSE streaming for real-time progress
+      let streamContent = '## MBR Agent\n\n';
+      const stepStatuses = [];
+
+      const updateStream = () => {
+        const stepsBlock = stepStatuses.length > 0
+          ? '### Steps\n' + stepStatuses.join('\n') + '\n\n'
+          : '';
+        setStreamingContent(streamContent + stepsBlock);
+      };
+
+      streamContent += '_Analyzing data structure..._\n\n';
+      updateStream();
+
+      try {
+        const resp = await fetch(`${ML_API_BASE}/agent/mbr/stream`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sheets }),
+        });
+
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let narrative = '';
+        let finalSteps = [];
+        let artifactCount = 0;
+        let executionMs = 0;
+        let downloadId = null;
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            const raw = line.slice(6).trim();
+            if (!raw) continue;
+
+            let rawEvent;
+            try { rawEvent = JSON.parse(raw); } catch { continue; }
+            // Flatten nested payload format: {type, payload: {...}} → {type, ...payload}
+            const event = { type: rawEvent.type, ...(rawEvent.payload || {}), ...(!rawEvent.payload ? rawEvent : {}), timestamp: rawEvent.timestamp };
+
+            switch (event.type) {
+              case 'agent_thinking':
+                streamContent = '## MBR Agent\n\n_' + (event.message || 'Thinking...') + '_\n\n';
+                updateStream();
+                break;
+
+              case 'plan_start':
+                streamContent = '## MBR Agent\n\n_Planning analysis steps..._\n\n';
+                updateStream();
+                break;
+
+              case 'plan_ready':
+              case 'plan_done': {
+                const planTools = event.plan || event.tools || [];
+                if (planTools.length > 0) {
+                  streamContent = '## MBR Agent\n\nPlan: ' + planTools.join(' → ') + '\n\n';
+                  updateStream();
+                }
+                break;
+              }
+
+              case 'tool_start': {
+                const toolName = event.tool_id || event.tool || 'unknown';
+                const desc = event.description ? ` — ${event.description}` : ' — running...';
+                stepStatuses.push(`- **${toolName}**${desc}`);
+                updateStream();
+                break;
+              }
+
+              case 'tool_thinking': {
+                // Show thinking detail inline
+                if (event.detail) {
+                  const lastIdx = stepStatuses.length - 1;
+                  if (lastIdx >= 0) {
+                    stepStatuses[lastIdx] = stepStatuses[lastIdx].replace(/— .*$/, `— _${event.detail}_`);
+                    updateStream();
+                  }
+                }
+                break;
+              }
+
+              case 'tool_finding': {
+                // Append finding to current step
+                if (event.finding) {
+                  stepStatuses.push(`  - ${event.finding.slice(0, 120)}`);
+                  updateStream();
+                }
+                break;
+              }
+
+              case 'tool_done': {
+                const doneToolName = event.tool_id || event.tool || 'unknown';
+                const idx = stepStatuses.findLastIndex(s => s.includes('running') || s.includes(doneToolName));
+                if (idx >= 0) {
+                  const duration = event.duration_ms ? ` (${(event.duration_ms / 1000).toFixed(1)}s)` : '';
+                  stepStatuses[idx] = `- **${doneToolName}** ✓${duration}`;
+                }
+                updateStream();
+                break;
+              }
+
+              case 'tool_error': {
+                const errToolName = event.tool_id || event.tool || 'unknown';
+                const idx2 = stepStatuses.findLastIndex(s => s.includes(errToolName) || s.includes('running'));
+                if (idx2 >= 0) {
+                  stepStatuses[idx2] = `- **${errToolName}** ✗ ${event.error?.slice(0, 80) || 'failed'}`;
+                }
+                updateStream();
+                break;
+              }
+
+              case 'synthesize_start':
+                stepStatuses.push('\n_Writing executive summary..._');
+                updateStream();
+                break;
+
+              case 'synthesize_chunk':
+                // Streaming narrative chunk — append to narrative
+                if (event.text) narrative += event.text;
+                break;
+
+              case 'narrative':
+                narrative = event.text || '';
+                break;
+
+              case 'steps':
+                finalSteps = event.steps || [];
+                break;
+
+              case 'agent_done':
+                executionMs = event.total_duration_ms || 0;
+                break;
+
+              case 'artifacts_ready':
+                artifactCount = event.count || 0;
+                executionMs = event.execution_ms || executionMs || 0;
+                downloadId = event.download_id || null;
+                break;
+
+              case 'error':
+                setStreamingContent('');
+                appendMessagesToCurrentConversation([{
+                  role: 'ai',
+                  content: `**MBR Agent failed:** ${event.message || 'Unknown error'}`,
+                  timestamp: new Date().toISOString(),
+                }]);
+                break;
+            }
+          }
+        }
+
+        // Stream ended — build final message from accumulated data
+        const totalTime = executionMs ? ` (${(executionMs / 1000).toFixed(1)}s)` : '';
+
+        setStreamingContent('');
+        const messages = [{
+          role: 'ai',
+          content: [
+            `## MBR Analysis Complete${totalTime}`,
+            '',
+            '### Steps',
+            ...stepStatuses,
+            '',
+            '### Executive Summary',
+            narrative || '_No narrative generated._',
+          ].join('\n'),
+          timestamp: new Date().toISOString(),
+          meta: { agent: true, mbr: true },
+        }];
+
+        if (downloadId) {
+          messages.push({
+            role: 'ai',
+            type: 'downloads_card',
+            payload: {
+              files: [{
+                label: 'Download MBR Excel Report',
+                fileName: 'MBR_Report.xlsx',
+                url: `${ML_API_BASE}/agent/mbr/download/${downloadId}`,
+              }],
+            },
+            timestamp: new Date().toISOString(),
+          });
+        }
+
+        appendMessagesToCurrentConversation(messages);
+
+      } catch (err) {
+        setStreamingContent('');
+        appendMessagesToCurrentConversation([{
+          role: 'ai',
+          content: `**MBR Agent error:** ${err?.message || 'Network error'}`,
+          timestamp: new Date().toISOString(),
+        }]);
+      }
+      setIsTyping(false); setStreamingContent('');
+      return;
+    }
+
+    // ── Single-tool commands (direct API, no agent) ──
+    const runSingleTool = async (endpoint, label) => {
+      const sheets = getMbrSheets();
+      if (!sheets || Object.keys(sheets).length === 0) {
+        appendMessagesToCurrentConversation([{
+          role: 'ai',
+          content: `**${label}** requires data. Upload an Excel file first, then type \`${command}\`.`,
+          timestamp: new Date().toISOString(),
+        }]);
+        setIsTyping(false); setStreamingContent(''); return;
+      }
+      appendMessagesToCurrentConversation([{
+        role: 'ai', content: `**${label}** running...`, timestamp: new Date().toISOString(),
+      }]);
+      try {
+        const resp = await fetch(`${ML_API_BASE}${endpoint}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sheets }),
+        });
+        const result = await resp.json();
+        if (!result.ok) {
+          appendMessagesToCurrentConversation([{
+            role: 'ai', content: `**${label} failed:** ${result.error}`, timestamp: new Date().toISOString(),
+          }]);
+        } else {
+          const artCount = (result.artifacts || []).length;
+          appendMessagesToCurrentConversation([{
+            role: 'ai',
+            content: `**${label} complete** — ${artCount} tables generated (${(result.execution_ms / 1000).toFixed(1)}s).\n\n${result.summary_for_narrative || ''}`,
+            timestamp: new Date().toISOString(),
+            artifacts: result.artifacts,
+          }]);
+        }
+      } catch (err) {
+        appendMessagesToCurrentConversation([{
+          role: 'ai', content: `**${label} error:** ${err?.message}`, timestamp: new Date().toISOString(),
+        }]);
+      }
+      setIsTyping(false); setStreamingContent('');
+    };
+
+    if (command === '/clean') {
+      await runSingleTool('/cleaning/apply', 'Data Cleaning');
+      return;
+    }
+    if (command === '/kpi') {
+      await runSingleTool('/agent/mbr-kpi', 'KPI Calculation');
+      return;
+    }
+    if (command === '/variance') {
+      await runSingleTool('/agent/mbr-variance', 'Variance Analysis');
+      return;
+    }
+    if (command === '/anomaly') {
+      await runSingleTool('/agent/mbr-anomaly', 'Anomaly Detection');
+      return;
     }
 
     // ── /task — Assign task to Digital Worker ──────────────────────────────
@@ -4175,8 +4493,10 @@ export default function DecisionSupportView({ user, addNotification, mode = 'di'
   const handleTextareaChange = useCallback((e) => {
     setInput(e.target.value);
     const el = e.target;
-    el.style.height = 'auto';
-    el.style.height = `${Math.min(el.scrollHeight, 180)}px`;
+    if (el?.style) {
+      el.style.height = 'auto';
+      el.style.height = `${Math.min(el.scrollHeight, 180)}px`;
+    }
   }, []);
 
   const formatTime = (timestamp) => {

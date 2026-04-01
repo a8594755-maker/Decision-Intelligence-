@@ -5,6 +5,16 @@ import { loadArtifact } from '../../utils/artifactStore';
 
 const triggerDownload = async (file) => {
   if (!file) return;
+
+  // Direct URL download (e.g., from ML API)
+  if (file.url) {
+    const link = document.createElement('a');
+    link.href = file.url;
+    link.download = file.fileName || 'download';
+    link.click();
+    return;
+  }
+
   let content = file.content;
   if ((content === undefined || content === null || content === '') && file.ref) {
     content = await loadArtifact(file.ref);

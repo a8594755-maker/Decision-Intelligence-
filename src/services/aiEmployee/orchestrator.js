@@ -43,6 +43,8 @@ import { buildWritebackPayload } from '../artifacts/writebackPayloadBuilder.js';
 import { recordTaskValue } from '../roi/valueTrackingService.js';
 import { buildFullAuditTrail } from '../hardening/auditTrailService.js';
 import { isRalphLoopEnabled, runRalphLoop } from './ralphLoopAdapter.js';
+import { isClaudeSdkEnabled, runClaudeSdkLoop } from './claudeSdkAdapter.js';
+import { createCheckpoint } from './checkpointService.js';
 
 // ── Gate Pipeline ────────────────────────────────────────────────────────────
 import { runGatePipeline, buildStepContext } from './gates/stepPipeline.js';
@@ -604,9 +606,32 @@ export async function tick(taskId) {
 
 /** @internal — also called by the worker process */
 export async function _runTickLoop(taskId) {
+  const task0 = await taskRepo.getTask(taskId);
+
+  // ── Claude Agent SDK mode: autonomous tool-calling execution ──
+  const perTaskSdk = task0?.input_context?.agent_runtime === 'claude-sdk' || task0?.plan_snapshot?.agent_runtime === 'claude-sdk';
+  if (isClaudeSdkEnabled() || perTaskSdk) {
+    try {
+      const taskTitle = task0.plan_snapshot?.title || task0.title || taskId;
+      const result = await runClaudeSdkLoop(taskId, { taskTitle });
+      console.log(`[Orchestrator] Claude SDK loop completed: ${result.completionReason} (${result.turns} turns, $${result.totalCostUsd?.toFixed(4)})`);
+    } catch (err) {
+      console.error(`[Orchestrator] Claude SDK loop error for task ${taskId}:`, err);
+      try {
+        const task = await taskRepo.getTask(taskId);
+        if (!isTaskTerminal(task.status)) {
+          const nextStatus = taskTransition(task.status, TASK_EVENTS.FAIL);
+          await taskRepo.updateTaskStatus(taskId, nextStatus, task.version);
+          await _resetEmployee(task.employee_id);
+          eventBus.emit(EVENT_NAMES.TASK_FAILED, { taskId, error: `Claude SDK loop failed: ${err.message}` });
+        }
+      } catch { /* last resort */ }
+    }
+    return;
+  }
+
   // ── Ralph Loop mode: autonomous LLM-driven execution ──
   // Activates if globally enabled OR if the task was submitted with ralph_loop: true
-  const task0 = await taskRepo.getTask(taskId);
   const perTaskRalph = task0?.input_context?.ralph_loop === true || task0?.plan_snapshot?.ralph_loop === true;
   if (isRalphLoopEnabled() || perTaskRalph) {
     try {
@@ -853,6 +878,11 @@ async function _handleStepSuccess(task, step, result, stepDef) {
       artifacts_count: (result.artifacts || []).length,
     });
   } catch { /* worklog is best-effort */ }
+
+  // Create checkpoint after successful step (best-effort)
+  try {
+    await createCheckpoint(task.id, step.step_index);
+  } catch { /* checkpoint is best-effort */ }
 
   // Check if this step requires review
   if (stepDef.review_checkpoint) {

@@ -23,6 +23,11 @@ const SLASH_COMMANDS = [
   { cmd: '/transcript', desc: 'Extract tasks from meeting transcript' },
   { cmd: '/reuse off', desc: 'Disable dataset reuse' },
   { cmd: '/retrain', desc: 'Force model retrain' },
+  { cmd: '/mbr', desc: 'Run full MBR pipeline (clean → KPI → variance → anomaly → narrative)' },
+  { cmd: '/clean', desc: 'Run data cleaning on uploaded Excel' },
+  { cmd: '/kpi', desc: 'Calculate KPIs from uploaded data' },
+  { cmd: '/variance', desc: 'Run variance analysis (waterfall + contribution + drill-down)' },
+  { cmd: '/anomaly', desc: 'Auto-detect anomalies across all columns' },
 ];
 
 function ChatComposer({
@@ -329,7 +334,7 @@ function ChatComposer({
             <span>Attach spreadsheets or documents (max 50MB total)</span>
           )}
           <span className="text-[var(--border-strong)]">·</span>
-          <span>Commands: /think, /forecast, /plan, /workflowA, /ralph-loop, /reuse off, /retrain</span>
+          <span>Commands: /mbr, /kpi, /variance, /anomaly, /clean, /think, /forecast, /plan</span>
           <span className="text-[var(--border-strong)]">·</span>
           <span>Enter to send, Shift+Enter for newline</span>
         </div>

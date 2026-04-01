@@ -58,9 +58,13 @@
     "test:autofix:dry": "node e2e/auto-fix-loop.mjs --source live --dry-run",
     "test:autofix:crawler": "node e2e/auto-fix-loop.mjs --source crawler",
     "worker:start": "npx vite-node worker/taskWorker.js",
-    "worker:dev": "VITE_DI_SERVER_EXECUTION=true npx vite-node worker/taskWorker.js"
+    "worker:dev": "VITE_DI_SERVER_EXECUTION=true npx vite-node worker/taskWorker.js",
+    "protocol:start": "npx vite-node worker/protocolServer.js",
+    "protocol:dev": "npx vite-node --watch worker/protocolServer.js"
   },
   "dependencies": {
+    "@a2a-js/sdk": "^0.3.13",
+    "@anthropic-ai/claude-agent-sdk": "^0.2.87",
     "@duckdb/duckdb-wasm": "^1.33.1-dev20.0",
     "@modelcontextprotocol/sdk": "^1.27.1",
     "@sentry/react": "^10.42.0",
@@ -68,6 +72,7 @@
     "@tanstack/react-virtual": "^3.13.20",
     "axios": "^1.13.4",
     "date-fns": "^3.6.0",
+    "express": "^5.2.1",
     "fflate": "^0.8.2",
     "i18next": "^24.2.0",
     "lucide-react": "^0.555.0",
@@ -81,7 +86,8 @@
     "reactflow": "^11.11.4",
     "recharts": "^3.7.0",
     "remark-gfm": "^4.0.1",
-    "xlsx": "^0.18.5"
+    "xlsx": "^0.18.5",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",

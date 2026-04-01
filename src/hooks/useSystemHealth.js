@@ -51,7 +51,7 @@ async function checkMlApi() {
   if (!ML_API_BASE) return 'offline';
   try {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5000);
+    const timeout = setTimeout(() => controller.abort(), 15000);
     const res = await fetch(`${ML_API_BASE.replace(/\/+$/, '')}/health`, {
       signal: controller.signal,
     });
@@ -101,7 +101,7 @@ export function useSystemHealth() {
     }
     const [sb, ml, ai] = await Promise.allSettled([
       runHealthCheckWithRetry(checkSupabase),
-      runHealthCheckWithRetry(checkMlApi),
+      runHealthCheckWithRetry(checkMlApi, { retries: 2 }),
       runHealthCheckWithRetry(checkAiProxy),
     ]);
     setHealth({

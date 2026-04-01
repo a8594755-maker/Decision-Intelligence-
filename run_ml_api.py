@@ -2,6 +2,14 @@
 import sys
 import os
 
+# Fix SSL certificate verification for Python 3.14+
+# Python's default cert.pem may not exist; use certifi's CA bundle instead
+try:
+    import certifi
+    os.environ.setdefault("SSL_CERT_FILE", certifi.where())
+except ImportError:
+    pass
+
 # 将 src 目录加入 Python 路径（同时设置环境变量，确保 reload 子进程也能继承）
 src_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "src")
 sys.path.insert(0, src_path)
@@ -32,4 +40,11 @@ except ImportError:
 import uvicorn
 
 if __name__ == "__main__":
-    uvicorn.run("ml.api.main:app", host="127.0.0.1", port=8000, reload=True)
+    uvicorn.run(
+        "ml.api.main:app",
+        host="127.0.0.1",
+        port=8000,
+        reload=True,
+        reload_dirs=[os.path.join(src_path, "ml")],
+        reload_includes=["*.py"],
+    )

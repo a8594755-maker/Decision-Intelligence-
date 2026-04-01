@@ -860,7 +860,27 @@ async def demand_forecast(request: ForecastRequest, raw_request: Request = None)
             return submit_response.model_dump(mode="json")
 
         inline_history = request.history
-        
+
+        # B10 fix: Clean inline history BEFORE prediction so models receive
+        # deduplicated, non-negative, NaN-free data.  Quality report is kept
+        # for the response's `data_quality` field.
+        _data_quality_report = None
+        if inline_history is not None and len(inline_history) >= 3:
+            try:
+                from ml.demand_forecasting.data_contract import SalesSeries
+                from ml.demand_forecasting.data_validation import validate_and_clean_series
+                import pandas as pd
+                dates = pd.date_range(end=datetime.now().date(), periods=len(inline_history), freq="D")
+                series = SalesSeries(
+                    sku=request.materialCode,
+                    dates=[str(d.date()) for d in dates],
+                    values=list(inline_history),
+                )
+                cleaned_series, _data_quality_report = validate_and_clean_series(series)
+                inline_history = cleaned_series.values
+            except Exception:
+                pass  # fall back to raw inline_history
+
         # 1. 检查缓存（仅当无 inline 数据时）
         if inline_history is None:
             primary_model = request.modelType or forecaster_factory.recommend_model(
@@ -984,20 +1004,10 @@ async def demand_forecast(request: ForecastRequest, raw_request: Request = None)
             "cached": False
         }
 
-        # Phase 1 – P1.3: Surface data quality report when inline history is provided
-        if inline_history is not None and len(inline_history) >= 3:
+        # Phase 1 – P1.3: Surface data quality report (computed before prediction)
+        if _data_quality_report is not None:
             try:
-                from ml.demand_forecasting.data_contract import SalesSeries, DataQualityReport
-                from ml.demand_forecasting.data_validation import validate_and_clean_series
-                import pandas as pd
-                dates = pd.date_range(end=datetime.now().date(), periods=len(inline_history), freq="D")
-                series = SalesSeries(
-                    sku=request.materialCode,
-                    dates=[str(d.date()) for d in dates],
-                    values=list(inline_history),
-                )
-                _, quality_report = validate_and_clean_series(series)
-                response["data_quality"] = quality_report.to_dict()
+                response["data_quality"] = _data_quality_report.to_dict()
             except Exception:
                 pass  # non-critical; don't block forecast
 

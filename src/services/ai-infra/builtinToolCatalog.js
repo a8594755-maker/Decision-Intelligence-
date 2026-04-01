@@ -1388,6 +1388,85 @@ export const BUILTIN_TOOLS = [
       userId: 'string',
     },
   },
+
+  // ── MBR Pipeline Tools (Python API) ─────────────────────────────────────
+
+  {
+    id: 'run_mbr_cleaning',
+    name: 'MBR Data Cleaning',
+    description: 'Clean and standardize uploaded Excel data: strip whitespace, fix dates, normalize entities, remove duplicates, flag quality issues. Uses LLM for column mapping, deterministic engine for execution.',
+    category: TOOL_CATEGORY.DATA_PREPARATION,
+    keywords_en: ['mbr clean', 'data cleaning', 'standardize', 'normalize', 'fix data', 'clean excel'],
+    keywords_zh: ['MBR清洗', '資料清理', '標準化', '正規化', '修正資料'],
+    module: '__python_api__',
+    method: 'POST /cleaning/apply',
+    tier: 'tier_a',
+    required_datasets: [],
+    output_artifacts: ['mbr_cleaned_dataset'],
+    depends_on: [],
+    needs_dataset_profile: false,
+    input_schema: {
+      sheets: 'object — { sheet_name: [row_dicts] }',
+      llm_mappings: 'object — LLM-generated column mappings (optional)',
+    },
+  },
+
+  {
+    id: 'run_mbr_kpi',
+    name: 'KPI Calculation',
+    description: 'Calculate business KPIs from data: revenue, margin, coverage days, trends, top entities. 12 deterministic calculators, LLM only maps columns.',
+    category: TOOL_CATEGORY.ANALYTICS,
+    keywords_en: ['kpi', 'calculate kpi', 'revenue', 'margin', 'metrics', 'business metrics', 'mbr kpi'],
+    keywords_zh: ['KPI', '關鍵指標', '營收', '毛利', '指標計算', '業務指標'],
+    module: '__python_api__',
+    method: 'POST /agent/mbr-kpi',
+    tier: 'tier_a',
+    required_datasets: [],
+    output_artifacts: ['kpi_result'],
+    depends_on: [],
+    needs_dataset_profile: false,
+    input_schema: {
+      sheets: 'object — { sheet_name: [row_dicts] }',
+    },
+  },
+
+  {
+    id: 'run_mbr_variance',
+    name: 'Variance Analysis',
+    description: 'Analyze period-over-period changes: waterfall decomposition (volume/price/mix), contribution analysis (which dimension drove delta), driver tree (hierarchical drill-down).',
+    category: TOOL_CATEGORY.ANALYTICS,
+    keywords_en: ['variance', 'waterfall', 'contribution', 'drill-down', 'why changed', 'root cause', 'delta analysis', 'mbr variance'],
+    keywords_zh: ['差異分析', '瀑布圖', '貢獻分析', '根因', '變動分析', '下鑽'],
+    module: '__python_api__',
+    method: 'POST /agent/mbr-variance',
+    tier: 'tier_a',
+    required_datasets: [],
+    output_artifacts: ['variance_result'],
+    depends_on: [],
+    needs_dataset_profile: false,
+    input_schema: {
+      sheets: 'object — { sheet_name: [row_dicts] }',
+    },
+  },
+
+  {
+    id: 'run_mbr_anomaly',
+    name: 'Anomaly Detection (Auto Scan)',
+    description: 'Auto-detect anomalies across all numeric columns: z-score outliers, IQR outliers, negative values, trend breaks, cross-dimension deviations, relationship mismatches, composition shifts. No LLM needed.',
+    category: TOOL_CATEGORY.ANALYTICS,
+    keywords_en: ['anomaly', 'outlier', 'abnormal', 'detect anomaly', 'data quality', 'auto scan', 'mbr anomaly'],
+    keywords_zh: ['異常偵測', '離群值', '異常值', '自動掃描', '資料品質'],
+    module: '__python_api__',
+    method: 'POST /agent/mbr-anomaly',
+    tier: 'tier_a',
+    required_datasets: [],
+    output_artifacts: ['anomaly_result'],
+    depends_on: [],
+    needs_dataset_profile: false,
+    input_schema: {
+      sheets: 'object — { sheet_name: [row_dicts] }',
+    },
+  },
 ];
 
 // ── Lookup indexes ──────────────────────────────────────────────────────────

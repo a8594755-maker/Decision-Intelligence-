@@ -12,7 +12,7 @@ import { BUILTIN_TOOLS, isPythonApiTool } from '../services/ai-infra/builtinTool
 // The catalog uses informal type strings like 'string', 'number|null',
 // 'object (from datasetProfilesService)'. We convert these to JSON Schema.
 
-function catalogTypeToJsonSchema(typeStr) {
+export function catalogTypeToJsonSchema(typeStr) {
   if (!typeStr || typeof typeStr !== 'string') return { type: 'string' };
 
   const lower = typeStr.toLowerCase();
@@ -95,4 +95,14 @@ export function getToolMeta(toolId) {
   };
 }
 
-export default { catalogToMcpTools, getToolMeta };
+/**
+ * Get the TOOL_CATEGORY for a tool by ID.
+ * @param {string} toolId
+ * @returns {string|null}
+ */
+export function getToolCategory(toolId) {
+  const tool = BUILTIN_TOOLS.find(t => t.id === toolId);
+  return tool ? tool.category : null;
+}
+
+export default { catalogToMcpTools, getToolMeta, catalogTypeToJsonSchema, getToolCategory };

@@ -35,7 +35,7 @@ function autonomyAtLeast(level, threshold) {
   return (AUTONOMY_RANK[level] || 0) >= (AUTONOMY_RANK[threshold] || 0);
 }
 
-const SENSITIVE_MARKERS = ['unit_cost', 'unit_margin', 'salary', 'ssn', 'credit_card'];
+const SENSITIVE_MARKERS = ['salary', 'ssn', 'credit_card', 'social_security', 'tax_id'];
 
 function hasSensitiveData(inputData) {
   const str = JSON.stringify(inputData || {}).toLowerCase();

@@ -6,6 +6,8 @@
 // Supports multi-tenant isolation via API key → tenant mapping.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { supabase } from '../services/infra/supabaseClient';
+
 // ── In-memory stores (replace with DB in production) ───────────────────────
 
 const API_KEYS = new Map();
@@ -67,29 +69,59 @@ export function canAccessTool(toolId, tier) {
   return FREE_TOOLS.includes(toolId);
 }
 
+// ── Supabase JWT verification ─────────────────────────────────────────────
+
+async function authenticateSupabaseToken(token) {
+  try {
+    const { data: { user }, error } = await supabase.auth.getUser(token);
+    if (error || !user) return null;
+    return {
+      authenticated: true,
+      userId: user.id,
+      tenantId: user.app_metadata?.tenant_id || user.id,
+      tier: 'enterprise',
+    };
+  } catch {
+    return null;
+  }
+}
+
 // ── Auth middleware for MCP requests ───────────────────────────────────────
 
-export function authenticateRequest(meta) {
+export async function authenticateRequest(meta) {
   // In stdio mode (Claude Desktop), auth is implicit — the user launched the server.
-  // For HTTP transport, check x-api-key header.
+  // For HTTP transport, check Bearer token first, then x-api-key.
+  const authHeader = meta?.headers?.authorization || meta?.headers?.Authorization || '';
+  const bearerToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+
+  // Try Supabase JWT first
+  if (bearerToken) {
+    const supaResult = await authenticateSupabaseToken(bearerToken);
+    if (supaResult) return supaResult;
+  }
+
   const apiKey = meta?.apiKey || meta?.headers?.['x-api-key'];
 
-  if (!apiKey) {
-    // No key = local stdio mode, grant full access
+  if (!apiKey && !bearerToken) {
+    // No credentials = local stdio mode, grant full access
     return { authenticated: true, tenantId: 'local', tier: 'enterprise', userId: 'local' };
   }
 
-  const keyData = validateApiKey(apiKey);
-  if (!keyData) {
-    return { authenticated: false, error: 'Invalid API key' };
+  if (apiKey) {
+    const keyData = validateApiKey(apiKey);
+    if (!keyData) {
+      return { authenticated: false, error: 'Invalid API key' };
+    }
+
+    const rateCheck = checkRateLimit(apiKey, keyData.tier);
+    if (!rateCheck.allowed) {
+      return { authenticated: false, error: `Rate limit exceeded (${rateCheck.limit}/hour)` };
+    }
+
+    return { authenticated: true, ...keyData, rateRemaining: rateCheck.remaining };
   }
 
-  const rateCheck = checkRateLimit(apiKey, keyData.tier);
-  if (!rateCheck.allowed) {
-    return { authenticated: false, error: `Rate limit exceeded (${rateCheck.limit}/hour)` };
-  }
-
-  return { authenticated: true, ...keyData, rateRemaining: rateCheck.remaining };
+  return { authenticated: false, error: 'Invalid credentials' };
 }
 
 // ── Initialize demo key for development ────────────────────────────────────

@@ -71,8 +71,11 @@ function manualChunks(id) {
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
-    host: '0.0.0.0', // 監聽所有 IP 位址 (IPv4 和 IPv6)
+    host: '0.0.0.0',
     port: 5173,
+  },
+  optimizeDeps: {
+    exclude: ['@anthropic-ai/claude-agent-sdk'],
   },
   build: {
     // Strip console.log and debugger statements in production builds
