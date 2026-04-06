@@ -110,6 +110,24 @@ Each strategy has: real model mode (.json/.pkl) + statistical fallback (determin
 6. Build Tool Registry + General Agent
 7. Currency normalization tool (when customer needs it, not before)
 
+## Experiment Log (MANDATORY)
+**Every time you discover a bug, fix an edge case, or validate an assumption, append an entry to `docs/EXPERIMENT_LOG.md`.**
+
+Format:
+```
+## EXP-XXX: [Short title]
+**Date:** YYYY-MM-DD
+**Hypothesis:** What we assumed
+**Why it matters:** Business impact if wrong
+**Experiment:** What we tested
+**AI tools used:** Which tools/models were involved
+**Evidence:** What happened (data, screenshots, numbers)
+**Decision:** What we changed
+**Impact:** Measurable result (before → after)
+```
+
+This is for the AI Venture Velocity Challenge (30% of score = learning velocity). Every experiment is evidence of progress. Do NOT skip this.
+
 ## For Demos
 - Not a chatbot — digital worker that autonomously runs multi-step pipelines
 - Eval-driven: golden datasets + automated assertions after every change

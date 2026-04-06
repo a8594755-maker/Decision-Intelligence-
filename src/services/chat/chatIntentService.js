@@ -212,17 +212,10 @@ export async function routeIntent(parsedIntent, sessionContext, handlers, option
   }
 
   // Check dataset requirement
+  // When no uploaded dataset profile exists, fall through to the agent loop
+  // which can use built-in data via forecast_from_sap / query_sap_data tools.
   if (parsedIntent.requires_dataset && !datasetProfileId) {
-    if (handlers.onNoDataset) {
-      handlers.onNoDataset();
-    } else if (handlers.appendMessage) {
-      handlers.appendMessage({
-        role: 'ai',
-        content: 'Please upload a dataset first before running this action. You can drag and drop a CSV/XLSX file into the chat.',
-        timestamp: new Date().toISOString(),
-      });
-    }
-    return { handled: true, intent };
+    return { handled: false, intent };
   }
 
   const actionParams = buildActionParams(parsedIntent, sessionContext);

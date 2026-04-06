@@ -28,6 +28,10 @@ const KpiLabPage = lazy(() => import('./pages/KpiLabPage'));
 const VarianceLabPage = lazy(() => import('./pages/VarianceLabPage'));
 // @product: anomaly-lab — standalone anomaly detection test page
 const AnomalyLabPage = lazy(() => import('./pages/AnomalyLabPage'));
+// @product: eval-lab — Tier 1 tool evaluation dashboard
+const EvalLabPage = lazy(() => import('./pages/EvalLabPage'));
+// @product: agent-lab — General Agent Loop test page
+const AgentLabPage = lazy(() => import('./pages/AgentLabPage'));
 
 export const router = createBrowserRouter([
   {
@@ -70,6 +74,8 @@ export const router = createBrowserRouter([
       { path: 'kpi-lab', element: <KpiLabPage /> },
       { path: 'variance-lab', element: <VarianceLabPage /> },
       { path: 'anomaly-lab', element: <AnomalyLabPage /> },
+      { path: 'eval-lab', element: <EvalLabPage /> },
+      { path: 'agent-lab', element: <AgentLabPage /> },
       { path: 'sandbox', element: <SyntheticERPSandbox /> },
       { path: 'settings', element: <SettingsPage /> },
 

@@ -32,11 +32,13 @@ from datetime import datetime
 
 # Keyword sets for semantic role detection
 # "amount" and "total" removed from _REVENUE_KW — they're ambiguous
+# "gross_profit" removed — profit is NOT revenue
 _REVENUE_KW = {
     "revenue", "net_revenue", "gross_revenue", "total_revenue",
-    "sales", "net_sales", "gross_sales", "turnover", "gross_profit",
+    "sales", "net_sales", "gross_sales", "turnover",
 }
 _COST_KW = {"cost", "cogs", "unit_cost", "total_cost", "price_cost"}
+_PROFIT_KW = {"profit", "gross_profit", "net_profit", "total_profit", "net_income"}
 _EXPENSE_KW = {"expense", "spend", "amount"}  # "amount" defaults to expense context
 _PRICE_KW = {"price", "unit_price", "selling_price", "list_price", "avg_price"}
 _QTY_KW = {
@@ -71,41 +73,67 @@ _NAME_KW = {
 def _detect_role(col_name, series):
     """Detect semantic role of a column from its name and data."""
     cl = col_name.lower().strip()
+    # Normalize: "Total Revenue" → "total_revenue" for matching
+    cl_norm = cl.replace(" ", "_")
 
-    # Priority order matters — ID > Name > Date > Target > Pct > Revenue > Cost > Price > Qty > Expense > Category
+    # Check if column is numeric (for revenue/cost/qty — must be numeric)
+    is_numeric = False
+    if series is not None and len(series) > 0:
+        import pandas as pd
+        if pd.api.types.is_numeric_dtype(series):
+            is_numeric = True
+        elif pd.api.types.is_string_dtype(series) or series.dtype == object:
+            # Try converting — if >50% parse as numbers, treat as numeric
+            numeric = pd.to_numeric(series, errors="coerce")
+            is_numeric = numeric.notna().sum() > len(series) * 0.5
+
+    # Priority order: ID > Name > Date > Category > Target > Pct > Revenue > Cost > Price > Qty > Expense
+    # NOTE: Category is checked BEFORE Revenue/Cost to prevent "Sales Channel" → revenue
     for kw in _ID_KW:
-        if kw == cl or (len(kw) > 2 and kw in cl):
+        if kw == cl or kw == cl_norm or (len(kw) > 2 and kw in cl):
             return "id"
     for kw in _NAME_KW:
-        if kw == cl or (len(kw) > 3 and kw in cl):
+        if kw == cl or kw == cl_norm or (len(kw) > 3 and kw in cl):
             return "name"
     for kw in _DATE_KW:
-        if kw == cl or (len(kw) > 3 and kw in cl):
+        if kw == cl or kw == cl_norm or (len(kw) > 3 and kw in cl):
             return "date"
+    # Category BEFORE revenue — "Sales Channel", "Order Priority" are categories, not amounts
+    for kw in _CAT_KW:
+        if kw == cl or kw == cl_norm or (len(kw) > 3 and kw in cl):
+            return "category"
     for kw in _TARGET_KW:
         if kw in cl:
             return "target"
     for kw in _PCT_KW:
         if kw in cl:
             return "percentage"
+    # Revenue/Cost/Price/Qty — MUST be numeric column
     for kw in _REVENUE_KW:
-        if kw == cl or (len(kw) > 4 and kw in cl):
-            return "revenue"
+        if kw == cl or kw == cl_norm or (len(kw) > 4 and kw in cl):
+            if is_numeric:
+                return "revenue"
+            # Name matches but data is not numeric — skip (e.g., "Sales Channel")
     for kw in _COST_KW:
-        if kw == cl or (len(kw) > 3 and kw in cl):
-            return "cost"
+        if kw == cl or kw == cl_norm or (len(kw) > 3 and kw in cl):
+            if is_numeric:
+                return "cost"
     for kw in _PRICE_KW:
-        if kw == cl or (len(kw) > 4 and kw in cl):
-            return "price"
+        if kw == cl or kw == cl_norm or (len(kw) > 4 and kw in cl):
+            if is_numeric:
+                return "price"
     for kw in _QTY_KW:
-        if kw == cl or (len(kw) > 2 and kw in cl):
-            return "quantity"
+        if kw == cl or kw == cl_norm or (len(kw) > 2 and kw in cl):
+            if is_numeric:
+                return "quantity"
     for kw in _EXPENSE_KW:
-        if kw == cl or (len(kw) > 4 and kw in cl):
-            return "expense_amount"
-    for kw in _CAT_KW:
-        if kw == cl or (len(kw) > 3 and kw in cl):
-            return "category"
+        if kw == cl or kw == cl_norm or (len(kw) > 4 and kw in cl):
+            if is_numeric:
+                return "expense_amount"
+    for kw in _PROFIT_KW:
+        if kw == cl or kw == cl_norm or (len(kw) > 4 and kw in cl):
+            if is_numeric:
+                return "profit"
 
     # Fallback: infer from data type
     non_null = series.dropna()
@@ -544,11 +572,70 @@ SUPPORTED_CALCULATORS = {
 # Part 2b: AUTO-DETECT KPI CONFIG (replaces LLM call, ~0ms)
 # ================================================================
 
-def build_kpi_config_from_profile(profile: dict) -> dict:
+def _pick_best_cost_col(cost_cols: list[str]) -> str:
+    """Pick the best cost column when multiple exist.
+
+    Priority: total_cost/cogs > cost_of_goods > cost > unit_cost
+    Reason: "Unit Cost" is per-unit and must be multiplied by qty.
+             "Total Cost" is already aggregated — use it directly.
     """
-    Build KPI calculator config deterministically from profile.
-    Sheet-type-aware: only sales sheets get revenue_summary.
-    Uses _classify_sheet + roles from _detect_role().
+    if len(cost_cols) == 1:
+        return cost_cols[0]
+
+    def _score(col):
+        cl = col.lower().strip()
+        if "total" in cl:
+            return 0  # total_cost — best, already multiplied by qty
+        if cl in ("cogs", "cost_of_goods", "cost_of_goods_sold"):
+            return 1  # COGS — standard
+        if cl in ("cost",):
+            return 2  # ambiguous but likely total
+        if "unit" in cl:
+            return 4  # unit_cost — per-unit, must not sum directly
+        if "price" in cl and "cost" in cl:
+            return 3  # purchase_price_cost — ambiguous
+        return 2
+
+    scored = sorted(cost_cols, key=_score)
+    return scored[0]
+
+
+def _pick_best_revenue_col(revenue_cols: list[str]) -> str:
+    """Pick the best revenue column when multiple exist.
+
+    Priority: net_sales/net_revenue > sales/revenue > gross_sales/gross_revenue
+    Reason: "Gross Sales" includes discounts; "Sales" (net) is the true revenue.
+    If a 'profit' column also exists as revenue, deprioritize it.
+    """
+    if len(revenue_cols) == 1:
+        return revenue_cols[0]
+
+    # Score each column: lower = better
+    def _score(col):
+        cl = col.lower().strip()
+        if "net" in cl:
+            return 0  # net_sales, net_revenue — best
+        if cl in ("sales", "revenue", "total_revenue", "total_sales"):
+            return 1  # plain sales/revenue — good
+        if "gross" in cl and "profit" not in cl:
+            return 3  # gross_sales — includes discounts, less preferred
+        if "profit" in cl:
+            return 4  # gross_profit — not really revenue
+        if "turnover" in cl:
+            return 2
+        return 2  # default
+
+    scored = sorted(revenue_cols, key=_score)
+    return scored[0]
+
+
+def build_kpi_config_from_profile(profile: dict, kpi_formula: dict = None) -> dict:
+    """
+    Build KPI calculator config from profile.
+
+    If kpi_formula is provided (from LLM cleaning), use it directly
+    for revenue/cost/profit column selection and margin method.
+    Otherwise, fall back to deterministic role detection + priority rules.
     """
     calculations = []
     sheets = profile.get("sheets", {})
@@ -577,6 +664,7 @@ def build_kpi_config_from_profile(profile: dict) -> dict:
 
         revenue_cols = role_map.get("revenue", [])
         cost_cols = role_map.get("cost", [])
+        profit_cols = role_map.get("profit", [])
         date_cols = role_map.get("date", [])
         cat_cols = role_map.get("category", [])
         qty_cols = role_map.get("quantity", [])
@@ -587,8 +675,20 @@ def build_kpi_config_from_profile(profile: dict) -> dict:
         status_cols = [c for c in cols if cols[c].get("role") == "category"
                        and any(kw in c.lower() for kw in ("status", "state", "payment"))]
 
-        amount_col = revenue_cols[0] if revenue_cols else None
-        cost_col = cost_cols[0] if cost_cols else None
+        # Check if LLM provided kpi_formula for this sheet
+        sheet_formula = (kpi_formula or {}).get(sheet_name)
+        if sheet_formula:
+            # LLM told us exactly which columns to use
+            amount_col = sheet_formula.get("revenue_col")
+            cost_col = sheet_formula.get("cost_col")
+            profit_col = sheet_formula.get("profit_col")
+            margin_method = sheet_formula.get("margin_method", "revenue_minus_cogs")
+        else:
+            # Fallback: deterministic priority rules
+            amount_col = _pick_best_revenue_col(revenue_cols) if revenue_cols else None
+            cost_col = _pick_best_cost_col(cost_cols) if cost_cols else None
+            profit_col = profit_cols[0] if profit_cols else None
+            margin_method = None  # inferred below
         date_col = date_cols[0] if date_cols else None
         qty_col = qty_cols[0] if qty_cols else None
         primary_cat = cat_cols[0] if cat_cols else None
@@ -619,13 +719,36 @@ def build_kpi_config_from_profile(profile: dict) -> dict:
                     "params": {"source_sheet": sheet_name, "value_col": amount_col, "group_col": entity_col, "n": 10},
                     "label": f"{sheet_name} — Top 10 by {entity_col}",
                 })
-            if cost_col:
+            # Determine margin calculation path
+            use_profit_mode = False
+            margin_cogs_col = cost_col
+
+            if margin_method == "profit_direct" and profit_col:
+                # LLM explicitly said: use profit directly
+                use_profit_mode = True
+                margin_cogs_col = profit_col
+            elif margin_method == "revenue_minus_cogs" and cost_col:
+                # LLM explicitly said: use revenue - cogs
+                use_profit_mode = False
+                margin_cogs_col = cost_col
+            elif cost_col:
+                # Fallback Path A: have cost column
+                margin_cogs_col = cost_col
+            elif profit_col:
+                # Fallback Path B: have profit but no cost
+                use_profit_mode = True
+                margin_cogs_col = profit_col
+
+            if margin_cogs_col:
                 gm_params = {"sales_sheet": sheet_name, "cost_sheet": sheet_name,
-                             "revenue_col": amount_col, "cogs_col": cost_col}
+                             "revenue_col": amount_col, "cogs_col": margin_cogs_col}
+                if use_profit_mode:
+                    gm_params["profit_mode"] = True
                 if cat_cols:
                     gm_params["group_by"] = cat_cols[:2]
+                label_suffix = " (from Profit)" if use_profit_mode else ""
                 calculations.append({"calculator": "gross_margin", "params": gm_params,
-                                     "label": f"{sheet_name} — Gross Margin"})
+                                     "label": f"{sheet_name} — Gross Margin{label_suffix}"})
             for sc in status_cols:
                 calculations.append({
                     "calculator": "distribution",
@@ -1160,12 +1283,20 @@ class KpiCalculator:
             # ── SAME SHEET: revenue and cost columns in same row ──
             df = sales_df.copy()
             df["_revenue"] = self._to_numeric(df[revenue_col])
-            raw_cost = self._to_numeric(df[cogs_col])
-            if qty_col and qty_col in df.columns:
-                df["_cogs"] = raw_cost * self._to_numeric(df[qty_col])
+
+            if params.get("profit_mode"):
+                # Path B: cogs_col is actually the profit column
+                # margin = profit directly, cogs = revenue - profit
+                df["_profit"] = self._to_numeric(df[cogs_col])
+                df["_cogs"] = df["_revenue"] - df["_profit"]
             else:
-                df["_cogs"] = raw_cost
-            df["_profit"] = df["_revenue"] - df["_cogs"]
+                # Path A: standard revenue - cogs
+                raw_cost = self._to_numeric(df[cogs_col])
+                if qty_col and qty_col in df.columns:
+                    df["_cogs"] = raw_cost * self._to_numeric(df[qty_col])
+                else:
+                    df["_cogs"] = raw_cost
+                df["_profit"] = df["_revenue"] - df["_cogs"]
 
         # Multi-currency check
         multi_currency = bool(currency_keys) and currency_col in df.columns and df[currency_col].nunique() > 1
@@ -1758,7 +1889,7 @@ class KpiCalculator:
 # Part 4: PIPELINE ENTRY POINT
 # ================================================================
 
-def execute_kpi_pipeline(sheets_dict, call_llm_fn=None, llm_config=None):
+def execute_kpi_pipeline(sheets_dict, call_llm_fn=None, llm_config=None, kpi_formula=None):
     """
     Full KPI pipeline. Mirrors execute_cleaning_pipeline().
 
@@ -1766,6 +1897,7 @@ def execute_kpi_pipeline(sheets_dict, call_llm_fn=None, llm_config=None):
         sheets_dict: {"sheet_name": [list of row dicts]}
         call_llm_fn: fn(system_prompt, user_prompt, config) -> raw string
         llm_config: dict
+        kpi_formula: dict from LLM cleaning (optional) — specifies which columns to use
 
     Returns:
         {
@@ -1778,8 +1910,8 @@ def execute_kpi_pipeline(sheets_dict, call_llm_fn=None, llm_config=None):
     # Stage 0: Profile
     profile = profile_for_kpi(sheets_dict)
 
-    # Stage 1: Deterministic config from profile (~0ms)
-    kpi_config = build_kpi_config_from_profile(profile)
+    # Stage 1: Config from profile + LLM kpi_formula (~0ms)
+    kpi_config = build_kpi_config_from_profile(profile, kpi_formula=kpi_formula)
 
     # Stage 1b: LLM fallback ONLY if auto-detect produced nothing
     if not kpi_config and call_llm_fn:

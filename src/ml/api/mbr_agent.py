@@ -70,6 +70,118 @@ Total rows: {total_rows}
 
 
 # ================================================================
+# Part 1b: DETERMINISTIC PLANNER (no LLM)
+# ================================================================
+
+def plan_from_profile(profile):
+    """
+    Deterministic tool selection based on data profile.
+    Runs AFTER cleaning (sees canonical sheet/column names).
+    Returns (tool_list, reasoning_dict).
+
+    Logic:
+      - Always first: data_cleaning (already ran, included for completeness)
+      - Has revenue columns in sales sheet → kpi_calculation
+      - Has revenue + cost in same sheet → margin_analysis (via kpi)
+      - Has target/budget sheet → variance_analysis
+      - Has inventory sheet → inventory_health
+      - Has supplier/invoice sheet → supplier_analysis
+      - Has expense sheet → expense_analysis
+      - Has BOM sheet → bom_explosion
+      - Has date + enough data points (>=10) → forecast
+      - Always last: anomaly_detection
+    """
+    from ml.api.kpi_calculator import _classify_sheet, _detect_role
+
+    sheets = profile.get("sheets", {})
+    if not sheets:
+        return ["data_cleaning"], {"reason": "no sheets found"}
+
+    # Classify all sheets
+    sheet_types = {}
+    sheet_roles = {}  # sheet → set of column roles
+    for sn, sp in sheets.items():
+        cols = sp.get("columns", {})
+        sheet_types[sn] = _classify_sheet(sn, cols)
+        roles = set()
+        for col_info in cols.values():
+            role = col_info.get("role", "unknown")
+            if role not in ("unknown", "text"):
+                roles.add(role)
+        sheet_roles[sn] = roles
+
+    has_sales = any(t == "sales" for t in sheet_types.values())
+    has_target = any(t == "target" for t in sheet_types.values())
+    has_inventory = any(t == "inventory" for t in sheet_types.values())
+    has_supplier = any(t == "supplier" for t in sheet_types.values())
+    has_expense = any(t == "expense" for t in sheet_types.values())
+    has_bom = any(sn.lower() in ("bom_edges", "bom", "bill_of_materials") for sn in sheets)
+
+    # Check for revenue in sales sheets (not expense amounts)
+    has_revenue = False
+    has_cost = False
+    has_date = False
+    date_points = 0
+    for sn, sp in sheets.items():
+        if sheet_types.get(sn) == "sales":
+            roles = sheet_roles.get(sn, set())
+            if "revenue" in roles:
+                has_revenue = True
+            if "cost" in roles:
+                has_cost = True
+            if "date" in roles:
+                has_date = True
+                date_points = sp.get("row_count", 0)
+
+    # Build plan with reasoning
+    plan = ["data_cleaning"]
+    reasoning = {}
+
+    if has_revenue:
+        plan.append("kpi_calculation")
+        reasoning["kpi_calculation"] = "sales sheet has revenue columns"
+        if has_cost:
+            # margin_analysis is handled inside kpi_calculation (gross_margin calculator)
+            reasoning["margin_included"] = "cost columns found, margin will be computed in KPI"
+
+    if has_revenue and has_target:
+        plan.append("variance_analysis")
+        reasoning["variance_analysis"] = "sales + target/budget sheets found"
+
+    if has_inventory:
+        plan.append("inventory_health")
+        reasoning["inventory_health"] = "inventory sheet found"
+
+    if has_supplier:
+        plan.append("supplier_analysis")
+        reasoning["supplier_analysis"] = "supplier/invoice sheet found"
+
+    if has_expense:
+        plan.append("expense_analysis")
+        reasoning["expense_analysis"] = "expense sheet found"
+
+    if has_bom and has_revenue:
+        plan.append("bom_explosion")
+        reasoning["bom_explosion"] = "BOM edges + sales demand found"
+
+    if has_date and date_points >= 10 and has_revenue:
+        plan.append("forecast")
+        reasoning["forecast"] = f"time series data with {date_points} points"
+
+    # Cap middle tools at 7, then always append anomaly last
+    plan = plan[:7]
+
+    # Always last: anomaly detection (sees everything)
+    plan.append("anomaly_detection")
+    reasoning["anomaly_detection"] = "always runs last"
+
+    reasoning["total_tools"] = len(plan)
+    reasoning["sheet_types"] = sheet_types
+
+    return plan, reasoning
+
+
+# ================================================================
 # Part 2: TOOL OUTPUT SUMMARIZERS
 # ================================================================
 
@@ -457,6 +569,499 @@ def _make_sync_llm_caller(llm_config):
     return sync_call
 
 
+def _run_eda_full(sheets_data):
+    """Full EDA: per-column stats, correlations, distributions, quality score."""
+    artifacts = []
+    result = {}
+
+    for sheet_name, rows in sheets_data.items():
+        if not rows:
+            continue
+        df = pd.DataFrame(rows)
+        n_rows, n_cols = len(df), len(df.columns)
+
+        # Per-column stats
+        col_stats = []
+        numeric_cols = []
+        for col in df.columns:
+            series = df[col]
+            numeric = pd.to_numeric(series, errors="coerce")
+            null_pct = round(float(series.isna().sum() / max(n_rows, 1) * 100), 1)
+
+            if numeric.notna().sum() > n_rows * 0.5:
+                valid = numeric.dropna()
+                numeric_cols.append(col)
+                col_stats.append({
+                    "column": col, "type": "numeric",
+                    "count": int(valid.count()),
+                    "mean": round(float(valid.mean()), 2),
+                    "std": round(float(valid.std()), 2),
+                    "min": round(float(valid.min()), 2),
+                    "q25": round(float(valid.quantile(0.25)), 2),
+                    "median": round(float(valid.median()), 2),
+                    "q75": round(float(valid.quantile(0.75)), 2),
+                    "max": round(float(valid.max()), 2),
+                    "null_pct": null_pct,
+                    "skewness": round(float(valid.skew()), 2) if len(valid) > 2 else None,
+                })
+            else:
+                unique = int(series.nunique())
+                top_val = series.mode().iloc[0] if len(series.mode()) > 0 else None
+                col_stats.append({
+                    "column": col, "type": "text",
+                    "unique": unique,
+                    "top_value": str(top_val) if top_val is not None else None,
+                    "null_pct": null_pct,
+                })
+
+        artifacts.append({
+            "type": "table", "label": f"Column Statistics — {sheet_name}",
+            "data": col_stats,
+        })
+
+        # Correlation matrix (numeric cols only, max 15)
+        if len(numeric_cols) >= 2:
+            num_df = df[numeric_cols[:15]].apply(pd.to_numeric, errors="coerce")
+            corr = num_df.corr()
+            corr_rows = []
+            for c1 in corr.columns:
+                for c2 in corr.columns:
+                    if c1 < c2:
+                        val = corr.loc[c1, c2]
+                        if pd.notna(val) and abs(val) > 0.3:
+                            corr_rows.append({
+                                "column_1": c1, "column_2": c2,
+                                "correlation": round(float(val), 3),
+                                "strength": "strong" if abs(val) > 0.7 else "moderate",
+                            })
+            corr_rows.sort(key=lambda x: -abs(x["correlation"]))
+            if corr_rows:
+                artifacts.append({
+                    "type": "table", "label": f"Notable Correlations — {sheet_name}",
+                    "data": corr_rows[:20],
+                })
+
+        # Data quality score
+        completeness = round((1 - df.isna().sum().sum() / max(n_rows * n_cols, 1)) * 100, 1)
+        uniqueness = round(sum(df[c].nunique() / max(n_rows, 1) for c in df.columns) / max(n_cols, 1) * 100, 1)
+        quality_score = round(completeness * 0.6 + min(uniqueness, 100) * 0.2 + (20 if numeric_cols else 10), 1)
+
+        result[f"{sheet_name}_rows"] = n_rows
+        result[f"{sheet_name}_cols"] = n_cols
+        result[f"{sheet_name}_numeric_cols"] = len(numeric_cols)
+        result[f"{sheet_name}_quality_score"] = min(quality_score, 100)
+
+    summary = f"EDA: {len(sheets_data)} sheets profiled. " + ", ".join(
+        f"{k}={v}" for k, v in result.items()
+    )
+    return {"result": result, "artifacts": artifacts, "summary_for_narrative": summary}
+
+
+def _run_regression(sheets_data):
+    """OLS regression with diagnostics, feature importance, VIF."""
+    # Use the largest sheet
+    sheet_name = max(sheets_data, key=lambda s: len(sheets_data[s])) if sheets_data else None
+    if not sheet_name:
+        return {"result": {}, "artifacts": [], "summary_for_narrative": "No data for regression."}
+
+    df = pd.DataFrame(sheets_data[sheet_name])
+
+    # Find numeric columns
+    numeric_cols = []
+    for col in df.columns:
+        numeric = pd.to_numeric(df[col], errors="coerce")
+        if numeric.notna().sum() > len(df) * 0.5:
+            numeric_cols.append(col)
+
+    if len(numeric_cols) < 2:
+        return {"result": {}, "artifacts": [],
+                "summary_for_narrative": f"Regression: need >= 2 numeric columns, found {len(numeric_cols)}."}
+
+    # Auto-detect target: prefer revenue > profit > sales > last numeric col
+    target_priority = [
+        ("total_revenue", 0), ("total revenue", 0), ("revenue", 1), ("gross_revenue", 1),
+        ("total_profit", 2), ("profit", 3), ("sales", 4), ("total_sales", 4),
+    ]
+    target_col = numeric_cols[-1]
+    best_score = 99
+    for col in numeric_cols:
+        cl = col.lower().strip().replace(" ", "_")
+        for kw, score in target_priority:
+            if kw == cl or (len(kw) > 4 and kw in cl):
+                if score < best_score:
+                    best_score = score
+                    target_col = col
+                break
+    feature_cols = [c for c in numeric_cols if c != target_col][:10]
+
+    if not feature_cols:
+        return {"result": {}, "artifacts": [],
+                "summary_for_narrative": "Regression: need >= 1 feature column."}
+
+    # Build numeric matrix
+    num_df = df[feature_cols + [target_col]].apply(pd.to_numeric, errors="coerce").dropna()
+    if len(num_df) < 5:
+        return {"result": {}, "artifacts": [],
+                "summary_for_narrative": f"Regression: only {len(num_df)} valid rows after cleaning."}
+
+    X = num_df[feature_cols].values
+    y = num_df[target_col].values
+    n, p = X.shape
+
+    # Add intercept
+    ones = np.ones((n, 1))
+    X_int = np.hstack([ones, X])
+
+    # OLS: beta = (X'X)^-1 X'y
+    try:
+        XtX_inv = np.linalg.inv(X_int.T @ X_int)
+        beta = XtX_inv @ (X_int.T @ y)
+    except np.linalg.LinAlgError:
+        return {"result": {}, "artifacts": [],
+                "summary_for_narrative": "Regression: matrix is singular (perfect multicollinearity)."}
+
+    y_hat = X_int @ beta
+    residuals = y - y_hat
+    ss_res = float(np.sum(residuals ** 2))
+    ss_tot = float(np.sum((y - np.mean(y)) ** 2))
+    r_squared = round(1 - ss_res / max(ss_tot, 1e-10), 4)
+    adj_r_squared = round(1 - (1 - r_squared) * (n - 1) / max(n - p - 1, 1), 4)
+    mse = round(ss_res / max(n - p - 1, 1), 2)
+
+    # Standard errors + t-stats
+    sigma2 = ss_res / max(n - p - 1, 1)
+    se = np.sqrt(np.diag(XtX_inv) * sigma2)
+    t_stats = beta / np.where(se > 0, se, 1)
+
+    coef_names = ["intercept"] + feature_cols
+    coefficients = []
+    for i, name in enumerate(coef_names):
+        coefficients.append({
+            "feature": name,
+            "coefficient": round(float(beta[i]), 4),
+            "std_error": round(float(se[i]), 4),
+            "t_statistic": round(float(t_stats[i]), 2),
+        })
+
+    # Feature importance (standardized absolute coefficients)
+    if p > 0:
+        x_std = np.std(X, axis=0)
+        std_coefs = np.abs(beta[1:]) * x_std / max(np.std(y), 1e-10)
+        total = np.sum(std_coefs)
+        importance = []
+        for i, col in enumerate(feature_cols):
+            importance.append({
+                "feature": col,
+                "importance": round(float(std_coefs[i] / max(total, 1e-10) * 100), 1),
+            })
+        importance.sort(key=lambda x: -x["importance"])
+    else:
+        importance = []
+
+    result = {
+        "target": target_col,
+        "features": feature_cols,
+        "r_squared": r_squared,
+        "adj_r_squared": adj_r_squared,
+        "mse": mse,
+        "n_observations": n,
+        "n_features": p,
+    }
+
+    artifacts = [
+        {"type": "table", "label": f"Regression: {target_col} ~ {', '.join(feature_cols[:5])}",
+         "data": [result]},
+        {"type": "table", "label": "Coefficients", "data": coefficients},
+    ]
+    if importance:
+        artifacts.append({"type": "table", "label": "Feature Importance", "data": importance})
+
+    summary = (f"Regression: {target_col} ~ {len(feature_cols)} features. "
+               f"R²={r_squared}, Adj R²={adj_r_squared}, n={n}")
+
+    return {"result": result, "artifacts": artifacts, "summary_for_narrative": summary}
+
+
+async def _run_forecast_tool(sheets_data, prior_outputs):
+    """Run demand forecast on time-series data from sheets."""
+    from ml.demand_forecasting.forecaster_factory import ForecasterFactory
+    from collections import defaultdict
+
+    # Find sheet with date + qty/revenue columns
+    for sn, rows in sheets_data.items():
+        if not rows:
+            continue
+        df = pd.DataFrame(rows)
+        date_col = None
+        qty_col = None
+        for col in df.columns:
+            cl = col.lower().strip().replace(" ", "_")
+            # Date detection: "Order Date", "order_date", "Order YearMonth", "日期", "Date", "period"
+            if any(kw in cl for kw in ("date", "order_date", "yearmonth", "year_month", "period", "month", "日期")):
+                if not date_col:  # prefer first match (usually the most granular)
+                    date_col = col
+            # Qty detection: "Order Quantity", "qty", "units_sold", "demand", "數量"
+            if any(kw in cl for kw in ("qty", "quantity", "units", "demand", "volume", "數量", "order_quantity")):
+                qty_col = col
+            if not qty_col and any(kw in cl for kw in ("revenue", "sales", "gross_sales", "amount", "營收")):
+                qty_col = col
+
+        if date_col and qty_col:
+            df[qty_col] = pd.to_numeric(df[qty_col], errors="coerce").fillna(0)
+            daily = df.groupby(date_col)[qty_col].sum().sort_index()
+            history = daily.tolist()
+
+            if len(history) < 10:
+                return {"result": {}, "artifacts": [],
+                        "summary_for_narrative": f"Forecast: need >=10 data points, found {len(history)}."}
+
+            factory = ForecasterFactory()
+            result = factory.predict_with_fallback(
+                sku="AGENT-FORECAST", erp_connector=None, horizon_days=7,
+                preferred_model="auto", inline_history=history,
+            )
+
+            ok = result.get("success", False)
+            pred_data = result.get("prediction", {})
+            preds = pred_data.get("predictions", [])
+            p10 = pred_data.get("p10", [])
+            p90 = pred_data.get("p90", [])
+            model = pred_data.get("model_used", result.get("model_used", "?"))
+
+            forecast_table = []
+            for i, p in enumerate(preds):
+                row = {"day": i + 1, "p50": round(p, 1)}
+                if p10 and i < len(p10):
+                    row["p10"] = round(p10[i], 1)
+                if p90 and i < len(p90):
+                    row["p90"] = round(p90[i], 1)
+                forecast_table.append(row)
+
+            summary = (f"Forecast ({model}): {len(preds)} day predictions. "
+                       f"P50 range: {min(preds):.0f}-{max(preds):.0f}" if preds else "No predictions")
+
+            return {
+                "result": {"model": model, "horizon": len(preds), "history_points": len(history),
+                           "predictions": preds, "p10": p10, "p90": p90},
+                "artifacts": [{"type": "table", "label": f"7-Day Demand Forecast ({model})",
+                               "data": forecast_table}],
+                "summary_for_narrative": summary,
+            }
+
+    return {"result": {}, "artifacts": [],
+            "summary_for_narrative": "Forecast: no sheet with date + quantity columns found."}
+
+
+async def _run_solver_tool(sheets_data, prior_outputs):
+    """Run replenishment solver using forecast output + inventory data."""
+    from datetime import datetime, timedelta
+
+    # Get forecast from prior tool output
+    forecast_result = prior_outputs.get("forecast", {})
+    preds = forecast_result.get("result", {}).get("predictions", [])
+
+    # Get inventory from sheets
+    inv_sheet = None
+    for sn, rows in sheets_data.items():
+        if not rows:
+            continue
+        cols_lower = {c.lower().strip(): c for c in pd.DataFrame(rows).columns}
+        if any(kw in " ".join(cols_lower.keys()) for kw in ("on_hand", "safety_stock", "stock", "inventory", "庫存")):
+            inv_sheet = sn
+            break
+
+    if not inv_sheet:
+        return {"result": {}, "artifacts": [],
+                "summary_for_narrative": "Solver: no inventory sheet found."}
+
+    inv_rows = sheets_data[inv_sheet]
+    df = pd.DataFrame(inv_rows)
+
+    # Simple heuristic solver (no need for full API call)
+    plan_lines = []
+    for _, row in df.iterrows():
+        sku = str(row.get("product_code", row.get("物料編碼", row.get(df.columns[0], "?"))))
+        on_hand = float(pd.to_numeric(row.get("on_hand_qty", row.get("在庫數量", 0)), errors="coerce") or 0)
+        ss = float(pd.to_numeric(row.get("safety_stock", row.get("安全庫存", 0)), errors="coerce") or 0)
+        moq = float(pd.to_numeric(row.get("moq", row.get("MOQ", 1)), errors="coerce") or 1)
+
+        # Use forecast if available, else estimate from history
+        if preds:
+            daily_demand = sum(preds) / max(len(preds), 1)
+        else:
+            daily_demand = on_hand / 30 if on_hand > 0 else 10
+
+        demand_7d = daily_demand * 7
+        projected = on_hand - demand_7d
+        if projected < ss:
+            order = max(0, ss - projected + demand_7d)
+            if 0 < order < moq:
+                order = moq
+            order = round(order, 0)
+            plan_lines.append({
+                "sku": sku, "on_hand": round(on_hand, 0),
+                "safety_stock": round(ss, 0), "demand_7d": round(demand_7d, 0),
+                "projected": round(projected, 0), "order_qty": order,
+            })
+
+    plan_lines.sort(key=lambda x: -x["order_qty"])
+    total_orders = sum(p["order_qty"] for p in plan_lines)
+    summary = f"Replenishment plan: {len(plan_lines)} order lines, total qty={total_orders:.0f}"
+
+    return {
+        "result": {"plan_lines": len(plan_lines), "total_order_qty": total_orders},
+        "artifacts": [{"type": "table", "label": "Replenishment Plan", "data": plan_lines}],
+        "summary_for_narrative": summary,
+    }
+
+
+def _run_risk_score_tool(sheets_data, prior_outputs):
+    """Calculate risk scores from inventory + supplier data."""
+    scores = []
+    for sn, rows in sheets_data.items():
+        if not rows:
+            continue
+        df = pd.DataFrame(rows)
+        cols_lower = {c.lower().strip(): c for c in df.columns}
+
+        on_hand_col = None
+        for kw in ("on_hand_qty", "在庫數量", "on_hand", "stock", "inventory", "warehouse_inventory", "warehouse inventory"):
+            if kw in cols_lower:
+                on_hand_col = cols_lower[kw]
+                break
+        if not on_hand_col:
+            continue
+
+        ss_col = None
+        for kw in ("safety_stock", "安全庫存", "reorder_point", "min_stock"):
+            if kw in cols_lower:
+                ss_col = cols_lower[kw]
+                break
+
+        cost_col = None
+        for kw in ("unit_cost", "單位成本(usd)", "cost", "cost_per_unit", "inventory_cost", "inventory cost per unit"):
+            if kw in cols_lower:
+                cost_col = cols_lower[kw]
+                break
+
+        for _, row in df.iterrows():
+            sku = str(row.get(df.columns[0], "?"))
+            on_hand = float(pd.to_numeric(row.get(on_hand_col, 0), errors="coerce") or 0)
+            ss = float(pd.to_numeric(row.get(ss_col, 0) if ss_col else 0, errors="coerce") or 0)
+            cost = float(pd.to_numeric(row.get(cost_col, 10) if cost_col else 10, errors="coerce") or 10)
+
+            coverage = on_hand / max(ss / 30, 0.01) if ss > 0 else 999
+            p_stockout = max(0, min(1, 1 - coverage / 60))
+            impact = max(ss, 1) * cost
+            urgency = 1.5 if coverage < 14 else (1.2 if coverage < 30 else 1.0)
+            score = round(p_stockout * impact * urgency, 2)
+            tier = "HIGH" if score > 10000 else ("MEDIUM" if score > 1000 else "LOW")
+
+            scores.append({"sku": sku, "on_hand": round(on_hand, 0), "safety_stock": round(ss, 0),
+                           "coverage_days": round(coverage, 1), "p_stockout": round(p_stockout, 2),
+                           "risk_score": score, "tier": tier})
+
+    if not scores:
+        return {"result": {}, "artifacts": [],
+                "summary_for_narrative": "Risk: no inventory data with on_hand column found."}
+
+    scores.sort(key=lambda x: -x["risk_score"])
+    high = sum(1 for s in scores if s["tier"] == "HIGH")
+    summary = f"Risk: {len(scores)} items scored, {high} HIGH risk"
+
+    return {
+        "result": {"total_scored": len(scores), "high_risk": high},
+        "artifacts": [{"type": "table", "label": "Risk Scores", "data": scores}],
+        "summary_for_narrative": summary,
+    }
+
+
+def _run_bom_tool(sheets_data):
+    """BOM explosion — compute component demand from finished goods."""
+    bom_rows = None
+    sales_rows = None
+    for sn, rows in sheets_data.items():
+        if not rows:
+            continue
+        cols = [c.lower().strip() for c in pd.DataFrame(rows).columns]
+        if any("parent" in c or "child" in c or "bom" in c for c in cols):
+            bom_rows = rows
+        elif any("qty" in c or "revenue" in c or "demand" in c for c in cols):
+            if not sales_rows:
+                sales_rows = rows
+
+    if not bom_rows:
+        return {"result": {}, "artifacts": [],
+                "summary_for_narrative": "BOM: no BOM/bill-of-materials sheet found."}
+
+    bom_df = pd.DataFrame(bom_rows)
+    # Find parent/child/qty columns
+    parent_col = child_col = qty_col = None
+    for col in bom_df.columns:
+        cl = col.lower().strip()
+        if "parent" in cl:
+            parent_col = col
+        elif "child" in cl:
+            child_col = col
+        elif "qty_per" in cl or "quantity" in cl:
+            qty_col = col
+
+    if not parent_col or not child_col:
+        return {"result": {}, "artifacts": [],
+                "summary_for_narrative": "BOM: could not find parent/child columns."}
+
+    # Get FG demand
+    fg_demand = {}
+    if sales_rows:
+        sales_df = pd.DataFrame(sales_rows)
+        for col in sales_df.columns:
+            if "qty" in col.lower() or "quantity" in col.lower():
+                for pc_col in sales_df.columns:
+                    if "product" in pc_col.lower() or "sku" in pc_col.lower() or "code" in pc_col.lower():
+                        sales_df[col] = pd.to_numeric(sales_df[col], errors="coerce").fillna(0)
+                        fg_demand = sales_df.groupby(pc_col)[col].sum().to_dict()
+                        break
+                break
+
+    # Explode BOM
+    bom_index = {}
+    for _, edge in bom_df.iterrows():
+        parent = str(edge.get(parent_col, ""))
+        if parent:
+            bom_index.setdefault(parent, []).append(edge)
+
+    component_map = {}
+    def explode(mat, qty, path, depth):
+        if depth > 50 or mat in path:
+            return
+        for edge in bom_index.get(mat, []):
+            child = str(edge[child_col])
+            qty_per = float(pd.to_numeric(edge.get(qty_col, 1), errors="coerce") or 1)
+            scrap = float(pd.to_numeric(edge.get("scrap_rate", 0), errors="coerce") or 0)
+            yld = max(float(pd.to_numeric(edge.get("yield_rate", 1), errors="coerce") or 1), 0.01)
+            child_qty = qty * qty_per * (1 + scrap) / yld
+            component_map[child] = component_map.get(child, 0) + child_qty
+            explode(child, child_qty, path | {mat}, depth + 1)
+
+    for sku, qty in fg_demand.items():
+        if str(sku) in bom_index:
+            explode(str(sku), qty, set(), 0)
+
+    if not component_map and fg_demand:
+        return {"result": {}, "artifacts": [],
+                "summary_for_narrative": f"BOM: {len(fg_demand)} FGs found but no BOM edges match."}
+
+    comp_table = sorted([{"component": k, "total_qty": round(v, 1)} for k, v in component_map.items()],
+                        key=lambda x: -x["total_qty"])
+    summary = f"BOM: {len(fg_demand)} FGs → {len(component_map)} components"
+
+    return {
+        "result": {"fg_count": len(fg_demand), "component_count": len(component_map)},
+        "artifacts": [{"type": "table", "label": "Component Demand (BOM Explosion)", "data": comp_table}],
+        "summary_for_narrative": summary,
+    }
+
+
 async def _execute_tool(tool_id, sheets_data, prior_outputs, llm_config):
     """Execute a single tool and return structured result."""
     sync_llm = _make_sync_llm_caller(llm_config)
@@ -474,16 +1079,74 @@ async def _execute_tool(tool_id, sheets_data, prior_outputs, llm_config):
             "sheets_cleaned": len(cleaned),
             "rows_after": sum(len(v) for v in cleaned.values()),
             "artifacts": result.get("artifacts", []),
+            "kpi_formula": result.get("kpi_formula", {}),
         }
 
     elif tool_id == "kpi_calculation":
-        from ml.api.kpi_calculator import execute_kpi_pipeline
-        result = await asyncio.to_thread(execute_kpi_pipeline, sheets_data, call_llm_fn=sync_llm)
-        return {
-            "result": result.get("result", {}),
-            "summary_for_narrative": result.get("summary_for_narrative", ""),
-            "artifacts": result.get("artifacts", []),
-        }
+        # Try LLM code generation first, fall back to deterministic
+        llm_kpi_result = None
+        try:
+            from ml.api.kpi_code_executor import calculate_kpis_with_llm_code
+            # Use the largest (sales) sheet
+            sheet_name = list(sheets_data.keys())[0]
+            for sn in sheets_data:
+                if len(sheets_data[sn]) > len(sheets_data.get(sheet_name, [])):
+                    sheet_name = sn
+            df = pd.DataFrame(sheets_data[sheet_name])
+            llm_kpi_result = await calculate_kpis_with_llm_code(df, sheet_name, llm_config, all_sheets=sheets_data)
+        except Exception as ex:
+            logger.warning(f"[MBR Agent] LLM KPI code generation failed: {ex}")
+
+        if llm_kpi_result and llm_kpi_result.get("success"):
+            kpi_results = llm_kpi_result["results"]
+            audit = llm_kpi_result["audit"]
+            # Build artifacts from LLM results
+            arts = [{
+                "type": "table",
+                "label": "Overall KPIs",
+                "data": [kpi_results],
+            }]
+            if audit:
+                arts.append({
+                    "type": "table",
+                    "label": "KPI Calculation Audit",
+                    "data": [{
+                        "method": audit.get("method", ""),
+                        "reasoning": audit.get("reasoning", ""),
+                        "derivations": ", ".join(audit.get("derivations", [])),
+                        "code": audit.get("code", "")[:500],
+                        "execution_ms": audit.get("execution_time_ms", 0),
+                    }],
+                })
+            # Also run deterministic pipeline for breakdowns (by category, trend, etc.)
+            from ml.api.kpi_calculator import execute_kpi_pipeline
+            kpi_formula = prior_outputs.get("data_cleaning", {}).get("kpi_formula")
+            det_result = await asyncio.to_thread(
+                execute_kpi_pipeline, sheets_data, call_llm_fn=sync_llm, kpi_formula=kpi_formula
+            )
+            # Merge: LLM results override summary, deterministic provides breakdowns
+            merged_result = det_result.get("result", {})
+            merged_result.update(kpi_results)
+            all_arts = arts + det_result.get("artifacts", [])
+            return {
+                "result": merged_result,
+                "summary_for_narrative": det_result.get("summary_for_narrative", ""),
+                "artifacts": all_arts,
+                "kpi_audit": audit,
+            }
+        else:
+            # Fallback: deterministic pipeline
+            logger.info("[MBR Agent] Using deterministic KPI pipeline (LLM code failed or unavailable)")
+            from ml.api.kpi_calculator import execute_kpi_pipeline
+            kpi_formula = prior_outputs.get("data_cleaning", {}).get("kpi_formula")
+            result = await asyncio.to_thread(
+                execute_kpi_pipeline, sheets_data, call_llm_fn=sync_llm, kpi_formula=kpi_formula
+            )
+            return {
+                "result": result.get("result", {}),
+                "summary_for_narrative": result.get("summary_for_narrative", ""),
+                "artifacts": result.get("artifacts", []),
+            }
 
     elif tool_id == "margin_analysis":
         # DON'T re-run kpi_calculator — extract margin artifacts from prior kpi_calculation
@@ -544,6 +1207,30 @@ async def _execute_tool(tool_id, sheets_data, prior_outputs, llm_config):
     elif tool_id == "expense_analysis":
         arts = _run_expense_analysis(sheets_data)
         return {"artifacts": arts}
+
+    elif tool_id == "eda":
+        result = _run_eda_full(sheets_data)
+        return result
+
+    elif tool_id == "regression":
+        result = _run_regression(sheets_data)
+        return result
+
+    elif tool_id == "forecast":
+        result = await _run_forecast_tool(sheets_data, prior_outputs)
+        return result
+
+    elif tool_id == "replenishment_plan":
+        result = await _run_solver_tool(sheets_data, prior_outputs)
+        return result
+
+    elif tool_id == "risk_score":
+        result = _run_risk_score_tool(sheets_data, prior_outputs)
+        return result
+
+    elif tool_id == "bom_explosion":
+        result = _run_bom_tool(sheets_data)
+        return result
 
     return {"error": f"Unknown tool: {tool_id}"}
 
@@ -939,95 +1626,27 @@ async def run_mbr_agent(sheets_data, llm_config=None, on_step=None, filename="up
     sheet_summary = "\n".join(sheet_lines)
     total_rows = sum(len(r) for r in sheets_data.values())
 
-    # ── Step 1: Planner ──
+    # ── Step 1: Clean first, then plan (cleaning standardizes schema) ──
     if on_step:
-        await on_step({"type": "plan_start"})
-
-    try:
-        plan_response = await _call_llm_raw(
-            PLANNER_USER_TEMPLATE.format(
-                filename=filename,
-                sheet_summary=sheet_summary,
-                total_rows=total_rows,
-            ),
-            PLANNER_SYSTEM_PROMPT,
-            llm_config,
-        )
-        # Parse JSON array
-        plan_response = plan_response.strip()
-        s = plan_response.find("[")
-        e = plan_response.rfind("]")
-        if s != -1 and e != -1:
-            plan = json.loads(plan_response[s:e + 1])
-        else:
-            plan = json.loads(plan_response)
-
-        # Ensure data_cleaning is first
-        if "data_cleaning" not in plan:
-            plan.insert(0, "data_cleaning")
-        elif plan[0] != "data_cleaning":
-            plan.remove("data_cleaning")
-            plan.insert(0, "data_cleaning")
-
-        # Cap at MAX_TOOLS
-        plan = plan[:MAX_TOOLS]
-
-        logger.info(f"[MBR Agent] Plan: {plan}")
-        if on_step:
-            await on_step({
-                "type": "plan_done",
-                "tools": plan,
-                "reasoning": f"Found {len(sheets_data)} sheets with {total_rows} rows. "
-                             f"Will run {len(plan)} analysis steps.",
-            })
-
-    except Exception as ex:
-        logger.error(f"[MBR Agent] Planner failed: {ex}")
-        plan = ["data_cleaning", "kpi_calculation", "anomaly_detection"]
-        if on_step:
-            await on_step({
-                "type": "plan_done",
-                "tools": plan,
-                "reasoning": f"Planner fallback — running default pipeline ({len(plan)} steps).",
-                "fallback": True,
-            })
-
-    # ── Step 2: Execute data_cleaning ──
-    if on_step:
-        await on_step({
-            "type": "tool_start",
-            "tool_id": "data_cleaning",
-            "description": TOOL_DESCRIPTIONS.get("data_cleaning", "Cleaning data..."),
-        })
+        await on_step({"type": "tool_start", "tool_id": "data_cleaning",
+                        "description": TOOL_DESCRIPTIONS.get("data_cleaning", "Cleaning data...")})
 
     clean_start = time.time()
     clean_result = None
     try:
-        # Emit thinking
         if on_step:
-            n = len(sheets_data)
             await on_step({"type": "tool_thinking", "tool_id": "data_cleaning",
-                           "detail": f"Scanning {n} sheets for data quality issues..."})
-
+                           "detail": f"Scanning {len(sheets_data)} sheets for data quality issues..."})
         clean_result = await _execute_tool("data_cleaning", sheets_data, {}, llm_config)
         clean_duration = int((time.time() - clean_start) * 1000)
         current_sheets = clean_result.get("cleaned_sheets") or sheets_data
         clean_summary = summarize_tool_output("data_cleaning", clean_result)
         steps_log.append({"tool": "data_cleaning", "duration_ms": clean_duration, "summary": clean_summary[:200]})
 
-        # Emit findings
         if on_step:
-            rows_removed = clean_result.get("rows_after", 0)
-            n_cleaned = clean_result.get("sheets_cleaned", 0)
-            await on_step({"type": "tool_thinking", "tool_id": "data_cleaning",
-                           "detail": f"Standardized {n_cleaned} sheets, {rows_removed} rows after cleaning."})
-            if clean_summary:
-                await on_step({"type": "tool_finding", "tool_id": "data_cleaning",
-                               "finding": clean_summary[:200]})
+            await on_step({"type": "tool_finding", "tool_id": "data_cleaning", "finding": clean_summary[:200]})
             await on_step({"type": "tool_done", "tool_id": "data_cleaning",
-                           "duration_ms": clean_duration, "status": "success",
-                           "findings_count": 1})
-
+                           "duration_ms": clean_duration, "status": "success"})
     except Exception as ex:
         clean_duration = int((time.time() - clean_start) * 1000)
         logger.error(f"[MBR Agent] Cleaning failed: {ex}")
@@ -1035,11 +1654,56 @@ async def run_mbr_agent(sheets_data, llm_config=None, on_step=None, filename="up
         steps_log.append({"tool": "data_cleaning", "error": str(ex)[:200], "duration_ms": clean_duration})
         if on_step:
             await on_step({"type": "tool_error", "tool_id": "data_cleaning",
-                           "error": str(ex)[:200], "recoverable": True, "duration_ms": clean_duration})
+                           "error": str(ex)[:200], "recoverable": True})
+
+    # ── Step 2: Planner (deterministic, runs on CLEANED data) ──
+    if on_step:
+        await on_step({"type": "plan_start"})
+
+    from ml.api.kpi_calculator import profile_for_kpi
+    profile = profile_for_kpi(current_sheets)
+    plan, reasoning = plan_from_profile(profile)
+
+    # Remove data_cleaning from plan (already ran above)
+    plan = [t for t in plan if t != "data_cleaning"]
+
+    if len(plan) <= 1:
+        # Only anomaly_detection — profile might have failed, try LLM fallback
+        logger.info(f"[MBR Agent] Deterministic plan too minimal ({plan}), trying LLM fallback")
+        try:
+            plan_response = await _call_llm_raw(
+                PLANNER_USER_TEMPLATE.format(
+                    filename=filename, sheet_summary=sheet_summary, total_rows=total_rows,
+                ),
+                PLANNER_SYSTEM_PROMPT, llm_config,
+            )
+            plan_response = plan_response.strip()
+            s = plan_response.find("[")
+            e = plan_response.rfind("]")
+            if s != -1 and e != -1:
+                llm_plan = json.loads(plan_response[s:e + 1])
+                llm_plan = [t for t in llm_plan if t != "data_cleaning"]
+                if len(llm_plan) > len(plan):
+                    plan = llm_plan
+                    reasoning["fallback"] = "LLM planner used (deterministic was too minimal)"
+        except Exception as ex:
+            logger.warning(f"[MBR Agent] LLM planner fallback also failed: {ex}")
+            reasoning["fallback_error"] = str(ex)[:100]
+
+    plan = plan[:MAX_TOOLS]
+    logger.info(f"[MBR Agent] Plan (post-clean): {plan} | Reasoning: {reasoning}")
+
+    if on_step:
+        await on_step({
+            "type": "plan_done",
+            "tools": ["data_cleaning"] + plan,  # show full plan including cleaning
+            "reasoning": f"Deterministic planner: {len(plan)} tools. " +
+                         ", ".join(f"{k}={v}" for k, v in reasoning.items()
+                                  if k not in ("sheet_types", "total_tools")),
+        })
 
     # ── Step 3: Execute remaining tools with context chain ──
-    remaining_plan = [t for t in plan if t != "data_cleaning"]
-    context = await run_pipeline(remaining_plan, current_sheets, llm_config, on_step=on_step)
+    context = await run_pipeline(plan, current_sheets, llm_config, on_step=on_step)
 
     # Add cleaning to findings chain
     context["findings_chain"].insert(0, ("data_cleaning", summarize_tool_output("data_cleaning", clean_result or {})))

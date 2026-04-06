@@ -58,13 +58,14 @@ def profile_sheet(df, sheet_name, max_unique_display=50):
         })
 
     # Header repeated as data (common CSV merge issue)
+    # Lowered threshold: 40% match is enough (some columns may have valid values)
     header_rows = []
     for idx, row in df.iterrows():
         matches = sum(
             1 for col in df.columns
             if str(row.get(col, "")).strip().lower() == str(col).strip().lower()
         )
-        if matches >= len(df.columns) * 0.6:
+        if matches >= max(len(df.columns) * 0.4, 3):
             header_rows.append(int(idx))
     if header_rows:
         profile["issues_detected"].append({
@@ -99,6 +100,26 @@ def profile_sheet(df, sheet_name, max_unique_display=50):
         profile["issues_detected"].append({
             "type": "suspected_test_data",
             "rows": test_rows[:5]
+        })
+
+    # Summary/total rows (合計, Total, Grand Total, Subtotal)
+    # These rows aggregate other rows and should be removed before analysis
+    summary_pat = re.compile(
+        r"^(合計|小計|總計|total|grand\s*total|subtotal|sum|合\s*計|小\s*計)$",
+        re.IGNORECASE
+    )
+    summary_rows = []
+    for idx, row in df.iterrows():
+        for val in row.values:
+            if pd.notna(val) and isinstance(val, str) and summary_pat.match(val.strip()):
+                summary_rows.append({"index": int(idx), "preview": str(row.values[:4])[:120]})
+                break
+    if summary_rows:
+        profile["issues_detected"].append({
+            "type": "summary_total_rows",
+            "count": len(summary_rows),
+            "row_indices": [r["index"] for r in summary_rows],
+            "rows": summary_rows[:5]
         })
 
     # -- Column-level analysis --
@@ -587,6 +608,16 @@ RULES:
 
 5. Fix case/spacing/punctuation variants: "costco asia " -> "Costco Asia"
 
+5b. CROSS-LANGUAGE ENTITY MERGE - the same real-world entity written in different
+    languages MUST be merged into ONE canonical name:
+    - "全聯" = "全聯福利中心" = "PX Mart" → pick ONE canonical (prefer English if mixed)
+    - "家樂福" = "Carrefour" = "家樂福量販" → "Carrefour"
+    - "好市多" = "Costco" = "COSTCO" → "Costco"
+    - "台幣" = "新台幣" = "TWD" = "NTD" = "NT$" → "TWD"
+    - "美金" = "美元" = "USD" = "US$" → "USD"
+    This applies to ALL columns: customers, suppliers, currencies, regions, etc.
+    If you see Chinese + English names for the same entity, ALWAYS merge them.
+
 6. COMPLETENESS - map ALL variants, not just some. If a column has 5 different
    spellings of the same entity, all 5 must appear in the mapping (except the
    canonical one itself). Do not skip variants.
@@ -605,6 +636,45 @@ RULES:
    (e.g., "Test Customer", "DUMMY", "foo", "xxx").
 
 10. Do NOT map empty strings "". Leave them out of the mapping entirely.
+
+## SCHEMA STANDARDIZATION (sheet names + column names)
+
+In addition to entity value mappings, ALSO provide:
+
+11. "sheet_mappings": Map each sheet name to its canonical English name.
+    Canonical names: sales_transactions, monthly_budget, inventory_snapshot,
+    supplier_invoices, expense_reports, bom_edges.
+    Only include sheets that need renaming (non-English or non-canonical names).
+
+12. "column_mappings": For each sheet, map non-English or non-standard column
+    names to canonical English names. Common canonical names:
+    order_date, product_code, product_name, category, region, customer_name,
+    qty, unit_price, gross_revenue, cogs, currency, payment_status, channel,
+    period, revenue_target, qty_target,
+    on_hand_qty, safety_stock, unit_cost, warehouse, lead_time_days, moq,
+    invoice_id, supplier_name, invoice_date, due_date, amount, status,
+    department, expense_type, expense_date,
+    parent_material, child_material, qty_per, scrap_rate, yield_rate.
+    Only include columns that need renaming. Skip already-canonical columns.
+
+13. "kpi_formula": For EACH sheet that has financial data (revenue/cost/profit),
+    specify how to calculate KPIs. Look at the column sample values to decide.
+    Structure per sheet:
+    {
+      "sheet_name": {
+        "revenue_col": "original column name for revenue/sales (the TOTAL, not per-unit)",
+        "cost_col": "original column name for COGS/total cost (null if not available)",
+        "profit_col": "original column name for profit (null if not available)",
+        "margin_method": "revenue_minus_cogs" | "profit_direct",
+        "reasoning": "brief explanation of why this method was chosen"
+      }
+    }
+    Rules for choosing margin_method:
+    - If BOTH total cost and profit columns exist: use "revenue_minus_cogs" (more granular)
+    - If only profit exists (no cost column): use "profit_direct"
+    - NEVER use a per-unit column (Unit Cost, Unit Price) as total COGS.
+      Check the value range: if mean < 1000 while revenue mean > 100000, it's per-unit.
+    - A column called "Sales Channel", "Sales Rep" etc. with TEXT values is NOT revenue.
 
 RESPOND WITH ONLY VALID JSON. No markdown fences, no explanation."""
 
@@ -627,16 +697,69 @@ RESPOND WITH ONLY VALID JSON. No markdown fences, no explanation."""
             user_prompt += f'  "{val}": {count}\n'
         user_prompt += "\n"
 
+    # Add sheet names + column profiles for schema mapping
+    # Include sample values + dtype so LLM can distinguish:
+    #   "Sales Channel" (string: Online/Offline) from "Total Revenue" (float: 2,533,654)
+    #   "Unit Cost" (float: 159.42, per-unit) from "Total Cost" (float: 1,582,243, aggregated)
+    user_prompt += "## Sheet & Column Profiles (for schema standardization)\n"
+    user_prompt += "Use column NAMES + SAMPLE VALUES + DTYPE to map to canonical names.\n"
+    user_prompt += "A column named 'Sales Channel' with values ['Online','Offline'] is a CATEGORY, not revenue.\n"
+    user_prompt += "A column named 'Unit Cost' with small values [159, 117] is per-unit cost, NOT total COGS.\n"
+    user_prompt += "A column named 'Total Cost' with large values [1,582,243] is total COGS.\n\n"
+
+    for sheet_name, sp in profile_result.get("sheet_profiles", {}).items():
+        user_prompt += f'### Sheet: "{sheet_name}" ({sp.get("row_count", 0)} rows)\n'
+        for col_name, col_info in sp.get("columns", {}).items():
+            dtype_hint = "numeric" if col_info.get("numeric_stats") else "text"
+            stats = col_info.get("numeric_stats")
+            vc = col_info.get("value_counts")
+            sample = col_info.get("sample_head")
+
+            parts = [f'  {col_name}: {dtype_hint}']
+            if stats:
+                parts.append(f'range=[{stats["min"]:,.2f} .. {stats["max"]:,.2f}]')
+                parts.append(f'mean={stats["mean"]:,.2f}')
+            elif vc:
+                # Show top 3 values for text columns
+                top3 = list(vc.keys())[:3]
+                parts.append(f'values={top3}')
+            elif sample:
+                parts.append(f'sample={sample[:3]}')
+
+            unique = col_info.get("unique_count", 0)
+            if unique > 0:
+                parts.append(f'unique={unique}')
+
+            user_prompt += " | ".join(parts) + "\n"
+        user_prompt += "\n"
+
     user_prompt += """
 Return format:
 {
+  "sheet_mappings": {
+    "original_sheet_name": "canonical_english_name"
+  },
+  "column_mappings": {
+    "original_sheet_name": {
+      "original_column_name": "canonical_english_name"
+    }
+  },
+  "kpi_formula": {
+    "sheet_name": {
+      "revenue_col": "column name",
+      "cost_col": "column name or null",
+      "profit_col": "column name or null",
+      "margin_method": "revenue_minus_cogs or profit_direct",
+      "reasoning": "why"
+    }
+  },
   "sheet_name.column_name": {
-    "variant_value": "canonical_value",
-    ...
+    "variant_value": "canonical_value"
   }
 }
 
-Only include values that NEED changing. Skip values already canonical."""
+Only include items that NEED changing. Skip already-canonical names and values.
+kpi_formula is REQUIRED for any sheet with financial/numeric data."""
 
     return system_prompt, user_prompt
 
@@ -669,6 +792,9 @@ class CleaningEngine:
         # Cross-sheet ID validation
         results = self._flag_cross_sheet_orphans(results)
 
+        # Schema standardization: rename columns + sheets to canonical English
+        results = self._standardize_schema(results)
+
         return results
 
     def _clean_sheet(self, df, sheet_name, profile):
@@ -678,6 +804,7 @@ class CleaningEngine:
         df = self._normalize_id_columns(df, sheet_name)
         df = self._clean_annotations(df, sheet_name)
         df = self._apply_mappings(df, sheet_name)
+        df = self._deduplicate_entities(df, sheet_name, profile)
         df = self._fix_dates(df, sheet_name, profile)
         df = self._fix_numerics(df, sheet_name, profile)
         df = self._handle_placeholders(df, sheet_name, profile)
@@ -713,6 +840,15 @@ class CleaningEngine:
                         self.log.append({
                             "sheet": sheet_name,
                             "action": "remove_test_data",
+                            "row_index": idx,
+                        })
+            elif issue["type"] == "summary_total_rows":
+                for idx in issue.get("row_indices", []):
+                    if idx < len(df):
+                        drop.add(idx)
+                        self.log.append({
+                            "sheet": sheet_name,
+                            "action": "remove_summary_row",
                             "row_index": idx,
                         })
             elif issue["type"] == "mostly_empty_rows":
@@ -842,6 +978,70 @@ class CleaningEngine:
                         "mappings_applied": len(normal_map),
                         "cells_changed": int(changed.sum()),
                     })
+        return df
+
+    def _deduplicate_entities(self, df, sheet_name, profile):
+        """
+        Case-insensitive entity deduplication for categorical columns.
+        No LLM needed — picks the most frequent casing as canonical.
+
+        Example: "APAC"(10), "apac"(3), "Apac"(1) → all become "APAC"
+        Also handles: "Acme Corp", "ACME CORP", "acme corp" → "Acme Corp" (most frequent)
+        """
+        total_mapped = 0
+        for col in df.columns:
+            if not _is_text_dtype(df[col]):
+                continue
+            unique_count = df[col].nunique()
+            # Skip ID columns (high cardinality), skip single-value columns
+            if unique_count < 2 or unique_count > 100:
+                continue
+            # Skip columns that look like IDs (mostly unique values)
+            col_lower = col.lower()
+            if any(kw in col_lower for kw in ["_id", "sku", "code", "number", "invoice", "expense_id", "order_id"]):
+                continue
+
+            # Group by case-insensitive key
+            non_null = df[col].dropna()
+            case_groups = {}
+            for val in non_null:
+                key = str(val).strip().lower()
+                case_groups.setdefault(key, []).append(str(val))
+
+            # Build mapping: for each group with multiple casings, pick most frequent
+            col_mapping = {}
+            for key, variants in case_groups.items():
+                if len(set(variants)) <= 1:
+                    continue  # only one casing, skip
+                # Most frequent variant wins
+                from collections import Counter
+                counts = Counter(variants)
+                canonical = counts.most_common(1)[0][0]
+                for variant in set(variants):
+                    if variant != canonical:
+                        col_mapping[variant] = canonical
+
+            if col_mapping:
+                before = df[col].copy()
+                df[col] = df[col].replace(col_mapping)
+                changed = ((before != df[col]) & before.notna()).sum()
+                if changed > 0:
+                    total_mapped += int(changed)
+                    self.log.append({
+                        "sheet": sheet_name,
+                        "action": "deduplicate_entities",
+                        "column": col,
+                        "mappings": len(col_mapping),
+                        "cells_changed": int(changed),
+                        "examples": dict(list(col_mapping.items())[:3]),
+                    })
+
+        if total_mapped > 0:
+            self.log.append({
+                "sheet": sheet_name,
+                "action": "entity_dedup_summary",
+                "total_cells_changed": total_mapped,
+            })
         return df
 
     def _fix_dates(self, df, sheet_name, profile):
@@ -1223,6 +1423,46 @@ class CleaningEngine:
 
         return results
 
+    def _standardize_schema(self, results):
+        """Rename sheet names and column names to canonical English using LLM mappings."""
+        # Extract schema mappings from LLM response
+        sheet_mappings = self.mappings.get("sheet_mappings", {})
+        column_mappings = self.mappings.get("column_mappings", {})
+
+        if not sheet_mappings and not column_mappings:
+            return results
+
+        # 1. Rename columns first (before renaming sheets, since column_mappings uses original sheet names)
+        for sheet_name, col_map in column_mappings.items():
+            if sheet_name in results and col_map and isinstance(col_map, dict):
+                before_cols = list(results[sheet_name].columns)
+                results[sheet_name] = results[sheet_name].rename(columns=col_map)
+                after_cols = list(results[sheet_name].columns)
+                renamed_count = sum(1 for b, a in zip(before_cols, after_cols) if b != a)
+                if renamed_count > 0:
+                    self.log.append({
+                        "sheet": sheet_name,
+                        "action": "rename_columns",
+                        "count": renamed_count,
+                        "examples": {k: v for k, v in list(col_map.items())[:5]},
+                    })
+
+        # 2. Rename sheets
+        if sheet_mappings:
+            renamed = {}
+            for old_name, df in results.items():
+                new_name = sheet_mappings.get(old_name, old_name)
+                renamed[new_name] = df
+                if new_name != old_name:
+                    self.log.append({
+                        "sheet": old_name,
+                        "action": "rename_sheet",
+                        "new_name": new_name,
+                    })
+            results = renamed
+
+        return results
+
     def get_log(self):
         return self.log
 
@@ -1268,6 +1508,15 @@ def execute_cleaning_pipeline(
         }
     """
 
+    # -- Stage 0a: Strip column name whitespace (fixes " Sales", " Order ID " etc.) --
+    for sheet_name in list(sheets_dict.keys()):
+        rows = sheets_dict[sheet_name]
+        if rows and isinstance(rows[0], dict):
+            sheets_dict[sheet_name] = [
+                {k.strip() if isinstance(k, str) else k: v for k, v in row.items()}
+                for row in rows
+            ]
+
     # -- Stage 0: Profile (no LLM, ~100ms) --
     profile = profile_workbook(sheets_dict)
 
@@ -1288,6 +1537,15 @@ def execute_cleaning_pipeline(
                     if attempt == 2:
                         llm_mappings = {}  # All failed, skip
 
+    # -- Stage 1b: Apply 3-layer rule system (Company > User > LLM) --
+    mapping_audit = []
+    try:
+        from ml.api.mapping_rules import apply_rules_to_llm_mappings, get_mapping_audit
+        mapping_audit = get_mapping_audit(llm_mappings)
+        llm_mappings = apply_rules_to_llm_mappings(llm_mappings)
+    except Exception as e:
+        logger.warning(f"[Cleaning] Rule system failed, using raw LLM mappings: {e}")
+
     # -- Stage 2: Deterministic cleaning --
     engine = CleaningEngine(profile, llm_mappings)
     cleaned = engine.clean_workbook(sheets_dict)
@@ -1306,10 +1564,21 @@ def execute_cleaning_pipeline(
         "data": engine.get_summary(),
     })
 
+    # Add column mapping audit trail (3-layer transparency)
+    if mapping_audit:
+        artifacts.append({
+            "type": "table",
+            "label": "column_mapping_audit",
+            "data": mapping_audit,
+        })
+
     total_orig = sum(
         p["row_count"] for p in profile["sheet_profiles"].values()
     )
     total_clean = sum(len(df) for df in cleaned.values())
+
+    # Extract kpi_formula from LLM mappings (if present)
+    kpi_formula = llm_mappings.get("kpi_formula", {})
 
     return {
         "result": {
@@ -1328,4 +1597,5 @@ def execute_cleaning_pipeline(
         },
         "artifacts": artifacts,
         "profile": profile,
+        "kpi_formula": kpi_formula,
     }

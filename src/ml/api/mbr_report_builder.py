@@ -373,22 +373,33 @@ class MbrExcelRenderer:
             self._render_fallback()
             return self._save()
 
-        for sheet_plan in sheets:
-            name = re.sub(r'[:\\/?\*\[\]]', '-', sheet_plan.get("name", "Sheet"))[:31]
-            ws = self.wb.create_sheet(title=name)
-            row = 1
+        try:
+            for sheet_plan in sheets:
+                name = re.sub(r'[:\\/?\*\[\]]', '-', str(sheet_plan.get("name", "Sheet")))[:31]
+                ws = self.wb.create_sheet(title=name)
+                row = 1
 
-            for section in sheet_plan.get("sections", []):
-                section_type = section.get("type")
-                if section_type == "kpi_cards":
-                    row = self._render_kpi_cards(ws, row, section)
-                elif section_type == "narrative":
-                    row = self._render_narrative(ws, row, section)
-                elif section_type == "table":
-                    row = self._render_table_section(ws, row, section)
-                row += 1
+                for section in sheet_plan.get("sections", []):
+                    try:
+                        section_type = section.get("type")
+                        if section_type == "kpi_cards":
+                            row = self._render_kpi_cards(ws, row, section)
+                        elif section_type == "narrative":
+                            row = self._render_narrative(ws, row, section)
+                        elif section_type == "table":
+                            row = self._render_table_section(ws, row, section)
+                        row += 1
+                    except Exception as sec_ex:
+                        logger.warning(f"[ReportBuilder] Section render failed: {sec_ex}")
+                        row += 1
 
-            self._auto_fit_columns(ws)
+                self._auto_fit_columns(ws)
+        except Exception as ex:
+            logger.error(f"[ReportBuilder] Plan render failed, using fallback: {ex}")
+            # Reset and use fallback
+            self.wb = Workbook()
+            self.wb.remove(self.wb.active)
+            self._render_fallback()
 
         return self._save()
 
@@ -406,10 +417,10 @@ class MbrExcelRenderer:
         for i, metric in enumerate(metrics):
             col = i * 3 + 1
             label = metric.get("label", "")
-            value_key = metric.get("value_key", "")
+            value_key = str(metric.get("value_key", ""))
             fmt = metric.get("format", "number")
 
-            value = self.result_summary.get(value_key, "N/A")
+            value = self.result_summary.get(value_key, "N/A") if value_key else "N/A"
             display_value = self._format_kpi_value(value, fmt)
 
             for r in range(row, row + 3):
@@ -472,7 +483,13 @@ class MbrExcelRenderer:
     def _render_table_section(self, ws, start_row, section):
         """Render a data table with optional chart and insight."""
         idx = section.get("artifact_index")
-        if idx is None or idx >= len(self.artifacts):
+        if idx is None:
+            return start_row
+        try:
+            idx = int(idx)
+        except (ValueError, TypeError):
+            return start_row
+        if idx < 0 or idx >= len(self.artifacts):
             return start_row
 
         artifact = self.artifacts[idx]
@@ -819,11 +836,16 @@ async def build_mbr_report(agent_result, llm_config, call_llm_fn=None):
         e = raw.rfind("}")
         if s != -1 and e != -1:
             plan = json.loads(raw[s:e + 1])
+            logger.info(f"[ReportBuilder] LLM plan: {len(plan.get('sheets', []))} sheets")
+        else:
+            logger.warning(f"[ReportBuilder] No JSON found in LLM response: {raw[:200]}")
+            plan = None
 
-        logger.info(f"[ReportBuilder] LLM plan: {len(plan.get('sheets', []))} sheets")
-
+    except json.JSONDecodeError as jex:
+        logger.error(f"[ReportBuilder] JSON parse failed: {jex}. Raw: {raw[:200] if 'raw' in dir() else '?'}")
+        plan = None
     except Exception as ex:
-        logger.error(f"[ReportBuilder] LLM planning failed: {ex}")
+        logger.error(f"[ReportBuilder] LLM planning failed: {type(ex).__name__}: {ex}")
         plan = None
 
     # Step 2: Render Excel (use filtered artifacts so artifact_index matches planner output)

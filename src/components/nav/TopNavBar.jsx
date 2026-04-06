@@ -20,11 +20,11 @@ const NAV_ITEMS = [
 ];
 
 const DI_TOOL_ITEMS = [
-  { to: '/forecast',     label: 'Forecast Studio', icon: TrendingUp },
-  { to: '/risk',         label: 'Risk Center',     icon: ShieldAlert },
-  { to: '/digital-twin', label: 'Digital Twin',    icon: Cpu },
-  { to: '/scenarios',    label: 'Scenarios',       icon: GitCompare },
-  { to: '/negotiation',  label: 'Negotiation',     icon: Handshake },
+  { to: '/forecast',     label: 'Forecast Studio', icon: TrendingUp, soon: true },
+  { to: '/risk',         label: 'Risk Center',     icon: ShieldAlert, soon: true },
+  { to: '/digital-twin', label: 'Digital Twin',    icon: Cpu, soon: true },
+  { to: '/scenarios',    label: 'Scenarios',       icon: GitCompare, soon: true },
+  { to: '/negotiation',  label: 'Negotiation',     icon: Handshake, soon: true },
 ];
 
 const BOTTOM_ITEMS = [
@@ -81,8 +81,8 @@ export default function Sidebar() {
               DI Tools
             </span>
           )}
-          {DI_TOOL_ITEMS.map(({ to, label, icon: Icon }) => (
-            <SidebarLink key={to} to={to} label={label} icon={Icon} expanded={expanded} />
+          {DI_TOOL_ITEMS.map(({ to, label, icon: Icon, soon }) => (
+            <SidebarLink key={to} to={to} label={label} icon={Icon} expanded={expanded} soon={soon} />
           ))}
         </div>
       </nav>
@@ -158,7 +158,7 @@ export default function Sidebar() {
 
 /* ── Sidebar link item ── */
 // eslint-disable-next-line no-unused-vars -- Icon is used in JSX below; ESLint false positive on destructured rename
-function SidebarLink({ to, label, icon: Icon, end, expanded }) {
+function SidebarLink({ to, label, icon: Icon, end, expanded, soon }) {
   const location = useLocation();
 
   // Custom active matching: for links with query params (e.g. /workspace?widget=risk),
@@ -185,6 +185,7 @@ function SidebarLink({ to, label, icon: Icon, end, expanded }) {
         const active = hasQuery ? isActiveCustom : (isEmployeesLink ? isEmployeesActive : routerActive);
         return [
           'group relative flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-sm font-medium transition-colors',
+          soon ? 'text-[var(--text-muted)] opacity-50 cursor-default' :
           active
             ? 'bg-[var(--brand-50)] text-[var(--brand-600)]'
             : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-subtle)]',
@@ -202,11 +203,16 @@ function SidebarLink({ to, label, icon: Icon, end, expanded }) {
               <Icon className="w-5 h-5" />
             </span>
             <span
-              className={`whitespace-nowrap overflow-hidden transition-all duration-200 ${
+              className={`whitespace-nowrap overflow-hidden transition-all duration-200 flex items-center gap-1.5 ${
                 expanded ? 'opacity-100 w-auto' : 'opacity-0 w-0'
               }`}
             >
               {label}
+              {soon && expanded && (
+                <span className="text-[9px] px-1 py-0.5 rounded bg-[var(--text-muted)] text-[var(--surface-card)] opacity-50 leading-none">
+                  soon
+                </span>
+              )}
             </span>
           </>
         );

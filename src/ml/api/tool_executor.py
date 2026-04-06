@@ -2610,3 +2610,415 @@ async def agent_mbr_stream(request: Request):
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Connection": "keep-alive"},
     )
+
+
+# =====================================================================
+# Excel Report Builder (robust — handles all data types)
+# =====================================================================
+
+def _excel_safe_value(v):
+    """Convert any Python value to something openpyxl can write to a cell."""
+    if v is None:
+        return None
+    # numpy scalar → Python native
+    if hasattr(v, 'item'):
+        v = v.item()
+    # Timestamp/datetime → ISO string
+    if hasattr(v, 'isoformat'):
+        return str(v)
+    # float NaN/inf → None
+    if isinstance(v, float) and (v != v or v == float('inf') or v == float('-inf')):
+        return None
+    # dict/list/set/tuple → JSON string
+    if isinstance(v, (dict, list, set, tuple)):
+        try:
+            return json.dumps(v, default=str, ensure_ascii=False)[:500]
+        except Exception:
+            return str(v)[:500]
+    # bytes → skip
+    if isinstance(v, bytes):
+        return "(binary data)"
+    return v
+
+
+def _build_agent_excel(result: dict) -> str | None:
+    """Build Excel report from agent result. Returns download_id or None."""
+    import uuid
+    import tempfile
+
+    try:
+        import openpyxl as _xl
+
+        wb = _xl.Workbook()
+        wb.remove(wb.active)
+
+        # ── Sheet 1: Executive Summary ──
+        narrative = result.get("narrative", "")
+        if narrative:
+            ws = wb.create_sheet(title="Executive Summary")
+            for i, line in enumerate(narrative.split("\n"), 1):
+                ws.cell(row=i, column=1, value=str(line)[:32000])
+
+        # ── Sheet 2: Analysis Steps ──
+        steps_log = result.get("steps_log", [])
+        if steps_log:
+            ws = wb.create_sheet(title="Analysis Steps")
+            ws.append(["Tool", "Status", "Duration (ms)", "Summary"])
+            for sl in steps_log:
+                ws.append([
+                    str(sl.get("tool", "")),
+                    str(sl.get("status", "")),
+                    sl.get("duration_ms", ""),
+                    str(sl.get("summary", "") or "")[:500],
+                ])
+
+        # ── Sheet 3+: Artifact tables ──
+        all_artifacts = result.get("all_artifacts", [])
+        used_names = {"Executive Summary", "Analysis Steps"}
+        tables_added = 0
+
+        for art in all_artifacts:
+            if tables_added >= 30:
+                break
+
+            data = art.get("data")
+            label = str(art.get("label", "Sheet"))
+
+            # Skip empty, non-list, or non-table artifacts
+            if not data or not isinstance(data, list) or len(data) == 0:
+                continue
+            if not isinstance(data[0], dict):
+                continue
+
+            # Skip very large tables (>100 rows) unless they're summaries
+            if len(data) > 100:
+                label_lower = label.lower()
+                if not any(kw in label_lower for kw in ("summary", "overall", "total", "top", "kpi")):
+                    continue
+
+            # Skip metadata tables
+            label_lower = label.lower()
+            if any(skip in label_lower for skip in ("column mapping", "detection config", "(verify)")):
+                continue
+
+            # Create sheet with safe name
+            name = re.sub(r'[:\\/?\*\[\]]', '-', label)[:31]
+            base = name
+            idx = 2
+            while name in used_names:
+                name = f"{base[:28]}_{idx}"
+                idx += 1
+            used_names.add(name)
+
+            ws = wb.create_sheet(title=name)
+            headers = list(data[0].keys())
+            ws.append([str(h) for h in headers])
+
+            for row in data[:200]:  # Cap at 200 rows per sheet
+                cells = [_excel_safe_value(row.get(h)) for h in headers]
+                ws.append(cells)
+
+            tables_added += 1
+
+        # ── Save ──
+        if len(wb.sheetnames) == 0:
+            # No sheets at all — add at least a placeholder
+            ws = wb.create_sheet(title="Report")
+            ws.cell(row=1, column=1, value="Analysis complete. No tabular data to display.")
+
+        download_id = str(uuid.uuid4())[:8]
+        path = os.path.join(tempfile.gettempdir(), f"agent_{download_id}.xlsx")
+        wb.save(path)
+        _mbr_downloads[download_id] = path
+        logger.info(f"[agent/general] Excel saved: {path} ({len(wb.sheetnames)} sheets, {tables_added} data tables)")
+        return download_id
+
+    except Exception as ex:
+        import traceback
+        logger.error(f"[agent/general] Excel generation FAILED: {ex}\n{traceback.format_exc()[-500:]}")
+        return None
+
+
+# =====================================================================
+# General Agent Endpoint
+# =====================================================================
+
+@tool_executor_router.post("/agent/general/stream")
+async def agent_general_stream(request: Request):
+    """
+    General Agent with SSE streaming.
+    Routes /mbr to existing pipeline, free text to general agent.
+    Only 2 LLM calls: tool selection + synthesis.
+    """
+    from starlette.responses import StreamingResponse
+    from ml.api.agent_entry import run_general_agent
+    import asyncio
+
+    body = await request.json()
+    query = body.get("query", "")
+    sheets = body.get("sheets", {})
+
+    if not sheets:
+        async def error_stream():
+            yield f"data: {json.dumps({'type': 'error', 'message': 'No sheets provided'})}\n\n"
+        return StreamingResponse(error_stream(), media_type="text/event-stream")
+
+    llm_config = body.get("llm_config", {})
+    if not llm_config.get("provider"):
+        llm_config["provider"] = os.getenv("MBR_LLM_PROVIDER", "deepseek")
+    if not llm_config.get("model"):
+        llm_config["model"] = os.getenv("MBR_LLM_MODEL", "deepseek-chat")
+    # Direct key fallback (optional — Supabase ai-proxy is preferred)
+    if not llm_config.get("api_key"):
+        llm_config["api_key"] = os.getenv("DEEPSEEK_API_KEY", "")
+    if not llm_config.get("base_url"):
+        llm_config["base_url"] = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+
+    event_queue = asyncio.Queue()
+
+    async def on_step(info):
+        await event_queue.put(info)
+
+    async def run_agent_task():
+        try:
+            result = await run_general_agent(query, sheets, llm_config, on_step=on_step)
+            await event_queue.put({"type": "done", "result": result})
+        except Exception as e:
+            logger.error(f"[agent/general] Error: {e}")
+            await event_queue.put({"type": "error", "message": str(e)})
+
+    async def event_generator():
+        task = asyncio.create_task(run_agent_task())
+
+        while True:
+            try:
+                event = await asyncio.wait_for(event_queue.get(), timeout=120)
+            except asyncio.TimeoutError:
+                yield f"data: {json.dumps({'type': 'heartbeat'})}\n\n"
+                continue
+
+            evt_type = event.get("type", "")
+
+            if evt_type == "done":
+                result = event.get("result", {})
+                all_artifacts = result.get("all_artifacts", [])
+                artifact_count = len(all_artifacts)
+
+                # ── Excel Report Generation (robust — handles all data types) ──
+                download_id = _build_agent_excel(result)
+
+                # ── Send agent_done with download_id ──
+                safe_result = {
+                    "narrative": result.get("narrative", ""),
+                    "tools_used": result.get("tools_used", []),
+                    "route": result.get("route", ""),
+                    "reasoning": result.get("reasoning", ""),
+                    "total_duration_ms": result.get("total_duration_ms", 0),
+                    "artifact_count": artifact_count,
+                    "steps_log": result.get("steps_log", []),
+                    "download_id": download_id,
+                }
+                yield f"data: {json.dumps({'type': 'agent_done', 'result': safe_result}, default=str, ensure_ascii=False)}\n\n"
+
+                if download_id:
+                    yield f"data: {json.dumps({'type': 'artifacts_ready', 'count': artifact_count, 'download_id': download_id})}\n\n"
+
+                break
+
+            elif evt_type == "error":
+                yield f"data: {json.dumps({'type': 'error', 'message': event.get('message', 'Unknown error')})}\n\n"
+                break
+
+            else:
+                yield f"event: agent_event\ndata: {json.dumps(event, default=str, ensure_ascii=False)}\n\n"
+
+        if not task.done():
+            task.cancel()
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Connection": "keep-alive"},
+    )
+
+
+# =====================================================================
+# Eval Runner Endpoint
+# =====================================================================
+
+# =====================================================================
+# Mapping Rules API (3-Layer Rule System)
+# =====================================================================
+
+@tool_executor_router.get("/rules/user")
+async def get_user_rules():
+    """Get user column mapping corrections."""
+    from ml.api.mapping_rules import get_user_rules
+    return {"ok": True, "rules": get_user_rules()}
+
+
+@tool_executor_router.post("/rules/user")
+async def set_user_rules_endpoint(request: Request):
+    """Save user column mapping corrections."""
+    from ml.api.mapping_rules import set_user_rules
+    body = await request.json()
+    set_user_rules(body.get("rules", {}))
+    return {"ok": True}
+
+
+@tool_executor_router.post("/rules/user/column")
+async def add_user_column_override_endpoint(request: Request):
+    """Add a single user column mapping override."""
+    from ml.api.mapping_rules import add_user_column_override
+    body = await request.json()
+    add_user_column_override(
+        body.get("sheet", ""),
+        body.get("column", ""),
+        body.get("role", ""),
+    )
+    return {"ok": True}
+
+
+@tool_executor_router.get("/rules/company")
+async def get_company_rules():
+    """Get company-wide mapping rules."""
+    from ml.api.mapping_rules import get_company_rules
+    return {"ok": True, "rules": get_company_rules()}
+
+
+@tool_executor_router.post("/rules/company")
+async def set_company_rules_endpoint(request: Request):
+    """Save company-wide mapping rules (admin)."""
+    from ml.api.mapping_rules import set_company_rules
+    body = await request.json()
+    set_company_rules(body.get("rules", {}))
+    return {"ok": True}
+
+
+# =====================================================================
+# Python Analysis Tool Endpoints (replacing broken JS tools)
+# =====================================================================
+
+@tool_executor_router.post("/agent/eda")
+async def agent_eda(request: Request):
+    """Run EDA on uploaded sheets data. Python replacement for JS edaService."""
+    try:
+        from ml.api.mbr_agent import _run_eda_full
+        body = await request.json()
+        sheets = body.get("sheets", {})
+        if not sheets:
+            return {"ok": False, "error": "No sheets provided"}
+        result = _run_eda_full(sheets)
+        return {"ok": True, **result}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:300]}
+
+
+@tool_executor_router.post("/agent/anomaly")
+async def agent_anomaly(request: Request):
+    """Run anomaly detection on uploaded sheets data. Python replacement for JS anomalyDetectionService."""
+    try:
+        from ml.api.anomaly_engine import AnomalyDetector, build_auto_config, profile_for_anomaly
+        import pandas as _pd
+        body = await request.json()
+        sheets = body.get("sheets", {})
+        if not sheets:
+            return {"ok": False, "error": "No sheets provided"}
+        profile = profile_for_anomaly(sheets)
+        config = build_auto_config(profile)
+        dfs = {name: _pd.DataFrame(data) for name, data in sheets.items() if data}
+        detector = AnomalyDetector(dfs)
+        result = detector.detect(config)
+        return {"ok": True, **result}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:300]}
+
+
+@tool_executor_router.post("/agent/regression")
+async def agent_regression(request: Request):
+    """Run OLS regression on uploaded sheets data. Python replacement for JS regressionService."""
+    try:
+        from ml.api.mbr_agent import _run_regression
+        body = await request.json()
+        sheets = body.get("sheets", {})
+        if not sheets:
+            return {"ok": False, "error": "No sheets provided"}
+        result = _run_regression(sheets)
+        return {"ok": True, **result}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:300]}
+
+
+@tool_executor_router.post("/eval/run-tier1")
+async def eval_run_tier1(request: Request):
+    """Run all 15 Tier 1 tools against provided sheets data."""
+    start = time.time()
+    try:
+        from ml.api.eval_runner import run_all_tier1
+        body = await request.json()
+        sheets = body.get("sheets", {})
+        if not sheets:
+            return {"ok": False, "error": "No sheets provided"}
+        result = run_all_tier1(sheets)
+        result["execution_ms"] = int((time.time() - start) * 1000)
+        return result
+    except Exception as e:
+        logger.error(f"[eval/run-tier1] Error: {e}")
+        import traceback
+        return {"ok": False, "error": str(e), "stderr": traceback.format_exc()[-500:]}
+
+
+@tool_executor_router.post("/eval/run-pipeline")
+async def eval_run_pipeline(request: Request):
+    """Run pipeline eval: cleaning → KPI → variance → anomaly → forecast. Structural assertions."""
+    start = time.time()
+    try:
+        from ml.api.eval_runner import run_pipeline_eval
+        body = await request.json()
+        sheets = body.get("sheets", {})
+        use_llm = body.get("use_llm", False)
+
+        if not sheets:
+            return {"ok": False, "error": "No sheets provided"}
+
+        call_llm_fn = None
+        if use_llm:
+            # Build sync LLM caller for cleaning bootstrap
+            def _sync_llm(sys_p, usr_p, cfg):
+                api_key = os.getenv("DEEPSEEK_API_KEY")
+                base_url = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+                if not api_key:
+                    raise ValueError("No DEEPSEEK_API_KEY for LLM cleaning")
+                import httpx as hx
+                resp = hx.post(f"{base_url}/chat/completions", json={
+                    "model": "deepseek-chat", "temperature": 0.1, "max_tokens": 4000,
+                    "messages": [{"role": "system", "content": sys_p}, {"role": "user", "content": usr_p}],
+                }, headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}, timeout=120)
+                resp.raise_for_status()
+                return resp.json()["choices"][0]["message"].get("content") or ""
+            call_llm_fn = _sync_llm
+
+        # Auto-detect answer key from dataset name
+        answer_key = None
+        dataset_name = body.get("dataset_name", "")
+        if dataset_name:
+            try:
+                from ml.api.eval_specs.pipeline_answer_keys import (
+                    ANSWER_KEY_HARD, ANSWER_KEY_ELECTRONICS, ANSWER_KEY_REALFORMAT
+                )
+                if "hard" in dataset_name.lower():
+                    answer_key = ANSWER_KEY_HARD
+                elif "electronics" in dataset_name.lower():
+                    answer_key = ANSWER_KEY_ELECTRONICS
+                elif "realformat" in dataset_name.lower() or "real" in dataset_name.lower():
+                    answer_key = ANSWER_KEY_REALFORMAT
+            except ImportError:
+                pass
+
+        result = run_pipeline_eval(sheets, call_llm_fn=call_llm_fn, answer_key=answer_key)
+        result["execution_ms"] = int((time.time() - start) * 1000)
+        return result
+    except Exception as e:
+        logger.error(f"[eval/run-pipeline] Error: {e}")
+        import traceback
+        return {"ok": False, "error": str(e), "stderr": traceback.format_exc()[-500:]}

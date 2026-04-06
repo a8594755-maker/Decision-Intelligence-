@@ -163,17 +163,17 @@ export async function executeTool(toolName, args, context = {}) {
     return { success: false, error: `Unknown tool: ${toolName}` };
   }
 
-  // Python API tools need special handling
+  // Python API tools — dispatch via HTTP to Python backend
   if (entry.module === '__python_api__') {
-    // Allow run_python_analysis — calls /execute-tool with analysis_mode
+    // Specialized handlers for specific tools
     if (entry.id === 'run_python_analysis') {
       return callPythonAnalysisTool(entry, args, context);
     }
-    // Allow generate_analysis_workbook — calls /generate-analysis-workbook
     if (entry.id === 'generate_analysis_workbook') {
       return callAnalysisWorkbookTool(entry, args, context);
     }
-    return { success: false, error: `Python API tool "${toolName}" is not supported in chat agent mode yet.` };
+    // Generic Python API dispatch — works for all __python_api__ tools
+    return callGenericPythonApiTool(entry, args, context);
   }
 
   try {
@@ -423,6 +423,64 @@ async function callAnalysisWorkbookTool(entry, args, _context) {
     return {
       success: false,
       error: `Workbook generation failed: ${err.message}`,
+      toolId: entry.id,
+    };
+  }
+}
+
+// ── Generic Python API Tool Dispatch ────────────────────────────────────────
+// Works for ANY __python_api__ tool by parsing the method field (e.g. "POST /agent/mbr-kpi")
+// and dispatching to the Python ML API.
+
+async function callGenericPythonApiTool(entry, args, context) {
+  try {
+    // Parse method field: "POST /agent/mbr-kpi" → {httpMethod: "POST", path: "/agent/mbr-kpi"}
+    const methodParts = (entry.method || '').split(/\s+/);
+    const httpMethod = methodParts.length > 1 ? methodParts[0].toUpperCase() : 'POST';
+    const apiPath = methodParts.length > 1 ? methodParts[1] : methodParts[0];
+
+    if (!apiPath || !apiPath.startsWith('/')) {
+      return { success: false, error: `Invalid API path for ${entry.id}: ${entry.method}`, toolId: entry.id };
+    }
+
+    // Build request body from LLM args + context
+    const body = { ...args };
+    if (context.userId && !body.userId && !body.user_id) {
+      body.userId = context.userId;
+    }
+    // Pass sheets data if available (for MBR tools)
+    if (context.datasetInputData?.sheets && !body.sheets) {
+      body.sheets = context.datasetInputData.sheets;
+    }
+
+    const resp = await fetch(`${ML_API_BASE}${apiPath}`, {
+      method: httpMethod,
+      headers: { 'Content-Type': 'application/json' },
+      body: httpMethod !== 'GET' ? JSON.stringify(body) : undefined,
+      signal: typeof AbortSignal?.timeout === 'function' ? AbortSignal.timeout(180_000) : undefined,
+    });
+
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => '');
+      return {
+        success: false,
+        error: `${entry.id} failed (${resp.status}): ${text.slice(0, 300)}`,
+        toolId: entry.id,
+      };
+    }
+
+    const data = await resp.json();
+    return {
+      success: data.ok !== false,
+      result: data,
+      toolId: entry.id,
+      artifactTypes: entry.output_artifacts,
+    };
+  } catch (err) {
+    console.error(`[chatToolAdapter] Python API tool ${entry.id} failed:`, err);
+    return {
+      success: false,
+      error: `${entry.id} failed: ${err.message}`,
       toolId: entry.id,
     };
   }
