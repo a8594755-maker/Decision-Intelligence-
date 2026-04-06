@@ -250,8 +250,8 @@ ${type === 'donut' ? `.donut-center{position:absolute;top:45%;left:50%;transform
 .donut-total{font-size:22px;font-weight:700;color:${textColor}}
 .donut-label{font-size:10px;color:${subTextColor};margin-top:2px}` : ''}
 </style>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"><\/script>
-${hasAnnotations ? '<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3/dist/chartjs-plugin-annotation.min.js"><\/script>' : ''}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+${hasAnnotations ? '<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3/dist/chartjs-plugin-annotation.min.js"></script>' : ''}
 </head>
 <body>
 ${chartTitle ? `<h2>${escapeHtml(chartTitle)}</h2>` : ''}
@@ -292,7 +292,7 @@ window.addEventListener('load',function(){
 
   window.addEventListener('message',function(e){if(e.data&&e.data.type==='theme-change')location.reload()});
 });
-<\/script>
+</script>
 </body>
 </html>`;
 }
@@ -346,11 +346,11 @@ async function generateWithLLM(chart, { title } = {}) {
 
   // Inject theme
   const isDark = typeof document !== 'undefined' && document.documentElement.classList.contains('dark');
-  html = html.replace('</head>', `<script>window.__ARTISAN_DARK__=${isDark}<\/script>\n</head>`);
+  html = html.replace('</head>', `<script>window.__ARTISAN_DARK__=${isDark}</script>\n</head>`);
 
   // Inject full data if truncated
   if (chart.data.length > 50) {
-    html = html.replace('</head>', `<script>window.__CHART_FULL_DATA__=${JSON.stringify(chart.data)}<\/script>\n</head>`);
+    html = html.replace('</head>', `<script>window.__CHART_FULL_DATA__=${JSON.stringify(chart.data)}</script>\n</head>`);
   }
 
   return { html, provider, model };

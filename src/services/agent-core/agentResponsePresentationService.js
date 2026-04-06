@@ -360,7 +360,7 @@ function tryParseJsonCandidate(candidate) {
   const attempts = [
     text,
     text.replace(/,\s*([}\]])/g, '$1'),
-    text.replace(/,\s*([}\]])/g, '$1').replace(/[\x00-\x1F\x7F]/g, ' '),
+    text.replace(/,\s*([}\]])/g, '$1').replace(/[\p{Cc}]/gu, ' '),
   ];
 
   for (const attempt of attempts) {
@@ -1272,7 +1272,7 @@ function sanitizeBrief(brief) {
 
   // Strip markdown headers from headline
   if (brief.headline && typeof brief.headline === 'string') {
-    brief.headline = brief.headline.replace(/^#{1,4}\s*/, '').replace(/^\*{2}|[\*]{2}$/g, '').trim();
+    brief.headline = brief.headline.replace(/^#{1,4}\s*/, '').replace(/^\*{2}|\*{2}$/g, '').trim();
   }
 
   // Truncate summary if it contains markdown headers (sign of raw narrative dump)
@@ -1616,7 +1616,7 @@ function enforceFieldDeduplication(brief) {
 function enforceSummaryDensity(brief) {
   if (typeof brief.summary !== 'string') return brief;
   // Count distinct exact numbers in summary (e.g., "5,202,955" or "R$119.98")
-  const numberMatches = brief.summary.match(/(?:[$€£R\$¥]?\s*)?[\d,]+(?:\.\d+)?(?:\s*[%xX])?/g) || [];
+  const numberMatches = brief.summary.match(/(?:[$€£R$¥]?\s*)?[\d,]+(?:\.\d+)?(?:\s*[%xX])?/g) || [];
   // Filter to meaningful numbers (not single digits or years)
   const meaningfulNumbers = numberMatches.filter(m => {
     const cleaned = m.replace(/[,$€£R¥%xX\s]/g, '');
@@ -2375,8 +2375,7 @@ function detectPillNarrativeInconsistency(brief) {
 
         // Apply suffix
         const suffix = match[2] || '';
-        if (suffix === '%') narrativeNum = narrativeNum; // already in % form
-        else if (suffix === 'x' || suffix === '倍') narrativeNum = narrativeNum * 100; // convert multiplier to %
+        if (suffix === 'x' || suffix === '倍') narrativeNum *= 100; // convert multiplier to %
 
         // Compare pill value (already parsed, includes K/M/B expansion) vs narrative value
         const ratio = pillNum / narrativeNum;
@@ -4670,7 +4669,7 @@ export async function buildAgentPresentationPayload({
           repaired = repaired.slice(jsonStart, jsonEnd + 1);
         }
         repaired = repaired.replace(/,\s*([}\]])/g, '$1');
-        repaired = repaired.replace(/[\x00-\x1F\x7F]/g, ' ');
+        repaired = repaired.replace(/[\p{Cc}]/gu, ' ');
         const repairedBrief = JSON.parse(repaired);
         if (repairedBrief.headline || repairedBrief.summary) {
           initialBrief = repairedBrief;

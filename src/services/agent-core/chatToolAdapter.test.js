@@ -4,7 +4,7 @@ import { executeTool } from './chatToolAdapter.js';
 
 describe('chatToolAdapter python analysis context', () => {
   beforeEach(() => {
-    global.fetch = vi.fn();
+    globalThis.fetch = vi.fn();
   });
 
   afterEach(() => {

@@ -887,7 +887,7 @@ function buildSyntheticProfile({ rows, training_start, training_end, userId }) {
 // ── Utility Helpers ─────────────────────────────────────────────────────────
 
 function escapeStr(s) {
-  return String(s).replace(/[^0-9\-]/g, '').slice(0, 7);
+  return String(s).replace(/[^0-9-]/g, '').slice(0, 7);
 }
 
 function nextMonth(yearMonth) {

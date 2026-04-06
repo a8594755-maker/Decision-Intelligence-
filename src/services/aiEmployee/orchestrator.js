@@ -43,7 +43,6 @@ import { buildWritebackPayload } from '../artifacts/writebackPayloadBuilder.js';
 import { recordTaskValue } from '../roi/valueTrackingService.js';
 import { buildFullAuditTrail } from '../hardening/auditTrailService.js';
 import { isRalphLoopEnabled, runRalphLoop } from './ralphLoopAdapter.js';
-import { isClaudeSdkEnabled, runClaudeSdkLoop } from './claudeSdkAdapter.js';
 import { createCheckpoint } from './checkpointService.js';
 
 // ── Gate Pipeline ────────────────────────────────────────────────────────────
@@ -96,12 +95,20 @@ const ML_API_URL = typeof import.meta !== 'undefined' && import.meta.env?.VITE_M
 // Instead, a Node.js worker process picks up queued tasks from the DB.
 const _SERVER_EXEC = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_DI_SERVER_EXECUTION === 'true')
   || (typeof process !== 'undefined' && process.env?.VITE_DI_SERVER_EXECUTION === 'true');
+const _CLAUDE_SDK_ENABLED = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_DI_AGENT_RUNTIME === 'claude-sdk')
+  || (typeof process !== 'undefined' && process.env?.DI_AGENT_RUNTIME === 'claude-sdk');
 
 export function isServerExecutionMode() { return _SERVER_EXEC; }
 
 // When running inside the Node.js worker, this flag is set by the worker entry.
 let _isWorkerProcess = false;
 export function __setWorkerProcess(val) { _isWorkerProcess = !!val; }
+
+async function _runClaudeSdkLoop(taskId, opts) {
+  const modulePath = './claudeSdkAdapter.js';
+  const { runClaudeSdkLoop } = await import(/* @vite-ignore */ modulePath);
+  return runClaudeSdkLoop(taskId, opts);
+}
 
 // ── SSE Publishing ────────────────────────────────────────────────────────────
 
@@ -610,10 +617,10 @@ export async function _runTickLoop(taskId) {
 
   // ── Claude Agent SDK mode: autonomous tool-calling execution ──
   const perTaskSdk = task0?.input_context?.agent_runtime === 'claude-sdk' || task0?.plan_snapshot?.agent_runtime === 'claude-sdk';
-  if (isClaudeSdkEnabled() || perTaskSdk) {
+  if (_CLAUDE_SDK_ENABLED || perTaskSdk) {
     try {
       const taskTitle = task0.plan_snapshot?.title || task0.title || taskId;
-      const result = await runClaudeSdkLoop(taskId, { taskTitle });
+      const result = await _runClaudeSdkLoop(taskId, { taskTitle });
       console.log(`[Orchestrator] Claude SDK loop completed: ${result.completionReason} (${result.turns} turns, $${result.totalCostUsd?.toFixed(4)})`);
     } catch (err) {
       console.error(`[Orchestrator] Claude SDK loop error for task ${taskId}:`, err);

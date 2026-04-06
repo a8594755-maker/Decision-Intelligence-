@@ -52,8 +52,10 @@ export function getCachedSummary(keyOrFingerprint, currentFingerprint) {
  * @param {object} [data] - data to cache (when using 3-arg form)
  */
 export function setCachedSummary(keyOrSummary, fingerprintOrSummary, data) {
+  let cacheKey = DEFAULT_CACHE_KEY;
   try {
-    let cacheKey, fingerprint, summary;
+    let fingerprint;
+    let summary;
     if (data !== undefined) {
       // 3-arg form: (key, fingerprint, data)
       cacheKey = keyOrSummary;

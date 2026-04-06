@@ -276,6 +276,9 @@ export default function AIEmployeeHome() {
     setView('chat');
   }, [persistSelectedWorker]);
 
+  const [newTaskText, setNewTaskText] = useState('');
+  const [creatingTask, setCreatingTask] = useState(false);
+
   // Aggregate stats
   const stats = useMemo(() => {
     let totalCompleted = 0;
@@ -298,66 +301,7 @@ export default function AIEmployeeHome() {
     return { totalCompleted, totalOpen, totalReviewPending, avgOnTime, workerCount: workers.length };
   }, [workers, kpisMap]);
 
-  // Chat view
-  if (view === 'chat') {
-    return (
-      <div className="h-full min-w-0 overflow-hidden flex flex-col">
-        <div className="h-10 flex items-center justify-between gap-3 px-4 border-b flex-shrink-0" style={{ borderColor: 'var(--border-default)', backgroundColor: 'var(--surface-card)' }}>
-          <div className="flex items-center gap-2 min-w-0">
-            <button
-              onClick={() => setView('dashboard')}
-              className="text-xs font-medium px-2 py-1 rounded hover:bg-[var(--surface-subtle)] transition-colors"
-              style={{ color: 'var(--text-secondary)' }}
-            >
-              &larr; Dashboard
-            </button>
-            {workers.length > 0 ? (
-              <div className="flex items-center gap-2 min-w-0">
-                <span className="text-[11px] uppercase tracking-wide whitespace-nowrap" style={{ color: 'var(--text-muted)' }}>
-                  Delegating to
-                </span>
-                <select
-                  value={selectedWorker?.id || ''}
-                  onChange={(event) => persistSelectedWorker(event.target.value)}
-                  className="min-w-[180px] max-w-[260px] px-2.5 py-1 rounded-lg border text-xs focus:outline-none focus:ring-2 focus:ring-[var(--brand-500)]"
-                  style={{ borderColor: 'var(--border-default)', backgroundColor: 'var(--surface-bg)', color: 'var(--text-primary)' }}
-                >
-                  {workers.map((worker) => (
-                    <option key={worker.id} value={worker.id}>
-                      {worker.name} ({(worker.role || '').replace(/_/g, ' ')})
-                    </option>
-                  ))}
-                </select>
-              </div>
-            ) : null}
-          </div>
-          <button
-            onClick={() => navigate(selectedWorker ? `/employees/tasks?worker=${selectedWorker.id}` : '/employees/tasks')}
-            className="text-xs font-medium px-2 py-1 rounded hover:bg-[var(--surface-subtle)] transition-colors whitespace-nowrap"
-            style={{ color: 'var(--text-secondary)' }}
-          >
-            Task Board &rarr;
-          </button>
-        </div>
-        <div className="flex-1 min-w-0 min-h-0">
-          <Suspense fallback={null}>
-            <DecisionSupportView
-              user={user}
-              addNotification={addNotification}
-              mode="ai_employee"
-              activeWorkerId={selectedWorker?.id || null}
-              activeWorkerLabel={selectedWorker?.name || null}
-            />
-          </Suspense>
-        </div>
-      </div>
-    );
-  }
-
   // ── Create Task handler (unified intake pipeline) ──
-  const [newTaskText, setNewTaskText] = useState('');
-  const [creatingTask, setCreatingTask] = useState(false);
-
   const handleCreateTask = useCallback(async () => {
     if (!newTaskText.trim() || creatingTask) return;
     const text = newTaskText.trim();
@@ -419,6 +363,62 @@ export default function AIEmployeeHome() {
       setCreatingTask(false);
     }
   }, [newTaskText, creatingTask, selectedWorker, workers, user?.id, addNotification, navigate]);
+
+  // Chat view
+  if (view === 'chat') {
+    return (
+      <div className="h-full min-w-0 overflow-hidden flex flex-col">
+        <div className="h-10 flex items-center justify-between gap-3 px-4 border-b flex-shrink-0" style={{ borderColor: 'var(--border-default)', backgroundColor: 'var(--surface-card)' }}>
+          <div className="flex items-center gap-2 min-w-0">
+            <button
+              onClick={() => setView('dashboard')}
+              className="text-xs font-medium px-2 py-1 rounded hover:bg-[var(--surface-subtle)] transition-colors"
+              style={{ color: 'var(--text-secondary)' }}
+            >
+              &larr; Dashboard
+            </button>
+            {workers.length > 0 ? (
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="text-[11px] uppercase tracking-wide whitespace-nowrap" style={{ color: 'var(--text-muted)' }}>
+                  Delegating to
+                </span>
+                <select
+                  value={selectedWorker?.id || ''}
+                  onChange={(event) => persistSelectedWorker(event.target.value)}
+                  className="min-w-[180px] max-w-[260px] px-2.5 py-1 rounded-lg border text-xs focus:outline-none focus:ring-2 focus:ring-[var(--brand-500)]"
+                  style={{ borderColor: 'var(--border-default)', backgroundColor: 'var(--surface-bg)', color: 'var(--text-primary)' }}
+                >
+                  {workers.map((worker) => (
+                    <option key={worker.id} value={worker.id}>
+                      {worker.name} ({(worker.role || '').replace(/_/g, ' ')})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : null}
+          </div>
+          <button
+            onClick={() => navigate(selectedWorker ? `/employees/tasks?worker=${selectedWorker.id}` : '/employees/tasks')}
+            className="text-xs font-medium px-2 py-1 rounded hover:bg-[var(--surface-subtle)] transition-colors whitespace-nowrap"
+            style={{ color: 'var(--text-secondary)' }}
+          >
+            Task Board &rarr;
+          </button>
+        </div>
+        <div className="flex-1 min-w-0 min-h-0">
+          <Suspense fallback={null}>
+            <DecisionSupportView
+              user={user}
+              addNotification={addNotification}
+              mode="ai_employee"
+              activeWorkerId={selectedWorker?.id || null}
+              activeWorkerLabel={selectedWorker?.name || null}
+            />
+          </Suspense>
+        </div>
+      </div>
+    );
+  }
 
   // Dashboard view
   return (

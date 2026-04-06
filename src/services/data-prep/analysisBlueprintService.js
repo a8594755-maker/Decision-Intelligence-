@@ -119,7 +119,7 @@ OUTPUT FORMAT — return ONLY this JSON, nothing else:
   ]
 }`;
 
-  console.log(`[AnalysisBlueprint] Generating blueprint from ${schema.length} tables (source: ${source}, olist: ${hasOlist})`);
+  console.log(`[AnalysisBlueprint] Generating blueprint from ${schema.length} tables (source: ${source})`);
 
   const response = await invokeAiProxy('chat', {
     messages: [

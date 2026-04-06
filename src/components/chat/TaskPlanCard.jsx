@@ -3,7 +3,7 @@
 // TaskPlanCard.jsx — Renders a task decomposition for user approval.
 // Shows subtask list with time estimates, token cost breakdown, and approve/edit/cancel actions.
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 
 // ── Time & cost estimation heuristics ──
 const STEP_TIME_ESTIMATES = {
@@ -54,15 +54,20 @@ function getInitialModel(subtasks) {
  * @param {boolean} [props.disabled] - Disable actions
  */
 export default function TaskPlanCard({ decomposition, onApprove, onCancel, onEdit, disabled = false }) {
+  const subtasks = decomposition?.subtasks || [];
+  const showModelSelector = hasForecastStep(subtasks);
   const [expanded, setExpanded] = useState(false);
+  const [selectedModel, setSelectedModel] = useState(() => getInitialModel(subtasks));
 
-  if (!decomposition?.subtasks?.length) {
+  useEffect(() => {
+    setSelectedModel(getInitialModel(subtasks));
+  }, [subtasks]);
+
+  if (!subtasks.length) {
     return null;
   }
 
-  const { subtasks, confidence, estimated_cost, report_format, needs_dynamic_tool } = decomposition;
-  const showModelSelector = hasForecastStep(subtasks);
-  const [selectedModel, setSelectedModel] = useState(() => getInitialModel(subtasks));
+  const { confidence, estimated_cost, report_format, needs_dynamic_tool } = decomposition;
 
   // Build patched decomposition with selected model injected into forecast step
   function getApprovalDecomposition() {

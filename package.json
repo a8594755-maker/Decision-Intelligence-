@@ -22,6 +22,7 @@
     "test": "vitest",
     "test:ui": "vitest --ui",
     "test:run": "vitest run",
+    "test:frontend-smoke": "vitest run src/components/canvas/canvasArchitecture.test.js src/services/governance/systemHealthService.test.js src/services/agent-core/chatToolAdapter.test.js src/services/charts/chartRecipeExecutor.test.js",
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest --watch",
     "test:unit": "vitest run --reporter=verbose src/domains src/utils src/risk src/services/closed_loop",

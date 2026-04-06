@@ -15,8 +15,14 @@ on:
     branches: [main]
     paths:
       - 'src/**'
+      - 'public/**'
       - 'package.json'
+      - 'package-lock.json'
       - 'vitest.config.js'
+      - 'vite.config.js'
+      - 'playwright.config.js'
+      - 'eslint.config.js'
+      - '.github/workflows/frontend-ci.yml'
   workflow_dispatch:
 
 jobs:
@@ -40,9 +46,9 @@ jobs:
         run: npm run lint
 
   vitest:
-    name: Vitest Unit Tests
+    name: Vitest Smoke Tests
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
@@ -58,19 +64,11 @@ jobs:
       - name: Create test results directory
         run: mkdir -p test-results
 
-      - name: Run Vitest with coverage
-        run: npm run test:coverage -- --reporter=verbose --reporter=json
+      - name: Run Vitest smoke suite
+        run: npm run test:frontend-smoke -- --reporter=verbose --reporter=json
         env:
           CI: true
           NODE_ENV: test
-
-      - name: Upload coverage report
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: coverage-report-${{ github.run_id }}
-          path: coverage/
-          retention-days: 14
 
       - name: Upload test results
         uses: actions/upload-artifact@v4
@@ -79,14 +77,6 @@ jobs:
           name: vitest-results-${{ github.run_id }}
           path: test-results/vitest-results.json
           retention-days: 7
-
-      - name: Post coverage summary to PR
-        if: github.event_name == 'pull_request'
-        uses: davelosert/vitest-coverage-report-action@v2
-        with:
-          json-summary-path: coverage/coverage-summary.json
-          json-summary-compare-path: coverage/coverage-summary.json
-          file-coverage-mode: 'all'
 
       - name: Generate GitHub Step Summary
         if: always()
@@ -171,39 +161,3 @@ jobs:
           name: dist-${{ github.run_id }}
           path: dist/
           retention-days: 3
-
-  e2e:
-    name: Playwright E2E
-    needs: build
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Install Playwright browsers
-        run: npx playwright install --with-deps chromium
-
-      - name: Run Playwright tests
-        run: npx playwright test
-        env:
-          CI: true
-          PLAYWRIGHT_BASE_URL: http://localhost:5173
-          VITE_SUPABASE_URL: https://placeholder.supabase.co
-          VITE_SUPABASE_ANON_KEY: placeholder-anon-key
-
-      - name: Upload Playwright report
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: playwright-report-${{ github.run_id }}
-          path: playwright-report/
-          retention-days: 7

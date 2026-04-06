@@ -77,6 +77,8 @@ function ColumnStats({ col, data }) {
 
 export default function EdaReportCard({ payload }) {
   const [showAllColumns, setShowAllColumns] = useState(false);
+  const safeColumns = payload?.columns || {};
+  const columnEntries = useMemo(() => Object.entries(safeColumns), [safeColumns]);
 
   if (!payload) return null;
 
@@ -92,7 +94,6 @@ export default function EdaReportCard({ payload }) {
     total_rows,
   } = payload;
 
-  const columnEntries = useMemo(() => Object.entries(columns), [columns]);
   const visibleColumns = showAllColumns ? columnEntries : columnEntries.slice(0, 8);
 
   return (

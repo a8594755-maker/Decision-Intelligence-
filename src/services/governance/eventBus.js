@@ -183,6 +183,6 @@ export const eventBus = new EventBus();
 export default eventBus;
 
 // Dev-only: expose to console for manual event testing
-if (import.meta.env.DEV) {
+if (import.meta.env.DEV && typeof window !== 'undefined') {
   window.__eventBus = eventBus;
 }

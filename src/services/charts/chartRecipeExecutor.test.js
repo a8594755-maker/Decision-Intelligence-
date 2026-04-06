@@ -4,7 +4,7 @@ import { executeChartRecipe } from './chartRecipeExecutor.js';
 
 describe('chartRecipeExecutor', () => {
   beforeEach(() => {
-    global.fetch = vi.fn();
+    globalThis.fetch = vi.fn();
   });
 
   afterEach(() => {
