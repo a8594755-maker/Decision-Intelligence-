@@ -124,6 +124,7 @@ async def run_general_agent(
                 "type": "agent_thinking",
                 "phase": "tool_selection",
                 "thinking": thinking,
+                "model": f"{llm_config.get('provider', 'deepseek')}/{llm_config.get('model', 'deepseek-chat')}",
             })
         await on_step({
             "type": "plan_done",
@@ -149,9 +150,17 @@ async def run_general_agent(
     context = await run_agent_loop(tool_ids, sheets_data, llm_config, on_step)
 
     # ── Step 4: LLM Call #2 — Synthesis ──
-    from ml.api.agent_synthesizer import synthesize
+    from ml.api.agent_synthesizer import prepare_analysis_context, synthesize
 
-    narrative = await synthesize(context["findings_chain"], llm_config, on_step)
+    analysis_context = prepare_analysis_context(context["all_artifacts"])
+    if analysis_context.get("enriched_artifacts"):
+        context["all_artifacts"].extend(analysis_context["enriched_artifacts"])
+
+    narrative = await synthesize(
+        context["findings_chain"], llm_config, on_step,
+        all_artifacts=context["all_artifacts"],
+        analysis_context=analysis_context,
+    )
 
     # Note: Excel generation is handled by the SSE endpoint (tool_executor.py)
     # which builds Excel from narrative + steps_log + artifacts.

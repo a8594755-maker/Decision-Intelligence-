@@ -785,7 +785,7 @@ def _run_regression(sheets_data):
 async def _run_forecast_tool(sheets_data, prior_outputs):
     """Run demand forecast on time-series data from sheets."""
     from ml.demand_forecasting.forecaster_factory import ForecasterFactory
-    from collections import defaultdict
+    from ml.api.forecast_artifact_contract import build_forecast_artifact
 
     # Find sheet with date + qty/revenue columns
     for sn, rows in sheets_data.items():
@@ -810,6 +810,7 @@ async def _run_forecast_tool(sheets_data, prior_outputs):
             df[qty_col] = pd.to_numeric(df[qty_col], errors="coerce").fillna(0)
             daily = df.groupby(date_col)[qty_col].sum().sort_index()
             history = daily.tolist()
+            history_index = list(daily.index)
 
             if len(history) < 10:
                 return {"result": {}, "artifacts": [],
@@ -827,24 +828,33 @@ async def _run_forecast_tool(sheets_data, prior_outputs):
             p10 = pred_data.get("p10", [])
             p90 = pred_data.get("p90", [])
             model = pred_data.get("model_used", result.get("model_used", "?"))
-
-            forecast_table = []
-            for i, p in enumerate(preds):
-                row = {"day": i + 1, "p50": round(p, 1)}
-                if p10 and i < len(p10):
-                    row["p10"] = round(p10[i], 1)
-                if p90 and i < len(p90):
-                    row["p90"] = round(p90[i], 1)
-                forecast_table.append(row)
-
-            summary = (f"Forecast ({model}): {len(preds)} day predictions. "
-                       f"P50 range: {min(preds):.0f}-{max(preds):.0f}" if preds else "No predictions")
+            forecast_artifact = build_forecast_artifact(
+                predictions=preds,
+                p10=p10,
+                p90=p90,
+                model=model,
+                source_measure_col=qty_col,
+                source_date_col=date_col,
+                history_index=history_index,
+            )
+            measure_display_name = forecast_artifact.get("measure_display_name", "Forecast")
+            unit = forecast_artifact.get("value_unit", "unknown")
+            granularity = forecast_artifact.get("series_granularity", "unknown")
+            summary = (
+                f"Forecast ({model}): {len(preds)} {granularity} predictions for {measure_display_name} "
+                f"[unit={unit}]. P50 range: {min(preds):.0f}-{max(preds):.0f}"
+                if preds else "No predictions"
+            )
 
             return {
                 "result": {"model": model, "horizon": len(preds), "history_points": len(history),
-                           "predictions": preds, "p10": p10, "p90": p90},
-                "artifacts": [{"type": "table", "label": f"7-Day Demand Forecast ({model})",
-                               "data": forecast_table}],
+                           "predictions": preds, "p10": p10, "p90": p90,
+                           "measure_name": forecast_artifact.get("measure_name"),
+                           "value_unit": unit,
+                           "series_granularity": granularity,
+                           "source_measure_col": qty_col,
+                           "source_date_col": date_col},
+                "artifacts": [forecast_artifact],
                 "summary_for_narrative": summary,
             }
 
@@ -1062,6 +1072,74 @@ def _run_bom_tool(sheets_data):
     }
 
 
+def _add_deterministic_breakdowns(sheets_data, arts, scalar_kpis):
+    """Auto-generate groupby breakdowns for every (numeric, categorical) pair.
+
+    Fully generalized: no hardcoded column names or metric types.
+    For each categorical column (2-30 unique values) and each numeric column,
+    computes sum-based groupby and emits a semantic artifact.
+    Skips pairs already produced by the LLM KPI code path.
+    """
+    from ml.api.metric_registry import build_semantic_breakdown_artifact, _slug
+
+    for sn, rows in sheets_data.items():
+        if not rows or len(rows) < 5:
+            continue
+        df = pd.DataFrame(rows)
+
+        # Identify categorical columns (2-30 unique, non-numeric)
+        cat_cols = []
+        for col in df.columns:
+            if pd.api.types.is_numeric_dtype(df[col]):
+                continue
+            nunique = df[col].nunique()
+            if 2 <= nunique <= 30:
+                cat_cols.append(col)
+
+        # Identify numeric columns (>50% parseable as number)
+        num_cols = []
+        for col in df.columns:
+            numeric = pd.to_numeric(df[col], errors="coerce")
+            if numeric.notna().sum() > len(df) * 0.5:
+                num_cols.append(col)
+                df[col] = numeric  # ensure numeric dtype
+
+        if not cat_cols or not num_cols:
+            continue
+
+        # Collect existing (metric_id, dimension) from LLM-produced artifacts
+        existing = set()
+        for a in arts:
+            mid = _slug(a.get("metric_id") or "")
+            dim = _slug(a.get("dimension") or "")
+            if mid and dim:
+                existing.add((mid, dim))
+
+        # For every (categorical, numeric) pair, compute groupby sum
+        for cat_col in cat_cols:
+            dim_slug = _slug(cat_col)
+            for num_col in num_cols:
+                metric_slug = _slug(num_col)
+                breakdown_key = (metric_slug, dim_slug)
+                if breakdown_key in existing:
+                    continue
+
+                grouped = df.groupby(cat_col)[num_col].sum()
+                if grouped.abs().sum() < 1e-9:
+                    continue  # all zeros, skip
+
+                values = {str(k): round(float(v), 4) for k, v in grouped.items()}
+                art = build_semantic_breakdown_artifact(
+                    f"{metric_slug}_by_{dim_slug}", values,
+                    label=f"{num_col} by {cat_col}",
+                )
+                if art:
+                    arts.append(art)
+                    existing.add(breakdown_key)
+
+        break  # Only process the largest sheet
+
+
 async def _execute_tool(tool_id, sheets_data, prior_outputs, llm_config):
     """Execute a single tool and return structured result."""
     sync_llm = _make_sync_llm_caller(llm_config)
@@ -1080,6 +1158,7 @@ async def _execute_tool(tool_id, sheets_data, prior_outputs, llm_config):
             "rows_after": sum(len(v) for v in cleaned.values()),
             "artifacts": result.get("artifacts", []),
             "kpi_formula": result.get("kpi_formula", {}),
+            "date_columns": result.get("date_columns", []),
         }
 
     elif tool_id == "kpi_calculation":
@@ -1093,19 +1172,36 @@ async def _execute_tool(tool_id, sheets_data, prior_outputs, llm_config):
                 if len(sheets_data[sn]) > len(sheets_data.get(sheet_name, [])):
                     sheet_name = sn
             df = pd.DataFrame(sheets_data[sheet_name])
-            llm_kpi_result = await calculate_kpis_with_llm_code(df, sheet_name, llm_config, all_sheets=sheets_data)
+            date_cols = prior_outputs.get("data_cleaning", {}).get("date_columns", [])
+            llm_kpi_result = await calculate_kpis_with_llm_code(df, sheet_name, llm_config, all_sheets=sheets_data, date_columns=date_cols)
         except Exception as ex:
             logger.warning(f"[MBR Agent] LLM KPI code generation failed: {ex}")
 
         if llm_kpi_result and llm_kpi_result.get("success"):
             kpi_results = llm_kpi_result["results"]
             audit = llm_kpi_result["audit"]
+            from ml.api.metric_registry import build_semantic_breakdown_artifact
+
+            # Separate scalar KPIs from dict breakdowns
+            scalar_kpis = {}
+            breakdown_arts = []
+            for k, v in kpi_results.items():
+                if isinstance(v, dict):
+                    semantic_artifact = build_semantic_breakdown_artifact(k, v)
+                    if semantic_artifact:
+                        breakdown_arts.append(semantic_artifact)
+                elif isinstance(v, (list, pd.Series)):
+                    pass  # Skip arrays
+                else:
+                    scalar_kpis[k] = v
+
             # Build artifacts from LLM results
             arts = [{
                 "type": "table",
                 "label": "Overall KPIs",
-                "data": [kpi_results],
+                "data": [scalar_kpis],
             }]
+            arts.extend(breakdown_arts)
             if audit:
                 arts.append({
                     "type": "table",
@@ -1118,6 +1214,9 @@ async def _execute_tool(tool_id, sheets_data, prior_outputs, llm_config):
                         "execution_ms": audit.get("execution_time_ms", 0),
                     }],
                 })
+            # Deterministic category/segment/region breakdowns (guaranteed — doesn't rely on LLM)
+            _add_deterministic_breakdowns(sheets_data, arts, scalar_kpis)
+
             # Also run deterministic pipeline for breakdowns (by category, trend, etc.)
             from ml.api.kpi_calculator import execute_kpi_pipeline
             kpi_formula = prior_outputs.get("data_cleaning", {}).get("kpi_formula")
@@ -1496,7 +1595,13 @@ def select_key_tables(all_artifacts, max_tables=8):
             continue
         label = (art.get("label") or "").lower()
         # Skip metadata tables
-        if "column mapping" in label or "detection config" in label:
+        if any(skip in label for skip in (
+            "column mapping",
+            "detection config",
+            "metric contract",
+            "benchmark policy",
+            "data gaps & warnings",
+        )):
             continue
         score = 0
         for i, kw in enumerate(KEY_TABLE_PRIORITY):
@@ -1714,61 +1819,22 @@ async def run_mbr_agent(sheets_data, llm_config=None, on_step=None, filename="up
         if not existing:
             steps_log.append({"tool": tool_id, "summary": summary[:200]})
 
-    # ── Step 4: Synthesizer (streaming) ──
-    if on_step:
-        await on_step({"type": "synthesize_start"})
+    # ── Step 4: Shared Synthesizer ──
+    from ml.api.agent_synthesizer import prepare_analysis_context, synthesize
 
-    findings_text = ""
-    for tool_id, findings in context["findings_chain"]:
-        findings_text += f"\n### {tool_id}\n{findings}\n"
+    analysis_context = prepare_analysis_context(context["all_artifacts"])
+    if analysis_context.get("enriched_artifacts"):
+        context["all_artifacts"].extend(analysis_context["enriched_artifacts"])
 
-    key_tables = select_key_tables(context["all_artifacts"])
-    table_summary = f"{len(key_tables)} key tables + {len(context['all_artifacts'])} total tables available"
-
-    # Detect currencies from artifacts
-    detected_currencies = set()
-    for art in context["all_artifacts"]:
-        for row in (art.get("data") or [])[:10]:
-            if isinstance(row, dict):
-                cur = row.get("currency")
-                if cur and isinstance(cur, str) and len(cur) <= 5:
-                    detected_currencies.add(cur.upper())
-
-    currency_note = ""
-    if len(detected_currencies) > 1:
-        currency_note = (
-            f"\n\n## CRITICAL: MULTIPLE CURRENCIES DETECTED\n"
-            f"Currencies found: {sorted(detected_currencies)}\n"
-            f"Do NOT label any total as a single currency. "
-            f"Either break down by currency or state 'mixed currency'.\n"
-        )
-    elif len(detected_currencies) == 1:
-        cur = list(detected_currencies)[0]
-        currency_note = f"\n\nCurrency: All amounts are in {cur}.\n"
-
-    narrative = ""
-    synth_prompt = SYNTHESIZER_USER_TEMPLATE.format(
-        findings_chain_text=findings_text + currency_note,
-        table_summary=table_summary,
+    narrative = await synthesize(
+        context["findings_chain"],
+        llm_config,
+        on_step=on_step,
+        all_artifacts=context["all_artifacts"],
+        analysis_context=analysis_context,
     )
 
-    try:
-        if on_step:
-            # Streaming mode — emit chunks as they arrive
-            word_count = 0
-            async for chunk in _call_llm_stream(synth_prompt, SYNTHESIZER_SYSTEM_PROMPT, llm_config):
-                narrative += chunk
-                word_count += len(chunk.split())
-                await on_step({"type": "synthesize_chunk", "text": chunk})
-            await on_step({"type": "synthesize_done", "word_count": word_count})
-        else:
-            # Non-streaming fallback (for /agent/mbr non-SSE endpoint)
-            narrative = await _call_llm_raw(synth_prompt, SYNTHESIZER_SYSTEM_PROMPT, llm_config)
-    except Exception as ex:
-        logger.error(f"[MBR Agent] Synthesizer failed: {ex}")
-        narrative = f"Synthesizer error: {ex}\n\nRaw findings:\n{findings_text}"
-        if on_step:
-            await on_step({"type": "synthesize_done", "word_count": 0, "error": str(ex)[:200]})
+    key_tables = select_key_tables(context["all_artifacts"])
 
     # ── Step 5: Generate formatted Excel report ──
     excel_report = None
