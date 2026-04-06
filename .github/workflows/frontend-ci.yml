@@ -69,6 +69,9 @@ jobs:
         env:
           CI: true
           NODE_ENV: test
+          VITE_SUPABASE_URL: https://placeholder.supabase.co
+          VITE_SUPABASE_ANON_KEY: placeholder-anon-key
+          VITE_ML_API_URL: http://localhost:8000
 
       - name: Upload test results
         uses: actions/upload-artifact@v4
