@@ -106,6 +106,8 @@ def compute_priority_scores(
         dimension = comparison["dimension"]
         direction = comparison.get("preferred_direction", "unknown")
 
+        peer_count = len(comparison.get("rows", []))
+
         for row in comparison.get("rows", []):
             dim_value = row.get("dimension_value", "?")
             metric_value = _safe_float(row.get("metric_value"))
@@ -171,6 +173,7 @@ def compute_priority_scores(
                 "priority_score": round(priority, 4),
                 "role": _match_role(metric_id),
                 "type": "breakdown_row",
+                "peer_count": peer_count,
             })
 
     # Score scalar metrics (no delta, use magnitude or flag as context)
@@ -471,8 +474,13 @@ def build_key_metrics_table(
             val = _format_ref_value(s["value"])
             lines.append(f"| {name} | {val} | — |")
 
-    # Add top 3 outlier findings (only if they have a real benchmark — no fabrication)
-    outliers = [s for s in scored_items if s["type"] == "breakdown_row" and s["is_bad"] and s.get("benchmark") is not None][:3]
+    # Add top 3 outlier findings — only with statistically meaningful benchmarks (3+ peers)
+    outliers = [
+        s for s in scored_items
+        if s["type"] == "breakdown_row" and s["is_bad"]
+        and s.get("benchmark") is not None
+        and s.get("peer_count", 0) >= 3  # need 3+ data points for meaningful peer median
+    ][:3]
     for o in outliers:
         name = f"{o['dimension_value']} {o['metric_id'].replace('_', ' ')}"
         val = _format_ref_value(o["value"])

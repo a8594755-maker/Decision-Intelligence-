@@ -438,6 +438,10 @@ def build_semantic_breakdown_artifact(raw_name: str, values: dict[Any, Any], lab
             continue
         if metric_value is None:
             continue
+        # Skip NaT/NaN/None dimension keys
+        dim_str = str(dim_value)
+        if dim_str in ("NaT", "nan", "None", "null", ""):
+            continue
         if isinstance(metric_value, float):
             metric_value = round(metric_value, 4)
         rows.append({

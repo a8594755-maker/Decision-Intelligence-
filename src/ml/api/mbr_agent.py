@@ -1255,6 +1255,20 @@ async def _execute_tool(tool_id, sheets_data, prior_outputs, llm_config):
             scalar_kpis.update(extra_results)
             all_arts.extend(extra_arts)
 
+            # Deduplicate breakdown artifacts by (metric_id, dimension)
+            seen_breakdowns = set()
+            deduped_arts = []
+            for art in all_arts:
+                mid = (art.get("metric_id") or "").lower()
+                dim = (art.get("dimension") or "").lower()
+                if mid and dim:
+                    key = (mid, dim)
+                    if key in seen_breakdowns:
+                        continue
+                    seen_breakdowns.add(key)
+                deduped_arts.append(art)
+            all_arts = deduped_arts
+
             # Build summary from scalar KPIs (LLM + guardrail-filled)
             llm_summary_parts = []
             for k, v in scalar_kpis.items():
