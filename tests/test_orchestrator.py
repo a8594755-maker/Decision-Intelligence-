@@ -79,7 +79,10 @@ class TestSortKeyDeterminism(unittest.TestCase):
             _make_result("lightgbm", mape=5.0, bias=2.0),
             _make_result("chronos", mape=4.0, bias=10.0),
         ]
-        expected_order = ["chronos", "lightgbm", "prophet"]
+        # Composite score (0.5*mape + 0.3*|bias| + 0.2*(100-50)):
+        #   lightgbm: 0.5*5+0.3*2+10=13.1, prophet: 13.1, chronos: 0.5*4+0.3*10+10=15.0
+        # Tie-break lightgbm vs prophet: complexity (lightgbm=2 < prophet=3)
+        expected_order = ["lightgbm", "prophet", "chronos"]
         for _ in range(100):
             sorted_results = sorted(results, key=_sort_key)
             actual_order = [r.model_name for r in sorted_results]
