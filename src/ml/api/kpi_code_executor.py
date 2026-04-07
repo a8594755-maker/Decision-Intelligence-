@@ -184,6 +184,24 @@ def execute_kpi_code(code: str, df: pd.DataFrame, expected_outputs: list[str], d
     t0 = time.time()
     try:
         exec(code, sandbox_globals, sandbox_locals)
+    except (ValueError, TypeError) as e:
+        # Common cause: NaT values in date columns crash .dt.days or comparisons
+        # Retry with NaT rows dropped from date columns
+        logger.warning(f"[KPICode] First exec failed ({type(e).__name__}), retrying with NaT-safe df...")
+        safe_df = clean_df.copy()
+        date_cols_in_df = [c for c in safe_df.columns if pd.api.types.is_datetime64_any_dtype(safe_df[c])]
+        if date_cols_in_df:
+            safe_df = safe_df.dropna(subset=date_cols_in_df, how="any")
+            sandbox_globals["df"] = safe_df
+            sandbox_locals = {}
+            try:
+                exec(code, sandbox_globals, sandbox_locals)
+            except Exception as e2:
+                return {"success": False, "results": {}, "error": f"{type(e2).__name__}: {e2}",
+                        "sanity_issues": [], "execution_time_ms": int((time.time() - t0) * 1000)}
+        else:
+            return {"success": False, "results": {}, "error": f"{type(e).__name__}: {e}",
+                    "sanity_issues": [], "execution_time_ms": int((time.time() - t0) * 1000)}
     except Exception as e:
         return {"success": False, "results": {}, "error": f"{type(e).__name__}: {e}",
                 "sanity_issues": [], "execution_time_ms": int((time.time() - t0) * 1000)}
