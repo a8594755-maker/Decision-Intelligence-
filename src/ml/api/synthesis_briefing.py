@@ -474,12 +474,13 @@ def build_key_metrics_table(
             val = _format_ref_value(s["value"])
             lines.append(f"| {name} | {val} | — |")
 
-    # Add top 3 outlier findings — only with statistically meaningful benchmarks (3+ peers)
+    # Add top 3 outlier findings — only from concise dimensions (≤10 peers = top-level categories)
+    # Sub-category level (17 peers) is too granular for Key Metrics summary
     outliers = [
         s for s in scored_items
         if s["type"] == "breakdown_row" and s["is_bad"]
         and s.get("benchmark") is not None
-        and s.get("peer_count", 0) >= 3  # need 3+ data points for meaningful peer median
+        and 3 <= s.get("peer_count", 0) <= 10
     ][:3]
     for o in outliers:
         name = f"{o['dimension_value']} {o['metric_id'].replace('_', ' ')}"
