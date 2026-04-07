@@ -181,9 +181,9 @@ async def _call_supabase_ai_proxy(prompt: str, system_prompt: str, provider: str
 
     # Map provider → ai-proxy mode
     # Use Responses API for OpenAI reasoning models, Chat Completions for others
-    reasoning_effort = config.reasoning_effort if config else None
-    _is_openai_reasoning = (provider == "openai" and reasoning_effort
-                            and reasoning_effort in ("low", "medium", "high", "xhigh"))
+    # Must resolve reasoning_effort the same way _call_openai does — default "medium" for gpt-5.4
+    reasoning_effort = _resolve_reasoning_effort(model, config or LLMConfig()) if provider == "openai" else None
+    _is_openai_reasoning = bool(reasoning_effort and reasoning_effort in ("low", "medium", "high", "xhigh"))
     mode_map = {
         "anthropic": "anthropic_chat",
         "openai": "openai_responses" if _is_openai_reasoning else "openai_chat",
@@ -207,7 +207,7 @@ async def _call_supabase_ai_proxy(prompt: str, system_prompt: str, provider: str
         }
     elif mode == "openai_responses":
         # OpenAI Responses API — supports reasoning_effort for GPT-5.4
-        reasoning_effort = config.reasoning_effort if config else None
+        # reasoning_effort already resolved above via _resolve_reasoning_effort
         payload = {
             "message": prompt,
             "systemPrompt": system_prompt,

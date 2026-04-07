@@ -32,7 +32,7 @@ BLOCKED_PATTERNS = [
 ]
 
 MAX_CODE_LENGTH = 5000
-MAX_CODE_LINES = 100
+MAX_CODE_LINES = 200
 
 
 def _strip_safe_imports(code: str) -> str:
