@@ -614,4 +614,44 @@ Model Routing:
 | v7→v9 | 6.2→5.8 | Failed experiments (placeholders, JSON claims, micro-calls) |
 | v10→v15 | 7.1→8.5 | Rebuilding with guardrails + hybrid architecture |
 
-*Log updated: 2026-04-07. Total experiments: 31.*
+## EXP-032: Generalization Test — Financial Sample (scored 8.6/10)
+**Date:** 2026-04-07
+**Hypothesis:** The V5+V9 hybrid architecture works on any dataset, not just Superstore.
+**Dataset:** Microsoft Financial Sample (700 rows, 16 columns: Segment, Country, Product, Discount Band, Units Sold, Manufacturing Price, Sale Price, Gross Sales, Discounts, Sales, COGS, Profit, Date, Month Number, Month Name, Year)
+
+**Result:** 8.6/10 — nearly identical to Superstore's 8.7/10.
+
+**What worked on a completely different dataset:**
+- KPI extraction correct: revenue $127.9M, profit $16.9M, margin 13.21%, discount rate 7.20%
+- Quarantine filtered ID/date columns correctly (no garbage metrics)
+- Priority ranking surfaced real issues: Channel Partners negative margin, Enterprise -2.92%
+- Reviewer caught metric labeling errors (share% vs dollar values mixed)
+- Final report correctly downgraded unsupported claims
+
+**New issue discovered (not seen in Superstore):**
+- Share metrics and dollar metrics get mixed labels — e.g., "Government 44.10" could be share% or scaled value
+- Anomaly count mismatch: tool reports 1299 anomaly events vs 50/700 anomalous rows — different counting units
+
+**Key insight:** The architecture generalizes because all rules are semantic (metric_id patterns, quarantine keywords, priority scoring formula). No Superstore-specific logic exists.
+
+## EXP-033: All LLM Calls via Supabase Edge Function
+**Date:** 2026-04-07
+**Change:** Added `openai_responses` mode to ai-proxy edge function, `DI_FORCE_PROXY=true` env var.
+**Result:** All 4 providers (OpenAI, DeepSeek, Kimi, Anthropic) work via Supabase proxy. No local API keys needed.
+**Impact:** Deployment-ready. Keys managed centrally in Supabase secrets.
+
+## Version Quality Tracker (Final)
+
+| Version | Date | Score | Dataset | Key Achievement |
+|---------|------|-------|---------|-----------------|
+| v1 | 04-03 | 6.0 | Superstore | First working pipeline |
+| v5 | 04-06 | 8.4 | Superstore | Metric contract + benchmark (first time Furniture found) |
+| v7 | 04-06 | 6.2 | Superstore | [[reference]] system — FAILED |
+| v8 | 04-06 | 6.6 | Superstore | JSON enum claims — partial success |
+| v9 | 04-06 | 5.8 | Superstore | Micro-calls — too fragmented |
+| v14 | 04-06 | 3.5 | Superstore | Diagnostic log bug crashed KPI |
+| v15 | 04-07 | 8.5 | Superstore | V5+V9 hybrid + 4 guardrails |
+| **v16** | **04-07** | **8.7** | **Superstore** | **Key Metrics cleanup, best ever** |
+| **v17** | **04-07** | **8.6** | **Financial Sample** | **Generalization confirmed** |
+
+*Log updated: 2026-04-07. Total experiments: 33.*
