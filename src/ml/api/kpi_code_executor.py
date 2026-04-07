@@ -310,7 +310,7 @@ Based on the domain detected, calculate the RIGHT KPIs:
 4. Handle zero denominators: use max(denominator, 1)
 5. For percentage KPIs: use AGGREGATE method (sum/sum), NEVER mean of per-row percentages
 6. CRITICAL: Do NOT calculate revenue/margin from procurement data. Purchase amount is COST, not revenue.
-7. If dates exist, parse them: pd.to_datetime(df[col], errors='coerce')
+7. If dates exist, parse them: pd.to_datetime(df[col], errors='coerce'). Always use .dropna() before .dt.days or .mean() — NaT values will crash math operations.
 8. REVENUE COLUMN SELECTION: If multiple revenue-like columns exist:
    - Pick the column whose sum best reconciles with profit + cost (e.g., revenue - cost ≈ profit)
    - Do NOT assume any column is "gross" or "net" based on name alone — validate from the data
