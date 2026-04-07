@@ -23,7 +23,8 @@ type ProxyMode =
   | 'kimi_chat_tools'
   | 'anthropic_billing'
   | 'openai_billing'
-  | 'kimi_billing';
+  | 'kimi_billing'
+  | 'openai_responses';
 
 interface ProxyRequestBody {
   mode?: ProxyMode;
@@ -2911,6 +2912,91 @@ const handleKimiChat = async (payload: Record<string, unknown>) => {
   return jsonResponse({ ok: true, ...result });
 };
 
+// ── OpenAI Responses API (for reasoning models like gpt-5.4) ──────────────
+const handleOpenAIResponses = async (payload: Record<string, unknown>) => {
+  const message = String(payload?.message || '').trim();
+  if (!message) return jsonResponse({ error: 'Missing required field: message' }, 400);
+  if (!OPENAI_API_KEY) return jsonResponse({ error: 'OPENAI_API_KEY is not configured.' }, 500);
+
+  const model = String(payload?.model || 'gpt-5.4').trim();
+  const systemPrompt = String(payload?.systemPrompt || '').trim();
+  const maxOutputTokens = Math.max(64, Math.floor(toFiniteNumber(payload?.maxOutputTokens, 8192)));
+  const reasoningEffort = String(payload?.reasoningEffort || 'medium').trim();
+
+  const requestBody: Record<string, unknown> = {
+    model,
+    instructions: systemPrompt,
+    input: message,
+    text: { format: { type: 'text' } },
+    max_output_tokens: maxOutputTokens,
+  };
+
+  // Only add reasoning config for reasoning-capable models
+  if (['high', 'medium', 'low'].includes(reasoningEffort)) {
+    requestBody.reasoning = { effort: reasoningEffort, summary: 'auto' };
+  }
+
+  const t = performance.now();
+  const response = await fetch(`${OPENAI_BASE_URL}/v1/responses`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${OPENAI_API_KEY}`,
+    },
+    body: JSON.stringify(requestBody),
+  });
+  const elapsed = Math.round(performance.now() - t);
+
+  if (!response.ok) {
+    const errorData = await response.text().catch(() => '');
+    console.warn(`[ai-proxy] OpenAI Responses API failed (${response.status}) in ${elapsed}ms: ${errorData.slice(0, 300)}`);
+    return jsonResponse({ error: `OpenAI Responses API error: ${response.status}`, details: errorData.slice(0, 500) }, response.status);
+  }
+
+  const data = await response.json() as Record<string, unknown>;
+  console.info(`[ai-proxy] OpenAI Responses API model=${model} effort=${reasoningEffort} OK in ${elapsed}ms`);
+
+  // Extract text from output items
+  let text = '';
+  let reasoningText = '';
+  const output = Array.isArray(data?.output) ? data.output : [];
+  for (const item of output) {
+    const itemObj = item as Record<string, unknown>;
+    if (itemObj.type === 'reasoning') {
+      const summaries = Array.isArray(itemObj.summary) ? itemObj.summary : [];
+      for (const s of summaries) {
+        const sObj = s as Record<string, unknown>;
+        if (sObj.type === 'summary_text' && typeof sObj.text === 'string') {
+          reasoningText += sObj.text + '\n';
+        }
+      }
+    }
+    if (itemObj.type === 'message') {
+      const content = Array.isArray(itemObj.content) ? itemObj.content : [];
+      for (const c of content) {
+        const cObj = c as Record<string, unknown>;
+        if (cObj.type === 'output_text' && typeof cObj.text === 'string') {
+          text = cObj.text;
+        }
+      }
+    }
+  }
+
+  if (!text && typeof data?.output_text === 'string') {
+    text = data.output_text;
+  }
+
+  return jsonResponse({
+    ok: true,
+    provider: 'openai',
+    model,
+    text,
+    reasoning: reasoningText.trim() || null,
+    raw: data,
+    usage: data?.usage || null,
+  });
+};
+
 const handleOpenAIChat = async (payload: Record<string, unknown>) => {
   const message = String(payload?.message || '').trim();
   if (!message) return jsonResponse({ error: 'Missing required field: message' }, 400);
@@ -3763,6 +3849,7 @@ Deno.serve(async (req) => {
     if (mode === 'anthropic_chat_tools') return wrapCors(await handleAnthropicChatTools(payload));
     if (mode === 'kimi_chat') return wrapCors(await handleKimiChat(payload));
     if (mode === 'kimi_chat_tools') return wrapCors(await handleKimiChatTools(payload));
+    if (mode === 'openai_responses') return wrapCors(await handleOpenAIResponses(payload));
     if (mode === 'openai_chat') return wrapCors(await handleOpenAIChat(payload));
     if (mode === 'openai_chat_tools') return wrapCors(await handleOpenAIChatTools(payload));
     if (mode === 'gemini_native') {

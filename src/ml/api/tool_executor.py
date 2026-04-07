@@ -169,7 +169,8 @@ def _pick_provider(config: Optional[LLMConfig]) -> LLMConfig:
 
 
 async def _call_supabase_ai_proxy(prompt: str, system_prompt: str, provider: str,
-                                   model: str, temperature: float, max_tokens: int) -> str:
+                                   model: str, temperature: float, max_tokens: int,
+                                   config: Optional['LLMConfig'] = None) -> str:
     """Route LLM call through Supabase Edge Function ai-proxy.
 
     This allows the Python backend to use Claude, OpenAI, Gemini etc. without
@@ -179,9 +180,13 @@ async def _call_supabase_ai_proxy(prompt: str, system_prompt: str, provider: str
     auth_key = SUPABASE_SERVICE_ROLE_KEY or SUPABASE_ANON_KEY
 
     # Map provider → ai-proxy mode
+    # Use Responses API for OpenAI reasoning models, Chat Completions for others
+    reasoning_effort = config.reasoning_effort if config else None
+    _is_openai_reasoning = (provider == "openai" and reasoning_effort
+                            and reasoning_effort in ("low", "medium", "high", "xhigh"))
     mode_map = {
         "anthropic": "anthropic_chat",
-        "openai": "openai_chat",
+        "openai": "openai_responses" if _is_openai_reasoning else "openai_chat",
         "deepseek": "deepseek_chat",
         "gemini": "gemini_generate",
         "kimi": "kimi_chat",
@@ -199,6 +204,16 @@ async def _call_supabase_ai_proxy(prompt: str, system_prompt: str, provider: str
                 "maxOutputTokens": max_tokens,
                 "responseMimeType": "application/json",
             },
+        }
+    elif mode == "openai_responses":
+        # OpenAI Responses API — supports reasoning_effort for GPT-5.4
+        reasoning_effort = config.reasoning_effort if config else None
+        payload = {
+            "message": prompt,
+            "systemPrompt": system_prompt,
+            "maxOutputTokens": max_tokens,
+            "model": model,
+            "reasoningEffort": reasoning_effort or "medium",
         }
     elif mode in ("anthropic_chat", "openai_chat", "deepseek_chat", "kimi_chat"):
         payload = {
@@ -256,6 +271,12 @@ async def _call_llm(prompt: str, system_prompt: str, config: LLMConfig, json_sch
 
     logger.info(f"[tool_executor] Calling LLM: {provider}/{model}")
 
+    # Force all calls through Supabase proxy (set DI_FORCE_PROXY=true to avoid local API keys)
+    force_proxy = os.getenv("DI_FORCE_PROXY", "").lower() in ("true", "1", "yes")
+    if force_proxy and _has_supabase_proxy():
+        logger.info(f"[tool_executor] Force proxy: routing {provider}/{model} via Supabase ai-proxy")
+        return await _call_supabase_ai_proxy(prompt, system_prompt, provider, model, temperature, max_tokens, config=config)
+
     # Check if we have a direct API key for this provider
     direct_key_map = {
         "gemini": GOOGLE_API_KEY,
@@ -281,7 +302,7 @@ async def _call_llm(prompt: str, system_prompt: str, config: LLMConfig, json_sch
     # No direct key — route through Supabase ai-proxy
     if _has_supabase_proxy():
         logger.info(f"[tool_executor] Routing {provider} via Supabase ai-proxy")
-        return await _call_supabase_ai_proxy(prompt, system_prompt, provider, model, temperature, max_tokens)
+        return await _call_supabase_ai_proxy(prompt, system_prompt, provider, model, temperature, max_tokens, config=config)
 
     raise ValueError(f"No API key for {provider} and no Supabase ai-proxy configured.")
 
