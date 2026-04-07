@@ -150,28 +150,25 @@ def execute_kpi_code(code: str, df: pd.DataFrame, expected_outputs: list[str], d
             if converted.notna().sum() > len(clean_df) * 0.3:
                 clean_df[col] = converted
 
-    # Pre-process date columns: use cleaning metadata if available, else detect by name
+    # Pre-process ONLY numeric date columns (Excel serial numbers like 42370).
+    # String dates (like '2-Jun-06') are left for LLM code to parse.
+    # This avoids the conflict where LLM code does pd.to_datetime(col, origin='1899-12-30')
+    # on an already-parsed datetime64 column → crash.
     date_kw = ("date", "day", "time", "ship", "order_date", "deliver")
-    cols_to_parse = set(date_columns or [])
     for col in clean_df.columns:
         cl = str(col).lower()
-        if any(kw in cl for kw in date_kw):
-            cols_to_parse.add(col)
-
-    for col in cols_to_parse:
-        if col not in clean_df.columns:
+        if not any(kw in cl for kw in date_kw):
             continue
         if pd.api.types.is_datetime64_any_dtype(clean_df[col]):
-            continue
+            continue  # already datetime — skip
         if pd.api.types.is_numeric_dtype(clean_df[col]):
-            # Likely Excel serial dates (e.g., 42370 = 2016-01-01)
+            # Numeric column with date keyword → likely Excel serial dates
             vals = clean_df[col].dropna()
             if len(vals) > 0 and 25000 < vals.median() < 70000:
                 clean_df[col] = pd.to_datetime(
                     clean_df[col], unit="D", origin="1899-12-30", errors="coerce"
                 )
-        else:
-            clean_df[col] = pd.to_datetime(clean_df[col], errors="coerce")
+        # String dates: do NOT pre-parse — let LLM code handle with pd.to_datetime(errors='coerce')
 
     sandbox_globals = {
         "__builtins__": ALLOWED_BUILTINS,
