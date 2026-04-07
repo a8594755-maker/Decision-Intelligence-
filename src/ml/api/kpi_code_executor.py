@@ -31,7 +31,7 @@ BLOCKED_PATTERNS = [
     "delattr(", "breakpoint(", "exit(", "quit(",
 ]
 
-MAX_CODE_LENGTH = 5000
+MAX_CODE_LENGTH = 10000
 MAX_CODE_LINES = 200
 
 
