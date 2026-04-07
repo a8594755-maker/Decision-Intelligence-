@@ -53,7 +53,7 @@ jobs:
       - name: Install ML test dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install numpy pandas scikit-learn lightgbm pydantic
+          pip install numpy pandas scikit-learn lightgbm pydantic requests
           pip install pytest pytest-timeout pytest-cov
 
       - name: Run drift monitor tests
