@@ -150,25 +150,33 @@ def execute_kpi_code(code: str, df: pd.DataFrame, expected_outputs: list[str], d
             if converted.notna().sum() > len(clean_df) * 0.3:
                 clean_df[col] = converted
 
-    # Pre-process ONLY numeric date columns (Excel serial numbers like 42370).
-    # String dates (like '2-Jun-06') are left for LLM code to parse.
-    # This avoids the conflict where LLM code does pd.to_datetime(col, origin='1899-12-30')
-    # on an already-parsed datetime64 column → crash.
+    # Pre-process ALL date columns (numeric Excel serial + string dates).
+    # To prevent conflict with LLM code that also calls pd.to_datetime(),
+    # we inject a safe wrapper that skips already-parsed datetime columns.
     date_kw = ("date", "day", "time", "ship", "order_date", "deliver")
     for col in clean_df.columns:
         cl = str(col).lower()
         if not any(kw in cl for kw in date_kw):
             continue
         if pd.api.types.is_datetime64_any_dtype(clean_df[col]):
-            continue  # already datetime — skip
+            continue
         if pd.api.types.is_numeric_dtype(clean_df[col]):
-            # Numeric column with date keyword → likely Excel serial dates
             vals = clean_df[col].dropna()
             if len(vals) > 0 and 25000 < vals.median() < 70000:
                 clean_df[col] = pd.to_datetime(
                     clean_df[col], unit="D", origin="1899-12-30", errors="coerce"
                 )
-        # String dates: do NOT pre-parse — let LLM code handle with pd.to_datetime(errors='coerce')
+        else:
+            clean_df[col] = pd.to_datetime(clean_df[col], errors="coerce")
+
+    # Safe pd.to_datetime wrapper: if input is already datetime, return as-is.
+    # This prevents LLM code from crashing when it re-parses a pre-processed column
+    # with origin='1899-12-30' (which only works on numeric input).
+    _real_to_datetime = pd.to_datetime
+    def _safe_to_datetime(arg, *args, **kwargs):
+        if isinstance(arg, pd.Series) and pd.api.types.is_datetime64_any_dtype(arg):
+            return arg
+        return _real_to_datetime(arg, *args, **kwargs)
 
     sandbox_globals = {
         "__builtins__": ALLOWED_BUILTINS,
@@ -176,6 +184,9 @@ def execute_kpi_code(code: str, df: pd.DataFrame, expected_outputs: list[str], d
         "np": np,
         "df": clean_df,
     }
+    # Patch pd.to_datetime only inside sandbox scope
+    _original_pd_to_datetime = pd.to_datetime
+    pd.to_datetime = _safe_to_datetime
     sandbox_locals = {}
 
     t0 = time.time()
@@ -194,14 +205,20 @@ def execute_kpi_code(code: str, df: pd.DataFrame, expected_outputs: list[str], d
             try:
                 exec(code, sandbox_globals, sandbox_locals)
             except Exception as e2:
+                pd.to_datetime = _original_pd_to_datetime
                 return {"success": False, "results": {}, "error": f"{type(e2).__name__}: {e2}",
                         "sanity_issues": [], "execution_time_ms": int((time.time() - t0) * 1000)}
         else:
+            pd.to_datetime = _original_pd_to_datetime
             return {"success": False, "results": {}, "error": f"{type(e).__name__}: {e}",
                     "sanity_issues": [], "execution_time_ms": int((time.time() - t0) * 1000)}
     except Exception as e:
+        pd.to_datetime = _original_pd_to_datetime
         return {"success": False, "results": {}, "error": f"{type(e).__name__}: {e}",
                 "sanity_issues": [], "execution_time_ms": int((time.time() - t0) * 1000)}
+
+    # Restore original pd.to_datetime
+    pd.to_datetime = _original_pd_to_datetime
 
     elapsed_ms = int((time.time() - t0) * 1000)
 
