@@ -50,6 +50,39 @@ def _strip_safe_imports(code: str) -> str:
     return "\n".join(cleaned)
 
 
+def _repair_indentation(code: str) -> str:
+    """Fix common indentation issues from JSON string extraction.
+
+    When code is embedded in a JSON string, newlines become \\n and
+    indentation can get mangled. This attempts to fix obvious cases.
+    """
+    lines = code.split("\n")
+    repaired = []
+    prev_indent = 0
+
+    for line in lines:
+        if not line.strip():
+            repaired.append("")
+            continue
+
+        # Count leading spaces
+        stripped = line.lstrip()
+        current_indent = len(line) - len(stripped)
+
+        # If a line starts with unexpected dedent mid-block, try to fix
+        # Common pattern: "if condition:\nstatement" where statement lost its indent
+        if repaired and current_indent == 0 and stripped and not stripped.startswith(("#", "def ", "class ", "if ", "for ", "while ", "try:", "except", "elif ", "else:")):
+            prev_line = repaired[-1].rstrip() if repaired else ""
+            if prev_line.endswith(":"):
+                # Previous line opens a block, this line should be indented
+                repaired.append("    " + stripped)
+                continue
+
+        repaired.append(line)
+
+    return "\n".join(repaired)
+
+
 def validate_code(code: str) -> tuple[bool, str]:
     """Check code for dangerous patterns before execution."""
     if not code or not code.strip():
@@ -575,10 +608,15 @@ async def calculate_kpis_with_llm_code(
         return {"success": False, "results": {}, "audit": {}, "error": str(ex)}
 
     code = _strip_safe_imports(llm_output.get("code", ""))
+    code = _repair_indentation(code)
     reasoning = llm_output.get("reasoning", "")
     # Normalize outputs/derivations — GPT-5.4 low reasoning sometimes returns dicts instead of strings
     raw_outputs = llm_output.get("outputs", [])
-    expected = [str(o) if not isinstance(o, str) else o for o in raw_outputs] if isinstance(raw_outputs, list) else []
+    # Filter: only keep valid Python variable names (no df['col'] expressions)
+    expected = [
+        str(o) for o in (raw_outputs if isinstance(raw_outputs, list) else [])
+        if isinstance(o, str) and o.isidentifier()
+    ]
     raw_derivations = llm_output.get("derivations", [])
     derivations = [str(d) if not isinstance(d, str) else d for d in raw_derivations] if isinstance(raw_derivations, list) else []
 
