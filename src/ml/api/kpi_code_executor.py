@@ -11,6 +11,7 @@ LLM writes pandas code → we exec it → extract results → audit trail.
 """
 
 import json
+import os
 import time
 import logging
 import re
@@ -80,7 +81,7 @@ ALLOWED_BUILTINS = {
 }
 
 
-def execute_kpi_code(code: str, df: pd.DataFrame, expected_outputs: list[str]) -> dict:
+def execute_kpi_code(code: str, df: pd.DataFrame, expected_outputs: list[str], date_columns: list[str] = None) -> dict:
     """
     Execute LLM-generated code in a restricted sandbox.
 
@@ -115,6 +116,29 @@ def execute_kpi_code(code: str, df: pd.DataFrame, expected_outputs: list[str]) -
             converted = pd.to_numeric(clean_df[col], errors="coerce")
             if converted.notna().sum() > len(clean_df) * 0.3:
                 clean_df[col] = converted
+
+    # Pre-process date columns: use cleaning metadata if available, else detect by name
+    date_kw = ("date", "day", "time", "ship", "order_date", "deliver")
+    cols_to_parse = set(date_columns or [])
+    for col in clean_df.columns:
+        cl = str(col).lower()
+        if any(kw in cl for kw in date_kw):
+            cols_to_parse.add(col)
+
+    for col in cols_to_parse:
+        if col not in clean_df.columns:
+            continue
+        if pd.api.types.is_datetime64_any_dtype(clean_df[col]):
+            continue
+        if pd.api.types.is_numeric_dtype(clean_df[col]):
+            # Likely Excel serial dates (e.g., 42370 = 2016-01-01)
+            vals = clean_df[col].dropna()
+            if len(vals) > 0 and 25000 < vals.median() < 70000:
+                clean_df[col] = pd.to_datetime(
+                    clean_df[col], unit="D", origin="1899-12-30", errors="coerce"
+                )
+        else:
+            clean_df[col] = pd.to_datetime(clean_df[col], errors="coerce")
 
     sandbox_globals = {
         "__builtins__": ALLOWED_BUILTINS,
@@ -246,18 +270,39 @@ Based on the domain detected, calculate the RIGHT KPIs:
 - over_budget_categories: categories where actual > budget
 
 ## Rules
-1. Code operates on DataFrame `df` with ORIGINAL column names (not mapped names)
+1. CRITICAL: Code operates on DataFrame `df`. Use the EXACT column names shown in the Columns section above.
+   Copy column names precisely as they appear — they may have been renamed during cleaning.
 2. Do NOT import anything (pd and np are pre-loaded)
 3. Do NOT print anything — just assign variables
 4. Handle zero denominators: use max(denominator, 1)
 5. For percentage KPIs: use AGGREGATE method (sum/sum), NEVER mean of per-row percentages
 6. CRITICAL: Do NOT calculate revenue/margin from procurement data. Purchase amount is COST, not revenue.
 7. If dates exist, parse them: pd.to_datetime(df[col], errors='coerce')
-8. REVENUE COLUMN SELECTION: If multiple revenue-like columns exist (e.g., "Sales" and "Order Item Total"):
-   - Check which column's sum matches profit + cost relationships
-   - Prefer NET revenue (after discounts) over GROSS (before discounts)
-   - If a "discount" column exists, NET = GROSS - DISCOUNT. Use NET for margin calculations.
-   - If a "profit" column's values are derived from one revenue column (profit / revenue ≈ profit_ratio), use THAT revenue column
+8. REVENUE COLUMN SELECTION: If multiple revenue-like columns exist:
+   - Pick the column whose sum best reconciles with profit + cost (e.g., revenue - cost ≈ profit)
+   - Do NOT assume any column is "gross" or "net" based on name alone — validate from the data
+   - Only calculate net_revenue = revenue × (1 - discount) if the data proves that profit ≈ revenue × (1-discount) - cost
+   - If only ONE revenue column exists, use it directly — do not create a second revenue metric
+9. LEAD TIME: If BOTH an order date and ship/delivery date column exist, ALWAYS calculate:
+   - avg_lead_time_days = mean of (ship_date - order_date).dt.days
+   - lead_time_by_ship_mode = groupby ship mode, mean lead time (if ship mode column exists)
+   Date columns are pre-parsed as datetime — use pd.to_datetime(df[col], errors='coerce') if needed.
+   If avg_lead_time_days == 0.0 or is NaN, the dates may be unparseable — report "lead time calculation failed" instead of 0.
+10. CATEGORY BREAKDOWNS: If category/segment/region columns exist, ALWAYS calculate:
+   - profit_margin_by_category = groupby category, sum(profit) / sum(revenue) * 100
+   - revenue_by_region = groupby region, sum(revenue)
+11. DISCOUNT RATE: First check if the discount column contains RATIOS (values between 0 and 1) or AMOUNTS (large numbers).
+   - If RATIOS (most values 0.0-1.0): effective_discount_rate = sum(discount * revenue) / sum(revenue) * 100
+     This is the revenue-weighted average discount percentage.
+   - If AMOUNTS (values > 1): effective_discount_rate = sum(discount) / sum(revenue) * 100
+   Do NOT just sum() a ratio column — that gives a meaningless total.
+   Name it clearly: "effective_discount_rate" not "avg_discount_rate".
+12. DO NOT INVENT METRICS THAT DON'T EXIST IN THE DATA:
+   - Only calculate metrics for which the required columns explicitly exist.
+   - Do NOT infer domain-specific metrics from numeric patterns (e.g., don't infer return rates from negative values).
+   - "avg_items_per_order" must use sum(quantity)/count(orders), NOT count(transaction_rows)/count(orders).
+   - Name variables precisely: "avg_lines_per_order" not "avg_items_per_order" if counting rows.
+   Store these as dict variables — they will be extracted as artifacts.
 
 Return JSON:
 {{
@@ -353,16 +398,17 @@ Columns:
 
 Return JSON:
 {{
-  "revenue_col": "column name for NET revenue/sales (after discounts, not gross)",
+  "revenue_col": "column name for the PRIMARY revenue/sales metric used in profit calculations",
   "cost_col": "column name for COGS/total cost (null if not found)",
   "profit_col": "column name for profit (null if not found)",
-  "discount_col": "column name for discount amount (null if not found)",
+  "discount_col": "column name for discount (null if not found)",
   "reasoning": "brief explanation of why you chose each"
 }}
 
 Rules:
-- If both GROSS and NET revenue exist, pick NET (after discounts). Look at the values: if col_A - discount = col_B, then col_B is NET.
-- If a profit column exists, check: profit / revenue should give a reasonable ratio (0-100%). Pick the revenue column that makes this work.
+- Pick the revenue column that best reconciles with profit: sum(revenue) - sum(cost) ≈ sum(profit)
+- Do NOT assume any column is "gross" or "net" based on name — validate from the data values
+- If only ONE revenue-like column exists, use it directly
 - "Sales per customer" or "Benefit per order" are NOT total revenue — they are per-unit metrics.
 - Return ONLY the JSON. No markdown."""
 
@@ -385,7 +431,13 @@ async def _detect_column_roles(df: pd.DataFrame, llm_config: dict) -> dict:
     prompt = COLUMN_ROLE_PROMPT.format(column_list="\n".join(col_info))
 
     try:
-        raw = await _call_llm_via_proxy(prompt, "Return ONLY valid JSON.", llm_config)
+        _role_provider = os.environ.get("DI_REASONING_PROVIDER", "openai")
+        _role_model = os.environ.get("DI_REASONING_MODEL", "gpt-5.4")
+        raw = await _call_llm_via_proxy(
+            prompt, "Return ONLY valid JSON.", llm_config,
+            override_provider=_role_provider, override_model=_role_model,
+            reasoning_effort="high",
+        )
         raw = raw.strip()
         raw = re.sub(r"^```(?:json)?\s*", "", raw)
         raw = re.sub(r"\s*```$", "", raw)
@@ -409,6 +461,7 @@ async def calculate_kpis_with_llm_code(
     sheet_name: str,
     llm_config: dict,
     all_sheets: dict = None,
+    date_columns: list[str] = None,
 ) -> dict:
     """
     LLM generates pandas code → sandbox executes → audit trail.
@@ -426,10 +479,13 @@ async def calculate_kpis_with_llm_code(
 
     col_profile = build_column_profile_for_kpi(df)
 
-    # Step 0: Detect column roles (lightweight LLM call)
-    # This tells the code generator WHICH columns to use, avoiding the
-    # "53 columns, LLM picks wrong one" problem.
-    column_roles = await _detect_column_roles(df, llm_config)
+    # Step 0: Detect column roles (only for high-column-count datasets)
+    # For <25 columns, the KPI code prompt handles it directly.
+    # For 25+ columns, a separate role detection call prevents the LLM from getting lost.
+    if len(df.columns) >= 25:
+        column_roles = await _detect_column_roles(df, llm_config)
+    else:
+        column_roles = {}  # Skip — KPI code prompt is sufficient for simpler datasets
     role_hint = ""
     if column_roles.get("revenue_col"):
         role_hint = f"\n\n## Pre-identified Column Roles (use these — do NOT pick different columns)\n"
@@ -465,29 +521,87 @@ async def calculate_kpis_with_llm_code(
     ) + role_hint + other_sheets_info
 
     try:
-        raw = await _call_llm_via_proxy(prompt, KPI_CODE_SYSTEM, llm_config)
+        # Use request llm_config if user selected a specific model, else env var, else default
+        _req_provider = llm_config.get("provider", "")
+        _use_request = _req_provider and _req_provider != "deepseek"  # non-default = user chose
+        _code_provider = _req_provider if _use_request else os.environ.get("DI_CODE_GEN_PROVIDER", "openai")
+        _code_model = llm_config.get("model") if _use_request else os.environ.get("DI_CODE_GEN_MODEL", "gpt-5.4")
+        raw = await _call_llm_via_proxy(
+            prompt, KPI_CODE_SYSTEM, llm_config,
+            override_provider=_code_provider,
+            override_model=_code_model,
+        )
         raw = raw.strip()
-        # Strip markdown fences
-        raw = re.sub(r"^```(?:json)?\s*", "", raw)
-        raw = re.sub(r"\s*```$", "", raw)
+        logger.info(f"[KPICode] Raw LLM response ({len(raw)} chars): {raw[:200]}...")
+
+        # Robust JSON extraction: strip ALL markdown fences, find outermost { }
+        raw = re.sub(r"```(?:json)?", "", raw).strip()
         s = raw.find("{")
         e = raw.rfind("}")
         if s >= 0 and e > s:
             raw = raw[s:e + 1]
-        llm_output = json.loads(raw)
+        else:
+            logger.error(f"[KPICode] No JSON object found in response: {raw[:300]}")
+            raise ValueError("No JSON object in LLM response")
+        # Try standard parse first
+        try:
+            llm_output = json.loads(raw)
+        except json.JSONDecodeError as je:
+            logger.warning(f"[KPICode] Standard JSON parse failed: {je}. Trying repair...")
+            # Common GPT-5.4 issue: literal newlines inside JSON string values
+            # Strategy: find each string value and escape its newlines
+            repaired = raw
+            for field in ("code", "reasoning"):
+                # Find "field": "...content..." and escape newlines in content
+                pattern = f'"{field}"\\s*:\\s*"'
+                match = re.search(pattern, repaired)
+                if match:
+                    start = match.end()
+                    # Find the closing quote (not preceded by backslash)
+                    depth = 0
+                    i = start
+                    while i < len(repaired):
+                        if repaired[i] == '"' and (i == 0 or repaired[i-1] != '\\'):
+                            break
+                        i += 1
+                    if i < len(repaired):
+                        content = repaired[start:i]
+                        fixed_content = content.replace('\n', '\\n').replace('\t', '\\t')
+                        repaired = repaired[:start] + fixed_content + repaired[i:]
+            llm_output = json.loads(repaired)
+        logger.info(f"[KPICode] Parsed JSON keys: {list(llm_output.keys())}, outputs: {llm_output.get('outputs', [])[:5]}")
     except Exception as ex:
         logger.error(f"[KPICode] LLM call/parse failed: {ex}")
         return {"success": False, "results": {}, "audit": {}, "error": str(ex)}
 
     code = _strip_safe_imports(llm_output.get("code", ""))
     reasoning = llm_output.get("reasoning", "")
-    expected = llm_output.get("outputs", [])
-    derivations = llm_output.get("derivations", [])
+    # Normalize outputs/derivations — GPT-5.4 low reasoning sometimes returns dicts instead of strings
+    raw_outputs = llm_output.get("outputs", [])
+    expected = [str(o) if not isinstance(o, str) else o for o in raw_outputs] if isinstance(raw_outputs, list) else []
+    raw_derivations = llm_output.get("derivations", [])
+    derivations = [str(d) if not isinstance(d, str) else d for d in raw_derivations] if isinstance(raw_derivations, list) else []
+
+    # Fallback: if outputs list is empty, scan code for top-level variable assignments
+    if not expected and code:
+        import ast as _ast
+        try:
+            tree = _ast.parse(code)
+            for node in _ast.walk(tree):
+                if isinstance(node, _ast.Assign):
+                    for target in node.targets:
+                        if isinstance(target, _ast.Name):
+                            expected.append(target.id)
+            if expected:
+                logger.info(f"[KPICode] Recovered {len(expected)} outputs from code AST: {expected[:10]}")
+        except SyntaxError:
+            pass
 
     logger.info(f"[KPICode] LLM generated {len(code)} chars code, {len(expected)} outputs")
+    logger.info(f"[KPICode] Generated code:\n{code[:1000]}")
 
     # Execute in sandbox
-    execution = execute_kpi_code(code, df, expected)
+    execution = execute_kpi_code(code, df, expected, date_columns=date_columns)
 
     audit = {
         "method": "llm_generated_code",

@@ -186,6 +186,22 @@ def _metric_meta(raw_name: str, label: str = "", row_keys: set[str] | None = Non
     joined = " ".join(filter(None, [raw_slug, label_slug]))
     row_keys = row_keys or set()
 
+    # Per-unit / average metrics should NOT be mapped to aggregate metric_ids
+    # e.g., "avg_revenue_per_order" is NOT "total_revenue"
+    _is_per_unit = any(tok in raw_slug for tok in ("avg_", "per_", "mean_", "median_"))
+    if _is_per_unit and not any(tok in raw_slug for tok in ("margin", "rate", "pct", "lead_time", "discount")):
+        # This is a per-unit metric — give it its own metric_id, don't merge with totals
+        return {
+            "metric_id": raw_slug,
+            "display_name": _display_name(raw_name),
+            "unit": "currency" if any(tok in raw_slug for tok in ("revenue", "sales", "cost", "profit")) else "unknown",
+            "aggregation": "mean_of_rows",
+            "definition": f"Average metric: {raw_name}",
+            "numerator": None,
+            "denominator": None,
+            "preferred_direction": "unknown",
+        }
+
     if "effective_discount_rate" in joined or ("discount" in joined and "effective" in joined):
         return {
             "metric_id": "effective_discount_rate_weighted",
@@ -474,6 +490,9 @@ def _extract_scalar_metrics(label: str, data: list[dict[str, Any]]) -> list[dict
     for key, value in row.items():
         if value is None or isinstance(value, (dict, list)):
             continue
+        # Enforce: scalar metric values must be numeric
+        if not _is_number(value):
+            continue
         meta = _metric_meta(key, label=label)
         entry = {
             **meta,
@@ -511,13 +530,18 @@ def _metric_conflicts(left: Any, right: Any, unit: str) -> bool:
 
 
 def _source_priority(label: str) -> int:
+    """Lower number = higher trust. 'Overall KPIs' is the golden source."""
     label_lower = (label or "").lower()
     if "overall kpi" in label_lower:
-        return 0
-    if "revenue summary" in label_lower or "revenue" in label_lower:
+        return 0  # LLM-computed or guardrail-filled KPIs — highest trust
+    if "kpi" in label_lower:
         return 1
-    if "summary" in label_lower:
-        return 2
+    if "summary" in label_lower and "margin" not in label_lower:
+        return 2  # generic summaries, but not margin tables
+    # Margin/revenue/cost calculation tables — they contain intermediate values
+    # that may duplicate metrics like total_revenue. Lower priority.
+    if "margin" in label_lower or "revenue" in label_lower or "cost" in label_lower:
+        return 8
     return 5
 
 
@@ -531,6 +555,9 @@ def _canonicalize_scalar_metrics(scalars: list[dict[str, Any]]) -> tuple[list[di
     warnings = []
 
     for metric_id in sorted(grouped):
+        if not grouped[metric_id]:
+            continue
+
         candidates = sorted(
             grouped[metric_id],
             key=lambda item: (_source_priority(item.get("source_artifact", "")), item.get("source_artifact", "")),

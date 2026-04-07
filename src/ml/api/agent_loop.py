@@ -191,9 +191,11 @@ async def run_agent_loop(
             # Emit KPI audit trail if available
             if internal_id == "kpi_calculation" and result.get("kpi_audit") and on_step:
                 audit = result["kpi_audit"]
+                code_text = audit.get("code", "")
+                logger.info(f"[AgentLoop] Emitting kpi_audit: code={len(code_text)} chars, reasoning={len(audit.get('reasoning', ''))} chars")
                 await on_step({
                     "type": "kpi_audit",
-                    "code": audit.get("code", ""),
+                    "code": code_text,
                     "reasoning": audit.get("reasoning", ""),
                     "derivations": audit.get("derivations", []),
                     "method": audit.get("method", ""),

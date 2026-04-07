@@ -649,7 +649,7 @@ In addition to entity value mappings, ALSO provide:
 12. "column_mappings": For each sheet, map non-English or non-standard column
     names to canonical English names. Common canonical names:
     order_date, product_code, product_name, category, region, customer_name,
-    qty, unit_price, gross_revenue, cogs, currency, payment_status, channel,
+    qty, unit_price, revenue, cogs, currency, payment_status, channel,
     period, revenue_target, qty_target,
     on_hand_qty, safety_stock, unit_cost, warehouse, lead_time_days, moq,
     invoice_id, supplier_name, invoice_date, due_date, amount, status,
@@ -1577,6 +1577,22 @@ def execute_cleaning_pipeline(
     )
     total_clean = sum(len(df) for df in cleaned.values())
 
+    # -- Stage 3: Detect date columns (for downstream tools) --
+    date_columns = []
+    for sheet_name, sp in profile["sheet_profiles"].items():
+        for col_name, col_info in sp["columns"].items():
+            if col_info.get("date_formats_detected"):
+                # Column has date-like values (text dates or Excel serial)
+                date_columns.append(col_name)
+            elif col_info.get("numeric_stats"):
+                # Check for Excel serial dates: numeric 30000-60000 range, looks like dates
+                stats = col_info["numeric_stats"]
+                cl = col_name.lower()
+                if (any(kw in cl for kw in ("date", "day", "time", "ship", "order", "deliver"))
+                        and 25000 < stats.get("min", 0) < 70000
+                        and 25000 < stats.get("max", 0) < 70000):
+                    date_columns.append(col_name)
+
     # Extract kpi_formula from LLM mappings (if present)
     kpi_formula = llm_mappings.get("kpi_formula", {})
 
@@ -1598,4 +1614,5 @@ def execute_cleaning_pipeline(
         "artifacts": artifacts,
         "profile": profile,
         "kpi_formula": kpi_formula,
+        "date_columns": list(set(date_columns)),
     }

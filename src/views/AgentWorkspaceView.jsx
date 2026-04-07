@@ -12,8 +12,52 @@ import {
   Brain, Clock, Download, Send, ChevronDown, ChevronRight,
   Sparkles, ArrowRight, RotateCcw, Eye, EyeOff,
 } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 const ML_API = import.meta.env.VITE_ML_API_URL || 'http://localhost:8000';
+
+// Agent thinking card sub-component (needs its own state for expand/collapse)
+const AGENT_CONFIG = {
+  tool_selection: { icon: '🧠', label: 'Lead Analyst', color: '#c084fc', bg: 'rgba(168,85,247,0.15)' },
+  kpi_calculation: { icon: '📊', label: 'KPI Engine', color: '#93c5fd', bg: 'rgba(59,130,246,0.15)' },
+  financial_analysis: { icon: '💰', label: 'Financial Analyst', color: '#4ade80', bg: 'rgba(34,197,94,0.15)' },
+  operations_analysis: { icon: '⚙️', label: 'Operations Analyst', color: '#fb923c', bg: 'rgba(249,115,22,0.15)' },
+  risk_analysis: { icon: '⚠️', label: 'Risk Analyst', color: '#f87171', bg: 'rgba(239,68,68,0.15)' },
+  reviewer: { icon: '🔍', label: 'Reviewer', color: '#a78bfa', bg: 'rgba(167,139,250,0.15)' },
+};
+
+function AgentThinkingCard({ trace, index, isLast }) {
+  const [expanded, setExpanded] = useState(isLast);
+  const config = AGENT_CONFIG[trace.phase] || { icon: '💬', label: trace.phase, color: '#9ca3af', bg: 'rgba(107,114,128,0.15)' };
+  return (
+    <div className="relative pb-4 last:pb-0" style={{ animation: `fadeSlideIn 0.3s ease-out ${index * 0.1}s both` }}>
+      <div className="absolute -left-3 w-6 h-6 rounded-full flex items-center justify-center text-xs border-2"
+           style={{ borderColor: config.color, backgroundColor: config.bg, top: '2px' }}>
+        {config.icon}
+      </div>
+      <div className="ml-5 rounded-lg border overflow-hidden cursor-pointer transition-colors"
+           style={{ borderColor: 'var(--border-default)' }}
+           onClick={() => setExpanded(!expanded)}>
+        <div className="flex items-center gap-2 px-3 py-2" style={{ backgroundColor: config.bg }}>
+          <span className="text-xs font-semibold" style={{ color: config.color }}>{config.label}</span>
+          {trace.model && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded font-mono"
+                  style={{ backgroundColor: 'rgba(0,0,0,0.4)', color: 'rgba(255,255,255,0.7)' }}>
+              {trace.model}
+            </span>
+          )}
+          <ChevronDown className={`w-3 h-3 ml-auto transition-transform duration-200 ${expanded ? '' : '-rotate-90'}`} style={{ color: config.color }} />
+        </div>
+        {expanded && (
+          <div className="px-3 py-2 text-sm text-[var(--text-secondary)] leading-relaxed prose prose-invert prose-sm max-w-none" style={{ backgroundColor: 'var(--surface-base)' }}>
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{trace.thinking}</ReactMarkdown>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 
 function formatMs(ms) {
   if (ms < 1000) return `${ms}ms`;
@@ -56,6 +100,8 @@ export default function AgentWorkspaceView() {
   // Agent
   const [tools, setTools] = useState([]);
   const [reasoning, setReasoning] = useState('');
+  const [thinkingTraces, setThinkingTraces] = useState([]);
+  const [agentStatuses, setAgentStatuses] = useState({}); // {phase: 'running'|'done'}
   const [steps, setSteps] = useState([]);
   const [narrative, setNarrative] = useState('');
   const [totalDuration, setTotalDuration] = useState(0);
@@ -63,6 +109,16 @@ export default function AgentWorkspaceView() {
   const [downloadId, setDownloadId] = useState(null);
   const [kpiAudit, setKpiAudit] = useState(null);
   const [columnMappings, setColumnMappings] = useState([]);
+
+  // Model selection
+  const [selectedModel, setSelectedModel] = useState('auto');
+  const MODEL_OPTIONS = [
+    { value: 'auto', label: 'Auto (GPT-5.4 + DeepSeek)', desc: 'Default' },
+    { value: 'kimi', label: 'Kimi K2.5', desc: 'Moonshot' },
+    { value: 'openai', label: 'GPT-5.4', desc: 'OpenAI' },
+    { value: 'deepseek', label: 'DeepSeek', desc: 'DeepSeek' },
+    { value: 'anthropic', label: 'Claude Sonnet', desc: 'Anthropic' },
+  ];
 
   // Chat
   const [chatMessages, setChatMessages] = useState([]);
@@ -121,6 +177,8 @@ export default function AgentWorkspaceView() {
     setSteps([]);
     setTools([]);
     setReasoning('');
+    setThinkingTraces([]);
+    setAgentStatuses({});
     setNarrative('');
     setKpiAudit(null);
     setColumnMappings([]);
@@ -132,7 +190,20 @@ export default function AgentWorkspaceView() {
       const resp = await fetch(`${ML_API}/agent/general/stream`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query, sheets: sheetsData || sheets }),
+        body: JSON.stringify({
+          query,
+          sheets: sheetsData || sheets,
+          ...(selectedModel !== 'auto' ? {
+            llm_config: {
+              provider: selectedModel,
+              model: selectedModel === 'kimi' ? 'kimi-k2.5'
+                   : selectedModel === 'openai' ? 'gpt-5.4'
+                   : selectedModel === 'deepseek' ? 'deepseek-chat'
+                   : selectedModel === 'anthropic' ? 'claude-sonnet-4-6'
+                   : undefined,
+            },
+          } : {}),
+        }),
       });
       const reader = resp.body.getReader();
       const decoder = new TextDecoder();
@@ -151,6 +222,16 @@ export default function AgentWorkspaceView() {
           try { evt = JSON.parse(line.slice(6).trim()); } catch { continue; }
 
           switch (evt.type) {
+            case 'agent_status':
+              setAgentStatuses(prev => ({ ...prev, [evt.phase]: evt.status }));
+              break;
+            case 'agent_thinking':
+              setThinkingTraces(prev => [...prev, {
+                phase: evt.phase || 'general',
+                thinking: evt.thinking || '',
+                model: evt.model || '',
+              }]);
+              break;
             case 'plan_done':
               setTools(evt.tools || []);
               setReasoning(evt.reasoning || '');
@@ -172,6 +253,12 @@ export default function AgentWorkspaceView() {
               break;
             case 'kpi_audit':
               setKpiAudit(evt);
+              if (evt.reasoning) {
+                setThinkingTraces(prev => [...prev, {
+                  phase: 'kpi_calculation',
+                  thinking: evt.reasoning + (evt.derivations?.length ? `\nDerived: ${evt.derivations.join(', ')}` : ''),
+                }]);
+              }
               break;
             case 'synthesize_chunk':
               setNarrative(prev => prev + (evt.text || ''));
@@ -213,7 +300,7 @@ export default function AgentWorkspaceView() {
       setError(`Analysis failed: ${err.message}`);
       setPhase('error');
     }
-  }, [sheets]);
+  }, [sheets, selectedModel]);
 
   // ── Chat ──
   const sendChat = useCallback(() => {
@@ -348,7 +435,19 @@ export default function AgentWorkspaceView() {
           {phase === 'ready' && (
             <div className="flex-shrink-0 border-b px-4 py-4" style={{ borderColor: 'var(--border-default)', backgroundColor: 'var(--surface-base)' }}>
               <div className="max-w-2xl mx-auto">
-                <p className="text-sm text-[var(--text-secondary)] mb-2">What would you like to analyze?</p>
+                <div className="flex items-center gap-3 mb-2">
+                  <p className="text-sm text-[var(--text-secondary)]">What would you like to analyze?</p>
+                  <select
+                    value={selectedModel}
+                    onChange={e => setSelectedModel(e.target.value)}
+                    className="h-7 px-2 rounded-md border text-xs text-[var(--text-secondary)]"
+                    style={{ borderColor: 'var(--border-default)', backgroundColor: 'var(--surface-card)' }}
+                  >
+                    {MODEL_OPTIONS.map(opt => (
+                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </select>
+                </div>
                 <div className="flex gap-2">
                   <input
                     type="text"
@@ -518,6 +617,62 @@ export default function AgentWorkspaceView() {
                 </div>
               )}
 
+              {/* ── Agent Thinking Panel (streaming timeline) ── */}
+              {(thinkingTraces.length > 0 || Object.keys(agentStatuses).length > 0) && (() => {
+                const isAnalyzing = Object.values(agentStatuses).some(s => s === 'running');
+                const completedPhases = new Set(thinkingTraces.map(t => t.phase));
+                const runningPhases = Object.entries(agentStatuses)
+                  .filter(([phase, status]) => status === 'running' && !completedPhases.has(phase))
+                  .map(([phase]) => phase);
+
+                return (
+                  <div className="rounded-xl border overflow-hidden" style={{ borderColor: 'var(--border-default)', backgroundColor: 'var(--surface-card)' }}>
+                    {/* Header with shimmer */}
+                    <div className="px-4 py-3 border-b flex items-center gap-2" style={{ borderColor: 'var(--border-default)' }}>
+                      {isAnalyzing ? (
+                        <div className="w-4 h-4 rounded-full border-2 border-purple-500 border-t-transparent timeline-dot-spin" />
+                      ) : (
+                        <Brain className="w-4 h-4 text-amber-400" />
+                      )}
+                      <span className={`text-sm font-semibold ${isAnalyzing ? 'shimmer-text' : 'text-[var(--text-primary)]'}`}>
+                        {isAnalyzing ? 'Agents Analyzing...' : 'Agent Analysis'}
+                      </span>
+                      <span className="text-xs text-[var(--text-muted)]">
+                        {thinkingTraces.length} complete{runningPhases.length > 0 ? ` · ${runningPhases.length} running` : ''}
+                      </span>
+                    </div>
+
+                    {/* Timeline */}
+                    <div className="relative pl-8 pr-4 py-3">
+                      <div className="absolute left-5 top-3 bottom-3 w-px" style={{ backgroundColor: 'var(--border-default)' }} />
+
+                      {/* Running agents (show dots animation) */}
+                      {runningPhases.map((phase) => {
+                        const config = AGENT_CONFIG[phase] || { icon: '💬', label: phase, color: '#9ca3af', bg: 'rgba(107,114,128,0.15)' };
+                        return (
+                          <div key={`running-${phase}`} className="relative pb-4" style={{ animation: 'fadeSlideIn 0.3s ease-out both' }}>
+                            <div className="absolute -left-3 w-6 h-6 rounded-full flex items-center justify-center text-xs border-2 border-dashed"
+                                 style={{ borderColor: config.color, backgroundColor: config.bg, top: '2px' }}>
+                              <div className="w-3 h-3 rounded-full border-2 border-t-transparent timeline-dot-spin"
+                                   style={{ borderColor: config.color }} />
+                            </div>
+                            <div className="ml-5 rounded-lg border px-3 py-2 flex items-center gap-2" style={{ borderColor: 'var(--border-default)', backgroundColor: config.bg }}>
+                              <span className="text-xs font-semibold" style={{ color: config.color }}>{config.label}</span>
+                              <span className="thinking-dots"><span /><span /><span /></span>
+                            </div>
+                          </div>
+                        );
+                      })}
+
+                      {/* Completed agents (show content) */}
+                      {thinkingTraces.map((trace, i) => (
+                        <AgentThinkingCard key={`done-${trace.phase}-${i}`} trace={trace} index={i} isLast={i === thinkingTraces.length - 1} />
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* ── Executive Summary ── */}
               {narrative && (
                 <div className="rounded-xl border overflow-hidden" style={{ borderColor: 'var(--border-default)', backgroundColor: 'var(--surface-card)' }}>
@@ -525,8 +680,8 @@ export default function AgentWorkspaceView() {
                     <Sparkles className="w-4 h-4 text-purple-400" />
                     <span className="text-sm font-semibold text-[var(--text-primary)]">Executive Summary</span>
                   </div>
-                  <div className="px-5 py-4 prose prose-invert prose-sm max-w-none text-[var(--text-primary)] leading-relaxed whitespace-pre-wrap">
-                    {narrative}
+                  <div className="px-5 py-4 prose prose-invert prose-sm max-w-none text-[var(--text-primary)] leading-relaxed">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{narrative}</ReactMarkdown>
                   </div>
                 </div>
               )}

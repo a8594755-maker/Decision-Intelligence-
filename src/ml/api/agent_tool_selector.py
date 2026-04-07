@@ -243,25 +243,39 @@ Return JSON:
 
 # ── Main Selector Function ───────────────────────────────────────────────
 
-async def _call_llm_via_proxy(prompt: str, system_prompt: str, llm_config: dict) -> str:
+async def _call_llm_via_proxy(prompt: str, system_prompt: str, llm_config: dict,
+                              override_provider: str = None, override_model: str = None,
+                              reasoning_effort: str = None,
+                              json_schema: dict = None) -> str:
     """
-    Call LLM through Supabase ai-proxy (preferred) or direct DeepSeek API.
-    Supports all providers configured in the proxy.
+    Call LLM through Supabase ai-proxy (preferred) or direct API.
+
+    Args:
+        override_provider: Force a specific provider (e.g., "openai" for reasoning tasks)
+        override_model: Force a specific model (e.g., "gpt-5.4" for synthesis)
+        reasoning_effort: For reasoning models (gpt-5.4, o3): "low", "medium", "high"
+        json_schema: If provided, forces structured JSON output (OpenAI strict mode).
+                     Schema dict with "name" and "schema" keys.
     """
     from ml.api.tool_executor import _call_llm, _has_supabase_proxy, LLMConfig
 
-    # Build LLMConfig from dict
-    provider = llm_config.get("provider", "deepseek")
-    model = llm_config.get("model", None)
+    # Build LLMConfig — override takes priority over llm_config
+    provider = override_provider or llm_config.get("provider", "deepseek")
+    model = override_model or llm_config.get("model", None)
 
-    # If no direct key and proxy available, use proxy
+    # reasoning_effort only applies to OpenAI reasoning models — clear for other providers
+    effective_reasoning = reasoning_effort if provider == "openai" else None
+
+    logger.info(f"[LLM] Calling {provider}/{model} (reasoning={effective_reasoning}, json_schema={'yes' if json_schema else 'no'})")
+
     config = LLMConfig(
         provider=provider,
+        reasoning_effort=effective_reasoning,
         model=model,
         temperature=0.1,
-        max_tokens=2000,
+        max_tokens=8192,
     )
-    return await _call_llm(prompt, system_prompt, config)
+    return await _call_llm(prompt, system_prompt, config, json_schema=json_schema)
 
 
 async def select_tools(query: str, profile: dict, llm_config: dict) -> tuple[list[str], str]:

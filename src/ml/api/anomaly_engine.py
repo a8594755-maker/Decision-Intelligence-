@@ -762,18 +762,20 @@ class AnomalyDetector:
         horizontal_count = 0
 
         if len(dim_agg) >= 2:
+            total = dim_agg["value"].sum()
             mean = dim_agg["value"].mean()
             std = dim_agg["value"].std()
-            dim_agg["pct_of_avg"] = (dim_agg["value"] / mean * 100).round(1) if mean else 0
+            # actual_share_pct = what % of total this dimension represents (e.g., "Standard Class = 59.1%")
+            dim_agg["actual_share_pct"] = (dim_agg["value"] / total * 100).round(1) if total else 0
 
             if len(dim_agg) >= 5 and std > 0:
                 # Enough peers: use z-score
                 dim_agg["z_score_vs_peers"] = ((dim_agg["value"] - mean) / std).round(2)
                 dim_agg["is_peer_anomaly"] = dim_agg["z_score_vs_peers"].abs() > threshold
             else:
-                # Small peer group: use pct_of_avg (>200% or <50% = anomaly)
+                # Small peer group: flag if one dimension has >60% or <5% of total
                 dim_agg["z_score_vs_peers"] = None
-                dim_agg["is_peer_anomaly"] = (dim_agg["pct_of_avg"] > 200) | (dim_agg["pct_of_avg"] < 50)
+                dim_agg["is_peer_anomaly"] = (dim_agg["actual_share_pct"] > 60) | (dim_agg["actual_share_pct"] < 5)
 
             horizontal_count = int(dim_agg["is_peer_anomaly"].sum())
 
@@ -993,8 +995,14 @@ def build_auto_config(profile):
     """
     detections = []
 
-    # ID-like column patterns to skip
-    id_patterns = {"_id", "_no", "_code", "index", "row_num", "record", "seq"}
+    # ID-like column patterns to skip — these are identifiers, not business metrics
+    id_patterns = {
+        "_id", "_no", "_code", "index", "row_num", "record", "seq",
+        "row id", "row_id", "postal", "zip", "zipcode", "zip_code",
+        "order id", "order_id", "customer id", "customer_id",
+        "product id", "product_id", "item id", "item_id",
+        "invoice", "po_number", "po number",
+    }
 
     for sheet_name, sp in profile.get("sheets", {}).items():
         numeric_cols = sp.get("numeric_cols", [])
@@ -1004,12 +1012,17 @@ def build_auto_config(profile):
         if not numeric_cols:
             continue
 
-        # Filter out ID-like and single-value numeric columns
+        # Filter out ID-like, date, and other non-business numeric columns
+        # Reuse quarantine logic for consistency with metric_registry
+        from ml.api.metric_registry import _quarantine_reason
         cols_info = sp.get("columns", {})
         meaningful_numeric = []
         for c in numeric_cols:
             cl = c.lower()
             if any(pat in cl for pat in id_patterns):
+                continue
+            # Also check via quarantine logic (catches date columns, etc.)
+            if _quarantine_reason(c, 99999):  # test with a dummy large value
                 continue
             ci = cols_info.get(c, {})
             # Skip if basically constant (std ≈ 0)
@@ -1023,10 +1036,10 @@ def build_auto_config(profile):
 
         numeric_cols = meaningful_numeric
 
-        # 1. Z-score on all numeric cols
+        # 1. Z-score on all numeric cols (threshold 3.5 to reduce false positives on long-tail distributions)
         detections.append({
             "detector": "zscore_outlier",
-            "params": {"source_sheet": sheet_name, "metric_cols": numeric_cols, "threshold": 3.0},
+            "params": {"source_sheet": sheet_name, "metric_cols": numeric_cols, "threshold": 3.5},
             "label": f"Z-score Outliers — {sheet_name}",
         })
 

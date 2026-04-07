@@ -79,7 +79,7 @@ def get_user_rules() -> dict:
         {
             "column_overrides": {
                 "Sheet1": {
-                    " Sales": "gross_revenue",       # user corrected this
+                    " Sales": "revenue",       # user corrected this
                     "Gross Sales": "__ignore__",     # user said ignore this
                     "Profit": "profit",
                 }
@@ -126,7 +126,7 @@ def apply_rules_to_llm_mappings(llm_mappings: dict) -> dict:
     Args:
         llm_mappings: Raw LLM output from cleaning engine
             {
-                "column_mappings": {"Sheet1": {"Gross Sales": "gross_revenue", ...}},
+                "column_mappings": {"Sheet1": {"Gross Sales": "revenue", ...}},
                 "sheet_mappings": {"Sheet1": "sales_transactions"},
                 "entity_dictionary": {"全聯": "PX Mart"},
                 ...
@@ -169,13 +169,13 @@ def apply_rules_to_llm_mappings(llm_mappings: dict) -> dict:
     if revenue_pref:
         col_mappings = merged.get("column_mappings", {})
         for sheet_name, sheet_map in col_mappings.items():
-            # Find which column is currently mapped to gross_revenue
+            # Find which column is currently mapped to revenue
             current_revenue_cols = [k for k, v in sheet_map.items()
-                                     if v in ("gross_revenue", "net_revenue", "revenue")]
+                                     if v in ("revenue", "net_revenue")]
             # Find the preferred column
             for orig_col in sheet_map:
                 if orig_col.lower().strip().replace(" ", "_") == revenue_pref.lower().replace(" ", "_"):
-                    sheet_map[orig_col] = "gross_revenue"
+                    sheet_map[orig_col] = "revenue"
                     # Downgrade others
                     for other in current_revenue_cols:
                         if other != orig_col:
@@ -213,10 +213,10 @@ def get_mapping_audit(llm_mappings: dict) -> list[dict]:
             {
                 "sheet": "Sheet1",
                 "column": "Gross Sales",
-                "llm_role": "gross_revenue",
+                "llm_role": "revenue",
                 "user_override": null,
                 "company_rule": null,
-                "final_role": "gross_revenue",
+                "final_role": "revenue",
                 "source": "llm",
             },
             ...

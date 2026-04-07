@@ -325,3 +325,65 @@ h1, h2, h3, h4 {
 .dark #risk-table-container { scrollbar-color: #44403c var(--surface-subtle); }
 .dark #risk-table-container::-webkit-scrollbar-track { background: var(--surface-subtle); }
 .dark #risk-table-container::-webkit-scrollbar-thumb { background-color: #44403c; }
+
+/* ============================================================
+   AI Agent Thinking / Streaming Animations
+   ============================================================ */
+
+/* Fade + slide in for timeline steps */
+@keyframes fadeSlideIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Thinking dots (3 dots with staggered bounce) */
+@keyframes thinkingBounce {
+  0%, 80%, 100% { transform: scale(0); opacity: 0.3; }
+  40% { transform: scale(1); opacity: 1; }
+}
+.thinking-dots span {
+  display: inline-block;
+  width: 6px; height: 6px;
+  margin: 0 2px;
+  border-radius: 9999px;
+  background: var(--brand-500, #8b5cf6);
+  animation: thinkingBounce 1.4s infinite ease-in-out both;
+}
+.thinking-dots span:nth-child(1) { animation-delay: -0.32s; }
+.thinking-dots span:nth-child(2) { animation-delay: -0.16s; }
+.thinking-dots span:nth-child(3) { animation-delay: 0s; }
+
+/* Shimmer text gradient (like Grok/Siri thinking header) */
+@keyframes shimmerGradient {
+  0%   { background-position: 200% center; }
+  100% { background-position: -200% center; }
+}
+.shimmer-text {
+  background: linear-gradient(90deg,
+    var(--brand-700, #6d28d9) 0%, var(--brand-500, #8b5cf6) 25%,
+    #a78bfa 50%,
+    var(--brand-500, #8b5cf6) 75%, var(--brand-700, #6d28d9) 100%);
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: shimmerGradient 2.5s linear infinite;
+}
+
+/* Timeline dot spinner */
+@keyframes spinDot { to { transform: rotate(360deg); } }
+.timeline-dot-spin { animation: spinDot 1s linear infinite; }
+
+/* Streaming cursor blink */
+@keyframes cursorBlink {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}
+.streaming-cursor {
+  display: inline-block;
+  width: 2px; height: 1em;
+  background: var(--brand-500, #8b5cf6);
+  margin-left: 1px;
+  vertical-align: text-bottom;
+  animation: cursorBlink 1s step-end infinite;
+}

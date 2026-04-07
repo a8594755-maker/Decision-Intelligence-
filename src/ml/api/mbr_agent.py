@@ -1097,10 +1097,16 @@ def _add_deterministic_breakdowns(sheets_data, arts, scalar_kpis):
                 cat_cols.append(col)
 
         # Identify numeric columns (>50% parseable as number)
+        # Exclude columns whose sum is meaningless (IDs, dates) — reuse quarantine logic
+        from ml.api.metric_registry import _quarantine_reason
         num_cols = []
         for col in df.columns:
             numeric = pd.to_numeric(df[col], errors="coerce")
             if numeric.notna().sum() > len(df) * 0.5:
+                # Check if summing this column would be quarantined
+                test_sum = float(numeric.sum())
+                if _quarantine_reason(col, test_sum):
+                    continue  # ID-sum or date-sum — skip
                 num_cols.append(col)
                 df[col] = numeric  # ensure numeric dtype
 
@@ -1177,6 +1183,13 @@ async def _execute_tool(tool_id, sheets_data, prior_outputs, llm_config):
         except Exception as ex:
             logger.warning(f"[MBR Agent] LLM KPI code generation failed: {ex}")
 
+        if llm_kpi_result:
+            logger.info(f"[MBR Agent] LLM KPI result: success={llm_kpi_result.get('success')}, "
+                         f"results_keys={list(llm_kpi_result.get('results', {}).keys())[:8]}, "
+                         f"error={str(llm_kpi_result.get('error') or 'none')[:100]}")
+        else:
+            logger.warning("[MBR Agent] LLM KPI result is None — call may have failed silently")
+
         if llm_kpi_result and llm_kpi_result.get("success"):
             kpi_results = llm_kpi_result["results"]
             audit = llm_kpi_result["audit"]
@@ -1209,7 +1222,7 @@ async def _execute_tool(tool_id, sheets_data, prior_outputs, llm_config):
                     "data": [{
                         "method": audit.get("method", ""),
                         "reasoning": audit.get("reasoning", ""),
-                        "derivations": ", ".join(audit.get("derivations", [])),
+                        "derivations": ", ".join(str(d) for d in audit.get("derivations", [])),
                         "code": audit.get("code", "")[:500],
                         "execution_ms": audit.get("execution_time_ms", 0),
                     }],
@@ -1227,9 +1240,34 @@ async def _execute_tool(tool_id, sheets_data, prior_outputs, llm_config):
             merged_result = det_result.get("result", {})
             merged_result.update(kpi_results)
             all_arts = arts + det_result.get("artifacts", [])
+
+            # Layer 1: KPI Minimum Spec — fill any gaps deterministically
+            from ml.api.kpi_guardrails import ensure_required_breakdowns
+            sheet_name = list(sheets_data.keys())[0]
+            for sn in sheets_data:
+                if len(sheets_data[sn]) > len(sheets_data.get(sheet_name, [])):
+                    sheet_name = sn
+            guardrail_df = pd.DataFrame(sheets_data[sheet_name])
+            extra_results, extra_arts = ensure_required_breakdowns(
+                guardrail_df, merged_result, all_arts,
+            )
+            merged_result.update(extra_results)
+            scalar_kpis.update(extra_results)
+            all_arts.extend(extra_arts)
+
+            # Build summary from scalar KPIs (LLM + guardrail-filled)
+            llm_summary_parts = []
+            for k, v in scalar_kpis.items():
+                if isinstance(v, float):
+                    llm_summary_parts.append(f"{k}: {v:,.2f}")
+                elif isinstance(v, (int, str)):
+                    llm_summary_parts.append(f"{k}: {v}")
+            llm_summary = " | ".join(llm_summary_parts) if llm_summary_parts else ""
+            narrative_summary = llm_summary or det_result.get("summary_for_narrative", "")
+
             return {
                 "result": merged_result,
-                "summary_for_narrative": det_result.get("summary_for_narrative", ""),
+                "summary_for_narrative": narrative_summary,
                 "artifacts": all_arts,
                 "kpi_audit": audit,
             }
@@ -1237,14 +1275,32 @@ async def _execute_tool(tool_id, sheets_data, prior_outputs, llm_config):
             # Fallback: deterministic pipeline
             logger.info("[MBR Agent] Using deterministic KPI pipeline (LLM code failed or unavailable)")
             from ml.api.kpi_calculator import execute_kpi_pipeline
+            from ml.api.kpi_guardrails import ensure_required_breakdowns
             kpi_formula = prior_outputs.get("data_cleaning", {}).get("kpi_formula")
             result = await asyncio.to_thread(
                 execute_kpi_pipeline, sheets_data, call_llm_fn=sync_llm, kpi_formula=kpi_formula
             )
+            # Layer 1: fill gaps even in fallback path
+            det_result_dict = result.get("result", {})
+            det_arts = result.get("artifacts", [])
+            sheet_name = list(sheets_data.keys())[0]
+            for sn in sheets_data:
+                if len(sheets_data[sn]) > len(sheets_data.get(sheet_name, [])):
+                    sheet_name = sn
+            extra_r, extra_a = ensure_required_breakdowns(
+                pd.DataFrame(sheets_data[sheet_name]), det_result_dict, det_arts,
+            )
+            det_result_dict.update(extra_r)
+            det_arts.extend(extra_a)
             return {
-                "result": result.get("result", {}),
+                "result": det_result_dict,
                 "summary_for_narrative": result.get("summary_for_narrative", ""),
-                "artifacts": result.get("artifacts", []),
+                "artifacts": det_arts,
+                "kpi_audit": {
+                    "method": "deterministic_pipeline",
+                    "code": "# Deterministic KPI calculation (LLM code gen was unavailable)",
+                    "reasoning": "Used deterministic groupby pipeline as fallback.",
+                },
             }
 
     elif tool_id == "margin_analysis":

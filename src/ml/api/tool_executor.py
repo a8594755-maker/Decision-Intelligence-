@@ -42,6 +42,10 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "") or os.getenv("VITE_DEEPSEEK_API_KEY", "")
 
+# Generic OpenAI-compatible provider (for Kimi, Qwen, Mistral, OpenRouter, etc.)
+OPENAI_COMPAT_API_KEY = os.getenv("DI_OPENAI_COMPAT_API_KEY", "")
+OPENAI_COMPAT_BASE_URL = os.getenv("DI_OPENAI_COMPAT_BASE_URL", "")
+
 # ---------------------------------------------------------------------------
 # Supabase Edge Function ai-proxy — route through Supabase for providers
 # whose API keys are stored as Edge Function secrets (Claude, OpenAI, Gemini)
@@ -180,6 +184,7 @@ async def _call_supabase_ai_proxy(prompt: str, system_prompt: str, provider: str
         "openai": "openai_chat",
         "deepseek": "deepseek_chat",
         "gemini": "gemini_generate",
+        "kimi": "kimi_chat",
     }
     mode = mode_map.get(provider, "di_prompt")
 
@@ -195,7 +200,7 @@ async def _call_supabase_ai_proxy(prompt: str, system_prompt: str, provider: str
                 "responseMimeType": "application/json",
             },
         }
-    elif mode in ("anthropic_chat", "openai_chat", "deepseek_chat"):
+    elif mode in ("anthropic_chat", "openai_chat", "deepseek_chat", "kimi_chat"):
         payload = {
             "message": prompt,
             "conversationHistory": [],
@@ -242,7 +247,7 @@ async def _call_supabase_ai_proxy(prompt: str, system_prompt: str, provider: str
     return text
 
 
-async def _call_llm(prompt: str, system_prompt: str, config: LLMConfig) -> str:
+async def _call_llm(prompt: str, system_prompt: str, config: LLMConfig, json_schema: dict = None) -> str:
     """Call the selected LLM provider. Uses direct API if key available, else Supabase ai-proxy."""
     provider = config.provider
     model = config.model or _default_model(provider)
@@ -257,6 +262,7 @@ async def _call_llm(prompt: str, system_prompt: str, config: LLMConfig) -> str:
         "anthropic": ANTHROPIC_API_KEY,
         "openai": OPENAI_API_KEY,
         "deepseek": DEEPSEEK_API_KEY,
+        "openai_compat": OPENAI_COMPAT_API_KEY,
     }
     has_direct_key = bool(direct_key_map.get(provider))
 
@@ -266,9 +272,11 @@ async def _call_llm(prompt: str, system_prompt: str, config: LLMConfig) -> str:
         elif provider == "anthropic":
             return await _call_anthropic(prompt, system_prompt, model, temperature, max_tokens)
         elif provider == "openai":
-            return await _call_openai(prompt, system_prompt, model, temperature, max_tokens, config)
+            return await _call_openai(prompt, system_prompt, model, temperature, max_tokens, config, json_schema=json_schema)
         elif provider == "deepseek":
             return await _call_deepseek(prompt, system_prompt, model, temperature, max_tokens)
+        elif provider == "openai_compat":
+            return await _call_openai_compat(prompt, system_prompt, model, temperature, max_tokens)
 
     # No direct key — route through Supabase ai-proxy
     if _has_supabase_proxy():
@@ -318,7 +326,7 @@ async def _call_anthropic(prompt: str, system_prompt: str, model: str, temperatu
     return data["content"][0]["text"]
 
 
-async def _call_openai(prompt: str, system_prompt: str, model: str, temperature: float, max_tokens: int, config: Optional[LLMConfig] = None) -> str:
+async def _call_openai(prompt: str, system_prompt: str, model: str, temperature: float, max_tokens: int, config: Optional[LLMConfig] = None, json_schema: dict = None) -> str:
     """Call OpenAI. Uses Responses API for reasoning models (gpt-5.4 etc.), Chat Completions for others."""
     headers = {
         "Authorization": f"Bearer {OPENAI_API_KEY}",
@@ -330,6 +338,18 @@ async def _call_openai(prompt: str, system_prompt: str, model: str, temperature:
     if reasoning_effort:
         # ── Responses API (for reasoning models) ──────────────────────────
         url = "https://api.openai.com/v1/responses"
+
+        # If json_schema provided, use strict JSON output format
+        if json_schema:
+            text_format = {
+                "type": "json_schema",
+                "name": json_schema.get("name", "structured_output"),
+                "schema": json_schema.get("schema", json_schema),
+                "strict": True,
+            }
+        else:
+            text_format = {"type": "text"}
+
         payload = {
             "model": model,
             "instructions": system_prompt,
@@ -338,7 +358,7 @@ async def _call_openai(prompt: str, system_prompt: str, model: str, temperature:
                 "effort": reasoning_effort,
                 "summary": "auto",
             },
-            "text": {"format": {"type": "text"}},
+            "text": {"format": text_format},
             "max_output_tokens": max_tokens,
         }
         # Reasoning models don't support temperature
@@ -349,21 +369,39 @@ async def _call_openai(prompt: str, system_prompt: str, model: str, temperature:
             resp.raise_for_status()
             data = resp.json()
 
-        # Extract text from output items
+        # Extract text + reasoning from output items
+        output_text = None
+        reasoning_text = None
+        response_id = data.get("id")
+
         for item in data.get("output", []):
+            if item.get("type") == "reasoning":
+                # Extract reasoning summary (thinking trace)
+                summaries = []
+                for content in item.get("summary", []):
+                    if content.get("type") == "summary_text":
+                        summaries.append(content.get("text", ""))
+                if summaries:
+                    reasoning_text = "\n".join(summaries)
+
             if item.get("type") == "message":
                 for content in item.get("content", []):
                     if content.get("type") == "output_text":
-                        return content["text"]
-            # Also check for direct text type
+                        output_text = content["text"]
             if item.get("type") == "text":
-                return item.get("text", "")
+                output_text = item.get("text", "")
 
         # Fallback: try output_text shorthand
-        if data.get("output_text"):
-            return data["output_text"]
+        if not output_text and data.get("output_text"):
+            output_text = data["output_text"]
 
-        raise ValueError(f"No text found in OpenAI Responses API output: {json.dumps(data)[:500]}")
+        if not output_text:
+            raise ValueError(f"No text found in OpenAI Responses API output: {json.dumps(data)[:500]}")
+
+        if reasoning_text:
+            logger.info(f"[tool_executor] Reasoning summary: {len(reasoning_text)} chars")
+
+        return output_text
 
     else:
         # ── Chat Completions API (for non-reasoning models) ───────────────
@@ -414,6 +452,31 @@ async def _call_deepseek(prompt: str, system_prompt: str, model: str, temperatur
     if not content.strip() and msg.get("reasoning_content"):
         content = msg["reasoning_content"]
     return content
+
+
+async def _call_openai_compat(prompt: str, system_prompt: str, model: str, temperature: float, max_tokens: int) -> str:
+    """Call any OpenAI-compatible API (Kimi, Qwen, Mistral, OpenRouter, etc.)."""
+    base_url = OPENAI_COMPAT_BASE_URL.rstrip("/")
+    url = f"{base_url}/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {OPENAI_COMPAT_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": model,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": prompt},
+        ],
+    }
+    logger.info(f"[tool_executor] OpenAI-compat: {base_url}, model={model}")
+    async with httpx.AsyncClient(timeout=180) as client:
+        resp = await client.post(url, json=payload, headers=headers)
+        resp.raise_for_status()
+        data = resp.json()
+    return data["choices"][0]["message"]["content"]
 
 
 # ---------------------------------------------------------------------------
@@ -476,8 +539,8 @@ ANALYSIS_CODE_GEN_SYSTEM_PROMPT = """You are an expert statistical data analyst.
 
 CRITICAL RULES:
 1. Your code MUST define `run(input_data, prior_artifacts, tables)` where `tables` is a Dict[str, pd.DataFrame].
-   - `tables` keys: customers, orders, order_items, payments, reviews, products, sellers, geolocation, category_translation
-   - Use `tables["orders"]` etc. to access DataFrames directly — no file I/O needed.
+   - Discover available tables dynamically: `table_names = list(tables.keys())`
+   - Use `tables[name]` to access DataFrames — do NOT assume specific table names
    - If `tables` is empty, fall back to `input_data["sheets"]`.
 2. Available libraries: pandas, numpy, json, re, math, datetime, collections, statistics, itertools, functools, scipy, scipy.stats, statsmodels (statsmodels.tsa.seasonal.seasonal_decompose, statsmodels.tsa.holtwinters.ExponentialSmoothing, statsmodels.tsa.stattools.adfuller), sklearn (sklearn.cluster.KMeans, sklearn.linear_model.LinearRegression, sklearn.preprocessing.StandardScaler), calendar
 3. DO NOT import os, sys, subprocess, importlib, shutil, or any I/O libraries.

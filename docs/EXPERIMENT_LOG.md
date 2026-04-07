@@ -268,4 +268,350 @@ AI Venture Velocity Challenge 2026. Time-stamped record of hypotheses tested, ev
 
 ---
 
-*Log updated: 2026-04-05. Total experiments: 18.*
+## EXP-019: Multi-Agent Architecture — Parallel Lenses + Reviewer
+**Date:** 2026-04-05
+**Hypothesis:** Adding a Reviewer agent that reads all 3 specialist outputs + original KPIs will catch contradictions and improve report accuracy.
+**Why it matters:** Previous versions had errors where "code computed category margin but narrative said not available." A reviewer reading both should catch this.
+**Experiment:** Replaced single synthesizer with 5-agent architecture: 3 specialist lenses (Financial, Operations, Risk) run in parallel, then Reviewer checks for contradictions, then Lead Analyst synthesizes with corrections applied. All reasoning agents use GPT-5.4 with reasoning_effort=high.
+**AI tools used:** GPT-5.4 (reasoning=high) for analysis/review, DeepSeek for tool selection/code gen.
+**Evidence:** Reviewer successfully caught: "Operations Analyst says lead_time=0.00 but KPI table shows it was computed." Also caught inconsistencies in margin numbers between analysts. Report quality: 7.8-8/10 (up from 6-7/10 without reviewer).
+**Decision:** Keep parallel + reviewer architecture. But discovered new issue: the reviewer can't fix what the code gen got wrong (date parsing regression).
+**Impact:** Architecture upgrade from single-LLM synthesis to multi-agent with cross-checking. First implementation of inter-agent review in the system.
+
+---
+
+## EXP-020: LLM Code Gen — Negative Profit ≠ Return Rate
+**Date:** 2026-04-05
+**Hypothesis:** LLM will not confuse negative profit transactions with product returns if explicitly instructed.
+**Why it matters:** Previous version calculated "return_rate = 18.72%" from negative profit rows, then built entire risk narrative on this false premise. Negative profit means the transaction lost money (deep discount, high cost), NOT that the product was returned.
+**Experiment:** Added KPI code prompt rule: "Negative profit does NOT mean returns/refunds. Never calculate return_rate from negative profit rows." Also added rules for precise metric naming (avg_lines_per_order vs avg_items_per_order) and revenue-weighted discount rate.
+**AI tools used:** DeepSeek KPI code generator.
+**Evidence:** After fix, no more "return_rate" in output. Discount rate changed from misleading "15.62%" (unweighted mean) to "14.04%" (revenue-weighted effective rate).
+**Decision:** KPI code prompt now has 12 rules. Each rule traces back to a specific error found in testing.
+**Impact:** Eliminated false "return rate" narrative. Discount rate reporting more accurate.
+
+---
+
+## EXP-021: Excel Serial Date Handling — Lead Time Regression
+**Date:** 2026-04-05
+**Hypothesis:** LLM-generated date parsing code will correctly handle Excel serial dates.
+**Why it matters:** Superstore lead time went from correct 3.96 days (version N-1) to 0.00 days (version N) because LLM used pd.to_datetime() which doesn't handle Excel serial numbers (e.g., 42370 = 2016-01-01).
+**Experiment:** Instead of relying on LLM to write correct date parsing, added deterministic pre-processing in the sandbox: detect columns named "date" with numeric values in 30000-60000 range → auto-convert using unit='D', origin='1899-12-30'. This runs BEFORE LLM code executes.
+**AI tools used:** None (deterministic fix).
+**Evidence:** Test with Excel serial dates [42370, 42371, 42372] → correctly parsed to 2016-01-01, 2016-01-02, 2016-01-03. Lead time calculation: avg=4.33 days (correct).
+**Decision:** Date handling moved from LLM responsibility to deterministic pre-processing. LLM code can assume date columns are already datetime type.
+**Impact:** Lead time calculation now reliable regardless of LLM code quality. Eliminates an entire class of date-related regressions.
+
+---
+
+## EXP-022: Anomaly Sensitivity — 6594 out of 9989 rows (66%) flagged
+**Date:** 2026-04-05
+**Hypothesis:** Reducing anomaly detection sensitivity and excluding ID columns will produce more meaningful anomaly counts.
+**Why it matters:** Flagging 66% of rows as anomalies is useless — it means the threshold is wrong, not that the data is bad. Also, using Row ID and Postal Code as anomaly evidence is meaningless (these are identifiers, not business metrics).
+**Experiment:** Two changes: (1) Z-score threshold raised from 3.0 to 3.5 to reduce false positives on long-tail distributions. (2) Added more ID column patterns to exclusion list: row_id, postal, zip, order_id, customer_id, product_id, invoice, po_number.
+**AI tools used:** None (anomaly engine configuration).
+**Evidence:** Not yet re-tested with Superstore. Expected: anomaly count should drop from 6594 to a more reasonable number (200-500 range for 9989 rows).
+**Decision:** Anomaly thresholds should be tunable per dataset. Current fix is a better default. Future: let the system auto-calibrate threshold based on data distribution.
+**Impact:** Reduces false positive rate. Prevents risk narrative from being built on inflated anomaly counts.
+
+---
+
+## EXP-023: Model Routing — reasoning_effort=high for GPT-5.4
+**Date:** 2026-04-05
+**Hypothesis:** Setting reasoning_effort from default "medium" to "high" for GPT-5.4 will improve analysis quality.
+**Why it matters:** Another AI's analysis of our codebase found that GPT-5.4 was running at medium reasoning effort by default, which may explain why our output quality is lower than ChatGPT (which presumably uses high or max).
+**Experiment:** Changed all synthesizer and column role detection calls to use reasoning_effort="high". Also added logging to show actual provider/model/reasoning for every LLM call. UI now shows model tag next to each agent (e.g., "openai/gpt-5.4 (reasoning=high)").
+**AI tools used:** GPT-5.4 with reasoning_effort=high.
+**Evidence:** Testing in progress. Expected: improved reasoning depth in specialist lenses, fewer "not available" false claims, better risk confidence tagging.
+**Decision:** High reasoning for analysis tasks, medium/default for tool selection and code gen (where speed matters more than depth).
+**Impact:** Transparent model routing — every agent shows which model it used. Users and developers can verify the AI is using the right model for each step.
+
+---
+
+## Cumulative Version Comparison (Superstore Dataset)
+
+| Version | Date | Score | Key Improvement | Key Regression |
+|---------|------|-------|-----------------|----------------|
+| v1 | 04-03 | 6/10 | First working pipeline | No category margin, dates wrong |
+| v2 | 04-04 | 7/10 | Category margin found, less overclaim | Discount = return rate error |
+| v3 | 04-05 | 7.8/10 | Lead time computed, confidence tags | Return rate still present |
+| v4 | 04-05 | 8/10 | Reviewer catches contradictions | Lead time regressed to 0.00 |
+| v5 | 04-05 | TBD | Date pre-processing, parallel+reviewer, reasoning=high | Testing... |
+
+---
+
+## EXP-024: Metric Contract + Quarantine + Deterministic Breakdowns
+**Date:** 2026-04-06
+**Hypothesis:** Adding metric contract (canonical values), quarantine (date-sum/ID-sum), and expanded deterministic breakdowns (revenue share, discount by dimension) will close the remaining analysis gaps
+**Why it matters:** V3 scored 8.4/10 but missed discount-by-category, Consumer segment margin, and treated 6205 anomalies as footnote
+**Experiment:** Built 4 new deterministic layers between tool execution and synthesis
+**AI tools used:** Pure deterministic (no LLM calls)
+
+**Evidence:**
+- Metric contract now produces: margin, revenue share, AND discount rate breakdowns per dimension (3×3 = 9 breakdowns vs 3 before)
+- Quarantine catches date-sum and ID-sum garbage before it reaches agents (safelist protects avg_lead_time_days)
+- Anomaly escalation: ≥100 anomalies or ≥5 critical → auto-flagged as MAJOR finding in Data Gaps section
+- Revenue base ambiguity: auto-warns when revenue + discount + margin coexist without clarifying gross vs net
+
+**Decision:** Ship these as deterministic pre-synthesis layer. Next: structured claims (specialist output → JSON claims → reviewer audits claims not prose)
+**Impact:** Agents now see 3× more breakdown data; meaningless metrics quarantined; high anomaly counts auto-escalated; revenue definition ambiguity surfaced
+
+## EXP-025: V3 Quality Evaluation — Best Version
+**Date:** 2026-04-06
+**Hypothesis:** Metric contract + benchmark policy would produce consistently accurate analysis
+**Evidence:** External evaluation scored 8.4/10 overall, 9.5/10 KPI accuracy, 9/10 actionability
+**Key finding:** Furniture 2.49% margin caught for first time (was missed in V1-V2). Tables -8.56% sub-category identified. $109K profit shortfall quantified.
+**Remaining gaps:** Discount not broken by category, Consumer segment margin dropped, 6205 anomalies under-prioritized
+**Decision:** All gaps addressed by EXP-024 deterministic fixes
+
+## EXP-026: Synthesis v2 — Role Briefing + Reference System + Structured Reviewer
+**Date:** 2026-04-06
+**Hypothesis:** Agent errors come from 3 root causes: (1) too much noise in input, (2) LLM responsible for numbers, (3) reviewer can't enforce corrections. Fixing all 3 at the deterministic layer will improve accuracy more than prompt engineering.
+**Why it matters:** V3 scored 8.4/10 but agents still cited wrong numbers, ignored forecast contract, and guessed causal relationships.
+
+**Changes (all deterministic, no prompt tuning):**
+1. **Priority Ranking**: `compute_priority_scores()` — scores by `abs(delta_pct) × revenue_weight × is_bad_boost`. Furniture margin now ranks #1 automatically.
+2. **Role-Based Routing**: `build_role_briefing()` — Financial gets ~2000 tokens (margin, discount, revenue only), Operations gets ~300 tokens (lead time, forecast contract only). Down from 3500 shared tokens.
+3. **[[Reference]] System**: `resolve_references()` — agents write `[[margin_pct:Furniture]]`, system replaces with real value. If ref doesn't exist → [UNRESOLVED]. Agent never writes raw numbers.
+4. **Causal Context**: `build_causal_context()` — for top 5 outliers, finds all other metrics for the same dimension. E.g., Furniture margin outlier → system provides Furniture revenue, COGS, discount as explanation candidates. Agent doesn't need to guess causation.
+5. **Structured Reviewer**: Reviewer outputs JSON with corrections + worst_agent. If worst agent has critical errors → retry with specific feedback. Max 1 retry.
+6. **Key Metrics Table**: System-generated from metric contract, not LLM-generated.
+
+**New file**: `src/ml/api/synthesis_briefing.py` (~350 lines)
+**Modified**: `src/ml/api/agent_synthesizer.py` (rewritten synthesize() flow)
+**Tests**: 16 tests passing (7 new for briefing + 9 existing)
+
+**Expected impact:**
+- "forecast unit unknown" bug → eliminated (Operations briefing includes forecast contract explicitly)
+- Number copying errors → eliminated (LLM never writes numbers)
+- Furniture margin missed → eliminated (priority ranking forces it to #1)
+- Causal guessing → reduced (system provides explanation candidates)
+
+**Decision:** This is the architecture for v2 synthesis. Needs end-to-end validation with real LLM calls.
+
+## EXP-027: [[Reference]] System Failed — 6.2/10, Severe Regression
+**Date:** 2026-04-06
+**Hypothesis:** If agents use `[[metric_id]]` placeholders and system resolves them, numbers will always be correct.
+**Why it matters:** This was supposed to solve the #1 problem (agents citing wrong numbers).
+
+**Evidence (FAILURE):**
+- Overall quality: **6.2/10** (down from 8.4/10 — worst version in recent history)
+- Consistency: **4.8/10**
+- Trustworthiness: **4.5/10**
+- Final output contained `[UNRESOLVED: 55,617.82]`, `[UNRESOLVED: -17,725.48]`, `[UNRESOLVED: $2,296,635]` throughout
+- Agents invented non-existent refs: `[[total_profit:Copiers]]`, `[[total_revenue:California]]`, `[[units:Standard Class]]`
+- Reviewer caught the errors but retry didn't fix them — final report still had broken placeholders
+
+**Root cause:** LLMs see `[[pattern]]` and **generalize** — they create new refs that don't exist. This is LLM's nature: it sees a pattern and extrapolates. Unlike Excel where `=A1` is a closed vocabulary trained billions of times, `[[metric_id:dimension]]` is a custom syntax the LLM hasn't been trained on.
+
+**Decision:** Killed `[[reference]]` system entirely. Reverted briefings to show real numbers. Added `sanitize_output()` safety net to strip any stray `[[...]]`.
+
+**Key lesson:** **Don't make numbers secondary output (embedded in prose). Either make them primary structured output (JSON) or show them directly (real numbers).** The middle ground (placeholders in prose) is the worst of both worlds.
+
+## EXP-028: Structured Claims — Excel Model (Enum-Constrained JSON)
+**Date:** 2026-04-06
+**Hypothesis:** If we constrain LLM output to a JSON schema where `metric_ref` is an enum of valid IDs, the LLM physically cannot reference non-existent metrics — same principle as Excel formulas.
+
+**Why it matters:** This is the architectural fix for the #1 quality bottleneck: agents citing wrong or non-existent data.
+
+**Architecture:**
+```
+Metric Contract → extract valid_metric_ids → build JSON schema with enum
+    ↓
+3 Specialists output JSON claims (OpenAI strict mode: enum enforced at decode time)
+    ↓
+System validates claims (belt-and-suspenders)
+    ↓
+Reviewer checks claims (structured JSON)
+    ↓
+Writer LLM converts verified claims → prose (all numbers pre-filled from ref_values)
+    ↓
+sanitize_output() safety net
+```
+
+**Key insight from research:** OpenAI Responses API supports `text.format.type = "json_schema"` with `strict: true`. With enums, the model **cannot emit tokens outside the enum**. This is the same guarantee Excel gives: you can't write `=VLOOKUP("Copiers", ...)` if Copiers isn't in the data.
+
+**Changes:**
+- New: `structured_claims.py` — schema builder, validator, claims-to-prose converter
+- Modified: `_call_openai()` — now accepts `json_schema` for strict structured output
+- Modified: `_call_llm_via_proxy()` and `_call_llm()` — pass `json_schema` through chain
+- Modified: `agent_synthesizer.py` — full rewrite to claims-based flow
+- 5 LLM calls (same as before): 3 specialists (JSON) + 1 reviewer (JSON) + 1 writer (prose)
+
+**Tests:** 19 passing (5 new for structured claims)
+
+**Expected impact:**
+- `[[total_profit:Copiers]]` → **impossible** (Copiers not in enum)
+- `[UNRESOLVED: ...]` in output → **impossible** (no placeholders in flow)
+- Numbers copied wrong → **impossible** (writer gets pre-formatted ref_values)
+- Agent ignores forecast contract → **reduced** (role briefing shows it directly)
+
+**Status:** Built and tested deterministically. Needs end-to-end validation with real GPT-5.4 API calls.
+
+## Version Quality Tracker
+
+| Version | Date | Score | Best Feature | Worst Issue |
+|---------|------|-------|--------------|-------------|
+| v1 | 04-03 | 6/10 | First working pipeline | No category margin |
+| v2 | 04-04 | 7/10 | Category margin found | Discount = return rate |
+| v3 | 04-05 | 7.8/10 | Lead time computed | Return rate still present |
+| v4 | 04-05 | 8/10 | Reviewer catches contradictions | Lead time regressed to 0.00 |
+| v5 (metric contract) | 04-06 | 8.4/10 | Furniture 2.49% found, reviewer strong | Discount not by category |
+| v6 (metric contract v2) | 04-06 | 8.2/10 | Metric conflict awareness | KPI conflict still unresolved |
+| v7 ([[reference]]) | 04-06 | **6.2/10** | Reviewer very strong | **[UNRESOLVED] in output — delivery failure** |
+| v8 (structured claims) | 04-06 | **6.6/10** | Enum refs work, reviewer strong | **LLM fabricates numbers in free-text fields** |
+
+## EXP-029: Structured Claims v1 — Enum Works, Free-Text Leaks
+**Date:** 2026-04-06
+**Hypothesis:** Enum-constrained `metric_ref` will prevent fabricated references.
+**Result:** Partial success — **6.6/10** (up from 6.2, but still below v5's 8.4)
+
+**What worked:**
+- `metric_ref` enum constraint **held** — no invented metric IDs in the JSON field
+- Reviewer caught 10 critical errors, correctly identified fabricated benchmarks
+- KPI baseline was clean and complete
+
+**What failed:**
+- LLM fabricated numbers in `insight` and `note` free-text string fields:
+  - "Tables profit -$17,725.48, which is $33,319.50 below its benchmark" ← benchmark is made up
+  - "Copiers exceed benchmark by $45,610.72" ← no Copiers benchmark exists
+  - "Home Office unit sales dramatically below benchmark" ← no unit benchmarks for segments
+- All 3 specialists missed the #1 finding: Office Supplies 60.3% share anomaly (delta +40.45)
+- Operations incorrectly labeled Technology as "severely underperforming" when it's ABOVE benchmark
+
+**Root cause:** Schema constrains `metric_ref` (enum) and `assessment` (enum), but `insight` is a free `string` type — LLM fills it with fabricated numbers. The schema prevents bad REFERENCES but not bad PROSE.
+
+**Fix needed:** Remove all free-text number-containing fields from claims. Claims should be:
+```json
+{"metric_ref": "margin_pct:Furniture", "assessment": "critically_low", "confidence": "data_proven", "cause_ref": "total_revenue:Furniture"}
+```
+No `insight`, no `note`, no free-text where LLM can embed numbers. The writer gets the real numbers from `ref_values` lookup.
+
+**Key lesson:** Constraining the INDEX is not enough — you also have to constrain the VALUES. Every channel where LLM can write free text is a channel where it will fabricate numbers.
+
+## Version Quality Tracker (updated)
+
+| Version | Date | Score | Architecture | Key Win | Key Fail |
+|---------|------|-------|-------------|---------|----------|
+| v1 | 04-03 | 6.0 | Basic pipeline | First working | No category margin |
+| v2 | 04-04 | 7.0 | + KPI code | Category margin | Discount=return rate |
+| v3 | 04-05 | 7.8 | + Lead time | Lead time works | Return rate persists |
+| v4 | 04-05 | 8.0 | + Reviewer | Catches contradictions | Lead time regressed |
+| **v5** | **04-06** | **8.4** | **+ Metric contract** | **Furniture found, best version** | **Discount not by category** |
+| v6 | 04-06 | 8.2 | + Benchmark policy | Metric conflict awareness | KPI conflicts unresolved |
+| v7 | 04-06 | 6.2 | + [[Reference]] | Reviewer strong | [UNRESOLVED] in output |
+| v8 | 04-06 | 6.6 | + Structured claims | Enum refs hold | Numbers in free-text |
+
+**Trend:** v5 (8.4) remains the high-water mark. v7-v8 introduced architectural changes that regressed quality. The simpler architecture (real numbers in prompt + strong reviewer) outperformed the more complex ones (placeholders, JSON claims).
+
+## EXP-030: Micro-Call Synthesis — One LLM, One Job
+**Date:** 2026-04-06
+**Hypothesis:** If each LLM call only sees 3-5 facts (~200 tokens), it can only use those numbers. No room to fabricate.
+
+**Insight:** Previous versions failed because one LLM call did 4 things simultaneously (select, judge, explain cause, write). Each additional task multiplied hallucination chances. The deterministic layer already handles select (priority ranking), judge (benchmark delta), and explain (causal context). LLM only needs to WRITE.
+
+**Architecture:**
+```
+Deterministic: score → rank → build fact packets (3 facts each, ~200 tokens)
+    ↓
+Parallel micro-calls: each packet → 2-3 sentences (N calls, all parallel)
+    ↓
+Deterministic: assemble sections from micro-outputs
+    ↓
+1 LLM call: Executive Summary + Recommendations from assembled sections
+    ↓
+sanitize_output() safety net
+```
+
+**Key differences from v5-v8:**
+- No specialist agents (financial/ops/risk each doing full analysis)
+- No reviewer (nothing to review — each micro-call is too small to go wrong)
+- No JSON claims, no enums, no placeholders
+- Each LLM call sees ~200 tokens (vs 2000-3500 in previous versions)
+- LLM calls: ~7-10 micro + 1 exec summary = ~8-11 total (vs 5 before)
+- But each is faster (small context) and all micro-calls run in parallel
+
+**Why this might work at scale (200+ metrics):**
+- Priority ranking selects top N per role (deterministic, O(n log n))
+- Each packet is always 3 facts regardless of total metrics
+- Token count per call is constant (~200), doesn't grow with data size
+- Number of packets grows linearly (60 metrics ÷ 3 = 20 packets), all parallel
+
+**New file:** `src/ml/api/fact_packets.py` (~200 lines)
+**Tests:** 20 passing (6 new for fact packets)
+**Status:** Built and tested. Needs end-to-end validation with real LLM calls.
+
+| Version | Date | Score | Architecture | Key Idea |
+|---------|------|-------|-------------|----------|
+| v5 | 04-06 | **8.4** | All facts → 3 agents | Simple, works at small scale |
+| v7 | 04-06 | 6.2 | [[placeholder]] system | LLM generalizes patterns → broken |
+| v8 | 04-06 | 6.6 | JSON enum claims | Enum works, free-text leaks |
+| v9 | 04-06 | 5.8 | Micro-calls (3 facts each) | Too fragmented, no reviewer, grass-draft patchwork |
+| v10 | 04-06 | 7.1 | V5+V9 hybrid (first attempt) | Role routing + focused briefings, but GPT-5.4 code gen unstable |
+| v11 | 04-06 | 7.4 | + quarantine fix for row_id/postal/date | Garbage metrics gone, but share% still dominates |
+| v12 | 04-06 | 8.0 | + gross_revenue→revenue rename | No more net_revenue confusion, code gen reliable |
+| v13 | 04-06 | 8.3 | + anomaly engine quarantine | Row_id/postal/date sums fully removed from agents |
+| v14 | 04-06 | 3.5 | GPT-5.4 code gen broke (Revenue=0) | Diagnostic log bug crashed KPI path |
+| **v15** | **04-07** | **8.5** | **V5+V9 hybrid + 4 guardrails + reasoning optimization** | **Best version. Clean KPIs, strong reviewer, no garbage.** |
+
+## EXP-031: V5+V9 Hybrid — Final Architecture (v15, scored 8.5/10)
+**Date:** 2026-04-07
+**Hypothesis:** Combine V5 synthesis structure (3 agents + reviewer + synthesizer) with V9 deterministic layer (priority ranking, role routing, causal context, quarantine) for the best of both worlds.
+
+**Architecture:**
+```
+Deterministic Layer (V9):
+  metric_contract → benchmark_policy → priority_scoring → role_routing → causal_context
+  + KPI minimum spec (ensure_required_breakdowns)
+  + Sanity check (gross_margin ≠ revenue, revenue > 0)
+  + Structural vs Problematic classification (share% deprioritized)
+  + Quarantine (row_id, postal_code, date sums excluded everywhere)
+
+Synthesis Layer (V5):
+  3 specialists parallel (Financial, Operations, Risk) — focused briefings, real numbers
+  1 reviewer — sees all data + all 3 outputs, finds errors
+  1 synthesizer — applies corrections, McKinsey Pyramid structure
+
+Model Routing:
+  Tool selection: DeepSeek (default llm_config)
+  KPI code gen: GPT-5.4 reasoning=medium (via env var DI_CODE_GEN_*)
+  Synthesis: GPT-5.4 reasoning=medium for specialists, low for reviewer (via env var DI_REASONING_*)
+  All configurable via env vars + UI model selector
+```
+
+**Key files created/modified:**
+- NEW: `kpi_guardrails.py` — 3-layer deterministic guardrails (minimum spec + sanity + structural)
+- NEW: `synthesis_briefing.py` — priority ranking, role routing, causal context, key metrics table
+- NEW: `fact_packets.py` — micro-call support (kept but not used in final architecture)
+- NEW: `structured_claims.py` — JSON enum claims (kept but not used in final architecture)
+- MODIFIED: `agent_synthesizer.py` — V5+V9 hybrid flow
+- MODIFIED: `metric_registry.py` — source priority, quarantine, per-unit metric separation
+- MODIFIED: `kpi_code_executor.py` — GPT-5.4 support, JSON repair, prompt cleanup
+- MODIFIED: `mbr_agent.py` — guardrails wired into both LLM and fallback paths
+- MODIFIED: `anomaly_engine.py` — quarantine filter on numeric columns
+- MODIFIED: `mbr_data_cleaning.py` — neutral canonical name (revenue not gross_revenue)
+- MODIFIED: `mapping_rules.py` — same rename fix
+- MODIFIED: `tool_executor.py` — Kimi/OpenAI-compat provider, reasoning extraction, max_tokens 8192
+- MODIFIED: `AgentWorkspaceView.jsx` — model selector dropdown
+
+**Tests:** 27 passing (kpi_guardrails, synthesis_briefing, fact_packets, metric_registry, synthesis_foundations)
+
+**What worked:**
+- Quarantine rules (one set, three entry points) eliminated all garbage metrics
+- Priority ranking puts Furniture margin #1 automatically
+- Structural classification deprioritizes share% deviations
+- Reviewer catches unsupported benchmarks, final absorbs corrections
+- KPI code gen reliable with GPT-5.4 medium reasoning + 8192 max_tokens
+
+**What still needs fixing:**
+- Key Metrics table shows items without formal benchmark (Tables, Central)
+- Lead time by ship_mode = NaT (date parsing edge case)
+- Structured breakdowns have duplicates
+- Discount benchmarks fabricated by specialists (reviewer catches but shouldn't happen)
+
+**Scores evolution:**
+| v1→v5 | 6.0→8.4 | Building the pipeline |
+| v7→v9 | 6.2→5.8 | Failed experiments (placeholders, JSON claims, micro-calls) |
+| v10→v15 | 7.1→8.5 | Rebuilding with guardrails + hybrid architecture |
+
+*Log updated: 2026-04-07. Total experiments: 31.*
