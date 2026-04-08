@@ -120,12 +120,16 @@ def benchmark_policy_to_markdown(benchmark_policy: dict[str, Any]) -> str:
             f"- {comparison['display_name']} by {comparison['dimension']}: "
             f"use {comparison['policy']} as the ONLY primary benchmark."
         )
-        for row in comparison["rows"][:8]:
-            metric_value = row.get("metric_value")
-            benchmark_value = row.get("benchmark_value")
-            delta_abs = row.get("delta_vs_benchmark")
+        for row in comparison["rows"]:
+            mv = row.get("metric_value")
+            bv = row.get("benchmark_value")
+            da = row.get("delta_vs_benchmark")
+            # Round to 2 decimals for consistency with specialist briefings
+            mv_str = f"{mv:.2f}" if isinstance(mv, float) else str(mv)
+            bv_str = f"{bv:.2f}" if isinstance(bv, float) else str(bv)
+            da_str = f"{da:.2f}" if isinstance(da, float) else str(da)
             lines.append(
-                f"  {row.get('dimension_value')}: value={metric_value}, "
-                f"benchmark={benchmark_value}, delta={delta_abs}"
+                f"  {row.get('dimension_value')}: value={mv_str}, "
+                f"benchmark={bv_str}, delta={da_str}"
             )
     return "\n".join(lines)
