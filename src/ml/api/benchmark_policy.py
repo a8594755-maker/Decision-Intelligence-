@@ -115,12 +115,12 @@ def benchmark_policy_to_markdown(benchmark_policy: dict[str, Any]) -> str:
         return ""
 
     lines.append("## Benchmark Policy")
-    for comparison in comparisons[:12]:
+    for comparison in comparisons:  # show ALL comparisons — reviewer needs full visibility
         lines.append(
             f"- {comparison['display_name']} by {comparison['dimension']}: "
             f"use {comparison['policy']} as the ONLY primary benchmark."
         )
-        for row in comparison["rows"][:6]:
+        for row in comparison["rows"][:8]:
             metric_value = row.get("metric_value")
             benchmark_value = row.get("benchmark_value")
             delta_abs = row.get("delta_vs_benchmark")
