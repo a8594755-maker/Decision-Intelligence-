@@ -365,24 +365,28 @@ def _find_col(df: pd.DataFrame, keywords: tuple[str, ...]) -> str | None:
 
 def _match_dimension(name: str, available: list[str]) -> str | None:
     """Fuzzy match LLM dimension name to actual column name."""
-    name_lower = name.lower().strip().replace(" ", "_")
+    def _norm(s: str) -> str:
+        return s.lower().strip().replace(" ", "_").replace("-", "_")
 
-    # Exact match
+    name_norm = _norm(name)
+
+    # Exact match (normalized)
     for col in available:
-        if col.lower() == name_lower:
+        if _norm(col) == name_norm:
             return col
 
-    # Substring match
+    # Substring match (normalized)
     for col in available:
-        if name_lower in col.lower() or col.lower() in name_lower:
+        cn = _norm(col)
+        if name_norm in cn or cn in name_norm:
             return col
 
     # Word overlap
-    name_words = set(name_lower.split("_"))
+    name_words = set(name_norm.split("_"))
     best_col = None
     best_score = 0
     for col in available:
-        col_words = set(col.lower().split("_"))
+        col_words = set(_norm(col).split("_"))
         overlap = len(name_words & col_words)
         if overlap > best_score:
             best_score = overlap
