@@ -723,3 +723,37 @@ Model Routing:
 - Procurement: 0 artifacts (no margin metric → correct skip) ✅
 
 *Log updated: 2026-04-07. Total experiments: 35.*
+
+## EXP-036: Benchmark Parity + Drill-Down Visibility — scored 8.9/10
+**Date:** 2026-04-08
+**Hypothesis:** Reviewer misjudging valid benchmarks as fabricated is caused by information asymmetry, not LLM hallucination. Fixing parity + showing drill-down results will improve quality.
+
+**Root causes found and fixed:**
+1. benchmark_policy_to_markdown truncated at [:12] comparisons and [:8] rows → reviewer couldn't see benchmarks that specialists cited
+2. Rounding mismatch: specialists showed "15.87" (2 decimals), reviewer saw "15.865" (4 decimals) → reviewer judged as fabricated
+3. Drill-down thinking showed only LLM decisions ("DRILL: Category"), not execution results
+
+**Fixes:**
+- benchmark_policy_to_markdown: no truncation, all comparisons + all rows
+- All benchmark values rounded to 2 decimals (matching specialist briefings)
+- Drill-down SSE events include full results (margin breakdown + cross-dimension hotspots)
+
+**Result:** 8.9/10 (previous best: 8.7)
+- Reviewer no longer says "benchmark not in data" ✅
+- Drill-down shows rich thinking: "Furniture × Consumer margin=1.79%, Tables × Consumer=-9.73%"
+- Root cause chain visible: Furniture → Tables → Central × Consumer × Standard Class
+
+**Key insight:** The #1 bottleneck was never LLM hallucination — it was information asymmetry between agents. Once all agents see the same data at the same precision, quality improves without any prompt changes.
+
+## Version Quality Tracker (Final)
+
+| Version | Date | Score | Key Achievement |
+|---------|------|-------|-----------------|
+| v1 | 04-03 | 6.0 | First working pipeline |
+| v5 | 04-06 | 8.4 | Metric contract + benchmark |
+| v15 | 04-07 | 8.5 | V5+V9 hybrid + guardrails |
+| v16 | 04-07 | 8.7 | Key Metrics cleanup |
+| v17 | 04-07 | 8.6 | Generalization (Financial Sample) |
+| **v18** | **04-08** | **8.9** | **Benchmark parity + drill-down + variance decomposition** |
+
+*Log updated: 2026-04-08. Total experiments: 36.*
