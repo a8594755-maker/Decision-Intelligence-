@@ -174,6 +174,7 @@ def compute_priority_scores(
                 "role": _match_role(metric_id),
                 "type": "breakdown_row",
                 "peer_count": peer_count,
+                "deviation_class": deviation_class,
             })
 
     # Score scalar metrics (no delta, use magnitude or flag as context)
@@ -304,9 +305,19 @@ def build_role_briefing(
             val_str = _format_ref_value(f["value"])
             delta_str = f", delta: {f['delta']:+.2f}" if f["delta"] else ""
             bench_str = f", benchmark: {_format_ref_value(f['benchmark'])}" if f["benchmark"] else ""
+
+            # Annotate benchmarks that are peer medians of absolute sums (less meaningful)
+            dev_class = f.get("deviation_class", "neutral")
+            if dev_class == "structural" and f.get("benchmark"):
+                bench_note = " (NOTE: this is a peer median of absolute totals — larger segments are naturally higher. Do NOT treat as a target or policy benchmark.)"
+            elif dev_class == "neutral" and f.get("benchmark") and "pct" not in f.get("metric_id", "") and "rate" not in f.get("metric_id", "") and "margin" not in f.get("metric_id", ""):
+                bench_note = " (NOTE: benchmark is peer median of absolute amounts, not a rate. Interpret with caution.)"
+            else:
+                bench_note = ""
+
             lines.append(
                 f"{i}. **{f['dimension_value']}** ({f['metric_id']}): "
-                f"{val_str}{bench_str}{delta_str}{bad_marker}"
+                f"{val_str}{bench_str}{delta_str}{bad_marker}{bench_note}"
             )
 
     # ── Causal context for outliers ──

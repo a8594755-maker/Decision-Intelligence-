@@ -302,7 +302,8 @@ SYNTHESIS_PROMPT = """Write the final executive report.
 (3 specific actions. Who, what, when, expected impact.)
 
 RULES:
-- Apply ALL reviewer corrections.
+- Apply ALL reviewer corrections. If the reviewer says a benchmark is unsupported, DO NOT use it in the final report.
+- If a finding has a NOTE about peer median of absolute totals, downgrade it to a descriptive observation, not a benchmark gap.
 - Use ONLY numbers from the sections above. Do NOT invent new numbers.
 - 400-600 words."""
 
