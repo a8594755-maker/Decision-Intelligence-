@@ -704,3 +704,22 @@ Model Routing:
 | **v18** | **04-07** | **—** | **4 domains, 6 datasets** | **All hand-verified correct. Engine ready.** |
 
 *Log updated: 2026-04-07. Total experiments: 34.*
+
+## EXP-035: Variance Decomposition — Diagnostic Leap
+**Date:** 2026-04-07
+**Hypothesis:** Adding cross-sectional variance decomposition (contribution_pp) will transform agents from descriptive ("margin is low") to diagnostic ("Furniture drags margin by -3.22pp, 100% of drag").
+
+**Result:** Confirmed. Financial and Risk analysts now cite contribution_pp directly.
+
+**Before:** "Furniture margin 2.49% is below benchmark 17.21%"
+**After:** "Furniture is 100% of category drag with contribution = -3.22pp, Tables -1.89pp (40% of drag)"
+
+**Architecture:** Pure deterministic (Layer 4 in kpi_guardrails.py). For each rate metric × dimension:
+  `contribution_pp = (dimension_rate - overall_rate) × revenue_share`
+
+**Generalization tested:**
+- Superstore: 5 decomposition artifacts (category, sub_category, region, segment, ship_mode) ✅
+- Financial Sample: Enterprise -1.29pp (86.6% of drag) ✅
+- Procurement: 0 artifacts (no margin metric → correct skip) ✅
+
+*Log updated: 2026-04-07. Total experiments: 35.*
