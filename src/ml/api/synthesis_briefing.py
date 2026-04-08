@@ -263,6 +263,7 @@ def build_role_briefing(
     forecast_contracts: list[dict[str, Any]],
     validation_issues: list[dict[str, Any]],
     findings_chain: list[tuple[str, str]] | None = None,
+    variance_artifacts: list[dict[str, Any]] | None = None,
 ) -> str:
     """Build a focused briefing for one specialist role.
 
@@ -332,6 +333,26 @@ def build_role_briefing(
                 f"unit={fc.get('value_unit', 'unknown')}, "
                 f"granularity={fc.get('series_granularity', 'unknown')}"
             )
+
+    # ── Variance Decomposition (financial and risk only) ──
+    if role in ("financial", "risk") and variance_artifacts:
+        lines.append("")
+        lines.append("## Margin Contribution Analysis (which dimensions drag overall margin)")
+        for art in variance_artifacts:
+            overall = art.get("overall_value", "?")
+            lines.append(f"\n**{art.get('label', 'Contribution')}** (overall: {overall}%)")
+            for row in art.get("data", []):
+                dim_val = row.get("dimension_value", "?")
+                metric_val = row.get("metric_value", "?")
+                share = row.get("revenue_share_pct", "?")
+                contrib = row.get("contribution_pp", 0)
+                drag_pct = row.get("pct_of_drag")
+                sign = "+" if contrib >= 0 else ""
+                drag_note = f" ← {drag_pct:.0f}% of total drag" if drag_pct else ""
+                lines.append(
+                    f"  {dim_val}: margin={metric_val}%, revenue_share={share}%, "
+                    f"contribution={sign}{contrib}pp{drag_note}"
+                )
 
     # ── Validation warnings ──
     role_warnings = _filter_warnings_for_role(role, validation_issues)

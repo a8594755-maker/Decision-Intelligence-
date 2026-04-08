@@ -350,10 +350,15 @@ async def synthesize(
     validation_issues = vr.get("issues", [])
 
     # Build per-role briefings (real numbers, priority-sorted, causal-annotated)
+    # Extract variance decomposition artifacts from enriched
+    variance_arts = [a for a in (analysis_context.get("enriched_artifacts") or [])
+                     if "contribution" in (a.get("metric_id") or "").lower()]
+
     briefings = {}
     for role in ("financial", "operational", "risk"):
         briefings[role] = build_role_briefing(
             role, scored, causal, fc, validation_issues, findings_chain,
+            variance_artifacts=variance_arts,
         )
 
     # Full facts for reviewer (sees everything)
