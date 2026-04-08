@@ -292,6 +292,130 @@ def classify_deviation(item: dict[str, Any]) -> str:
     return "neutral"
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# Layer 4: Cross-Sectional Variance Decomposition
+# ═══════════════════════════════════════════════════════════════════════════
+
+# Rate metrics where decomposition makes sense (metric = sum(x)/sum(y) by dimension)
+_DECOMPOSABLE_RATE_METRICS = {"margin_pct", "gross_margin_pct", "profit_margin_pct"}
+# Weight metrics used to compute revenue share for decomposition
+_WEIGHT_METRIC_IDS = {"total_revenue", "sales", "revenue"}
+
+
+def build_variance_decomposition(
+    metric_contract: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Decompose overall rate metrics into dimensional contributions.
+
+    For each rate breakdown (e.g., margin_pct by category), computes how much
+    each dimension value contributes to the overall rate vs. the weighted average.
+
+    Example output:
+      Furniture margin 2.49%, revenue share 32.3% → drags overall margin by -3.22pp
+
+    Pure deterministic. Zero LLM calls. Works for any dataset.
+    Returns list of artifacts.
+    """
+    scalars = {m["metric_id"]: m for m in metric_contract.get("scalar_metrics", [])}
+    breakdowns = metric_contract.get("breakdowns", [])
+    artifacts = []
+
+    for breakdown in breakdowns:
+        metric_id = breakdown.get("metric_id", "")
+        dimension = breakdown.get("dimension", "")
+        rows = breakdown.get("rows", [])
+
+        # Only decompose rate metrics with 3+ rows
+        if metric_id not in _DECOMPOSABLE_RATE_METRICS:
+            continue
+        if len(rows) < 2:
+            continue
+
+        # Find the overall scalar for this metric
+        overall_value = None
+        for sid in (metric_id, "gross_margin_pct", "margin_pct"):
+            if sid in scalars:
+                overall_value = _safe(scalars[sid].get("value"))
+                break
+        if overall_value is None or overall_value == 0:
+            continue
+
+        # Find corresponding revenue/weight breakdown for the same dimension
+        weight_breakdown = None
+        for wb in breakdowns:
+            if wb.get("dimension") != dimension:
+                continue
+            if wb.get("metric_id") in _WEIGHT_METRIC_IDS:
+                weight_breakdown = wb
+                break
+
+        if not weight_breakdown or not weight_breakdown.get("rows"):
+            continue
+
+        # Build lookup: dimension_value → revenue
+        revenue_map = {}
+        total_weight = 0.0
+        for wr in weight_breakdown["rows"]:
+            dim_val = str(wr.get("dimension_value", ""))
+            rev = _safe(wr.get("metric_value"))
+            if rev > 0:
+                revenue_map[dim_val] = rev
+                total_weight += rev
+
+        if total_weight <= 0:
+            continue
+
+        # Compute decomposition
+        decomp_rows = []
+        for row in rows:
+            dim_val = str(row.get("dimension_value", ""))
+            rate = _safe(row.get("metric_value"))
+            rev = revenue_map.get(dim_val, 0)
+            if rev <= 0:
+                continue
+
+            revenue_share = rev / total_weight * 100
+            deviation = rate - overall_value
+            contribution_pp = deviation * (rev / total_weight)
+
+            decomp_rows.append({
+                "dimension_value": dim_val,
+                "metric_value": round(rate, 2),
+                "revenue_share_pct": round(revenue_share, 2),
+                "deviation_from_avg": round(deviation, 2),
+                "contribution_pp": round(contribution_pp, 2),
+            })
+
+        if not decomp_rows:
+            continue
+
+        # Sort by contribution (most negative first = biggest drag)
+        decomp_rows.sort(key=lambda r: r["contribution_pp"])
+
+        # Calculate pct_of_gap for the negative contributors
+        total_negative = sum(r["contribution_pp"] for r in decomp_rows if r["contribution_pp"] < 0)
+        for r in decomp_rows:
+            if total_negative < 0 and r["contribution_pp"] < 0:
+                r["pct_of_drag"] = round(r["contribution_pp"] / total_negative * 100, 1)
+            else:
+                r["pct_of_drag"] = None
+
+        display_name = breakdown.get("display_name", metric_id)
+        artifacts.append({
+            "type": "table",
+            "label": f"{display_name} Contribution by {dimension.replace('_', ' ').title()}",
+            "metric_id": f"{metric_id}_contribution",
+            "dimension": dimension,
+            "overall_value": overall_value,
+            "data": decomp_rows,
+        })
+
+    if artifacts:
+        logger.info(f"[KPIGuardrails] Built {len(artifacts)} variance decomposition artifacts")
+
+    return artifacts
+
+
 def _safe(value: Any) -> float:
     if isinstance(value, (int, float)) and not isinstance(value, bool):
         f = float(value)

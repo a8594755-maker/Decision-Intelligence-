@@ -49,7 +49,7 @@ logger = logging.getLogger(__name__)
 
 def prepare_analysis_context(all_artifacts: list | None) -> dict:
     """Build structured context once so every synthesis path shares the same facts."""
-    from ml.api.kpi_guardrails import sanity_check_contract
+    from ml.api.kpi_guardrails import sanity_check_contract, build_variance_decomposition
 
     metric_contract = build_metric_contract(all_artifacts or [])
 
@@ -62,6 +62,9 @@ def prepare_analysis_context(all_artifacts: list | None) -> dict:
     benchmark_policy = build_benchmark_policy(metric_contract)
     validation_report = validate_analysis_inputs(all_artifacts or [], metric_contract, benchmark_policy)
 
+    # Layer 4: Variance decomposition — which dimensions drag overall metrics
+    variance_artifacts = build_variance_decomposition(metric_contract)
+
     existing_labels = {(art.get("label") or "").lower() for art in (all_artifacts or [])}
     enriched_artifacts = []
     for art in (
@@ -69,6 +72,7 @@ def prepare_analysis_context(all_artifacts: list | None) -> dict:
         + build_forecast_contract_artifacts(forecast_contracts)
         + build_benchmark_artifacts(benchmark_policy)
         + build_validation_artifacts(validation_report)
+        + variance_artifacts
     ):
         if (art.get("label") or "").lower() not in existing_labels:
             enriched_artifacts.append(art)
