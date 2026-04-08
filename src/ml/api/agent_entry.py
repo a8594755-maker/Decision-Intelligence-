@@ -149,7 +149,31 @@ async def run_general_agent(
 
     context = await run_agent_loop(tool_ids, sheets_data, llm_config, on_step)
 
-    # ── Step 4: LLM Call #2 — Synthesis ──
+    # ── Step 3b: Auto Drill-Down Loop (LLM judges, engine executes) ──
+    from ml.api.drill_down_loop import run_drill_down_loop
+    from ml.api.agent_tool_selector import _call_llm_via_proxy
+    import pandas as pd
+
+    # Get the largest cleaned sheet as DataFrame for drill-down
+    largest_sheet = max(sheets_data.items(), key=lambda x: len(x[1]))[1]
+    drill_df = pd.DataFrame(largest_sheet)
+
+    async def drill_llm_call(prompt, system):
+        return await _call_llm_via_proxy(prompt, system, llm_config)
+
+    drill_artifacts = await run_drill_down_loop(
+        drill_df, context["all_artifacts"], drill_llm_call, on_step,
+    )
+    if drill_artifacts:
+        context["all_artifacts"].extend(drill_artifacts)
+        context["steps_log"].append({
+            "tool": "auto_drill_down",
+            "duration_ms": 0,
+            "status": "success",
+            "summary": f"Auto drill-down: {len(drill_artifacts)} artifacts",
+        })
+
+    # ── Step 4: LLM Call — Synthesis ──
     from ml.api.agent_synthesizer import prepare_analysis_context, synthesize
 
     analysis_context = prepare_analysis_context(context["all_artifacts"])
