@@ -171,18 +171,16 @@ async def run_drill_down_loop(
 
         logger.info(f"[DrillDown] Round {round_num}: {response}")
 
-        if on_step:
-            await on_step({
-                "type": "agent_thinking",
-                "phase": f"drill_round_{round_num}",
-                "thinking": response,
-            })
-
         # Parse response
         if response.upper().startswith("DONE"):
             summary = response.split(":", 1)[1].strip() if ":" in response else response
             drill_history.append({"round": round_num, "target": "DONE", "summary": summary})
             if on_step:
+                await on_step({
+                    "type": "agent_thinking",
+                    "phase": f"drill_round_{round_num}",
+                    "thinking": f"✅ **Investigation Complete**\n\n{summary}",
+                })
                 await on_step({"type": "agent_status", "phase": f"drill_round_{round_num}", "status": "done"})
             break
 
@@ -196,6 +194,12 @@ async def run_drill_down_loop(
             if not target_col:
                 logger.warning(f"[DrillDown] Could not match dimension '{dim_name}' to available: {available}")
                 drill_history.append({"round": round_num, "target": dim_name, "summary": "dimension not found"})
+                if on_step:
+                    await on_step({
+                        "type": "agent_thinking",
+                        "phase": f"drill_round_{round_num}",
+                        "thinking": f"⚠️ Could not find dimension '{dim_name}' — skipping.",
+                    })
                 continue
 
             drilled_dims.add(target_col)
@@ -205,13 +209,49 @@ async def run_drill_down_loop(
             new_arts = _execute_drill(df, target_col, rev_col, prof_col, num_cols)
             drill_artifacts.extend(new_arts)
 
+            # Build rich thinking text with results
+            thinking_lines = [f"🔍 **Drilling into {target_col}** — {reason}"]
             summary = f"found {len(new_arts)} breakdowns"
+
             if new_arts and new_arts[0].get("data"):
-                top_row = new_arts[0]["data"][0]
-                dim_val = top_row.get("dimension_value", top_row.get(list(top_row.keys())[0], "?"))
-                summary = f"top finding: {dim_val}"
+                # Show top findings from the margin breakdown
+                thinking_lines.append("")
+                for art in new_arts:
+                    if "Margin by" in art.get("label", "") and art.get("data"):
+                        thinking_lines.append(f"**{art['label']}:**")
+                        for row in art["data"][:5]:
+                            dv = row.get("dimension_value", "?")
+                            margin = row.get("margin_pct", "?")
+                            contrib = row.get("contribution_pp")
+                            rev = row.get("revenue", 0)
+                            contrib_str = f", contribution={contrib:+.2f}pp" if contrib else ""
+                            thinking_lines.append(f"  {dv}: margin={margin}%, revenue={rev:,.0f}{contrib_str}")
+                        top_row = art["data"][0]
+                        worst_val = top_row.get("dimension_value", "?")
+                        worst_margin = top_row.get("margin_pct", "?")
+                        summary = f"{worst_val} is worst at {worst_margin}% margin"
+                        break
+
+                # Show cross-dimension hotspots
+                cross_arts = [a for a in new_arts if " × " in a.get("label", "")]
+                if cross_arts:
+                    thinking_lines.append("")
+                    for ca in cross_arts[:2]:
+                        thinking_lines.append(f"**{ca['label']}:**")
+                        for row in ca["data"][:3]:
+                            dv = row.get("dimension_value", "?")
+                            margin = row.get("margin_pct", "?")
+                            rev = row.get("revenue", 0)
+                            thinking_lines.append(f"  {dv}: margin={margin}%, revenue={rev:,.0f}")
 
             drill_history.append({"round": round_num, "target": target_col, "summary": summary})
+
+            if on_step:
+                await on_step({
+                    "type": "agent_thinking",
+                    "phase": f"drill_round_{round_num}",
+                    "thinking": "\n".join(thinking_lines),
+                })
 
             if on_step:
                 await on_step({
