@@ -1,0 +1,79 @@
+{
+  "pipeline_id": "pipeline_b6ca0a59",
+  "pipeline_version": "1.0.0",
+  "started_at": "2026-04-13T03:09:58.646678+00:00",
+  "finished_at": "2026-04-13T03:09:58.648286+00:00",
+  "dry_run": true,
+  "step_only": "all",
+  "series_count": 1,
+  "retrain_triggered_count": 0,
+  "retrain_triggered": [],
+  "retrain_completed_count": 0,
+  "retrain_completed": [],
+  "promoted_count": 0,
+  "promoted": [],
+  "enable_auto_retrain": false,
+  "candidate_models": [
+    "lightgbm"
+  ],
+  "series_results": {
+    "SYNTHETIC": {
+      "series_id": "SYNTHETIC",
+      "drift": {
+        "report_id": "drift_ea9c0295dc",
+        "series_id": "SYNTHETIC",
+        "created_at": "2026-04-13T03:09:58.647263+00:00",
+        "data_drift_score": 0.0,
+        "residual_drift_score": 0.0,
+        "drift_score": 0.0,
+        "drift_flags": [],
+        "psi": 0.0,
+        "mean_zscore_shift": 0.0,
+        "std_ratio": 1.0,
+        "baseline_mape": null,
+        "recent_mape": null,
+        "baseline_bias": null,
+        "recent_bias": null,
+        "baseline_coverage": null,
+        "recent_coverage": null,
+        "residual_mean_shift": null,
+        "residual_std_ratio": null,
+        "baseline_window_start": "",
+        "baseline_window_end": "",
+        "recent_window_start": "",
+        "recent_window_end": "",
+        "config": {
+          "psi_threshold": 0.2,
+          "zscore_shift_threshold": 2.0,
+          "mape_increase_threshold": 10.0,
+          "bias_shift_threshold": 2.0,
+          "coverage_drop_threshold": 0.15,
+          "default_baseline_size": 60,
+          "default_recent_size": 14,
+          "psi_n_bins": 10
+        },
+        "data_source": "synthetic_fallback"
+      },
+      "evaluate": {
+        "should_retrain": false,
+        "reasons": [],
+        "severity": "none",
+        "cooldown_remaining_seconds": 0.0,
+        "blocked_by_cooldown": false,
+        "blocked_by_dedupe": false,
+        "auto_retrain_enabled": false,
+        "trigger_types": []
+      },
+      "train": {
+        "skipped": true,
+        "reason": "trigger_not_fired"
+      },
+      "promote": {
+        "skipped": true,
+        "reason": "dry_run_or_training_skipped"
+      },
+      "outcome": "success",
+      "error": null
+    }
+  }
+}
