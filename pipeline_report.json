@@ -1,8 +1,8 @@
 {
-  "pipeline_id": "pipeline_57a858f7",
+  "pipeline_id": "pipeline_b5688253",
   "pipeline_version": "1.0.0",
-  "started_at": "2026-04-20T03:09:25.206681+00:00",
-  "finished_at": "2026-04-20T03:09:25.208262+00:00",
+  "started_at": "2026-04-27T03:10:54.815303+00:00",
+  "finished_at": "2026-04-27T03:10:54.816681+00:00",
   "dry_run": true,
   "step_only": "all",
   "series_count": 1,
@@ -20,9 +20,9 @@
     "SYNTHETIC": {
       "series_id": "SYNTHETIC",
       "drift": {
-        "report_id": "drift_40ba1de08f",
+        "report_id": "drift_e77a1a5eac",
         "series_id": "SYNTHETIC",
-        "created_at": "2026-04-20T03:09:25.207194+00:00",
+        "created_at": "2026-04-27T03:10:54.815835+00:00",
         "data_drift_score": 0.0,
         "residual_drift_score": 0.0,
         "drift_score": 0.0,
